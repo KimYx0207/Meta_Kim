@@ -9,6 +9,9 @@ import path from "node:path";
 import test, { after, before } from "node:test";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
+import { fixtureCritical, fixtureInventoryProvider, fixtureReadWorkOrder, fixtureThinkingInput, runWithFixtureHostThinking } from "../helpers/host-reasoning-fixture.mjs";
+import { localProtocolFixtureTaskFacts } from "../helpers/task-design-facts.mjs";
+import { intentDialogueDigest as digestFixtureIntent } from "../../scripts/governed-execution/intent-dialogue.mjs";
 
 let openDurableRunKernel;
 let runMetaTheoryGovernedExecution;
@@ -28,6 +31,48 @@ before(async () => {
 });
 after(() => runtimeFixture?.cleanup());
 
+// Explicit host decisions for this file's bounded metadata/report fixtures.
+// Persist the actual preparation and selection across retries; the production
+// entrypoint still validates every digest, scope, source and resume identity.
+const durableHostInputs = new Map();
+async function runDurableReportFixture(options) {
+  const key = options.runId ? `${options.stateDir}\0${options.runId}` : null;
+  const existingInputs = key && durableHostInputs.get(key);
+  if (existingInputs) return runMetaTheoryGovernedExecution({ ...options, ...existingInputs });
+  const criticalInput = fixtureCritical({ task: options.task,
+    intentDigest: options.confirmedIntent ? digestFixtureIntent(options.confirmedIntent) : null,
+    successCriteria: options.confirmedIntent?.acceptanceCriteria.map(criterion => criterion.description) ?? [options.task],
+    nonGoals: ["No source edits, deployment or native model acceptance claims"] });
+  const governanceTaskFacts = localProtocolFixtureTaskFacts(options.task);
+  return runWithFixtureHostThinking(runMetaTheoryGovernedExecution, options, {
+    criticalInput, governanceTaskFacts,
+    workOrders: preparation => {
+      const slices = options.designInput?.taskSlices ?? [{ id: "package-metadata", outcome: options.task,
+        deliverables: [{ description: "Exact package name and version from package.json" }], criterionIds: ["user-outcome"],
+        scopeFiles: ["package.json"], inputRefs: ["package.json"], dependsOn: [], capabilityNeed: ["read package metadata"] }];
+      const packets = slices.map(slice => {
+        const packet = fixtureReadWorkOrder(preparation, { id: slice.id, todayTask: slice.outcome,
+          output: slice.deliverables.map(item => item.description).join("; "), criterionIds: slice.criterionIds,
+          taskFacts: localProtocolFixtureTaskFacts(slice.outcome) });
+        Object.assign(packet, { scopeFiles: slice.scopeFiles, shardScope: slice.scopeFiles, evidenceRefs: slice.inputRefs,
+          capabilityNeed: slice.capabilityNeed, dependsOn: slice.dependsOn });
+        if (slice.methodCapabilityId) {
+          const agents = preparation.fetchPacket.capabilityDiscovery.agents.filter(agent => agent.id === "kim-service:report-reviewer");
+          assert.equal(agents.length, 1, "The current Fetch must discover this fixture's report-review method");
+          packet.selectedCapabilityProviders = { agent: structuredClone(agents[0]), verificationAgent: fixtureInventoryProvider(preparation, "review") };
+          packet.methodCapabilityId = slice.methodCapabilityId;
+          packet.methodInputs = slice.methodInputs;
+          packet.selectionReason = "The fixture host selected the currently discovered read-only report method for the supplied facts and criterion.";
+        }
+        return packet;
+      });
+      if (key) durableHostInputs.set(key, { criticalInput, governanceTaskFacts,
+        thinkingInput: fixtureThinkingInput(preparation, { criticalInput, workOrders: () => packets }),
+        previousPlanChallengeRunId: preparation.runId });
+      return packets;
+    },
+  });
+}
 
 async function tempRoot(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-p118-entry-"));
@@ -57,19 +102,11 @@ function workerCounter(counter) {
   };
 }
 
-test("67 — active paired resume consumes and preserves scope-bound outcome revisions", async (t) => {
-  const root = await tempRoot(t);
-  const projectRoot = process.cwd();
-  const runId = "outcome-revision-public-active";
+async function reportReviewMethodFixture(t, root) {
   const sourceRoot = path.join(root, "service");
   const componentPath = "agents/report-reviewer";
   const componentRoot = path.join(sourceRoot, componentPath);
   const { componentHash, stableJson, sha256, discoverDependencyAgentContracts } = await runtimeFixture.import("scripts/dependency-agent-discovery.mjs");
-  const { buildTaskGoalContract, taskOutcomeDigest } = await runtimeFixture.import("src/domain/governance/task-outcome.mjs");
-  const { intentDialogueDigest } = await runtimeFixture.import("scripts/governed-execution/intent-dialogue.mjs");
-  const { stageLaneNodeId } = await runtimeFixture.import("scripts/governed-execution/stage-dag.mjs");
-  const { invokeReadOnlyRuntimeWorker } = await runtimeFixture.import("scripts/governed-execution/stage-runner-bridge.mjs");
-  const { resolveCliInvocation } = await runtimeFixture.import("scripts/runtime-cli-invocation.mjs");
   await fs.mkdir(componentRoot, { recursive: true });
   const capability = { id: "report-review", summary: "Read-only PRD report review against current facts", useWhen: ["Review the supplied PRD report"], doNotUseWhen: ["Implement or deploy"],
     input: { type: "object", required: ["facts"], properties: { facts: { type: "string" } } },
@@ -88,9 +125,23 @@ test("67 — active paired resume consumes and preserves scope-bound outcome rev
     components: [component], capabilities: [{ ...capability, componentId: component.id, componentType: component.componentType, componentVersion: component.componentVersion,
       componentPath, entrypoint: component.entrypoint, componentContentSha256: component.contentSha256, contractSha256: component.contractSha256 }] }));
   const oldRoot = process.env.META_KIM_KIM_SERVICE_ROOT;
-  const oldPath = process.env.PATH;
   process.env.META_KIM_KIM_SERVICE_ROOT = sourceRoot;
-  t.after(() => { if (oldRoot === undefined) delete process.env.META_KIM_KIM_SERVICE_ROOT; else process.env.META_KIM_KIM_SERVICE_ROOT = oldRoot; process.env.PATH = oldPath; });
+  t.after(() => { if (oldRoot === undefined) delete process.env.META_KIM_KIM_SERVICE_ROOT; else process.env.META_KIM_KIM_SERVICE_ROOT = oldRoot; });
+  return { sourceRoot, capability, sha256, discoverDependencyAgentContracts };
+}
+
+test("67 — active paired resume consumes and preserves scope-bound outcome revisions", async (t) => {
+  const root = await tempRoot(t);
+  const projectRoot = process.cwd();
+  const runId = "outcome-revision-public-active";
+  const { sourceRoot, capability, sha256, discoverDependencyAgentContracts } = await reportReviewMethodFixture(t, root);
+  const { buildTaskGoalContract, taskOutcomeDigest } = await runtimeFixture.import("src/domain/governance/task-outcome.mjs");
+  const { intentDialogueDigest } = await runtimeFixture.import("scripts/governed-execution/intent-dialogue.mjs");
+  const { stageLaneNodeId } = await runtimeFixture.import("scripts/governed-execution/stage-dag.mjs");
+  const { invokeReadOnlyRuntimeWorker } = await runtimeFixture.import("scripts/governed-execution/stage-runner-bridge.mjs");
+  const { resolveCliInvocation } = await runtimeFixture.import("scripts/runtime-cli-invocation.mjs");
+  const oldPath = process.env.PATH;
+  t.after(() => { process.env.PATH = oldPath; });
   const program = `let input="";process.stdin.on("data",chunk=>input+=chunk);process.stdin.on("end",()=>{const task=JSON.parse(input.split("\\n").find(line=>line.startsWith("Task packet: ")).slice(13));const body={draft:task.referenceDirection??"bounded report",status:"partial",handoff:{nextOwner:task.ownerAgent,requiresDecision:false}};process.stdout.write([{type:"thread.started",thread_id:"synthetic-"+task.taskPacketId},{type:"item.completed",item:{id:"final",type:"agent_message",text:JSON.stringify(body)}},{type:"turn.completed",usage:{}}].map(record=>JSON.stringify(record)).join("\\n")+"\\n");});`;
   await fs.writeFile(path.join(root, "fake-codex.mjs"), program);
   const ownedNode = path.join(root, process.platform === "win32" ? "node.exe" : "node");
@@ -176,7 +227,7 @@ test("67 — active paired resume consumes and preserves scope-bound outcome rev
   const route = JSON.parse(routeCheck.stdout);
   assert.equal(route.recommendedRoute.owner, "kim-service:report-reviewer", JSON.stringify({ owner: route.recommendedRoute.owner,
     agent: route.recommendedRoute.selectedCapabilityProviders?.agent, blocked: route.recommendedRoute.blockedReasons, discovery: discovery.sources }));
-  const first = await runMetaTheoryGovernedExecution({ ...base, stageRunner: host });
+  const first = await runDurableReportFixture({ ...base, stageRunner: host });
   assert.equal(first.machineExecution.reason, "fixture_seed_prior_result", JSON.stringify(first.machineExecution));
   const reservation = JSON.parse(await fs.readFile(path.join(root, `${runId}.reservation.json`), "utf8"));
   const hashFile = async (file) => createHash("sha256").update(await fs.readFile(file)).digest("hex");
@@ -203,7 +254,7 @@ test("67 — active paired resume consumes and preserves scope-bound outcome rev
     observations: [{ criterionId: "report", taskHash: goal.taskHash, intentDigest, acceptanceDigest: goal.acceptanceDigest,
       artifactRefs: [reportRef], verdict: "fail", evidenceKind: "independent_review", producer: "fixture-producer", reviewer: "fixture-reviewer", evidenceRef: `fixture:review-${stage}` }],
     revisionRequests: [{ taskId: c.taskPacketId, criterionId: "report", returnToStage: stage, finding: "Current statement needs evidence comparison", requiredChange, evidenceRefs: [`fixture:review-${stage}`] }] });
-  const resume = (input) => runMetaTheoryGovernedExecution({ ...base, stageRunner: { ...host, durableMode: "resume" }, ...(input ? { outcomeReviewInput: input } : {}) });
+  const resume = (input) => runDurableReportFixture({ ...base, stageRunner: { ...host, durableMode: "resume" }, ...(input ? { outcomeReviewInput: input } : {}) });
   const bad = review("Execution"); bad.observations[0].taskHash = "wrong-task";
   await assert.rejects(resume(bad), /invalid.*observation|binding/i);
   assert.equal(captures.length, 0);
@@ -239,6 +290,8 @@ test("67 — active paired resume consumes and preserves scope-bound outcome rev
 test("67 — human milestones reenter the public runner with current native replies and preserve completed work", async (t) => {
   const root = await tempRoot(t);
   const runId = "human-milestone-public-resume";
+  const { capability } = await reportReviewMethodFixture(t, root);
+  const reportFacts = await fs.readFile("package.json", "utf8");
   const { buildTaskGoalContract } = await runtimeFixture.import("src/domain/governance/task-outcome.mjs");
   const goal = buildTaskGoalContract({ task: TASK });
   // Reviewable material belongs to the isolated project, not the external DB directory.
@@ -247,7 +300,8 @@ test("67 — human milestones reenter the public runner with current native repl
   await fs.writeFile(`${artifactDir}/system.md`, "Current bounded system plan for the package report.");
   await fs.writeFile(`${artifactDir}/prd.md`, "Current PRD: exact package name and version; no source changes.");
   const slice = (id, workKind, dependsOn = []) => ({ id, workKind, outcome: TASK,
-    capabilityNeed: ["read package metadata and produce a bounded verification report"], scopeFiles: ["package.json"], inputRefs: ["package.json"],
+    capabilityNeed: ["Read-only PRD report review"], methodCapabilityId: capability.id, methodInputs: { facts: reportFacts },
+    scopeFiles: ["package.json"], inputRefs: ["package.json"],
     criterionIds: goal.acceptanceCriteria.map((criterion) => criterion.id), dependsOn, journeyRefs: [], decisionRefs: [],
     dependencyReasons: dependsOn.map((taskId) => ({ taskId, reason: "Consumes the reviewed plan and scope" })),
     deliverables: [{ id: `${id}-report`, description: "Package metadata report", consumer: "Current package user" }],
@@ -262,7 +316,7 @@ test("67 — human milestones reenter the public runner with current native repl
       sourceArtifactRefs: ["package.json"], scopeEvidenceRefs: ["fixture:current-plan"], criterionIds: goal.acceptanceCriteria.map((criterion) => criterion.id) })) };
   const base = { task: TASK, runId, stateDir: root, artifactDir: root, dbPath: path.join(root, "analytics.sqlite"),
     projectRoot: process.cwd(), projectCapabilityMutationMode: "read_only", designInput };
-  const planned = await runMetaTheoryGovernedExecution(base);
+  const planned = await runDurableReportFixture(base);
   await fs.rm(planned.paths.json);
   await fs.rm(planned.paths.markdown);
   const { stageLaneNodeId } = await runtimeFixture.import("scripts/governed-execution/stage-dag.mjs");
@@ -291,12 +345,18 @@ test("67 — human milestones reenter the public runner with current native repl
     }
   } finally { kernel.close(); }
   let calls = 0;
+  let questions = 0;
+  let allowSecondNativeReply = false;
   const admitted = [];
   const host = { enabled: true, durableMode: "resume", durableDbPath, ownerId: "fixture-host", runtime: "codex",
     adapterRegistry: { invoke: async () => { calls += 1; throw new Error("Completed workers must not be replayed"); } },
     authorize: async ({ node }) => { if (node) { admitted.push(node.nodeId); return { status: "waiting", reason: "fixture_stops_at_consumer_admission" }; }
-      return { status: "ready" }; } };
-  const pending = await runMetaTheoryGovernedExecution({ ...base, stageRunner: host });
+      // This host fixture exposes one human reply per turn. The scheduler may
+      // continue polling, but it cannot start the next exchange before reentry.
+      return questions === 1 && !allowSecondNativeReply
+        ? { status: "waiting", reason: "fixture_waits_for_next_native_reply" }
+        : { status: "ready" }; } };
+  const pending = await runDurableReportFixture({ ...base, stageRunner: host });
   assert.equal(pending.machineExecution.reason, "human_milestone_review_required", JSON.stringify(pending.machineExecution));
   assert.equal(pending.preDecisionOptionFrame.unresolvedQuestions.find((question) => question.nodeId === producerId).status, "open");
   assert.equal(calls, 0);
@@ -304,7 +364,6 @@ test("67 — human milestones reenter the public runner with current native repl
   let request;
   let response;
   let at;
-  let questions = 0;
   const consumer = createNativeHumanMilestoneConsumer({ repository: createNativeHostAnswerRepository({ profileRoot: root }),
     now: () => new Date(Date.parse(at) + 1).toISOString(),
     prepareDecision: async ({ decision }) => {
@@ -324,21 +383,24 @@ test("67 — human milestones reenter the public runner with current native repl
     }, hostConnection: { hostConnectionRef: "host:synthetic-public-entry",
       takeRequestUserInput: async () => ({ request, timeSourceClaimRef: "time-source:request" }),
       takeResponse: async () => ({ response, at, timeSourceClaimRef: "time-source:return" }), ackResponse: async () => {} } });
-  const firstAnswer = await runMetaTheoryGovernedExecution({ ...base, stageRunner: { ...host, humanDecisionConsumer: consumer } });
+  const firstAnswer = await runDurableReportFixture({ ...base, stageRunner: { ...host, humanDecisionConsumer: consumer } });
   assert.equal(firstAnswer.machineExecution.humanMilestoneReviews[0].accepted, true);
+  assert.equal(questions, 1);
+  assert.equal(firstAnswer.machineExecution.humanMilestoneReviews[1].accepted, false);
   assert.deepEqual(admitted, [], "Answering the system plan cannot release the unanswered PRD consumer");
-  const accepted = await runMetaTheoryGovernedExecution({ ...base, stageRunner: { ...host, humanDecisionConsumer: consumer } });
+  allowSecondNativeReply = true;
+  const accepted = await runDurableReportFixture({ ...base, stageRunner: { ...host, humanDecisionConsumer: consumer } });
   assert.equal(accepted.machineExecution.humanMilestoneReviews.every((review) => review.accepted), true, JSON.stringify(accepted.machineExecution));
   assert.equal(accepted.machineExecution.reason, "fixture_stops_at_consumer_admission");
   assert.ok(accepted.preDecisionOptionFrame.unresolvedQuestions.some((question) => question.question.includes("PRD与MVP范围") && question.question.includes(`${artifactDir}/prd.md`)));
   assert.deepEqual(admitted, [consumerId], "Only the actual current answers release the dependent consumer");
-  const replay = await runMetaTheoryGovernedExecution({ ...base, stageRunner: { ...host, humanDecisionConsumer: consumer } });
+  const replay = await runDurableReportFixture({ ...base, stageRunner: { ...host, humanDecisionConsumer: consumer } });
   assert.deepEqual(replay.machineExecution.calls, []);
   assert.equal(calls, 0);
   assert.equal(questions, 2);
   assert.equal(replay.machineExecution.outcome.status, "incomplete", "A milestone judgement is not parent-goal acceptance");
   const inheritedBase = { ...base, runId: `${runId}-unproven-inheritance`, designInput: { ...designInput, lifecycle: "within_accepted_scope" } };
-  const inheritedPlan = await runMetaTheoryGovernedExecution(inheritedBase);
+  const inheritedPlan = await runDurableReportFixture(inheritedBase);
   await fs.rm(inheritedPlan.paths.json); await fs.rm(inheritedPlan.paths.markdown);
   const inheritedKernel = await openDurableRunKernel(durableDbPath);
   try {
@@ -352,7 +414,7 @@ test("67 — human milestones reenter the public runner with current native repl
         output: { outputSha256: "a".repeat(64), domainOutput: { status: "partial", handoff: { requiresDecision: false, nextOwner: packet.ownerAgent } } } });
     }
   } finally { inheritedKernel.close(); }
-  const unproven = await runMetaTheoryGovernedExecution({ ...inheritedBase, stageRunner: { ...host, humanDecisionConsumer: consumer } });
+  const unproven = await runDurableReportFixture({ ...inheritedBase, stageRunner: { ...host, humanDecisionConsumer: consumer } });
   assert.equal(unproven.machineExecution.status, "waiting");
   assert.ok(unproven.machineExecution.humanMilestoneReviews.every((review) => !review.accepted && review.nextAction.stage === "Thinking"));
   assert.equal(unproven.preDecisionOptionFrame.unresolvedQuestions.some((question) => question.milestoneId), false,
@@ -412,7 +474,7 @@ test("67 — CLI keeps planned-only default and validates durable fresh/resume f
     /unsupported stage-runner orchestrator|stategraph/iu,
   );
 
-  const planned = await runMetaTheoryGovernedExecution({
+  const planned = await runDurableReportFixture({
     task: TASK,
     stateDir: root,
     artifactDir: root,
@@ -428,7 +490,7 @@ test("67 — CLI keeps planned-only default and validates durable fresh/resume f
 test("67 — governed entry can explicitly select the LangGraph Functional API ready-set adapter", async (t) => {
   const root = await tempRoot(t);
   const counter = { count: 0 };
-  const report = await runMetaTheoryGovernedExecution({
+  const report = await runDurableReportFixture({
     task: TASK,
     runId: "p119-governed-langgraph-adapter",
     stateDir: root,
@@ -474,7 +536,7 @@ test("67 — governed entry can explicitly select the LangGraph Functional API r
 test("67 — fresh durable auto-run reserves identity, uses the stateDir database, and closes coordinator", async (t) => {
   const root = await tempRoot(t);
   const counter = { count: 0 };
-  const report = await runMetaTheoryGovernedExecution({
+  const report = await runDurableReportFixture({
     task: TASK,
     stateDir: root,
     artifactDir: root,
@@ -518,7 +580,7 @@ test("67 — resume returns already_materialized without workers or overwrites a
   const root = await tempRoot(t);
   const runId = "p118-entry-already-materialized";
   const firstCounter = { count: 0 };
-  const first = await runMetaTheoryGovernedExecution({
+  const first = await runDurableReportFixture({
     task: TASK,
     runId,
     stateDir: root,
@@ -531,7 +593,7 @@ test("67 — resume returns already_materialized without workers or overwrites a
   const jsonBefore = await fs.readFile(first.paths.json, "utf8");
   const markdownBefore = await fs.readFile(first.paths.markdown, "utf8");
   const resumedCounter = { count: 0 };
-  const resumed = await runMetaTheoryGovernedExecution({
+  const resumed = await runDurableReportFixture({
     task: TASK,
     runId,
     stateDir: root,
@@ -549,7 +611,7 @@ test("67 — resume returns already_materialized without workers or overwrites a
 
   await fs.rm(first.paths.markdown);
   await assert.rejects(
-    runMetaTheoryGovernedExecution({
+    runDurableReportFixture({
       task: TASK,
       runId,
       stateDir: root,
@@ -566,7 +628,7 @@ test("67 — resume returns already_materialized without workers or overwrites a
 test("67 — resume continues an identity-bound active kernel run and materializes it once", async (t) => {
   const root = await tempRoot(t);
   const runId = "p118-entry-active-resume";
-  const planned = await runMetaTheoryGovernedExecution({
+  const planned = await runDurableReportFixture({
     task: TASK,
     runId,
     stateDir: root,
@@ -589,7 +651,7 @@ test("67 — resume continues an identity-bound active kernel run and materializ
     kernel.close();
   }
   const counter = { count: 0 };
-  const resumed = await runMetaTheoryGovernedExecution({
+  const resumed = await runDurableReportFixture({
     task: TASK,
     runId,
     stateDir: root,
@@ -618,7 +680,7 @@ test("67 — resume strictly binds reservation schema, runId, and task fingerpri
     })}\n`,
   );
   await assert.rejects(
-    runMetaTheoryGovernedExecution({
+    runDurableReportFixture({
       task: TASK,
       runId,
       stateDir: root,
@@ -636,7 +698,7 @@ test("67 — progress callback failure preserves execution and a materialized re
   const root = await tempRoot(t);
   const runId = "p118-progress-sink-failure";
   const initialCounter = { count: 0 };
-  const first = await runMetaTheoryGovernedExecution({
+  const first = await runDurableReportFixture({
     task: TASK, runId, stateDir: root, artifactDir: root,
     dbPath: path.join(root, "analytics.sqlite"), projectRoot: process.cwd(),
     projectCapabilityMutationMode: "read_only",
@@ -649,7 +711,7 @@ test("67 — progress callback failure preserves execution and a materialized re
   assert.ok(first.conversationNotice.progressEvents.every((event) => event.deliveryStatus === "failed"));
   const counter = { count: 0 };
   const events = [];
-  const resumed = await runMetaTheoryGovernedExecution({
+  const resumed = await runDurableReportFixture({
     task: TASK, runId, stateDir: root, artifactDir: root,
     dbPath: path.join(root, "analytics.sqlite"), projectRoot: process.cwd(),
     projectCapabilityMutationMode: "read_only",
@@ -667,7 +729,7 @@ test("67 — progress callback failure preserves execution and a materialized re
 test("67 — already_materialized validates paired digests and CLI reports resume with zero workers", async (t) => {
   const root = await tempRoot(t);
   const runId = "p118-digest-bound-materialized";
-  const first = await runMetaTheoryGovernedExecution({
+  const first = await runDurableReportFixture({
     task: TASK,
     runId,
     stateDir: root,
@@ -707,7 +769,7 @@ test("67 — already_materialized validates paired digests and CLI reports resum
 
   await fs.appendFile(first.paths.json, " \n");
   await assert.rejects(
-    runMetaTheoryGovernedExecution({
+    runDurableReportFixture({
       task: TASK,
       runId,
       stateDir: root,
@@ -724,7 +786,7 @@ test("67 — already_materialized validates paired digests and CLI reports resum
 test("67 — resume repairs a missing final artifact from a bounded staging reference", async (t) => {
   const root = await tempRoot(t);
   const runId = "p118-stage-repair";
-  const first = await runMetaTheoryGovernedExecution({
+  const first = await runDurableReportFixture({
     task: TASK,
     runId,
     stateDir: root,
@@ -741,7 +803,7 @@ test("67 — resume repairs a missing final artifact from a bounded staging refe
   await fs.rm(first.paths.markdown);
   reservation.phase = "artifacts_committing";
   await fs.writeFile(reservationPath, `${JSON.stringify(reservation, null, 2)}\n`);
-  const resumed = await runMetaTheoryGovernedExecution({
+  const resumed = await runDurableReportFixture({
     task: TASK,
     runId,
     stateDir: root,
@@ -762,7 +824,7 @@ test("67 — dual committed artifacts with an active DB resume to terminal witho
   crash.simulatedProcessCrash = true;
   const firstCounter = { count: 0 };
   await assert.rejects(
-    runMetaTheoryGovernedExecution({
+    runDurableReportFixture({
       task: TASK,
       runId,
       stateDir: root,
@@ -783,7 +845,7 @@ test("67 — dual committed artifacts with an active DB resume to terminal witho
   assert.equal((await fs.stat(path.join(root, `${runId}.json`))).isFile(), true);
   assert.equal((await fs.stat(path.join(root, `${runId}.en.md`))).isFile(), true);
   const resumedCounter = { count: 0 };
-  const resumed = await runMetaTheoryGovernedExecution({
+  const resumed = await runDurableReportFixture({
     task: TASK,
     runId,
     stateDir: root,
@@ -803,7 +865,7 @@ test("67 — terminal kernel plus missing final artifact is finalized from stagi
   const crash = new Error("simulated post-terminal crash");
   crash.simulatedProcessCrash = true;
   await assert.rejects(
-    runMetaTheoryGovernedExecution({
+    runDurableReportFixture({
       task: TASK,
       runId,
       stateDir: root,
@@ -822,7 +884,7 @@ test("67 — terminal kernel plus missing final artifact is finalized from stagi
   );
   await fs.rm(path.join(root, `${runId}.json`));
   const counter = { count: 0 };
-  const resumed = await runMetaTheoryGovernedExecution({
+  const resumed = await runDurableReportFixture({
     task: TASK,
     runId,
     stateDir: root,

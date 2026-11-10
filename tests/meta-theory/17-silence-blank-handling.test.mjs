@@ -115,31 +115,15 @@ describe("Part B: intentional silence behavior", async () => {
     );
   });
 
-  test("Intentional Silence resumes on user explicit initiation", () => {
-    const patterns = [
-      /resume.*user/i,
-      /user.*initiate.*resume/i,
-      /silence.*resume.*user/i,
-    ];
-    let found =
-      patterns.some((p) => p.test(devGov)) ||
-      patterns.some((p) => p.test(conductor));
-    assert.ok(
-      found,
-      "Intentional Silence must resume on user explicit initiation",
-    );
+  test("communication silence continues ready authorized work without a new user instruction", () => {
+    assert.match(conductor, /Continue necessary authorized work[\s\S]*?dependencies are ready/i);
+    assert.match(conductor, /communication silence does not pause execution or require another user instruction/i);
+    assert.match(conductor, /An explicit user pause requires an explicit user resume/i);
   });
 
-  test("Intentional Silence has idle threshold fallback", () => {
-    const patterns = [
-      /idle.*threshold/i,
-      /threshold.*exceed.*resume/i,
-      /idle.*auto.*resume/i,
-    ];
-    let found =
-      patterns.some((p) => p.test(devGov)) ||
-      patterns.some((p) => p.test(conductor));
-    assert.ok(found, "Intentional Silence must have idle threshold fallback");
+  test("idle time never releases an explicit pause or an unresolved blocker", () => {
+    assert.match(conductor, /Elapsed idle time never releases a pause or blocker/i);
+    assert.match(conductor, /permission, budget and resource decisions retain their own boundaries/i);
   });
 
   test("Intentional Silence is not inaction — it is the most deliberate card", () => {

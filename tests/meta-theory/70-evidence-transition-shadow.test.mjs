@@ -1,3 +1,4 @@
+import { readOnlyWorkerPacket } from "../helpers/read-only-worker-packet.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -32,7 +33,7 @@ function lane() {
 }
 
 function packet() {
-  return {
+  return readOnlyWorkerPacket({
     taskPacketId: "shadow-worker",
     ownerAgent: "test-automator",
     description: "Read package metadata",
@@ -40,7 +41,7 @@ function packet() {
     dependsOn: [],
     executionMode: "primary_execution",
     externalWriteBoundary: false,
-  };
+  });
 }
 
 function dag({ stageOrder = ["Execution", "Review"] } = {}) {

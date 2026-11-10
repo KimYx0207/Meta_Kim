@@ -10,6 +10,7 @@
     "./*": "./*"
   },
   "scripts": {
+    "dsh:test": "node --test tests/setup/dsh-profile-package.test.mjs",
     "meta:live": "node scripts/meta-kim-live.mjs --port 4331",
     "meta:live:restart": "node scripts/meta-kim-live.mjs --restart --port 4331",
     "meta:live:compact": "node scripts/compact-governed-runs.mjs",

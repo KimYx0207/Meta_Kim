@@ -3,28 +3,22 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { runMetaTheoryGovernedExecution } from "../../scripts/run-meta-theory-governed-execution.mjs";
+import { resolveAgentTeamsPlaybookProvider } from "../../scripts/run-meta-theory-governed-execution.mjs";
 
 async function runFor(runtime, { dependencyRoots = null } = {}) {
-  const stateDir = await mkdtemp(path.join(os.tmpdir(), `meta-kim-agent-teams-${runtime}-`));
   const previousDependencyRoots = process.env.META_KIM_DEP_ROOTS;
   if (dependencyRoots !== null) process.env.META_KIM_DEP_ROOTS = dependencyRoots;
   try {
-    const report = await runMetaTheoryGovernedExecution({
-      task: "meta-theory 检查 Codex runtime 和 Claude Code runtime 的并行编排契约",
-      runId: `agent-teams-provider-${runtime}`,
-      stateDir,
-      dbPath: path.join(stateDir, "runs.sqlite"),
-      runtime,
-      osTarget: "windows",
-    });
-    return report.coreLoop.agentTeamsPlaybookPacket.providerResolution;
+    // This contract is discovery-only. Calling the complete governed entry
+    // without host Critical/Thinking now correctly yields a preparation; it is
+    // not evidence that dependency lookup failed. Exercise the same exported
+    // resolver the runner consumes, with no invented planning or execution.
+    return await resolveAgentTeamsPlaybookProvider(runtime);
   } finally {
     if (dependencyRoots !== null) {
       if (previousDependencyRoots === undefined) delete process.env.META_KIM_DEP_ROOTS;
       else process.env.META_KIM_DEP_ROOTS = previousDependencyRoots;
     }
-    await rm(stateDir, { recursive: true, force: true });
   }
 }
 

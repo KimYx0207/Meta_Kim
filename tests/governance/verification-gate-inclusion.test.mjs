@@ -69,7 +69,7 @@ test("isolated test environment strips credentials and ambient runtime/config ov
 
 test("CI runs setup and process guard regressions on every supported host", () => {
   assert.deepEqual(CI_LANES["setup-platform"].map(({ name }) => name), [
-    "meta:test:setup:cross-platform", "meta:test:process-guard",
+    "meta:test:setup:cross-platform", "meta:test:process-guard", "dsh:test",
   ]);
   const stages = localVerificationStages("setup-platform");
   for (const stage of CI_LANES["setup-platform"]) assert.ok(stages.includes(stage));

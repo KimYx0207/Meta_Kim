@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { runMetaTheoryGovernedExecution } from "./run-meta-theory-governed-execution.mjs";
+import { runDiagnosticReadPlan } from "./diagnostic-host-protocol.mjs";
 
 const MULTI_CAPABILITY_TASK = [
   "同一套 PRD review standard 需要 skill。",
@@ -149,7 +150,7 @@ function validateProductExperienceEvidence(report) {
   assert.equal(resolution.selectedVersion, nearestProvider?.version ?? null);
   // Discovery may find a real optional provider on this host. Both branches
   // must retain native DAG readiness; discovery alone never proves invocation.
-  assert.equal(playbook.status, "pass");
+  assert.equal(playbook.status, "pass", JSON.stringify(playbook.fanoutSafetyPacket));
   assert.equal(playbook.selected, providerAvailable);
   assert.equal(playbook.selectedAs, providerAvailable
     ? "parallel_fanout_orchestration_adapter"
@@ -303,24 +304,18 @@ async function main() {
       stateDir: tempDir,
       dbPath: path.join(tempDir, "runs.sqlite")
     });
-    validateDefaultCompletionStatus(discoveryReport);
-    validateGovernanceEvidence(discoveryReport);
-    validateWorkerExecutionEvidence(discoveryReport);
-    const inventory = discoveryReport.sourceArtifacts.orchestrationReport.fetchEvidence.capabilityInventory;
-    const discoveredTypes = inventory.map((item) => item.capabilityType);
-    for (const slots of [["agent"], ["skill"], ["command"], ["mcpServer", "mcpTool"]]) {
-      assert.ok(inventory.some((item) => slots.includes(item.slot)), `Original multi-capability request must still discover ${slots.join("/")}`);
-    }
-    assert.equal(discoveryReport.coreLoop.langGraphRunPacket.status, "pass");
-    assert.equal(discoveryReport.coreLoop.peerAgentMeshPacket.status, "pass");
-    assert.ok(discoveryReport.coreLoop.thinkingPacket.workerTaskPackets.some((packet) => packet.workOrderReadiness === "incomplete"));
-    assert.equal(discoveryReport.coreLoop.agentTeamsPlaybookPacket.fanoutSafetyPacket.safeForParallelFanout, false);
-    const report = await runMetaTheoryGovernedExecution({
+    assert.equal(discoveryReport.artifactKind, "host_preparation");
+    assert.equal(discoveryReport.preparation.status, "needs_thinking");
+    assert.deepEqual(discoveryReport.workerTaskPackets, []);
+    assert.equal(discoveryReport.coreLoop.stageDagPacket, undefined);
+    assert.equal(discoveryReport.publicReadyDecision.publicReady, false);
+    assert.ok(discoveryReport.hostInvocationRequestPacket.nextAction);
+    const report = await runDiagnosticReadPlan(runMetaTheoryGovernedExecution, {
       task: BOUNDED_FANOUT_TASK,
       runId: "validate-default-governed-execution-evidence",
       stateDir: tempDir,
       dbPath: path.join(tempDir, "runs.sqlite")
-    });
+    }, ["package.json", "AGENTS.md", "README.md", "config/contracts/workflow-contract.json"]);
 
     validateDefaultCompletionStatus(report);
     validateGovernanceEvidence(report);
@@ -334,9 +329,9 @@ async function main() {
         governedExecutionStatus: report.status,
         multiCapabilityPlanning: {
           status: discoveryReport.status,
-          discoveredTypes,
-          plannedWorkers: discoveryReport.coreLoop.thinkingPacket.workerTaskPackets.length,
-          actualWorkerExecution: discoveryReport.coreLoop.executionResult.actualWorkerExecution,
+          preparationRequired: true,
+          plannedWorkers: discoveryReport.workerTaskPackets.length,
+          actualWorkerExecution: false,
           executionReady: false,
         },
         governanceAgentResultPackets: report.coreLoop.governanceAgentResultPackets.length,

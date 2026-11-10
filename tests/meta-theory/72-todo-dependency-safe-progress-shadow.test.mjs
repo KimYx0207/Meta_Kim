@@ -1,3 +1,4 @@
+import { readOnlyWorkerPacket } from "../helpers/read-only-worker-packet.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -466,7 +467,7 @@ function bridgeLane() {
 }
 
 function bridgePacket() {
-  return {
+  return readOnlyWorkerPacket({
     taskPacketId: "todo-worker",
     ownerAgent: "test-automator",
     description: "Read package metadata",
@@ -474,7 +475,7 @@ function bridgePacket() {
     dependsOn: [],
     executionMode: "primary_execution",
     externalWriteBoundary: false,
-  };
+  });
 }
 
 function bridgeDag() {

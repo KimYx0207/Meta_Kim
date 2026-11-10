@@ -1,3 +1,4 @@
+import { readOnlyWorkerPacket } from "../helpers/read-only-worker-packet.mjs";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -17,6 +18,7 @@ import {
 const BRIDGE_URL = pathToFileURL(path.resolve("scripts/governed-execution/stage-runner-bridge.mjs")).href;
 const KERNEL_URL = pathToFileURL(path.resolve("scripts/governed-execution/durable-run-kernel.mjs")).href;
 const DAG_URL = pathToFileURL(path.resolve("scripts/governed-execution/stage-dag.mjs")).href;
+const WORKER_FIXTURE_URL = pathToFileURL(path.resolve("tests/helpers/read-only-worker-packet.mjs")).href;
 const CONTRACT = JSON.parse(
   readFileSync("config/contracts/stage-runner-bridge-contract.json", "utf8"),
 );
@@ -35,7 +37,7 @@ function lane(taskPacketId) {
 }
 
 function packet(taskPacketId) {
-  return {
+  return readOnlyWorkerPacket({
     taskPacketId,
     ownerAgent: "test-automator",
     description: `Read ${taskPacketId}.txt`,
@@ -43,7 +45,7 @@ function packet(taskPacketId) {
     dependsOn: [],
     executionMode: "primary_execution",
     externalWriteBoundary: false,
-  };
+  });
 }
 
 function dagFor(taskPacketIds) {
@@ -486,6 +488,7 @@ test("66 — child process kill after A commit resumes only B after lease expiry
     import { runStageRunnerBridge } from ${JSON.stringify(BRIDGE_URL)};
     import { openDurableRunKernel } from ${JSON.stringify(KERNEL_URL)};
     import { buildStageDagPacket } from ${JSON.stringify(DAG_URL)};
+    import { readOnlyWorkerPacket } from ${JSON.stringify(WORKER_FIXTURE_URL)};
 
     const [phase, dbPath, invocationLog] = process.argv.slice(2);
     const claimedAtMs = 1_700_000_000_000;
@@ -503,7 +506,7 @@ test("66 — child process kill after A commit resumes only B after lease expiry
       isolation: "shared_read_only",
       status: "planned_not_invoked",
     });
-    const packet = (taskPacketId) => ({
+    const packet = (taskPacketId) => readOnlyWorkerPacket({
       taskPacketId,
       ownerAgent: "test-automator",
       description: \`Read \${taskPacketId}.txt\`,

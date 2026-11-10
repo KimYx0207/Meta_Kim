@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
 import { promises as fs } from "node:fs";
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { runMetaTheoryGovernedExecution } from "./run-meta-theory-governed-execution.mjs";
+import { buildWardenWritebackFlow } from "./run-meta-theory-governed-execution.mjs";
 import { createReportContext } from "./report-context.mjs";
 
 const reportContext = createReportContext();
@@ -22,14 +24,16 @@ function hasLocalAbsolutePath(value) {
 async function runPreviewAndRollback() {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-approval-preview-"));
   try {
-    const task = "A reusable AI-readable product review standard keeps recurring and should become a candidate-only skill unless Warden approval is supplied.";
-    const previewRun = await runMetaTheoryGovernedExecution({
-      task,
-      runId: "warden-approval-preview",
-      stateDir: path.join(tempDir, "preview-state"),
-      dbPath: path.join(tempDir, "preview.sqlite"),
-      canonicalRoot: path.join(tempDir, "preview-canonical"),
-    });
+    // This declared synthetic candidate exercises the exact writeback mechanism,
+    // not product inference, professional output quality, or an RSI improvement.
+    const decisionResults = [{
+      capabilityGap: { gapId: "rehearsal-review-standard", requestedCapability: "review standard rehearsal" },
+      gapDecision: { decision: "create_skill", verificationOwner: "meta-prism" },
+      candidateWriteback: { candidateId: "rehearsal-review-standard-candidate", candidateType: "skill" },
+      decisionOutput: { owner: "meta-artisan", scope: "isolated mechanism rehearsal only", verification: { owner: "meta-prism" } },
+    }];
+    const tempCanonicalRoot = path.join(tempDir, "canonical");
+    const previewRun = { wardenWritebackFlow: await buildWardenWritebackFlow({ decisionResults, canonicalRoot: tempCanonicalRoot }) };
     const candidate = previewRun.wardenWritebackFlow.candidates.find((item) => item.targetRelativeToCanonical);
     if (!candidate) {
       throw new Error("Preview run did not produce a candidate target.");
@@ -41,26 +45,23 @@ async function runPreviewAndRollback() {
       approvedAt: "2026-06-04T00:00:00.000Z",
       scope: "canonical_reverse_sync",
       mutationBindings: [candidate.mutationBinding],
-      diffSummary: candidate.diffSummary,
+      diffSummary: `Create temporary rehearsal candidate at canonical/${candidate.targetRelativeToCanonical}.`,
       rollbackPlan: "Remove the temporary canonical root created for this rehearsal.",
       riskReview: {
         status: "fixture_only_rehearsal",
         boundary: "Run-scoped task details must not enter durable identity.",
       },
     };
-    const tempCanonicalRoot = path.join(tempDir, "approved-canonical");
-    const approvedRun = await runMetaTheoryGovernedExecution({
-      task,
-      runId: "warden-approval-temp-apply",
-      stateDir: path.join(tempDir, "approved-state"),
-      dbPath: path.join(tempDir, "approved.sqlite"),
-      canonicalRoot: tempCanonicalRoot,
-      approvalPacket,
-      applyWriteback: true,
-    });
+    const approvedRun = { wardenWritebackFlow: await buildWardenWritebackFlow({
+      decisionResults, canonicalRoot: tempCanonicalRoot, approvalPacket, applyWriteback: true,
+    }) };
     const tempWrites = approvedRun.wardenWritebackFlow.candidates.filter(
       (item) => item.applyStatus === "created" || item.applyStatus === "updated",
     );
+    for (const item of tempWrites) {
+      const bytes = await fs.readFile(path.join(tempCanonicalRoot, item.targetRelativeToCanonical));
+      assert.equal(`sha256:${createHash("sha256").update(bytes).digest("hex")}`, item.mutationBinding.candidateDigest);
+    }
     await fs.rm(tempCanonicalRoot, { recursive: true, force: true });
     const rollbackVerified = !(await fs.stat(tempCanonicalRoot).catch(() => null));
     return {
@@ -140,7 +141,7 @@ async function main() {
     candidateType: candidate.candidateType,
     writebackDecision: candidate.writebackDecision,
     target: candidate.targetRelativeToCanonical ? `canonical/${candidate.targetRelativeToCanonical}` : candidate.target,
-    diffSummary: candidate.diffSummary,
+    diffSummary: `Proposed temporary write to canonical/${candidate.targetRelativeToCanonical}; current repository remains unchanged.`,
     riskReview: candidate.dryRunArtifact.riskReview,
     rollbackPlan: approvalPacket.rollbackPlan,
     verificationOwner: candidate.verificationResult.owner,
@@ -167,6 +168,9 @@ async function main() {
   const privacyLeaks = [candidateDiffs, approvalPanel, rollbackRehearsal].filter(hasLocalAbsolutePath);
   const report = {
     schemaVersion: "warden-approval-experience-v0.1",
+    evidenceKind: "isolated_writeback_mechanism_rehearsal",
+    nativeExecutionVerified: false,
+    methodImprovementVerified: false,
     generatedAt: new Date().toISOString(),
     status:
       approvalPanel.approvalRequired === true &&

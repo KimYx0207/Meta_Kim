@@ -1,3 +1,4 @@
+import { readOnlyWorkerPacket } from "../helpers/read-only-worker-packet.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildStageDagPacket } from "../../scripts/governed-execution/stage-dag.mjs";
@@ -16,11 +17,12 @@ function preparation(runId = "local-tool-bridge-unit") {
     stageOrder: ["Execution"], runtimeCapacity: 1,
     stageLanes: { Execution: [{ laneId: "scan", laneKind: "execution_worker", ownerBindingRef: "owner:local-tool", capabilityBindingRef: "capability:local-security-scan", effectClass: "read_only_support", resourceScopes: ["local-target"], isolation: "shared_read_only", status: "planned_not_invoked" }] },
   });
-  const packet = {
+  const packet = readOnlyWorkerPacket({
+    todayTask: task,
     taskPacketId: "scan", ownerAgent: "local-tool", scopeFiles: ["local-target"],
     executionMode: "primary_execution", externalWriteBoundary: false,
     localToolBinding: { runId, taskHash: taskOutcomeDigest(task), intentDigest: null, selectedCapability: { id: "kim-service:local-security-scan" }, input: {} },
-  };
+  });
   const coreLoop = {
     requestRecord: { runId, task }, goalContractPacket: { taskHash: taskOutcomeDigest(task), intentBinding: { intentDigest: null } },
     thinkingPacket: { workerTaskPackets: [packet] }, stageDagPacket,

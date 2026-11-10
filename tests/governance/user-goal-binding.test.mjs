@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { spawnSync } from 'node:child_process';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { buildCapabilityGapOrchestration } from '../../scripts/run-capability-gap-orchestration.mjs';
 import { evaluateGovernedArtifact } from '../../scripts/evaluate-governance-outcomes.mjs';
+import { createGovernanceRuntimeFixture } from '../helpers/governance-runtime-fixture.mjs';
+import { fixtureCritical, fixtureReadWorkOrder, refreshFixtureSourcePins, runFixtureHostCli } from '../helpers/host-reasoning-fixture.mjs';
+import { localProtocolFixtureTaskFacts } from '../helpers/task-design-facts.mjs';
 
 test('Critical keeps each user outcome instead of substituting a framework maintenance goal', () => {
   for (const request of [
@@ -21,6 +23,8 @@ test('Critical keeps each user outcome instead of substituting a framework maint
 });
 
 test('the real governed entry binds a non-coding decision and a user-selected technology', async (t) => {
+  const fixture = createGovernanceRuntimeFixture(t);
+  refreshFixtureSourcePins(fixture);
   const temp = await mkdtemp(path.join(os.tmpdir(), 'meta-kim-goal-binding-'));
   t.after(async () => {
     assert.equal(path.dirname(path.resolve(temp)), path.resolve(os.tmpdir()));
@@ -32,10 +36,15 @@ test('the real governed entry binds a non-coding decision and a user-selected te
     'Compare Electron and Tauri for an accessible study tool and recommend an implementation plan.',
   ].entries()) {
     const runId = `goal-binding-${index}`;
-    const result = spawnSync(process.execPath, [
+    const criticalInput = fixtureCritical({ task, successCriteria: [task] });
+    const governanceTaskFacts = localProtocolFixtureTaskFacts(task);
+    const result = runFixtureHostCli(fixture, [
       'scripts/run-meta-theory-governed-execution.mjs', '--no-emit-conversation-notice',
       '--task', task, '--run-id', runId, '--state-dir', temp, '--db', path.join(temp, `${runId}.sqlite`),
-    ], { encoding: 'utf8', cwd: path.resolve(import.meta.dirname, '../..'), maxBuffer: 10 * 1024 * 1024 });
+    ], { criticalInput, governanceTaskFacts, workOrders: preparation => [fixtureReadWorkOrder(preparation, {
+      id: 'goal-binding-inspection', owner: 'analysis', todayTask: task, output: 'A source-bound comparison plan retaining the original outcome',
+      criterionIds: ['user-outcome'], taskFacts: governanceTaskFacts,
+    })] });
     assert.equal(result.status, 0, result.stderr);
     const artifact = JSON.parse(await readFile(path.join(temp, `${runId}.json`), 'utf8'));
     assert.equal(artifact.coreLoop.intentPacket.realIntent, task);

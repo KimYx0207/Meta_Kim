@@ -9,6 +9,8 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { createReportContext } from "./report-context.mjs";
 import { importDatabaseSync } from "../src/data/sqlite/runtime.mjs";
+import { runMetaTheoryGovernedExecution } from "./run-meta-theory-governed-execution.mjs";
+import { runDiagnosticReadPlan } from "./diagnostic-host-protocol.mjs";
 
 const reportContext = createReportContext();
 const REPO_ROOT = reportContext.repoRoot;
@@ -29,7 +31,7 @@ const OUTPUT_DIR = path.resolve(
   argValue("--state-dir", reportContext.resolveStatePath("product-delivery-bundle")),
 );
 const BUNDLE_TASK =
-  "Generate an AI-readable product delivery bundle with design, execution, acceptance, feedback, deliverables, reviewer calibration, runtime evidence, GitHub delta, and research evidence.";
+  "Inspect the product-delivery contract and reviewer-calibration sources for an AI-readable diagnostic bundle; retain source-bound plans without claiming model execution, user acceptance or professional improvement.";
 
 const componentCommands = {
   governedRun: [
@@ -263,15 +265,14 @@ async function runNodeScript(args, lifecycle) {
       path.join(lifecycle.stateDir, `${lifecycle.runId}.json`),
       path.join(lifecycle.stateDir, `${lifecycle.runId}.reservation.json`),
     ].some(existsSync);
-    commandArgs.push(
-      "--run-id",
-      lifecycle.runId,
-      "--state-dir",
-      lifecycle.stateDir,
-      "--db",
-      lifecycle.dbPath,
-    );
-    if (managedRunExists) commandArgs.push("--overwrite-run");
+    // This fixed report is a diagnostic host, so it must still submit actual
+    // Critical/Fetch/Thinking inputs. A preparation response is never a run.
+    const run = await runDiagnosticReadPlan(runMetaTheoryGovernedExecution, {
+      task: BUNDLE_TASK, runId: lifecycle.runId, stateDir: lifecycle.stateDir,
+      dbPath: lifecycle.dbPath, projectRoot: REPO_ROOT, allowOverwrite: managedRunExists,
+    }, ["config/contracts/product-delivery-bundle-contract.json", "tests/meta-theory/scenarios/reviewer-calibration-samples.json"]);
+    await finalizeGovernedRunLifecycle(lifecycle);
+    return { status: run.status, runId: lifecycle.runId, report: relativeToRepo(run.paths.json), reusedGovernedRun: false };
   }
   if (commandArgs[0] === "scripts/generate-meta-theory-run-deliverables.mjs") {
     commandArgs.push(
@@ -281,28 +282,18 @@ async function runNodeScript(args, lifecycle) {
       lifecycle.stateDir,
     );
   }
-  const allowPartialNonzero =
-    commandArgs[0] === "scripts/run-meta-theory-governed-execution.mjs";
   const result = spawnSync(process.execPath, commandArgs, {
     cwd: REPO_ROOT,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   });
   const parsed = result.stdout ? tryParseJsonFromStdout(result.stdout) : null;
-  if (result.status !== 0 && allowPartialNonzero && parsed?.status === "partial") {
-    await finalizeGovernedRunLifecycle(lifecycle);
-    return { ...parsed, reusedGovernedRun: false };
-  }
   if (result.status !== 0) {
     throw new Error(
       result.stderr || result.stdout || `Command failed: node ${commandArgs.join(" ")}`,
     );
   }
   const output = parsed ?? parseJsonFromStdout(result.stdout);
-  if (commandArgs[0] === "scripts/run-meta-theory-governed-execution.mjs") {
-    await finalizeGovernedRunLifecycle(lifecycle);
-    return { ...output, reusedGovernedRun: false };
-  }
   return output;
 }
 

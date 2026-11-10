@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import test, { before, after } from "node:test";
 import { syncBuiltinESMExports } from "node:module";
+import { Transform } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
 import { connectFixtureMcpWithDiagnostics, fixtureCalculationAssessment, runWithCalculationHostThinking } from "../helpers/calculation-host-fixture.mjs";
@@ -184,9 +185,10 @@ test("formal stage runner passes complete materials and receipt to the verified 
   assert.equal(JSON.stringify(report).includes("PRIVATE-STORE-MATERIAL-MARKER"), false, "Private metrics mapping is not published in artifacts");
   assert.ok(prompt.includes("PRIVATE-STORE-MATERIAL-MARKER"));
   assert.equal(report.workerTaskPackets[0].methodInputs == null, true);
-  const original = childProcess.spawnSync;
-  childProcess.spawnSync = (command, args, opts) => {
-    if (args?.includes("--input-json")) throw new Error("Materialized resume must not recalculate");
+  const original = childProcess.spawn;
+  let resumeHelperCalls = 0;
+  childProcess.spawn = (command, args, opts) => {
+    if (args?.includes("--input-json")) { resumeHelperCalls++; throw new Error("Materialized resume must not recalculate"); }
     return original(command, args, opts);
   }; syncBuiltinESMExports();
   try {
@@ -194,16 +196,22 @@ test("formal stage runner passes complete materials and receipt to the verified 
     assert.equal(captures.length, 1); assert.equal(resumed.dependencyCalculationPacket.toolInvoked, false);
     assert.equal(resumed.dependencyCalculationPacket.priorToolInvoked, true);
     assert.equal(resumed.dependencyCalculationPacket.observationScope, "historical_materialized_run");
+    assert.equal(resumeHelperCalls, 0);
     const changed = structuredClone(input); changed.rows[0].grossRevenue++;
     await assert.rejects(runner({ ...config, dependencyCalculationInput: { inputJson: JSON.stringify(changed), dependencyRoot },
       stageRunner: { ...config.stageRunner, durableMode: "resume" } }), /fingerprint|identity/iu);
-  } finally { childProcess.spawnSync = original; syncBuiltinESMExports(); }
+    assert.equal(resumeHelperCalls, 0, "changed materials must be rejected before any helper launch");
+  } finally { childProcess.spawn = original; syncBuiltinESMExports(); }
 });
 
 test("unavailable Python permits explicitly uncomputed owner analysis, while fabricated receipts fail closed", sourceOptions, async () => {
-  const original = childProcess.spawnSync;
-  childProcess.spawnSync = (command, args, opts) => args?.includes("--input-json")
-    ? original(path.join(fixture.root, "missing-python"), args, opts) : original(command, args, opts);
+  const original = childProcess.spawn;
+  let unavailableLaunches = 0;
+  childProcess.spawn = (command, args, opts) => {
+    if (!args?.includes("--input-json")) return original(command, args, opts);
+    unavailableLaunches++;
+    return original(path.join(fixture.root, "missing-python"), args, opts);
+  };
   syncBuiltinESMExports();
   try {
     const captures = [], config = options(); config.stageRunner.invokeWorker = captureWorker(captures);
@@ -212,7 +220,8 @@ test("unavailable Python permits explicitly uncomputed owner analysis, while fab
     assert.equal(captures[0].context.calculation.code, "calculation_process_failed");
     assert.equal(captures[0].context.calculation.toolInvoked, false); assert.equal(captures[0].context.calculation.receipt, null);
     assert.match(captures[0].prompt, /工具不可用/);
-  } finally { childProcess.spawnSync = original; syncBuiltinESMExports(); }
+    assert.equal(unavailableLaunches, 1, "unavailable-process injection must reach the asynchronous launch");
+  } finally { childProcess.spawn = original; syncBuiltinESMExports(); }
   for (const mutate of [
     (receipt) => { receipt.version = "9.9.9"; },
     (receipt) => { receipt.tool = "supplier-comparison-calculate"; },
@@ -221,16 +230,36 @@ test("unavailable Python permits explicitly uncomputed owner analysis, while fab
     (receipt) => { delete receipt.comparisons[0].deltas; },
     (receipt) => { receipt.calculationTable[0].metrics.netRevenue = 450; },
   ]) {
-    childProcess.spawnSync = (command, args, opts) => {
+    let helperLaunches = 0, mutatedReceipts = 0;
+    childProcess.spawn = (command, args, opts) => {
       const executed = original(command, args, opts);
       if (!args?.includes("--input-json")) return executed;
-      const receipt = JSON.parse(executed.stdout); mutate(receipt.receipt);
-      return { ...executed, stdout: JSON.stringify(receipt) };
+      helperLaunches++;
+      // Keep the real Python process, stdin EOF, exit status and close event.
+      // Alter only its completed stdout so each receipt-integrity rejection
+      // still exercises the current asynchronous transport and validator.
+      const chunks = [];
+      const changed = new Transform({
+        transform(chunk, _encoding, callback) { chunks.push(Buffer.from(chunk)); callback(); },
+        flush(callback) {
+          try {
+            const receipt = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+            mutate(receipt.receipt); mutatedReceipts++;
+            this.push(JSON.stringify(receipt)); callback();
+          } catch (error) { callback(error); }
+        },
+      });
+      executed.stdout.once("error", error => changed.destroy(error));
+      executed.stdout.pipe(changed);
+      executed.stdout = changed;
+      return executed;
     }; syncBuiltinESMExports();
     try {
       const rejected = await run();
       assert.equal(rejected.status, "failed"); assert.equal(rejected.code, "calculation_receipt_or_source_changed");
-    } finally { childProcess.spawnSync = original; syncBuiltinESMExports(); }
+      assert.equal(helperLaunches, 1, "each mutation must launch the reviewed helper");
+      assert.equal(mutatedReceipts, 1, "each mutation must alter a complete real receipt");
+    } finally { childProcess.spawn = original; syncBuiltinESMExports(); }
   }
   const supplied = materials(); supplied.calculationReceipt = { status: "completed", tool: "store-performance-calculator" };
   const report = await runner(options(supplied));

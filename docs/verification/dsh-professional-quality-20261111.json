@@ -1,0 +1,674 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-11-11",
+  "timezone": "Asia/Shanghai",
+  "scope": "source iteration and regression validation; no new npm/GitHub Release",
+  "baselineCommit": "b8599184b9624fbb1cee0feeccaffa0d8fed76d2",
+  "sourceSha256": {
+    "scripts/dsh-profile-package.mjs": "09b3493d5311d8b83f42f8cb5d86ab587435af960ca88072e2eac5076c351873",
+    "scripts/diagnostic-host-protocol.mjs": "5239083da69f32d93bbf2d6d59c79746f96c95f2cc0e326116a7f994793da835",
+    "scripts/governed-execution/plan-challenge-host-continuation.mjs": "d17476243387fb2b15d56484a376afad4e073070fc8765c0f325c7a5779d2fbd",
+    "scripts/run-meta-theory-governed-execution.mjs": "124dcb07b8b32b388857c25ffb67573e2e22de3be511fe06b634c73b27f4f50d",
+    "scripts/governed-execution/method-delivery.mjs": "894b715511b22be2435647bd38e23dca1400a380a92e537f42df86066ed5f58e",
+    "scripts/dependency-agent-discovery.mjs": "baa2e4001248c7f93493388ff2399163252f82c2aa48d5b4cc12b2cf711f081b",
+    "scripts/governed-execution/calculation-process.mjs": "3fc0e45a1c889e6223cae98a134eae39097db24f78ccf86b614601ce30a74564",
+    "scripts/governed-execution/dependency-calculation.mjs": "b3519d28389b47725c2ce50eece87c6f6059bdb6ee762e115db4afe2c54c0772",
+    "tests/governance/dependency-calculation-process.test.mjs": "0effe992bf8ce39d4f85b071e763c67a0f9006d6acc5ac426d5f5c99bf5a2f98",
+    "tests/governance/dependency-calculation.test.mjs": "cc3816c1bb2fc6fd85808dd6858ee6aac749ade8a8a1258828408577603a2f97",
+    "tests/governance/dependency-calculation-handoff.test.mjs": "664dec7c74c5dcb69cdfe15a7f8d80e2072837578c34bdbe3bebdb0d3cf19adc",
+    "config/runtime-capability-evidence.json": "86b1ed05527c91638e9e1e11624e8ea5ff596c0ca110affaa1679d00f1874b8b",
+    "config/runtime-capability-matrix.json": "b581bdf2851b0bf1a74cd9ce1a55646177ae122cf653e6a7b36a67411340a1a7",
+    "tests/governance/store-calculation-integration.test.mjs": "19aeb440a087b97041a189bc339ee4a4148d054951bd489b2d4847ebf8219ca6",
+    "tests/governance/dependency-method-knowledge.test.mjs": "e995205dee1aef9f4e8dfd02d8de7ae68963593ffc99fb15314f9fffc7df0139"
+  },
+  "checks": {
+    "meta-theory-resumed.log": {
+      "sha256": "2f0a787e91234134260b4ac8620d905526d5e8fe220a6b0ef96b84c7876f1efc",
+      "bytes": 190482,
+      "lastReportedCounts": {
+        "tests": 1671,
+        "pass": 1666,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 5
+      }
+    },
+    "meta-governance-final.log": {
+      "sha256": "9ce22cd0369c471e3eb076ac0feb64e0430cc0f49d3dc02c2a2e3dbd1d993299",
+      "bytes": 120293,
+      "lastReportedCounts": {
+        "tests": 1171,
+        "pass": 1134,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 37
+      }
+    },
+    "meta-unit-poc-resumed.log": {
+      "sha256": "71895a5353ba510f5b14c50f7f6108c82a770c2a56f0e4514b903c1f578241e8",
+      "bytes": 15218,
+      "lastReportedCounts": {
+        "tests": 59,
+        "pass": 59,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0
+      }
+    },
+    "meta-integration-resumed.log": {
+      "sha256": "b8d46a1e4c68a4ec690c0ea1556f9fea8b4876c15c11f4a7d6c2e6d5311aaec9",
+      "bytes": 4599,
+      "lastReportedCounts": {
+        "tests": 1,
+        "pass": 1,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0
+      }
+    },
+    "meta-live-resumed.log": {
+      "sha256": "a5f8bafe3f760e4959d0c417a922cea693f148ecc6052401f073c1c38bc43441",
+      "bytes": 100834,
+      "lastReportedCounts": {
+        "tests": 959,
+        "pass": 958,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 1
+      }
+    },
+    "meta-setup-platform-resumed.log": {
+      "sha256": "0e4a39b4a894181ec94bd7aa9718482b2d3f54f428299f589e3c3aab9cbd7b0d",
+      "bytes": 15546,
+      "lastReportedCounts": {
+        "tests": 152,
+        "pass": 148,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 4
+      }
+    },
+    "meta-process-guard-resumed.log": {
+      "sha256": "f324b43198d14c1aafb32b0babc822505099970180ae5e41112df17220593581",
+      "bytes": 6588,
+      "lastReportedCounts": {
+        "tests": 56,
+        "pass": 56,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0
+      }
+    },
+    "meta-work-order-final.log": {
+      "sha256": "eddd43783896cfaa98aa244dca7a4b00114bf18de00100d39cdc6188e9555cdd",
+      "bytes": 903,
+      "lastReportedCounts": {
+        "tests": 7,
+        "pass": 7,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0
+      }
+    },
+    "meta-memory-hooks-isolation-fixed.log": {
+      "sha256": "643ce97a1e43e00a9cdeff51cf61e535e771d87599ee8a34b0e64428d73a27ab",
+      "bytes": 7701
+    },
+    "meta-memory-hooks-junction-isolation-fixed.log": {
+      "sha256": "b6b1902572d384e8d1f516b12321bae0a54a064a35987a92683b3fe628d3c31c",
+      "bytes": 296
+    },
+    "meta-codex-hook-order-stable-source.log": {
+      "sha256": "2642c22e824b8a471a95202fb42542aa5d8ce55e4d35a4057ddea4ab43a2da67",
+      "bytes": 215
+    },
+    "meta-setup-packed-resumed.log": {
+      "sha256": "134b5d409524e4f9e1c72a43fdc99fb8734a913d5dae457e5bcc98521bb5aa3d",
+      "bytes": 18252
+    },
+    "meta-native-runtime-projection-final.log": {
+      "sha256": "a4e2324f0b59488d2a38f52a6ab8c883a6d779c7d8e52ebb025dac4216f83b1d",
+      "bytes": 1053,
+      "lastReportedCounts": {
+        "tests": 9,
+        "pass": 9,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0
+      }
+    },
+    "meta-async-calculation-process.log": {
+      "sha256": "cb57322b8ddf7a489849a7cc907b5090e3bda1873a3198c1f836eec81bb85167",
+      "bytes": 732,
+      "lastReportedCounts": {
+        "tests": 6,
+        "pass": 6,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0
+      }
+    },
+    "meta-async-calculation-integration.log": {
+      "sha256": "add04dd684252e9f01ecb945bda93018b61726ca03398e39f384ea343a093258",
+      "bytes": 3433,
+      "lastReportedCounts": {
+        "tests": 30,
+        "pass": 30,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0
+      }
+    },
+    "meta-async-calculation-independent-review.log": {
+      "sha256": "029b64d5a9e79b083e38448e5980d995c52dcb20c0e5ba66e6f6e06c471db5c1",
+      "bytes": 733,
+      "lastReportedCounts": {
+        "tests": 6,
+        "pass": 6,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0
+      }
+    },
+    "meta-inventory-final-async.log": {
+      "sha256": "2447e6fb683dc15d66fba9ef542249d04335d45dc84cda959442072416898bb7",
+      "bytes": 663
+    },
+    "meta-dsh-display-name-tests.log": {
+      "sha256": "cca8aeac17013c10d66a06661751a1224d6206ce6a3d86bfb70e412c8200425b",
+      "bytes": 2265
+    }
+  },
+  "nativeDshReport": "dsh-native-host-20261111.json",
+  "professionalEffect": "not_evaluated",
+  "paidModelCalls": 0,
+  "protectedAssets": {
+    "contact-qr.png": "68f910168cbe5a6095dfba73648abb06f8f6ad6231c97b8cf0d68e77a07c1f67",
+    "wechat-pay.jpg": "447b93d173582283712b4652c89a02d55f1b64253aa6b003127d8b5b70990839",
+    "alipay.jpg": "79d7327408159145ff45996b5051886aed9d25b51e4f9e0a25e07fa0151d9754"
+  },
+  "contactFooterComparison": {
+    "README.md": true,
+    "README.zh-CN.md": true,
+    "README.ja-JP.md": true,
+    "README.ko-KR.md": true
+  },
+  "validationBoundary": "Local tests use fixtures where declared. Native DSh configuration/Skill/MCP loading does not certify native model delegation or professional outcomes.",
+  "results": [
+    {
+      "name": "governance-final",
+      "command": "META_KIM_DISABLE_SIBLING_DEP_PROBE=1 node --test --test-concurrency=4 tests/governance/*.test.mjs",
+      "tests": 1171,
+      "passed": 1134,
+      "skipped": 37,
+      "failed": 0,
+      "exitCode": 0,
+      "scope": "Complete suite after the continuation fix and before the later asynchronous calculation transport change; the latter has separate affected-suite results and final PR CI.",
+      "log": {
+        "filename": "meta-governance-final.log",
+        "sha256": "9ce22cd0369c471e3eb076ac0feb64e0430cc0f49d3dc02c2a2e3dbd1d993299"
+      }
+    },
+    {
+      "name": "meta-theory-complete",
+      "command": "node scripts/run-node-tests.mjs tests/meta-theory/*.test.mjs",
+      "tests": 1671,
+      "passed": 1666,
+      "skipped": 5,
+      "failed": 0,
+      "exitCode": 0,
+      "scope": "Complete suite before the final continuation fix; all affected plan/durable-entry checks rerun afterward below.",
+      "log": {
+        "filename": "meta-theory-resumed.log",
+        "sha256": "2f0a787e91234134260b4ac8620d905526d5e8fe220a6b0ef96b84c7876f1efc"
+      }
+    },
+    {
+      "name": "plan-durable-after-fix",
+      "command": "node --test tests/meta-theory/57-plan-challenge-policy.test.mjs tests/meta-theory/67-durable-governed-entry.test.mjs",
+      "tests": 71,
+      "passed": 71,
+      "skipped": 0,
+      "failed": 0,
+      "exitCode": 0,
+      "log": {
+        "filename": "meta-plan-durable-transition-regression.log",
+        "sha256": "fa6535ebc481c8f708939298922200b7fc881989ddb329f4f9ba612e6f08127a"
+      }
+    },
+    {
+      "name": "work-order-final",
+      "command": "node --test tests/governance/task-work-order-projection.test.mjs",
+      "tests": 7,
+      "passed": 7,
+      "skipped": 0,
+      "failed": 0,
+      "exitCode": 0,
+      "log": {
+        "filename": "meta-work-order-final.log",
+        "sha256": "eddd43783896cfaa98aa244dca7a4b00114bf18de00100d39cdc6188e9555cdd"
+      }
+    },
+    {
+      "name": "actual-service-calculation-handoff",
+      "command": "META_KIM_TEST_KIM_SERVICE_SOURCE=<current-reviewed-Kim_Service> node --test tests/governance/dependency-calculation-handoff.test.mjs",
+      "tests": 13,
+      "passed": 13,
+      "skipped": 0,
+      "failed": 0,
+      "exitCode": 0,
+      "scope": "Actual current Service source and real Python calculations; synthetic worker callbacks, no model calls.",
+      "log": {
+        "filename": "meta-calculation-preparation-regression.log",
+        "sha256": "ff6485eff8c9a49954575c4e63afdc8d88ed3b295f22662424c8476554273e54"
+      }
+    },
+    {
+      "name": "unit",
+      "command": "npm run meta:test:unit (first unit suite)",
+      "tests": 113,
+      "passed": 112,
+      "skipped": 1,
+      "failed": 0,
+      "exitCode": 0,
+      "skipReason": "Windows authority lookup casing test is not applicable to this Linux host.",
+      "log": {
+        "filename": "meta-unit-poc-resumed.log",
+        "sha256": "71895a5353ba510f5b14c50f7f6108c82a770c2a56f0e4514b903c1f578241e8"
+      }
+    },
+    {
+      "name": "poc-design-gate",
+      "command": "npm run meta:test:unit (included PoC design gate)",
+      "tests": 59,
+      "passed": 59,
+      "skipped": 0,
+      "failed": 0,
+      "exitCode": 0,
+      "log": {
+        "filename": "meta-unit-poc-resumed.log",
+        "sha256": "71895a5353ba510f5b14c50f7f6108c82a770c2a56f0e4514b903c1f578241e8"
+      }
+    },
+    {
+      "name": "integration",
+      "command": "npm run meta:test:integration",
+      "tests": 1,
+      "passed": 1,
+      "skipped": 0,
+      "failed": 0,
+      "exitCode": 0,
+      "log": {
+        "filename": "meta-integration-resumed.log",
+        "sha256": "b8d46a1e4c68a4ec690c0ea1556f9fea8b4876c15c11f4a7d6c2e6d5311aaec9"
+      }
+    }
+  ],
+  "localGlobalInstallation": {
+    "status": "incomplete_environment",
+    "projectCheck": "7 checks passed",
+    "findings": [
+      "Existing local command projections were out of sync",
+      "Setup launch inventory was unavailable"
+    ],
+    "claim": "No global install success is inferred for this ChatGPT environment; isolated package lifecycle checks remain separate."
+  },
+  "reviewedServiceCommit": "2f93f0ab23ee452918fe9cd0f1ff8d985dca398b",
+  "packedSuiteRecovery": {
+    "initialRun": {
+      "tests": 100,
+      "pass": 96,
+      "fail": 4
+    },
+    "initialCauses": [
+      "Three test fixtures inherited an external CODEX_HOME despite a temporary HOME",
+      "Source changed between packed install and readback, correctly rejecting a stale firstPartyClosure"
+    ],
+    "changes": "Only fixture environment isolation changed; production ownership and closure validation unchanged",
+    "rechecks": {
+      "memoryHooksFullFile": {
+        "tests": 79,
+        "pass": 79,
+        "fail": 0
+      },
+      "junctionIsolation": {
+        "tests": 1,
+        "pass": 1,
+        "fail": 0
+      },
+      "codexObjectOrderStableSource": {
+        "tests": 1,
+        "pass": 1,
+        "fail": 0
+      }
+    },
+    "scope": "Affected files and cases rerun; the unrelated long bundle suite was not rerun and is not represented as one 100/100 run."
+  },
+  "asyncCalculation": {
+    "status": "implementation_and_local_validation_complete",
+    "productionScope": "Replace only the reviewed calculation child transport with asynchronous bounded stdin/stdout; retain source, route, receipt, task, runtime and exit-status checks.",
+    "transport": {
+      "deadlineMs": 10000,
+      "maxCombinedStdoutStderrBytes": 4194304,
+      "terminationGraceMs": 250,
+      "inputTransport": "stdin_json_with_explicit_end",
+      "cleanupAfter": "child_close",
+      "retries": 0,
+      "exit2": "Only a validated invalid_input receipt is accepted; EPIPE on exit 2 is not an acceptance decision."
+    },
+    "tests": [
+      {
+        "command": "node --test tests/governance/dependency-calculation-process.test.mjs",
+        "tests": 6,
+        "pass": 6,
+        "fail": 0,
+        "skip": 0,
+        "log": {
+          "sha256": "cb57322b8ddf7a489849a7cc907b5090e3bda1873a3198c1f836eec81bb85167",
+          "bytes": 732,
+          "filename": "meta-async-calculation-process.log"
+        }
+      },
+      {
+        "command": "META_KIM_TEST_KIM_SERVICE_SOURCE=<reviewed-Kim_Service> node --test --test-concurrency=2 tests/governance/dependency-calculation.test.mjs tests/governance/dependency-calculation-handoff.test.mjs",
+        "tests": 30,
+        "pass": 30,
+        "fail": 0,
+        "skip": 0,
+        "composition": "17 direct calculation/MCP tests plus all 13 existing handoff tests",
+        "durationMs": 145720.731221,
+        "log": {
+          "sha256": "add04dd684252e9f01ecb945bda93018b61726ca03398e39f384ea343a093258",
+          "bytes": 3433,
+          "filename": "meta-async-calculation-integration.log"
+        }
+      },
+      {
+        "reviewer": "reference_review",
+        "tests": 6,
+        "pass": 6,
+        "fail": 0,
+        "skip": 0,
+        "review": "No blocking finding; independent actual-process rerun and npm-pack inclusion check",
+        "log": {
+          "sha256": "029b64d5a9e79b083e38448e5980d995c52dcb20c0e5ba66e6f6e06c471db5c1",
+          "bytes": 733,
+          "filename": "meta-async-calculation-independent-review.log"
+        },
+        "command": "Independent reviewer rerun"
+      }
+    ],
+    "serviceCheckoutUsedForRecordedIntegration": {
+      "commit": "de050a705f6306edf0b17472c29c21a32f0d4de8"
+    },
+    "implementationFiles": {
+      "scripts/governed-execution/calculation-process.mjs": "3fc0e45a1c889e6223cae98a134eae39097db24f78ccf86b614601ce30a74564",
+      "scripts/governed-execution/dependency-calculation.mjs": "b3519d28389b47725c2ce50eece87c6f6059bdb6ee762e115db4afe2c54c0772",
+      "tests/governance/dependency-calculation-process.test.mjs": "0effe992bf8ce39d4f85b071e763c67a0f9006d6acc5ac426d5f5c99bf5a2f98",
+      "tests/governance/dependency-calculation.test.mjs": "cc3816c1bb2fc6fd85808dd6858ee6aac749ade8a8a1258828408577603a2f97",
+      "tests/governance/dependency-calculation-handoff.test.mjs": "664dec7c74c5dcb69cdfe15a7f8d80e2072837578c34bdbe3bebdb0d3cf19adc"
+    },
+    "crossPlatformCoverage": "New transport test included in the explicit dependency-calculation CI matrix command. Final remote platform results are still required.",
+    "limitations": [
+      "Local tests ran on Linux, with real Python calculators and synthetic worker callbacks; no native model or professional quality improvement is claimed.",
+      "Test groups overlap; do not sum independent review with the main six tests."
+    ]
+  },
+  "nativeDshEvidenceScope": "The local report binds its exact package/manifest hashes. CI rebuilds the complete Service package from reviewedServiceCommit and runs the official no-model probe again on the PR head.",
+  "testInventory": {
+    "trackedTests": 434,
+    "unmatchedTrackedTests": [],
+    "suiteCommandMismatches": [],
+    "testSuiteCoverageOk": true
+  },
+  "zcodeActualBuild": {
+    "schemaVersion": 1,
+    "scope": "Actual clean, fixed-commit two-repository content build; not ZCode native model invocation or installation.",
+    "meta": {
+      "repository": "https://github.com/KimYx0207/Meta_Kim",
+      "commit": "c5682dd7dbe775ac22e2acafb12f699e0a7db64c"
+    },
+    "kim": {
+      "repository": "https://github.com/KimYx0207/Kim_Service",
+      "commit": "5034d62512691dbea8da7133c3005a6037bf695d"
+    },
+    "command": "node scripts/build-zcode-marketplace.mjs --meta-root <clean Meta source> --meta-commit c5682dd7dbe775ac22e2acafb12f699e0a7db64c --kim-root <clean Service source> --kim-commit 5034d62512691dbea8da7133c3005a6037bf695d --output <fresh output>",
+    "result": {
+      "files": 1011,
+      "sourceCopies": 957,
+      "derivedEntrypoints": 46,
+      "agentEntrypoints": 45,
+      "skillRoots": 16,
+      "closureSha256": "539dc9273cf68cc87154dd559b86f14c406855dda00fd286f8d8ceb20138a104",
+      "sourceManifestSha256": "8be3cbd8faff276d5dafcb6e43dee534515033124f7359cce97e4f1d1a0a50c4",
+      "bundleManifestSha256": "28f6f3fff089c9cc0da9ccd92b2e64b5d6a17f323f2fa2155c5f6adb14fca4c6",
+      "installed": false,
+      "nativeInvocation": false
+    },
+    "independentVerification": {
+      "listedAndActualFilesEqual": true,
+      "noOutputSymbolicLinks": true,
+      "allClosureByteCountsAndHashesMatch": true,
+      "allSourceGitBlobsBelongToSelectedCommits": true,
+      "allOriginalCopiesByteIdentical": true,
+      "allDerivedEntrypointHashesMatch": true,
+      "bothSourcesCleanAndAtExpectedHeads": true,
+      "protectedOriginalAssets": 3,
+      "protectedAssetHashesMatch": true
+    }
+  },
+  "asynchronousStoreFixtureRecovery": {
+    "status": "test_migration_complete",
+    "sourceHeadBeforeFix": "4373551a2f423965c4ffb240b7c79ff4efc2c2e8",
+    "serviceSource": "5034d62512691dbea8da7133c3005a6037bf695d",
+    "fix": {
+      "file": "tests/governance/store-calculation-integration.test.mjs",
+      "sha256": "19aeb440a087b97041a189bc339ee4a4148d054951bd489b2d4847ebf8219ca6",
+      "productionFilesChanged": false,
+      "reason": "Store fixture spies still patched spawnSync after the production transport became asynchronous. Unavailable Python was not injected; normal execution returned code null.",
+      "changes": [
+        "Patch actual spawn and synchronize builtin exports.",
+        "Keep the actual Python child and mutate only a complete stdout receipt via Transform.",
+        "Assert unavailable launch count 1, each of six mutation launch and transform counts 1, and unchanged plus changed-input resume launch count 0."
+      ],
+      "independentReview": "kimservice_recovery reviewed the patch and all related tests/spies; no remaining calculation-path spawnSync interception found."
+    },
+    "initialCI": {
+      "runId": 42917534366,
+      "linux": {
+        "jobId": 130183709848,
+        "pass": 47,
+        "fail": 1,
+        "skip": 0
+      },
+      "macos": {
+        "jobId": 130183709918,
+        "pass": 47,
+        "fail": 1,
+        "skip": 0
+      },
+      "windows": {
+        "jobId": 130183709728,
+        "pass": 45,
+        "fail": 1,
+        "skip": 2
+      },
+      "failureInAllThree": "unavailable Python permits explicitly uncomputed owner analysis, while fabricated receipts fail closed"
+    },
+    "localValidation": {
+      "command": "META_KIM_TEST_KIM_SERVICE_SOURCE=<reviewed-Kim_Service> node --test tests/governance/dependency-calculation-process.test.mjs tests/governance/dependency-calculation.test.mjs tests/governance/dependency-calculation-handoff.test.mjs tests/governance/store-calculation-integration.test.mjs tests/governance/dependency-delivery-envelope.test.mjs",
+      "tests": 48,
+      "pass": 48,
+      "fail": 0,
+      "skip": 0,
+      "durationMs": 111131.100223,
+      "log": {
+        "sha256": "61857f425fcbdade9b99b20e54a363d23602c5dd958246f92cd04780f3a56b6d",
+        "bytes": 5421,
+        "filename": "meta-calculation-final-five-files.log"
+      }
+    },
+    "finalStrengthenedResumeAssertion": {
+      "tests": 1,
+      "pass": 1,
+      "fail": 0,
+      "skip": 0,
+      "log": {
+        "sha256": "db7eb7163449aa2502b7b803dd4c57beb9af150c096620bfe2a406b54f0338cd",
+        "bytes": 258,
+        "filename": "meta-store-resume-async-final.log"
+      }
+    },
+    "remoteEvidenceAlreadyPassed": {
+      "governance": {
+        "tests": 1179,
+        "pass": 1140,
+        "fail": 0,
+        "skip": 39
+      },
+      "metaTheory": {
+        "tests": 1671,
+        "pass": 1666,
+        "fail": 0,
+        "skip": 5
+      },
+      "unit": {
+        "tests": 113,
+        "pass": 112,
+        "fail": 0,
+        "skip": 1
+      },
+      "poc": {
+        "tests": 59,
+        "pass": 59,
+        "fail": 0,
+        "skip": 0
+      },
+      "integration": {
+        "tests": 1,
+        "pass": 1,
+        "fail": 0,
+        "skip": 0
+      }
+    },
+    "remaining": "Publish this test-only fix and collect final remote platform outcomes; original failures retained as evidence, not relabeled historical."
+  },
+  "runtimeEvidenceReview": {
+    "record": "runtime-evidence-review-2026-11-10.md",
+    "reviewDateUtc": "2026-11-10",
+    "officialUrlsReviewed": 38,
+    "sourcePinsRecomputed": 23,
+    "capabilitySupportAndAcceptanceUnchanged": true,
+    "historicalObservationsUnchanged": true,
+    "tests": 50,
+    "pass": 49,
+    "skip": 1,
+    "fail": 0,
+    "checkerStatus": "current",
+    "daysRemaining": 30,
+    "issueCount": 0
+  },
+  "displayNameCorrection": {
+    "name": "DSH",
+    "meaning": "DeepSeek Harness",
+    "scope": "23 display-text/assertion files and the existing knowledge-lifecycle CAS update; lowercase command/package/API/path identifiers and historic raw observations preserved",
+    "lifecycleTests": 17,
+    "candidateTests": 6,
+    "failed": 0,
+    "projectedTargets": 6,
+    "canonicalResources": 68,
+    "uncoveredResources": 0,
+    "knowledgeRegistryRevision": 12
+  },
+  "professionalKnowledgeDecisionFixture": {
+    "schemaVersion": 1,
+    "scope": "Meta_Kim real-source professional handoff fixture repair",
+    "sourceCommit": "2f93f0ab23ee452918fe9cd0f1ff8d985dca398b",
+    "metaCiHead": "2a6f05d3edbe4ba68243b2fe8b955e6361b2446d",
+    "changedFiles": [
+      "tests/governance/dependency-method-knowledge.test.mjs"
+    ],
+    "productionChanges": false,
+    "failureEvidence": {
+      "runId": 42920302327,
+      "jobIds": {
+        "ubuntu": 130193163792,
+        "windows": 130193163874,
+        "macos": 130193163900
+      },
+      "firstStep": {
+        "ubuntu": {
+          "tests": 48,
+          "pass": 48,
+          "fail": 0,
+          "skipped": 0
+        },
+        "macos": {
+          "tests": 48,
+          "pass": 48,
+          "fail": 0,
+          "skipped": 0
+        },
+        "windows": {
+          "tests": 48,
+          "pass": 46,
+          "fail": 0,
+          "skipped": 2,
+          "skipReasons": [
+            "POSIX FIFO material checks",
+            "unexpected process signal test"
+          ]
+        }
+      },
+      "knowledgeStep": {
+        "tests": 45,
+        "pass": 8,
+        "fail": 37,
+        "skipped": 0,
+        "leafFailures": 36,
+        "reason": "current_subtask_decision_evidence_required"
+      }
+    },
+    "fix": [
+      "Use an explicit synthetic focused-probe assessment for this exact source-transport subtask",
+      "Require clean explicitly selected Kim_Service checkout and bind its exact Git HEAD",
+      "Read the real source method and assets before recording source-transport findings, hashes and applicability limits",
+      "Persist current task/criteria-bound research via existing normalizeResearchEvidence/persistResearchEvidence/researchForTask APIs",
+      "Assert missing evidence, wrong task binding and altered source summary are rejected before every actual positive invocation",
+      "Preserve all 36 real source invocation, complete bytes/hash, output standard and no-acceptance-authority assertions"
+    ],
+    "review": {
+      "reviewer": "reference_review",
+      "result": "no_blocking_findings",
+      "productionGateWeakened": false
+    },
+    "verification": {
+      "command": "META_KIM_TEST_KIM_SERVICE_SOURCE=<reviewed-Kim_Service> node --test tests/governance/dependency-calculation-process.test.mjs tests/governance/dependency-calculation.test.mjs tests/governance/dependency-calculation-handoff.test.mjs tests/governance/store-calculation-integration.test.mjs tests/governance/dependency-delivery-envelope.test.mjs tests/governance/dependency-method-knowledge.test.mjs tests/governance/dependency-method-handoff.test.mjs",
+      "tests": 93,
+      "pass": 93,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "durationMs": 106680.889678,
+      "log": {
+        "filename": "meta-cross-repo-final-seven-files.log",
+        "sha256": "7bd19dd15c375b46babcf074bd347fec3f4d60c8641b72f4a161b08db9378cb7",
+        "bytes": 17595
+      }
+    },
+    "claimBoundary": "Source integrity, prompt assembly, real deterministic Python and synthetic worker transport only; no native model execution or professional output quality certification."
+  },
+  "ciIntegrationGrouping": {
+    "files": 7,
+    "allOriginalFilesRetained": true,
+    "isolation": "default per-file child process",
+    "platforms": [
+      "ubuntu-latest",
+      "windows-latest",
+      "macos-latest"
+    ],
+    "timeoutMinutes": 10,
+    "anyTestFailureFailsJob": true,
+    "reason": "Report calculation and knowledge failures in the same run instead of suppressing the second step after a first-step failure."
+  }
+}

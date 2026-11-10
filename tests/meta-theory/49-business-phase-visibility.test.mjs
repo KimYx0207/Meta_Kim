@@ -1,24 +1,43 @@
-import { describe, test } from "node:test";
+import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import process from "node:process";
-import { runMetaTheoryGovernedExecution } from "../../scripts/run-meta-theory-governed-execution.mjs";
+import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
+import { fixtureCritical, fixtureReadWorkOrder, refreshFixtureSourcePins, runFixtureHostCli, runWithFixtureHostThinking } from "../helpers/host-reasoning-fixture.mjs";
+import { readOnlyFixtureTaskFacts } from "../helpers/task-design-facts.mjs";
 
-const naturalUserTask = "帮我做个小红书营销自动发布器";
+const naturalUserTask = "读取 package.json，记录当前版本和脚本，不修改文件";
+let fixture;
+let runMetaTheoryGovernedExecution;
+before(async () => {
+  fixture = createGovernanceRuntimeFixtureScope(null, { graph: true });
+  refreshFixtureSourcePins(fixture);
+  ({ runMetaTheoryGovernedExecution } = await fixture.import("scripts/run-meta-theory-governed-execution.mjs"));
+});
+after(() => fixture?.cleanup());
+
+function hostReasoning() {
+  const criticalInput = fixtureCritical({ task: naturalUserTask,
+    successCriteria: [{ id: "metadata-read", condition: "记录 package.json 的当前版本和脚本", evidenceRequired: "当前源文件和独立复核结果" }],
+    nonGoals: ["不修改代码，不冒充模型执行或用户验收"] });
+  return { criticalInput, governanceTaskFacts: readOnlyFixtureTaskFacts(naturalUserTask),
+    workOrders: (preparation) => [fixtureReadWorkOrder(preparation, {
+      id: "metadata-read-worker", todayTask: naturalUserTask, output: "当前项目版本和脚本的来源报告", criterionIds: ["metadata-read"],
+      taskFacts: readOnlyFixtureTaskFacts(naturalUserTask),
+    })] };
+}
 
 describe("49 - 11-phase business workflow visibility", () => {
   test("programmatic governed run records phase reasons and report-visible current phase", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-11-phase-api-"));
     try {
-      await runMetaTheoryGovernedExecution({
+      await runWithFixtureHostThinking(runMetaTheoryGovernedExecution, {
         task: naturalUserTask,
         runId: "api-phase-visibility",
         stateDir: tempDir,
         dbPath: path.join(tempDir, "runs.sqlite"),
-      });
+      }, hostReasoning());
 
       const artifact = JSON.parse(
         await readFile(path.join(tempDir, "api-phase-visibility.json"), "utf8")
@@ -55,8 +74,8 @@ describe("49 - 11-phase business workflow visibility", () => {
   test("CLI emits 11-phase status notice when explicitly requested", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-11-phase-cli-"));
     try {
-      const result = spawnSync(
-        process.execPath,
+      const result = runFixtureHostCli(
+        fixture,
         [
           "scripts/run-meta-theory-governed-execution.mjs",
           "--task",
@@ -69,7 +88,7 @@ describe("49 - 11-phase business workflow visibility", () => {
           path.join(tempDir, "runs.sqlite"),
           "--emit-conversation-notice",
         ],
-        { cwd: process.cwd(), encoding: "utf8" }
+        hostReasoning()
       );
 
       assert.equal(result.status, 0, result.stderr);
@@ -129,8 +148,8 @@ describe("49 - 11-phase business workflow visibility", () => {
   test("CLI can still suppress conversation notice for machine-readable runs", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-11-phase-cli-quiet-"));
     try {
-      const result = spawnSync(
-        process.execPath,
+      const result = runFixtureHostCli(
+        fixture,
         [
           "scripts/run-meta-theory-governed-execution.mjs",
           "--task",
@@ -143,12 +162,12 @@ describe("49 - 11-phase business workflow visibility", () => {
           path.join(tempDir, "runs.sqlite"),
           "--no-emit-conversation-notice",
         ],
-        { cwd: process.cwd(), encoding: "utf8" }
+        hostReasoning()
       );
 
       assert.equal(result.status, 0, result.stderr);
       assert.doesNotMatch(result.stdout, /^Meta_Kim 对话提示:/u);
-      assert.match(result.stdout, /"runId": "cli-phase-quiet"/u);
+      assert.equal(JSON.parse(result.stdout).runId, "cli-phase-quiet");
       const artifact = JSON.parse(
         await readFile(path.join(tempDir, "cli-phase-quiet.json"), "utf8")
       );
@@ -161,5 +180,22 @@ describe("49 - 11-phase business workflow visibility", () => {
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
+  });
+
+  test("an unelaborated product intent stays in host preparation before phase completion", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-11-phase-pending-"));
+    try {
+      const result = await runMetaTheoryGovernedExecution({
+        task: "帮我做个小红书营销自动发布器", runId: "product-intent-pending", stateDir: tempDir,
+        dbPath: path.join(tempDir, "runs.sqlite"),
+      });
+      const preparation = JSON.parse(await readFile(result.paths.json, "utf8"));
+      assert.equal(preparation.artifactKind, "host_preparation");
+      assert.equal(preparation.preparation.status, "needs_thinking");
+      assert.equal(preparation.hostInvocationRequestPacket.nextAction.stage, "Critical");
+      assert.deepEqual(preparation.workerTaskPackets, []);
+      assert.equal(preparation.coreLoop.stageDagPacket, undefined);
+      assert.equal(preparation.businessPhasePlanPacket, undefined);
+    } finally { await rm(tempDir, { recursive: true, force: true }); }
   });
 });

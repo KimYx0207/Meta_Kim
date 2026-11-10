@@ -185,8 +185,11 @@ test("reviewer PoC: Stage Runner cannot bridge a fast-path or route-not-executab
       },
     });
     assert.equal(workerCalls, 0);
-    assert.equal(report.coreLoop.stageRunnerBridgePacket.status, "blocked");
-    assert.match(report.coreLoop.stageRunnerBridgePacket.failure.failureClass, /route_gate/u);
+    assert.equal(report.artifactKind, "host_preparation");
+    assert.deepEqual(report.workerTaskPackets, []);
+    assert.equal(report.coreLoop.stageDagPacket, undefined);
+    assert.equal(report.coreLoop.stageRunnerBridgePacket, undefined);
+    assert.equal(report.publicReadyDecision.publicReady, false);
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }
@@ -212,10 +215,12 @@ test("reviewer PoC: caller nativeChoiceEvidenceTrusted cannot make visible evide
         evidenceRef: "caller:choice-json",
       }],
     });
-    const boundary = report.coreLoop.productExperiencePacket.supportGates
-      .find((gate) => gate.id === "P-106").liveRuntimeBoundary;
-    assert.equal(boundary.evidenceTrusted, false);
-    assert.equal(boundary.acceptedEvidenceRefs.length, 0);
+    assert.equal(report.artifactKind, "host_preparation");
+    assert.deepEqual(report.workerTaskPackets, []);
+    assert.equal(report.preDecisionOptionFrame.planChallengeState.executionAllowed, false);
+    assert.equal(report.preDecisionOptionFrame.planChallengeState.executionAuthorization.trusted, false);
+    assert.deepEqual(report.preDecisionOptionFrame.planChallengeState.decisionEvidence, []);
+    assert.equal(report.publicReadyDecision.publicReady, false);
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }

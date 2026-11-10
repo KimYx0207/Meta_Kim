@@ -26,6 +26,7 @@ canonical/skills/commit-review/
 /.cursor/
 /.gemini/
 /.zcode/
+/.dsh/
 
 # ========== Local State (Never commit) ==========
 /.planning/
@@ -129,6 +130,10 @@ docs/**
 !docs/verification/
 !docs/verification/intent-to-delivery-20261110.md
 !docs/verification/intent-to-delivery-20261110.json
+!docs/verification/dsh-professional-quality-20261111.md
+!docs/verification/dsh-professional-quality-20261111.json
+!docs/verification/dsh-native-host-20261111.json
+!docs/verification/dsh-native-host-20261111.md
 
 # ========== Generated reports ==========
 docs/agent-design-quality-eval-report.zh-CN.md

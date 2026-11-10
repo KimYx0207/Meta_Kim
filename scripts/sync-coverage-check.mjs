@@ -67,6 +67,20 @@ const manifestPath = path.join(
 // Matching is "starts-with" semantics — listing a directory excludes
 // every file under it.
 const KNOWN_INTENTIONAL_EXCLUSIONS = [
+  // DSH has a separate opt-in profile lifecycle; the ordinary six-target
+  // projection must not install DSH or imply stage-runner authorization.
+  {
+    prefix: "dsh/dispatcher.md",
+    reason: "Rendered by scripts/dsh-profile-package.mjs into the native DSH dispatcher Skill; covered by DSH lifecycle tests and the official host probe",
+  },
+  {
+    prefix: "dsh/governance-role.md",
+    reason: "Rendered by scripts/dsh-profile-package.mjs into native DSH role Skills; not custom-agent presets",
+  },
+  {
+    prefix: "dsh/host-contract.json",
+    reason: "Consumed by scripts/dsh-profile-package.mjs as the DSH profile/patch and complete-resource-reading contract",
+  },
   // Installed by scripts/install-mcp-memory-hooks.mjs, not sync-runtimes.
   // sync-runtimes intentionally avoids touching the global Claude config dir
   // for these Python hooks; they have their own idempotent installer.

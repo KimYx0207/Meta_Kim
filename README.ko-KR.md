@@ -63,14 +63,27 @@ node setup.mjs --check
 | --- | --- |
 | Codex / Claude Code | 주 대상 투영과 읽기 전용 실행 브리지. 실행 여부는 현재 호스트와 증거에 따름 |
 | Cursor / OpenClaw | 기존 비기본 호환 투영. 해당 호스트의 검증 필요 |
+| DSH / DeepSeek Harness | 선택형 네이티브 Skill, 독립 profile／project patch 및 MCP. 실제 설정·Skill 읽기·MCP 관측과 모델 실행·강제 Hook의 검증을 구분 |
 | Gemini CLI | 선택형 네이티브 투영. 구조·생명주기 검증과 모델 실행은 구분 |
 | ZCode | 선택형 네이티브 투영. 사용자 수준 Hook을 사용하며 현재 클라이언트는 프로젝트 Hook을 무시 |
 
-DeepSeek Harness, Qoder, Trae는 **Beta** 호환 adapter로 유지됩니다. ZCode의 이전 plan-only adapter와 새 투영은 별도로 다룹니다. 의존 프로젝트의 install target은 upstream project에서 관리하며 Meta_Kim의 실제 동작을 보증하지 않습니다.
+Qoder와 Trae는 **Beta** 호환 adapter로 유지됩니다. DSH는 기존 plan-only adapter를 유지하면서 별도의 선택형 네이티브 통합을 추가합니다. 기존 stage runner의 실행 권한은 확장하지 않습니다. ZCode의 이전 plan-only adapter와 새 투영은 별도로 다룹니다. 의존 프로젝트의 install target은 upstream project에서 관리하며 Meta_Kim의 실제 동작을 보증하지 않습니다.
 
 현재 릴리스는 [v3.9.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.9.0)입니다. [Unreleased](CHANGELOG.ko-KR.md)의 추가 사항은 소스 버전 변경이며 새 릴리스가 게시되었다는 뜻이 아닙니다. Gemini / ZCode의 실제 모델 실행은 인증되지 않았습니다.
 
+### DSH 사용하기
+
+```sh
+node bin/meta-kim.mjs dsh install
+node bin/meta-kim.mjs dsh check
+dsh --profile meta-kim
+```
+
+DSH는 Node >=24.9.0을 요구하며 검토 버전은 `0.2.2-rc.1`입니다. 다른 클라이언트의 요구 사항은 그대로입니다. `--service-package /path/to/kim-service-dsh`로 Kim_Service의 전체 전문 Skills를 추가할 수 있습니다. 같은 진입점에서 update／check／uninstall을 실행하며 사용자 파일과 수정 사항을 보존합니다. [DSH 상세 안내](canonical/skills/meta-theory/references/runtime-dsh.md)를 참고하세요.
+
 ## 연속성과 개선
+
+전문 출력마다 통과·거절 조건, 검증 방법, 필요한 증거와 차단 조건을 실제 작업자에게 전달합니다. 작업자의 자체 통과 보고만으로 승인되지 않습니다. [검증 기록](docs/verification/dsh-professional-quality-20261111.md)에서 관측한 범위와 미검증 항목을 확인할 수 있습니다.
 
 의존 조건이 충족된 독립 작업은 실제 호스트 용량과 계획 한도 중 작은 값에 맞춰 실행합니다. 용량이 불명확하면 하나씩 실행합니다. 일부 작업이 실패해도 독립적으로 성공한 결과는 유지합니다. 현재의 전체 단계 경계와 쓰기 권한은 유지합니다.
 

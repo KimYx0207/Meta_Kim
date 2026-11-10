@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
+import { refreshFixtureSourcePins } from "../helpers/host-reasoning-fixture.mjs";
+import { runDiagnosticReadPlan } from "../../scripts/diagnostic-host-protocol.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../..");
@@ -206,22 +208,17 @@ test("primary native choice panels preserve structure and runtime maximum option
   );
 });
 
-test("generated card plans mark choice cards as adapter-required, not native-triggered", async () => {
+test("generated card plans mark choice cards as adapter-required, not native-triggered", async (t) => {
+  const fixture = createGovernanceRuntimeFixtureScope(t, { graph: true });
+  refreshFixtureSourcePins(fixture);
+  const { runMetaTheoryGovernedExecution } = await fixture.import("scripts/run-meta-theory-governed-execution.mjs");
   const tempDir = await mkdtemp(path.join(tmpdir(), "meta-kim-choice-surface-"));
   const runId = "choice-surface-trigger-test";
   try {
-    const result = spawnSync(
-      process.execPath,
-      [
-        "scripts/run-meta-theory-governed-execution.mjs",
-        "Build a governed feature and choose between two implementation scopes.",
-        runId,
-        "--state-dir",
-        tempDir,
-      ],
-      { cwd: repoRoot, encoding: "utf8" },
-    );
-    assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+    await runDiagnosticReadPlan(runMetaTheoryGovernedExecution, {
+      task: "Run meta-theory to inspect package.json and retain source-bound findings without changing files.",
+      runId, stateDir: tempDir, dbPath: path.join(tempDir, "runs.sqlite"), projectRoot: fixture.repoRoot,
+    }, ["package.json"]);
 
     const artifact = JSON.parse(await readFile(path.join(tempDir, `${runId}.json`), "utf8"));
     const choiceCards = artifact.cardPlanPacket.cardEvents.filter((card) =>
@@ -229,6 +226,7 @@ test("generated card plans mark choice cards as adapter-required, not native-tri
     );
 
     assert.ok(choiceCards.length >= 2);
+    assert.equal(artifact.status, "partial", "A generated plan cannot certify native execution or acceptance");
     for (const card of choiceCards) {
       assert.equal(card.choiceSurfaceDelivery, "adapter_required_not_triggered_by_artifact");
       assert.match(card.choiceSurfaceTriggerProof, /not a native popup/i);

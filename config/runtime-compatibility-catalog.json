@@ -951,15 +951,16 @@
         "isDefaultTarget": false
       },
       "genericCompatibility": {
-        "skillPath": "DeepSeek Harness plugin and skills surfaces; exact Meta_Kim preset ownership remains opt-in",
-        "agentPath": "DeepSeek Harness subagent and workflow primitives; no Meta_Kim durable agent projection yet",
+        "skillPath": "Opt-in meta-kim dsh lifecycle: DSH_HOME/skills globally or project .dsh/skills; canonical governance and professional methods load as native Skills",
+        "agentPath": "Native subagent tool inherits the current host preset; role Skills are not custom-agent presets",
         "hookConfig": null,
-        "mcpConfig": null,
+        "mcpConfig": "meta-kim profile cordis.patch.yml, or explicit project patch; pinned native MCP client points to the verified immutable Meta_Kim package",
         "status": "partial"
       },
       "compatibilitySurfaces": [
         "skill_workflow",
         "agent_mode",
+        "mcp_tooling",
         "command_cli",
         "permission_safety"
       ],
@@ -980,10 +981,20 @@
           "type": "official_docs",
           "ref": "https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/acp/acp/README.md",
           "claim": "The official ACP package documents a JSON-RPC stdio automation transport with intentionally incomplete UI, configuration, MCP, and replay surfaces."
+        },
+        {
+          "type": "local_file",
+          "ref": "canonical/runtime-assets/dsh/host-contract.json",
+          "claim": "Pinned native host interfaces and explicit unsupported boundaries for the separate opt-in DSH integration."
+        },
+        {
+          "type": "local_file",
+          "ref": "canonical/skills/meta-theory/references/runtime-dsh.md",
+          "claim": "Public lifecycle commands, complete canonical method loading and distinct config/Skills/MCP/model outcome evidence."
         }
       ],
-      "decision": "Admit DeepSeek Harness as beta_compatibility only: its plugin architecture and ACP automation seam support a packed structural adapter, but developer-preview status and missing full-runtime ACP surfaces forbid formal, native, or live-certified claims.",
-      "nextAction": "Keep the preset opt-in, disabled by default, version-gated, and no-quota; promote only after pinned feature probes, config ownership, install/update/uninstall policy, and separate live acceptance are proven."
+      "decision": "Keep beta_compatibility and existing plan-only candidate authority. Separately provide opt-in native profile/Skills/MCP installation through meta-kim dsh; no promotion of stage-runner authority, hard Hooks, custom-agent presets or model outcome certification.",
+      "nextAction": "Use the existing manifest-backed install/update/check/uninstall path. Rerun the official-host probe for pinned config/Skills/MCP evidence, and require separate native task/delegation and professional-outcome observations before those claims."
     },
     {
       "id": "qoder",

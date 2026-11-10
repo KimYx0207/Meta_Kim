@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "runtime": "deepseek-harness",
+  "upstream": "https://github.com/deepseek-ai/deepseek-harness",
+  "sourceRevision": "fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159",
+  "reviewedVersion": "0.2.2-rc.1",
+  "minimumNodeVersion": "24.9.0",
+  "profileName": "meta-kim",
+  "bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app"],
+  "mcpPlugin": "@deepseek-ai/dsh-mcp-client",
+  "mcpServerName": "meta-kim-runtime",
+  "skillBodyMaxCharacters": 6000,
+  "resourcePartMaxCharacters": 6000,
+  "nativeSkills": true,
+  "nativeCustomAgentPresets": false,
+  "nativeHookEnforcement": false,
+  "nativeStageRunner": false,
+  "delegation": "Use the actual host subagent tool with the current preset inherited; load the selected method and task contract into the child. A skill is not a registered custom agent."
+}

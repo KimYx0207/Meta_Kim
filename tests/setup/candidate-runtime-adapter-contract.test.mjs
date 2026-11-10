@@ -55,7 +55,7 @@ test("three-level priority keeps beta adapters between primary and compatibility
   assert.equal(priorityContract.priorityRules.betaCompatibilityPriorityLeakTarget, 0);
 });
 
-test("catalog separates ZCode native projection from unchanged plan-only candidate adapters", () => {
+test("catalog separates native integrations from unchanged plan-only candidate authority", () => {
   const byId = new Map(catalog.products.map((product) => [product.id, product]));
   for (const id of ["deepseek-harness", "qoder", "trae"]) {
     const product = byId.get(id);
@@ -70,7 +70,7 @@ test("catalog separates ZCode native projection from unchanged plan-only candida
     assert.equal(syncManifest.supportedTargets.includes(id), false, id);
     assert.equal(syncManifest.defaultTargets.includes(id), false, id);
     assert.equal(product.dependencyInstall.ecc.support, "not_supported", id);
-    assert.match(product.decision, /beta_compatibility only/i, id);
+    if (id !== "deepseek-harness") assert.match(product.decision, /beta_compatibility only/i, id);
   }
   const zcode = byId.get("zcode");
   assert.equal(zcode.tier, "runtime_projection");
@@ -88,7 +88,19 @@ test("catalog separates ZCode native projection from unchanged plan-only candida
       .get("deepseek-harness")
       .evidence.some((entry) => entry.ref.includes("packages/acp/acp/README.md")),
   );
-  assert.match(byId.get("deepseek-harness").decision, /developer-preview status|developer-preview/u);
+  const dsh = byId.get("deepseek-harness");
+  assert.match(dsh.decision, /beta_compatibility and existing plan-only candidate authority/u);
+  assert.match(dsh.decision, /opt-in native profile\/Skills\/MCP installation through meta-kim dsh/u);
+  assert.match(dsh.decision, /no promotion of stage-runner authority, hard Hooks, custom-agent presets or model outcome certification/u);
+  assert.equal(dsh.genericCompatibility.status, "partial");
+  assert.equal(dsh.genericCompatibility.hookConfig, null);
+  assert.ok(dsh.compatibilitySurfaces.includes("mcp_tooling"));
+  assert.ok(dsh.evidence.some((entry) => entry.ref === "canonical/runtime-assets/dsh/host-contract.json"));
+  const dshContract = readJson("canonical/runtime-assets/dsh/host-contract.json");
+  assert.equal(dshContract.nativeSkills, true);
+  assert.equal(dshContract.nativeCustomAgentPresets, false);
+  assert.equal(dshContract.nativeHookEnforcement, false);
+  assert.equal(dshContract.nativeStageRunner, false);
 });
 
 test("package closure is exact for candidate adapters and does not widen src", () => {

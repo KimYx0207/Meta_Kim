@@ -107,6 +107,33 @@ describe("47 - Meta-theory entry classifier", () => {
     ]) assert.equal(classifyMetaTheoryEntry(prompt).path, "standard_path", prompt);
   });
 
+  test("explanation clauses keep subsequent implementation and file output requests", () => {
+    for (const prompt of [
+      "Explain this design and then implement the frontend.",
+      "Describe this interface, then implement the backend.",
+      "Explain the implementation in a report and save it to design.md.",
+      "Explain the data model and export the report.",
+      "请解释如何写 PRD，然后生成一份方案。",
+      "请解释这个接口，然后修复代码。",
+    ]) {
+      const result = classifyMetaTheoryEntry(prompt);
+      assert.equal(result.path, "standard_path", prompt);
+      assert.equal(result.signals.actionIntent, true, prompt);
+    }
+    for (const prompt of [
+      "Explain how to build a notification system.",
+      "Please describe how to implement the frontend.",
+      "Explain how to export a report and save it locally.",
+      "Explain this design, but do not implement the frontend.",
+      "请解释如何写 PRD，不要生成文件。",
+      "帮我说明这个接口如何实现，不要改代码。",
+    ]) {
+      const result = classifyMetaTheoryEntry(prompt);
+      assert.equal(result.path, "fast_path", prompt);
+      assert.equal(result.signals.actionIntent, false, prompt);
+    }
+  });
+
   test("wish-style product build enters governed path without protocol words", () => {
     const prompt = "帮我做个小红书营销自动发布器";
     assert.doesNotMatch(prompt, /agent|skill|MCP|command|阶段|packet|JSON|优先级|验证清单/i);

@@ -304,13 +304,13 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-10-17",
+      "observedAt": "2026-11-10",
       "sourceRefs": [
         "canonical/runtime-assets/claude",
         "config/governance/choice-surface-policy.json",
         "config/contracts/core-loop-contract.json"
       ],
-      "summary": "Rechecked official subagents, tools, hooks, sandbox, permissions, skills, MCP and memory docs against canonical Claude assets. Preserve Windows sandbox and hook/permission boundaries; no live Claude session was available.",
+      "summary": "Rechecked current official subagent, tool, Hook, sandbox, permission, Skill, MCP and memory documentation against canonical assets. Native Windows Bash sandbox, cloud Skill scope and separate permission/choice boundaries remain limited; no new native acceptance. Review details: docs/verification/runtime-evidence-review-2026-11-10.md",
       "limitations": [
         "This review checks official documentation and repository integration boundaries, not current-host behavior.",
         "No not_run acceptance or unknown/partial host claim is promoted; execution eligibility is unchanged.",
@@ -565,7 +565,7 @@
         { "path": "canonical/runtime-assets/codex", "digestKind": "sha256", "sha256": "5cb91cf2adf020ae3e13c21bc419e08ce6527f29072561177a189464680a39ed" },
         { "path": "scripts/runtime-hook-mapping.mjs", "digestKind": "sha256", "sha256": "e7de7774341afe7206ad90d0f291284cae9f344e7b2a0757ecd06ebe0df7046b" },
         { "path": "setup.mjs", "digestKind": "sha256", "sha256": "41ea8e78891a0723893ce191012985e78e51922652d9d3cf6a9778ed5c9215a4" },
-        { "path": "AGENTS.md", "digestKind": "sha256", "sha256": "b274f788233c18086ef53d9655a2294ebe222eb574580f354956bc193001b005" }
+        { "path": "AGENTS.md", "digestKind": "sha256", "sha256": "1af2b83ae22fcf36fa4c89e6a6ff896adb3ffbaac0fcd237b38de24b000adad8" }
       ],
       "summary": "Canonical runtime projection sources and install wiring are present in the repository.",
       "limitations": [
@@ -616,13 +616,13 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-10-17",
+      "observedAt": "2026-11-10",
       "sourceRefs": [
         "canonical/runtime-assets/codex",
         "config/governance/choice-surface-policy.json",
         "config/contracts/core-loop-contract.json"
       ],
-      "summary": "Rechecked current ChatGPT Learn pages reached from the former Codex URLs, including concurrency aliases and unsupported hook output semantics. Canonical projection reviewed; installed CLI version availability is not behavioral acceptance.",
+      "summary": "Rechecked current official subagent/TOML, Skill, MCP, Hook, configuration, AGENTS.md and command documentation. Current concurrency alias and event-specific denial output remain documented; hosted-tool coverage, unsupported Hook fields and unprobed native choice remain limited. No native acceptance is inferred. Review details: docs/verification/runtime-evidence-review-2026-11-10.md",
       "limitations": [
         "This review checks official documentation and repository integration boundaries, not current-host behavior.",
         "No not_run acceptance or unknown/partial host claim is promoted; execution eligibility is unchanged.",
@@ -990,13 +990,13 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-10-17",
+      "observedAt": "2026-11-10",
       "sourceRefs": [
         "canonical/runtime-assets/openclaw",
         "config/governance/choice-surface-policy.json",
         "config/contracts/core-loop-contract.json"
       ],
-      "summary": "Rechecked official subagents, tool, skill, memory, permission, MCP and hook surfaces. Removed redirect-only evidence links. The missing Meta_Kim typed-plugin enforcement adapter and unprobed choice/apply_patch claims remain conservative.",
+      "summary": "Rechecked current official question, exec/plugin approval, subagent, MCP, permission, Hook, memory, Skill and tool documentation. Split topic pages retain their host boundaries; Meta_Kim still lacks a typed-plugin enforcement adapter and no live template, choice or apply_patch acceptance is inferred. Review details: docs/verification/runtime-evidence-review-2026-11-10.md",
       "limitations": [
         "This review checks official documentation and repository integration boundaries, not current-host behavior.",
         "No not_run acceptance or unknown/partial host claim is promoted; execution eligibility is unchanged.",
@@ -1344,13 +1344,13 @@
         "headless_live",
         "compatibility_smoke"
       ],
-      "observedAt": "2026-10-17",
+      "observedAt": "2026-11-10",
       "sourceRefs": [
         "canonical/runtime-assets/cursor",
         "config/governance/choice-surface-policy.json",
         "config/contracts/core-loop-contract.json"
       ],
-      "summary": "Replaced overview-redirecting legacy evidence URLs with current rules, skills, CLI, Cloud Agent, Agent and MCP documentation. Kept all product/live claims unaccepted and memory partial; no native Cursor session was available.",
+      "summary": "Rechecked current official subagent, Skill, Hook, CLI, cloud, rule, sandbox, Agent and MCP documentation and the 2.4/2.5 change records. Native directory and failClosed rules remain documented; local/cloud scope differs, memory stays partial and product/live acceptance remains unaccepted. Review details: docs/verification/runtime-evidence-review-2026-11-10.md",
       "limitations": [
         "This review checks official documentation and repository integration boundaries, not current-host behavior.",
         "No not_run acceptance or unknown/partial host claim is promoted; execution eligibility is unchanged.",

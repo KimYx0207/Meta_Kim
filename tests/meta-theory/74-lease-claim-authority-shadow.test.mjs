@@ -1,3 +1,4 @@
+import { readOnlyWorkerPacket } from "../helpers/read-only-worker-packet.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -387,7 +388,7 @@ async function bridgeVariant(withLeaseClaim) {
       runId,
       runtime: "codex",
       stageDagPacket,
-      workerTaskPackets: [{
+      workerTaskPackets: [readOnlyWorkerPacket({
         taskPacketId: "claim-worker",
         ownerAgent: "test-automator",
         description: "Observe lease claim shadow parity",
@@ -395,7 +396,7 @@ async function bridgeVariant(withLeaseClaim) {
         dependsOn: [],
         executionMode: "primary_execution",
         externalWriteBoundary: false,
-      }],
+      })],
       workspaceRoot: process.cwd(),
       durable: {
         enabled: true,

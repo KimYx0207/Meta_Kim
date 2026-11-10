@@ -583,20 +583,19 @@ describe("Canonical meta-agent boundary structure", () => {
     assert.deepEqual(bad, [], `Direct-writeback wording remains in: ${bad.join(", ")}`);
   });
 
-  test("oversized meta-theory references are split below operational size limits", async () => {
-    const entries = await fs.readdir(REFERENCE_DIR, { withFileTypes: true });
-    const tooLarge = [];
-    for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
-      const content = await fs.readFile(`${REFERENCE_DIR}/${entry.name}`, "utf-8");
-      const lines = content.split(/\r?\n/).length;
-      if (lines > 650) tooLarge.push(`${entry.name}:${lines}`);
+  test("progressive disclosure links resolve to readable canonical references", async () => {
+    // Line counts do not establish a loading limit or professional quality.
+    // The dispatcher must instead provide usable links to its selected detail.
+    const skill = await fs.readFile(SKILL_PATH, "utf8");
+    const links = [...skill.matchAll(/\]\((references\/[^\s)#]+\.md)(?:#[^\s)]+)?\)/gu)]
+      .map(match => match[1]);
+    assert.ok(links.length > 0, "the dispatcher must link its specialized references");
+    for (const link of new Set(links)) {
+      assert.doesNotMatch(link, /(?:^|\/)\.\.(?:\/|$)/u);
+      const target = `${REFERENCE_DIR}/${link.slice("references/".length)}`;
+      assert.ok((await fs.stat(target)).isFile(), `${link} must resolve to a file`);
+      assert.ok((await fs.readFile(target, "utf8")).trim(), `${link} must contain readable guidance`);
     }
-    assert.deepEqual(
-      tooLarge,
-      [],
-      `Reference files over 650 lines should be split: ${tooLarge.join(", ")}`,
-    );
   });
 
   test("meta-conductor makes native stage-DAG fan-out sufficient", async () => {

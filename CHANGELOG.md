@@ -8,6 +8,16 @@ The changelog explains the user-facing problem or risk each release solved, what
 
 ## [Unreleased]
 
+- Complete DSH's required source configuration closure, including runtime/OS matrices, capability discovery and the pinned host contract. Skill-only installations retain the same required knowledge; private machine configuration stays excluded. Cross-repository checks use the current full Kim Service packages and their original resource bytes.
+
+### DSH integration and evidence-based professional delivery
+
+- Keep large calculation inputs responsive with asynchronous stdin and explicit EOF. Preserve the ten-second deadline, a combined 4 MiB stdout/stderr limit, source/receipt checks and cleanup after the child closes. Real large-input and failure-boundary regressions run in the existing three-platform calculation job.
+- Add `meta-kim dsh install|update|check|uninstall`: an opt-in native Skills/profile or project patch, plus MCP from the existing immutable executable package. Canonical methods remain complete through lossless bounded parts. Existing install ownership, transactional updates and user edits stay protected.
+- Pin the official DSH interfaces and provide a repeatable no-model host probe for real configuration, Skill loading and MCP calls. These observations do not certify native task delegation, hard Hooks, custom-agent presets or business outcomes.
+- Carry each selected professional output's acceptance/rejection rules, verification method, evidence requirements and blocking behavior into actual worker context. Worker self-reports remain pending independent review; missing evidence never becomes a pass.
+- Align read-only Agent discovery with Kim_Service's legitimate `Grep` and `Glob` declarations. Update the durable-method regression inputs so it actually exercises completion, recovery and changed-design rejection without relaxing production gates.
+
 ### From short intent to coordinated delivery
 
 - **Keep preparation continuous.** Once the host supplies its current understanding, read-only capability discovery can run while the design, research or user decisions are still pending. Pending preparation is validated as preparation; it cannot masquerade as a formal execution plan. Current answers, settled choices and review notifications survive the next handoff.

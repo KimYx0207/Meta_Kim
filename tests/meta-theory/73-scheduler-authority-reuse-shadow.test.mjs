@@ -1,3 +1,4 @@
+import { readOnlyWorkerPacket } from "../helpers/read-only-worker-packet.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -535,7 +536,7 @@ async function bridgeVariant(withScheduler) {
       runId,
       runtime: "codex",
       stageDagPacket,
-      workerTaskPackets: [{
+      workerTaskPackets: [readOnlyWorkerPacket({
         taskPacketId: "bridge-worker",
         ownerAgent: "test-automator",
         description: "Observe scheduler shadow parity",
@@ -543,7 +544,7 @@ async function bridgeVariant(withScheduler) {
         dependsOn: [],
         executionMode: "primary_execution",
         externalWriteBoundary: false,
-      }],
+      })],
       workspaceRoot: process.cwd(),
       durable: {
         enabled: true,

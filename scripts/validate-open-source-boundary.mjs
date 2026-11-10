@@ -13,6 +13,7 @@ const forbiddenRuntimeSources = [
   ".cursor/",
   ".gemini/",
   ".zcode/",
+  ".dsh/",
   "openclaw/",
   "codex/",
   ".mcp.json",

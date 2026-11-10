@@ -54,7 +54,7 @@ function durableCapabilitySpecificationReady(line, explicitCapabilityId) {
 function positiveCapabilityActionText(line) {
   return String(line ?? "")
     .replace(
-      /(?:不要|不需要|无需|不应|禁止|拒绝)\s*(?:再|进行|执行)?\s*(?:新建|创建|生成|固化|沉淀|写入|安装|新增|添加|复制|迭代|修改|升级|定制|复用)/giu,
+      /(?:不要|不需要|无需|不应|禁止|拒绝|不)\s*(?:再|进行|执行)?\s*(?:新建|创建|生成|固化|沉淀|写入|安装|新增|添加|复制|迭代|修改|升级|定制|复用)/giu,
       "",
     )
     .replace(
@@ -121,11 +121,14 @@ export function durableCapabilityRequestsFromTask(task, runId = "meta-run") {
             ? "create_skill"
             : null);
     if (!decision) continue;
-    const explicitNeed = /需要|should|candidate|沉淀|可复用|直接复用|复用|reusable|reuse|recurring|重复|长期|迭代|修改|升级|定制|新建|创建|keeps recurring|iterate|modify|upgrade|customize|create/i.test(line);
+    // Negated actions describe a boundary, not a request to create a candidate.
+    // Keep affirmative actions elsewhere (e.g. create a skill that must not
+    // modify user files), while stripping the denied verb before all decisions.
+    const actionText = positiveCapabilityActionText(line);
+    const explicitNeed = /需要|should|candidate|沉淀|可复用|直接复用|复用|reusable|reuse|recurring|重复|长期|迭代|修改|升级|定制|新建|创建|keeps recurring|iterate|modify|upgrade|customize|create/i.test(actionText);
     if (!explicitNeed) continue;
     const declaration = explicitCapabilityDeclarationFromLine(line, decision);
     const explicitCapabilityId = declaration?.id ?? null;
-    const actionText = positiveCapabilityActionText(line);
     const requestedCapability =
       decision === "create_skill" && /prd\s*review\s*standard/i.test(line)
         ? "prd-review-standard-skill"

@@ -18,6 +18,8 @@
 
 **Meta_Kim 是 AI 编程助手的 Harness 框架：把一个还没想完整的需求，组织成明确的决策、共同的计划、协作任务和可检查的结果。** 你继续使用自己的 AI 客户端，用自然语言说目标，由 Meta_Kim 围绕目标组织工作。
 
+说直白一点：**Meta_Kim 管整件事怎么往前走，Kim Service 提供每项工作需要的专业方法。** 你说“继续”，它应接着当前决定和成果往下做；你改变需求，它按关联关系找出需要重做的部分。
+
 适合涉及多个决策、文件、专业或会话的任务：做一个产品、迭代已有系统、研究技术方案、协调一次复杂修复。清晰的小改动会走较轻的流程。
 
 > “我想做一个活动报名工具。用户能在手机上报名，我能看到准确的名单。先帮我研究怎么做、比较方案，再把选定的方案做出来并验证。”
@@ -98,12 +100,27 @@ node setup.mjs --update
 | **Gemini CLI** | 按需启用的原生投影：Agent、共享中立 Skill、原生设置和 Hook | 结构与生命周期验证；模型真实执行尚未认证 |
 | **ZCode** | 按需启用的原生投影：Agent、Skill、MCP 和用户级 Hook | 当前客户端忽略项目级 Hook；模型真实执行尚未认证 |
 | **OpenClaw** | 保留现有非默认兼容投影 | 需要自身配置和宿主证据 |
+| **DSH / DeepSeek Harness** | 通过 `meta-kim dsh` 接入原生 Skill、独立 profile／项目 patch 和 MCP | 已做不调用模型的官方配置、Skill 和 MCP 探测；自定义原生 Agent、强制 Hook 与业务质量分别验收 |
 
-DeepSeek Harness、Qoder、Trae 保持 **Beta 兼容 adapter**，不进入普通原生投影。ZCode 历史上的只读候选适配器与新增的按需投影分别保留。详情见[兼容目录](config/runtime-compatibility-catalog.json)、[Gemini 说明](canonical/skills/meta-theory/references/runtime-gemini.md)和 [ZCode 说明](canonical/skills/meta-theory/references/runtime-zcode.md)。
+Qoder、Trae 保持 **Beta 兼容 adapter**。DSH 保留历史只读候选适配器，另增按需启用的原生接入；不因此扩张现有执行桥的运行时权限。ZCode 历史上的只读候选适配器与新增的按需投影分别保留。详情见[兼容目录](config/runtime-compatibility-catalog.json)、[Gemini 说明](canonical/skills/meta-theory/references/runtime-gemini.md)和 [ZCode 说明](canonical/skills/meta-theory/references/runtime-zcode.md)。
 
 依赖项目自己的安装目标由上游项目维护，不能据此宣称 Meta_Kim 已通过适配。Gemini 与 Codex 共存时使用宿主中立的项目 Skill，具体工具和路径由当前客户端决定。[Gemini Skill 官方说明](https://geminicli.com/docs/cli/skills/)和 [ZCode Hook 官方说明](https://zcode.z.ai/en/docs/hooks)给出了这些差异的依据。
 
+### DSH 快速开始
+
+安装当前 Meta_Kim 源码后执行：
+
+```sh
+node bin/meta-kim.mjs dsh install
+node bin/meta-kim.mjs dsh check
+dsh --profile meta-kim
+```
+
+DSH 本身要求 **Node >=24.9.0**，Meta_Kim 其他客户端的版本要求不变。本适配核对 DSH `0.2.2-rc.1`。加 `--service-package /path/to/kim-service-dsh`，可以接入 [Kim_Service 构建的完整专业 Skills](https://github.com/KimYx0207/Kim_Service/blob/main/docs/dsh.md)。同一入口支持 `update`、`check`、`uninstall`，保留用户文件和改动。[DSH 说明](canonical/skills/meta-theory/references/runtime-dsh.md)包含项目安装、完整方法读取、共享包保留和验证边界。
+
 ## 连续性和自我进化如何落地？
+
+每项专业输出都有通过条件、拒收条件、验证方法、所需证据和是否阻断，Meta_Kim 会将这些标准交到实际工作者手里。工作者自报“通过”仍待独立核验；关键证据缺失不能被其他通过项抵消。检查、实测和未测范围见[本轮验证记录](docs/verification/dsh-professional-quality-20261111.md)。
 
 系统设计与模块细节属于**同一份 PRD**，连接同一组任务和验收条件。一个模块变化，会沿实际依赖找出受影响工作；其他已完成产物可以在核对当前绑定后复用。
 

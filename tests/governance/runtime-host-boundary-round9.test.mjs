@@ -9,6 +9,7 @@ import {
   planChallengeAuthorizationBinding,
 } from "../../scripts/governed-execution/plan-challenge-policy.mjs";
 import { evaluateRouteExecutionGate } from "../../scripts/runtime-execution-gate.mjs";
+import { classifyMetaTheoryEntry } from "../../scripts/meta-theory-entry-classifier.mjs";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -64,11 +65,27 @@ test("reviewer PoC: real subjective redesign keeps native choice above fast_path
     { cwd: repoRoot, encoding: "utf8", maxBuffer: 20 * 1024 * 1024 },
   );
   const result = JSON.parse(stdout);
-  assert.equal(result.entryClassification.path, "fast_path");
+  assert.equal(result.entryClassification.path, "standard_path");
   assert.equal(result.entryChoiceDecision.choicePolicy, "must_ask");
   assert.equal(result.routeExecutionGate.applies, true);
-  assert.equal(result.routeExecutionGate.handoffStatus, "awaiting_native_choice");
+  assert.equal(result.routeExecutionGate.nativeChoiceSurface.required, true);
+  assert.ok(result.routeExecutionGate.blockedBy.includes("native_choice_surface_required_before_execution"));
+  const hostUnavailable = result.routeExecutionGate.blockedBy.includes("runtime_capability_known_unsupported");
+  assert.equal(result.routeExecutionGate.handoffStatus, hostUnavailable ? "blocked" : "awaiting_native_choice");
   assert.equal(result.routeExecutionGate.canEnterExecution, false);
+});
+
+test("redesign requests enter governance while explanations and explicit refusals stay read-only", () => {
+  for (const task of ["Redesign this landing page to feel premium.", "Please redesign the page.", "Explain this design, then redesign the page."]) {
+    const entry = classifyMetaTheoryEntry(task);
+    assert.equal(entry.path, "standard_path", task);
+    assert.equal(entry.signals.actionIntent, true, task);
+  }
+  for (const task of ["Explain this redesign.", "Please describe this premium page redesign.", "What does redesign mean?", "Do not redesign this page."]) {
+    const entry = classifyMetaTheoryEntry(task);
+    assert.equal(entry.path, "fast_path", task);
+    assert.equal(entry.signals.actionIntent, false, task);
+  }
 });
 
 test("reviewer PoC: packaged plan challenge can be satisfied but cannot self-authorize", () => {

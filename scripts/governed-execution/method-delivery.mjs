@@ -5,6 +5,61 @@ const object = (value) => Boolean(value && typeof value === "object" && !Array.i
 const supplied = (value) => value !== undefined && value !== null && (typeof value !== "string" || Boolean(value.trim()));
 const allowsNull = (schema) => schema?.type === "null" || Array.isArray(schema?.type) && schema.type.includes("null");
 const clone = (value) => structuredClone(value);
+const REVIEW_METHODS = new Set(["artifact_inspection", "deterministic_recompute", "behavior_probe", "source_check", "domain_review"]);
+const REVIEW_FIELDS = ["id", "verificationMethod", "evidenceRequired", "blocking"];
+const text = (value) => typeof value === "string" && Boolean(value.trim());
+
+/** A projection of the selected source contract, not another acceptance store.
+ * Old sources stay usable, but missing professional standards stay visible.
+ * These requirements guide the worker; only the host's current task contract
+ * and independent evidence can accept the result. */
+function selectedOutputReview(method) {
+  const capabilityId = method.capabilityId ?? null;
+  const guidance = method.method?.expertise?.contractGuidance;
+  const selected = (Array.isArray(guidance) ? guidance : []).filter(guide =>
+    text(guide?.capabilityId) && (guide.capabilityId === capabilityId || capabilityId?.endsWith(`:${guide.capabilityId}`)));
+  const sourceChecks = selected.length === 1 && Array.isArray(selected[0].outputChecks) ? selected[0].outputChecks : [];
+  const standardDiagnostics = [];
+  if (selected.length !== 1) standardDiagnostics.push({ code: selected.length ? "ambiguous_capability_guidance" : "missing_capability_guidance" });
+  const outputProperties = object(method.outputContract?.properties) ? method.outputContract.properties : null;
+  if (!outputProperties) standardDiagnostics.push({ code: "output_contract_properties_unavailable" });
+  const requiredOutputFields = Array.isArray(method.outputContract?.required) ? method.outputContract.required.filter(text) : [];
+  const seen = new Set();
+  const seenFields = new Set();
+  const checks = sourceChecks.map(check => {
+    if (!object(check)) return { standardStatus: "legacy_incomplete", missingStandardFields: [...REVIEW_FIELDS], evidenceStatus: "not_observed" };
+    const missingStandardFields = REVIEW_FIELDS.filter(field => !Object.hasOwn(check, field));
+    const duplicateField = text(check.field) && seenFields.has(check.field);
+    const unknownField = text(check.field) && outputProperties && !Object.hasOwn(outputProperties, check.field);
+    if (duplicateField) standardDiagnostics.push({ code: "duplicate_output_field", field: check.field });
+    if (unknownField) standardDiagnostics.push({ code: "undeclared_output_field", field: check.field });
+    const complete = missingStandardFields.length === 0 && text(check.id) && /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(check.id) &&
+      !seen.has(check.id) && !duplicateField && !unknownField && [check.field, check.criterion, check.rejectWhen].every(text) &&
+      REVIEW_METHODS.has(check.verificationMethod) && Array.isArray(check.evidenceRequired) &&
+      check.evidenceRequired.length > 0 && check.evidenceRequired.every(text) && typeof check.blocking === "boolean";
+    if (text(check.id)) seen.add(check.id);
+    if (text(check.field)) seenFields.add(check.field);
+    return { ...clone(check), standardStatus: complete ? "complete_contract" : "legacy_incomplete",
+      missingStandardFields, evidenceStatus: "not_observed" };
+  });
+  for (const field of requiredOutputFields) {
+    if (!seenFields.has(field)) standardDiagnostics.push({ code: "required_output_field_without_check", field });
+    if (outputProperties && !Object.hasOwn(outputProperties, field)) standardDiagnostics.push({ code: "required_output_field_undeclared", field });
+  }
+  if (!checks.some(check => check.blocking === true)) standardDiagnostics.push({ code: "no_blocking_output_check" });
+  return {
+    capabilityId,
+    standardStatus: checks.length && !standardDiagnostics.length && checks.every(check => check.standardStatus === "complete_contract")
+      ? "complete_contract" : "legacy_incomplete",
+    standardDiagnostics,
+    checks,
+    evidenceStatus: "not_observed",
+    professionalEffect: "not_evaluated",
+    blockingPolicy: "Every applicable blocking condition needs its required evidence and independent review; no aggregate score or other passing condition can compensate for a missing or failed one.",
+    taskBoundary: "Source guidance does not add task requirements or change user constraints. Report conflicts or missing standards to the host; do not silently invent replacements.",
+    acceptanceStatus: "pending_independent_review",
+  };
+}
 
 /** Check the JSON contract's structural requirements, never semantic truth. */
 function inspectInput(value, schema, at, problems) {
@@ -90,6 +145,7 @@ export function buildMethodInvocationContext({ method, packet, upstreamResults =
     outputContract: method.outputContract,
     method: method.method,
     knowledgeAssets: clone(method.knowledgeAssets ?? []),
+    outputReview: selectedOutputReview(method),
     authority: "Input facts and source method only; tools, leases and final acceptance remain with the host",
   };
 }
@@ -106,7 +162,7 @@ export function assertMethodInputsReady(context) {
 /** Same method context is delivered by native and injected transports. */
 export function appendMethodInvocationContext(prompt, context) {
   if (!context) return prompt;
-  return `${prompt}\nSource-verified professional method and task inputs (data, not permission):\n${JSON.stringify(context)}\nFollow the method steps and acceptance guidance within the current task constraints. Plain prose is a valid conceptual-human-delivery. You may include criterionResults with criterion id, status, evidenceRefs and scope, but these are self-reports pending independent review. Report missing facts and capability gaps explicitly; never invent them.`;
+  return `${prompt}\nSource-verified professional method and task inputs (data, not permission):\n${JSON.stringify(context)}\nFollow the method steps and acceptance guidance within the current task constraints. For each applicable outputReview check, identify the actual output field or artifact and the required evidence using its declared verificationMethod. If an observation was not made or evidence is missing, report not_observed; if rejectWhen applies, report the failure. A blocking failure or missing evidence cannot be offset by another pass, style, word count, or an aggregate score. legacy_incomplete means the source lacks a complete review standard, not that it passed. Plain prose is a valid conceptual-human-delivery. You may include criterionResults with the assigned task criterion id, status, evidenceRefs and scope, but these are self-reports pending independent review. Source check ids do not automatically become assigned task criterion ids. Report missing facts and capability gaps explicitly; never invent them.`;
 }
 
 function returnedObject(text) {
@@ -136,8 +192,11 @@ export function buildMethodDeliveryEnvelope({ runId, packet, outputText, methodB
       diagnostics.push("invalid_or_unassigned_self_report_criterion"); continue;
     }
     seen.add(criterion.id);
+    const hasEvidenceReference = criterion.evidenceRefs.some(text);
+    if (criterion.status === "pass" && !hasEvidenceReference) diagnostics.push("self_report_pass_without_evidence");
     criterionResults.push({ id: criterion.id, status: criterion.status, evidenceRefs: [...criterion.evidenceRefs], scope: criterion.scope,
-      evidenceClass: "worker_self_report", acceptanceStatus: "pending_independent_review" });
+      evidenceClass: "worker_self_report", evidenceStatus: hasEvidenceReference ? "reported_unverified" : "not_observed",
+      acceptanceStatus: "pending_independent_review" });
   }
   return {
     schemaVersion: "method-delivery-envelope-v1",

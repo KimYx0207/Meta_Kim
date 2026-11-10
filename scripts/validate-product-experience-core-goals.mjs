@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { runMetaTheoryGovernedExecution } from "./run-meta-theory-governed-execution.mjs";
+import { runDiagnosticReadPlan } from "./diagnostic-host-protocol.mjs";
 
 const PRODUCT_EXPERIENCE_TASK =
   "帮团队做一个内容工作台：成员能把零散素材整理成草稿，编辑审核后安排发布时间；失败时能看出原因并重试，不同成员权限不同。先完成可审查的方案和本地验证，不连接生产账号，也不要真实发布。";
@@ -29,8 +30,6 @@ const REQUIRED_INVOCATION_FAMILIES = [
 ];
 const REQUIRED_BINDING_COVERAGE = [
   "skill",
-  "mcp",
-  "command",
   "hooks",
   "abstractPromptCapability",
   "agentTeamsPlaybook",
@@ -111,14 +110,10 @@ function assertDynamicWorkflow(report) {
     "offline product-experience validation must leave runtime tools unbound without current host evidence",
   );
   assert.ok(packet.capabilityBindingRows.length > 0);
-  assert.ok(
-    packet.capabilityBindingRows.some((row) => row.commands.length > 0),
-    "commands must be bound",
-  );
-  assert.ok(
-    packet.capabilityBindingRows.some((row) => row.mcp.length > 0),
-    "MCP provider/tool must be bound",
-  );
+  assert.equal(packet.capabilityBindingCoverage.command, false);
+  assert.equal(packet.capabilityBindingCoverage.mcp, false);
+  assert.ok(packet.capabilityBindingRows.every(row => row.commands.length === 0 && row.mcp.length === 0),
+    "The fixed source-read work orders must not manufacture unnecessary command or MCP selection");
   assert.ok(
     packet.capabilityBindingRows.every((row) => row.hookMatches.length > 0),
     "hooks must be matched",
@@ -275,11 +270,11 @@ function assertCapabilityInvocationTruth(report) {
   assert.equal(byFamily.get("agent_subagent").state, "unavailable");
   assert.equal(byFamily.get("app_visible_subagent").state, "not_required");
   assert.equal(byFamily.get("worker_task").state, "blocked");
-  assert.equal(byFamily.get("mcp").state, "selected_not_invoked");
+  assert.equal(byFamily.get("mcp").state, "not_required");
   assert.equal(byFamily.get("hook").state, "selected_not_invoked");
   assert.equal(byFamily.get("skill").state, "selected_not_invoked");
   assert.equal(byFamily.get("prompt_rule").state, "applied");
-  assert.equal(byFamily.get("command_script").state, "selected_not_invoked");
+  assert.equal(byFamily.get("command_script").state, "not_required");
   assert.equal(byFamily.get("runtime_tool").state, "not_required");
   const playbookInvocation = byFamily.get("agent_teams_playbook");
   const playbookSelected = report.coreLoop.agentTeamsPlaybookPacket.selected;
@@ -290,16 +285,14 @@ function assertCapabilityInvocationTruth(report) {
   for (const family of [
     "agent_subagent",
     "skill",
-    "mcp",
     "hook",
-    "command_script",
   ]) {
     assert.ok(packet.realInvocationCoverage.missingFamilies.includes(family));
   }
   assert.ok(packet.realInvocationCoverage.missingBindings.length > 0);
   assert.deepEqual(packet.callableInvocationCoverage.missingFamilies, []);
-  assert.ok(packet.callableInvocationCoverage.callableFamilies.includes("mcp"));
-  assert.ok(packet.callableInvocationCoverage.callableFamilies.includes("command_script"));
+  assert.equal(packet.callableInvocationCoverage.callableFamilies.includes("mcp"), false);
+  assert.equal(packet.callableInvocationCoverage.callableFamilies.includes("command_script"), false);
   assert.equal(
     packet.callableInvocationCoverage.callableFamilies.includes("runtime_tool"),
     false,
@@ -343,12 +336,10 @@ function assertInvocationProbes(report) {
   const packet = report.coreLoop.capabilityInvocationProbePacket;
   assert.equal(packet.status, "pass");
   assert.deepEqual(packet.missingFamilies, []);
-  assert.deepEqual(packet.requiredFamilies, ["mcp", "command_script"]);
+  assert.deepEqual(packet.requiredFamilies, [], "The source-read scenario selects no callable MCP or command family");
   const byFamily = new Map(packet.probes.map((probe) => [probe.family, probe]));
-  for (const family of ["mcp", "command_script"]) {
-    assert.equal(byFamily.get(family)?.status, "pass", `${family} probe did not pass`);
-    assert.equal(byFamily.get(family)?.exitCode, 0, `${family} probe exitCode was not 0`);
-  }
+  assert.equal(byFamily.has("mcp"), false);
+  assert.equal(byFamily.has("command_script"), false);
   assert.equal(
     byFamily.has("runtime_tool"),
     false,
@@ -584,18 +575,15 @@ async function main() {
       dbPath: path.join(tempDir, "runs.sqlite"),
     });
     assert.equal(planningReport.task, PRODUCT_EXPERIENCE_TASK);
-    assert.equal(planningReport.status, "partial");
-    assert.equal(planningReport.coreLoop.executionResult.actualWorkerExecution, false);
+    assert.equal(planningReport.artifactKind, "host_preparation");
+    assert.equal(planningReport.preparation.status, "needs_thinking");
     assert.equal(planningReport.publicReadyDecision.publicReady, false);
-    assertLangGraphStyle(planningReport);
-    assertPeerMesh(planningReport);
-    const plannedWorkers = planningReport.coreLoop.thinkingPacket.workerTaskPackets;
-    assert.ok(plannedWorkers.length > 1, "The original product request must retain its full worker plan");
-    assert.ok(plannedWorkers.some((packet) => packet.workOrderReadiness === "incomplete"));
-    assert.equal(planningReport.coreLoop.agentTeamsPlaybookPacket.fanoutSafetyPacket.safeForParallelFanout, false);
-    assert.equal(planningReport.stageOperationPlan.stages.length, 8);
-    assert.ok(planningReport.visibleMetaTheorySurfacePacket.capabilityInventory.notSkillOnly);
-    const report = await runMetaTheoryGovernedExecution({
+    const plannedWorkers = planningReport.workerTaskPackets;
+    assert.deepEqual(plannedWorkers, [], "A raw product request must wait for host Critical and Thinking before manufacturing a worker plan");
+    assert.equal(planningReport.coreLoop.stageDagPacket, undefined);
+    assert.ok(planningReport.hostInvocationRequestPacket.nextAction);
+    const scopes = ["package.json", "AGENTS.md", "README.md", "config/contracts/workflow-contract.json"];
+    const report = await runDiagnosticReadPlan(runMetaTheoryGovernedExecution, {
       task: BOUNDED_FANOUT_TASK,
       outputLanguage: "zh-CN",
       runId: "validate-product-experience-core-goals",
@@ -603,7 +591,7 @@ async function main() {
       dbPath: path.join(tempDir, "runs.sqlite"),
       emitConversationNotice: true,
       invokeCapabilityProbes: true,
-    });
+    }, scopes);
     assert.equal(report.status, "partial");
     assert.equal(report.workerTaskPackets.length, 4,
       "The four bounded actions require discoverable execution-owner sources in this validation environment");
@@ -623,7 +611,7 @@ async function main() {
     assertProductExperience(report);
     await assertReadableReportShowsVisibleSurface(report);
 
-    const negativeControlReport = await runMetaTheoryGovernedExecution({
+    const negativeControlReport = await runDiagnosticReadPlan(runMetaTheoryGovernedExecution, {
       task: BOUNDED_FANOUT_TASK,
       outputLanguage: "zh-CN",
       runId: "validate-product-experience-synthetic-negative-control",
@@ -633,7 +621,7 @@ async function main() {
       invokeCapabilityProbes: true,
       hostInvocationEvidenceTrusted: true,
       hostInvocationEvidence: SYNTHETIC_NEGATIVE_CONTROL,
-    });
+    }, scopes);
     assert.equal(negativeControlReport.status, "partial");
     assert.equal(
       negativeControlReport.coreLoop.productExperiencePacket.status,
@@ -662,7 +650,10 @@ async function main() {
             ownerEvidence: "current_environment_discovery_only",
           },
           productRequirementsPlanningRun: {
-            ...summarizeReport(planningReport),
+            status: planningReport.preparation.status,
+            artifactKind: planningReport.artifactKind,
+            publicReady: false,
+            preparationRequired: true,
             plannedWorkers: plannedWorkers.length,
             executionReady: false,
           },

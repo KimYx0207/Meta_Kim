@@ -1142,7 +1142,7 @@ const dependencyAgentMatch = dependencyAgentScopeExclusion
 // A quality adjective does not change a source-matched professional text task
 // into UI design. The selected method retains its own required inputs/boundaries.
 // An explicit interface/page request still needs its existing design choice.
-const explicitInterfaceScope = /\b(?:ui|ux|website|webpage|user interface)\b|页面|界面|网页|网站/iu.test(task);
+const explicitInterfaceScope = /\b(?:ui|ux|website|webpage|web page|landing page|user interface)\b|页面|界面|网页|网站/iu.test(task);
 const subjectiveRouteChoice = entrySignals.subjectiveQualitySignal === true &&
   explicitInterfaceScope && !currentReadOnlyOperation;
 const dependencyMethodHandoff = buildDependencyMethodHandoff({ task, match: professionalMethodDemand
@@ -2071,13 +2071,15 @@ if (fetchOnly || hostWorkOrder) {
     ownerContract: owner?.ownerContract ?? null, purpose: hostWorkOrder.todayTask, scopeFiles, shardScope,
     codexSpawnBinding: binding, agentCapabilityProfile: snapshot,
     mutationPolicy: readOnly ? "read_only" : "scoped_local_writes_only", externalWriteBoundary: hostWorkOrder.effectClass === "external_write",
-    workspaceIsolation: readOnly ? "shared_workspace_read_only" : "unproven", externalWritePolicy: "forbidden_without_host_authorization",
+    workspaceIsolation: readOnly ? "shared_workspace_read_only" : "unproven",
+    externalWritePolicy: readOnly ? "forbidden" : "forbidden_without_host_authorization",
     collisionPolicy: readOnly ? "no_overlap" : "unproven",
     safetyEvidence: { status: ready && readOnly ? "proven" : "unproven", shardScope,
       ...(localWrite ? { planningBlockers } : {}),
       evidenceBasis: localWrite ? "trusted_project_paths_pending_current_thinking_graph" : "current_discovered_sources_and_requested_read_only_scope_not_permission" } };
   console.log(JSON.stringify({ schemaVersion: 1, task, taskShape, runtime, os: osTarget, fetchPacket, ownerDiscoveryPacket,
     recommendedRoute: blockers.length ? null : { ...route, executionCapabilityGate: executionGate },
+    selectedCapabilityProviders: blockers.length ? {} : providersAfterProfile,
     rankedRoutes: [route], workerTaskPacketDrafts: ready ? [draft] : [],
     capabilityGapPacket: ready ? null : gap([...blockers, ...executionGate.blockers ?? []]),
     capabilityGapDetected: !ready, capabilityGapDecision: ready ? null : { decision: "blocked_or_needs_approval" },

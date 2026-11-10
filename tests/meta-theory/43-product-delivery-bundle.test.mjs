@@ -8,11 +8,12 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { importDatabaseSync } from "../../src/data/sqlite/runtime.mjs";
+import { createGovernanceRuntimeFixture } from "../helpers/governance-runtime-fixture.mjs";
+import { refreshFixtureSourcePins } from "../helpers/host-reasoning-fixture.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
@@ -22,31 +23,31 @@ function hasLocalAbsolutePath(value) {
   return /[A-Za-z]:[\\/]/.test(text) || /\/(?:Users|home|var|tmp|mnt)\//.test(text);
 }
 
-function runProductBundle({ stateDir, profile }) {
-  const result = spawnSync(process.execPath, [
+function runProductBundle({ stateDir, profile, fixture }) {
+  const result = fixture.run([
     "scripts/generate-product-delivery-bundle.mjs",
     "--state-dir",
     stateDir,
   ], {
-    cwd: REPO_ROOT,
-    encoding: "utf8",
     timeout: 90_000,
-    env: { ...process.env, META_KIM_PROFILE: profile },
+    env: { ...fixture.env, META_KIM_PROFILE: profile },
   });
   const jsonStart = result.stdout.indexOf("{");
-  assert.notEqual(jsonStart, -1, result.stdout);
+  assert.notEqual(jsonStart, -1, result.stderr || result.stdout);
   const summary = JSON.parse(result.stdout.slice(jsonStart));
   assert.equal(result.status, summary.status === "pass" ? 0 : 1, result.stderr || result.stdout);
   return summary;
 }
 
 describe("43 — Product delivery bundle and reviewer calibration", () => {
-  test("P-045/P-046/P-059/P-060 generate a privacy-safe AI-readable product bundle", async () => {
+  test("P-045/P-046/P-059/P-060 generate a privacy-safe AI-readable product bundle", async (t) => {
+    const fixture = createGovernanceRuntimeFixture(t, { graph: true });
+    refreshFixtureSourcePins(fixture);
     const disposableRoot = mkdtempSync(path.join(tmpdir(), "meta-kim-delivery-bundle-test-"));
     const stateDir = path.join(disposableRoot, "state");
     const profile = `delivery-bundle-test-${path.basename(disposableRoot).replace(/[^A-Za-z0-9._-]/gu, "-")}`;
-    const disposableProfileDir = path.join(REPO_ROOT, ".meta-kim", "state", profile);
-    const defaultStateDir = path.join(REPO_ROOT, ".meta-kim", "state", "default", "product-delivery-bundle");
+    const disposableProfileDir = path.join(fixture.repoRoot, ".meta-kim", "state", profile);
+    const defaultStateDir = path.join(fixture.repoRoot, ".meta-kim", "state", "default", "product-delivery-bundle");
     const defaultBefore = existsSync(defaultStateDir)
       ? readdirSync(defaultStateDir).sort()
       : [];
@@ -72,7 +73,7 @@ describe("43 — Product delivery bundle and reviewer calibration", () => {
     ]);
     assert.equal(contract.privacyRules.forbidLocalAbsolutePaths, true);
 
-    const summary = runProductBundle({ stateDir, profile });
+    const summary = runProductBundle({ stateDir, profile, fixture });
     assert.equal(summary.ok, false);
     assert.equal(summary.status, "partial");
     assert.equal(summary.governedRunStatus, "partial");
@@ -86,7 +87,7 @@ describe("43 — Product delivery bundle and reviewer calibration", () => {
     assert.match(summary.sourceClosureDigest, /^[a-f0-9]{64}$/u);
     assert.equal(summary.governedRunId, `product-delivery-bundle-${summary.bundleIdentity}`);
 
-    const repeated = runProductBundle({ stateDir, profile });
+    const repeated = runProductBundle({ stateDir, profile, fixture });
     assert.equal(repeated.bundleIdentity, summary.bundleIdentity);
     assert.equal(repeated.governedRunId, summary.governedRunId);
     assert.equal(repeated.reusedGovernedRun, true);
@@ -123,18 +124,18 @@ describe("43 — Product delivery bundle and reviewer calibration", () => {
     const tamperedJson = JSON.parse(readFileSync(governedJsonPath, "utf8"));
     tamperedJson.status = "pass";
     writeFileSync(governedJsonPath, `${JSON.stringify(tamperedJson, null, 2)}\n`, "utf8");
-    assert.equal(runProductBundle({ stateDir, profile }).reusedGovernedRun, false);
+    assert.equal(runProductBundle({ stateDir, profile, fixture }).reusedGovernedRun, false);
     assert.equal(JSON.parse(readFileSync(governedJsonPath, "utf8")).status, "partial");
 
     writeFileSync(governedMarkdownPath, "tampered markdown\n", "utf8");
-    assert.equal(runProductBundle({ stateDir, profile }).reusedGovernedRun, false);
+    assert.equal(runProductBundle({ stateDir, profile, fixture }).reusedGovernedRun, false);
 
     const incompleteReservation = JSON.parse(readFileSync(reservationPath, "utf8"));
     incompleteReservation.phase = "reserved";
     incompleteReservation.status = "reserved_or_incomplete";
     incompleteReservation.jsonSha256 = null;
     writeFileSync(reservationPath, `${JSON.stringify(incompleteReservation, null, 2)}\n`, "utf8");
-    assert.equal(runProductBundle({ stateDir, profile }).reusedGovernedRun, false);
+    assert.equal(runProductBundle({ stateDir, profile, fixture }).reusedGovernedRun, false);
 
     const tamperDb = new DatabaseSync(sqlitePath);
     try {
@@ -146,24 +147,33 @@ describe("43 — Product delivery bundle and reviewer calibration", () => {
     } finally {
       tamperDb.close();
     }
-    assert.equal(runProductBundle({ stateDir, profile }).reusedGovernedRun, false);
-    assert.equal(runProductBundle({ stateDir, profile }).reusedGovernedRun, true);
+    assert.equal(runProductBundle({ stateDir, profile, fixture }).reusedGovernedRun, false);
+    assert.equal(runProductBundle({ stateDir, profile, fixture }).reusedGovernedRun, true);
     assert.deepEqual(
       readdirSync(stateDir).filter((name) => /^governed-.*\.sqlite$/u.test(name)),
       [`governed-${summary.bundleIdentity}.sqlite`],
     );
     assert.deepEqual(
-      readdirSync(stateDir).filter((name) => name.endsWith(".reservation.json")),
-      [`${summary.governedRunId}.reservation.json`],
+      readdirSync(stateDir).filter((name) => name.endsWith(".reservation.json")).sort(),
+      [
+        `${summary.governedRunId}-fetch.reservation.json`,
+        `${summary.governedRunId}.reservation.json`,
+      ].sort(),
     );
     assert.deepEqual(
-      readdirSync(stateDir).filter((name) => /^product-delivery-bundle-.*\.json$/u.test(name)),
+      readdirSync(stateDir).filter((name) => /^product-delivery-bundle-.*\.json$/u.test(name)).sort(),
       [
+        `${summary.governedRunId}-fetch.json`,
+        `${summary.governedRunId}-fetch.reservation.json`,
         `${summary.governedRunId}.json`,
         `${summary.governedRunId}.live.json`,
         `${summary.governedRunId}.reservation.json`,
-      ],
+      ].sort(),
     );
+    const preparation = JSON.parse(readFileSync(path.join(stateDir, `${summary.governedRunId}-fetch.json`), "utf8"));
+    assert.equal(preparation.artifactKind, "host_preparation");
+    assert.deepEqual(preparation.workerTaskPackets, []);
+    assert.equal(preparation.coreLoop?.stageDag, undefined);
     const liveProjectionText = readFileSync(governedLivePath, "utf8");
     const liveProjection = JSON.parse(liveProjectionText);
     assert.equal(liveProjection.schemaVersion, "meta-kim-live-projection-v2");

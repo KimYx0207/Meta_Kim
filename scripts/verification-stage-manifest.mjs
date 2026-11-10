@@ -33,5 +33,6 @@ export const CI_LANES = Object.freeze({
   "setup-platform": Object.freeze([
     npmStage("meta:test:setup:cross-platform"),
     npmStage("meta:test:process-guard"),
+    npmStage("dsh:test"),
   ]),
 });

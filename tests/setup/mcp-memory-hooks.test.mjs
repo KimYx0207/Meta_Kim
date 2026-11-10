@@ -44,6 +44,19 @@ function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function codexFixtureEnvironment(tempHome) {
+  // Isolating HOME alone is insufficient when the invoking host has configured
+  // either Codex home override. Both must belong to this disposable fixture.
+  const codexHome = path.join(tempHome, ".codex");
+  return {
+    ...process.env,
+    HOME: tempHome,
+    USERPROFILE: tempHome,
+    META_KIM_CODEX_HOME: codexHome,
+    CODEX_HOME: codexHome,
+  };
+}
+
 function seedDelegatedGlobalProjection(tempHome, targets, { registrations = true } = {}) {
   const spec = JSON.parse(
     readRepoFile(
@@ -2423,11 +2436,7 @@ describe("MCP memory cross-runtime hooks", () => {
         {
           cwd: repoRoot,
           encoding: "utf8",
-          env: {
-            ...process.env,
-            HOME: tempHome,
-            USERPROFILE: tempHome,
-          },
+          env: codexFixtureEnvironment(tempHome),
           timeout: 10000,
         },
       );
@@ -2866,7 +2875,7 @@ describe("MCP memory cross-runtime hooks", () => {
         {
           cwd: repoRoot,
           encoding: "utf8",
-          env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome },
+          env: codexFixtureEnvironment(tempHome),
           timeout: 15000,
         },
       );
@@ -2888,10 +2897,11 @@ describe("MCP memory cross-runtime hooks", () => {
       const result = spawnSync(process.execPath, [installer, "--targets", "codex"], {
         cwd: repoRoot,
         encoding: "utf8",
-        env: { ...process.env, HOME: userHome, USERPROFILE: userHome },
+        env: codexFixtureEnvironment(userHome),
         timeout: 15000,
       });
       assert.equal(result.status, 1, result.stderr || result.stdout);
+      assert.doesNotMatch(result.stderr, /outside this memory installer's supported user-home boundary/u);
       assert.equal(readFileSync(userHook, "utf8"), "USER-OWNED\n");
       assert.equal(existsSync(path.join(userHome, ".meta-kim", "manifests")), false);
     } finally {
@@ -2913,14 +2923,13 @@ describe("MCP memory cross-runtime hooks", () => {
           cwd: repoRoot,
           encoding: "utf8",
           env: {
-            ...process.env,
-            HOME: tempHome,
-            USERPROFILE: tempHome,
+            ...codexFixtureEnvironment(tempHome),
             META_KIM_CONFIRM_GLOBAL: runtime === "claude" ? "1" : "",
           },
           timeout: 15000,
         });
         assert.equal(result.status, 1, result.stderr || result.stdout);
+        assert.doesNotMatch(result.stderr, /outside this memory installer's supported user-home boundary/u);
         assert.equal(readFileSync(outsideHook, "utf8"), "OUTSIDE-USER\n");
       } finally {
         rmSync(tempHome, { recursive: true, force: true });
@@ -3328,11 +3337,7 @@ describe("MCP memory cross-runtime hooks", () => {
         {
           cwd: repoRoot,
           encoding: "utf8",
-          env: {
-            ...process.env,
-            HOME: tempHome,
-            USERPROFILE: tempHome,
-          },
+          env: codexFixtureEnvironment(tempHome),
           timeout: 10000,
         },
       );

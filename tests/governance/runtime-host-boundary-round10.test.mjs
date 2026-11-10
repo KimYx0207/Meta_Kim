@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import * as runtimeClaims from "../../scripts/runtime-capability-claims.mjs";
 import { evaluateRouteExecutionGate } from "../../scripts/runtime-execution-gate.mjs";
-import { runMetaTheoryGovernedExecution } from "../../scripts/run-meta-theory-governed-execution.mjs";
+import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
+import { fixtureCritical, fixtureReadWorkOrder, refreshFixtureSourcePins, runWithFixtureHostThinking } from "../helpers/host-reasoning-fixture.mjs";
+import { localProtocolFixtureTaskFacts } from "../helpers/task-design-facts.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -32,19 +33,6 @@ function matrixWith(claimOverrides = {}) {
         claimsByMode: { interactive_host: structuredClone(interactiveClaim) },
       })),
     }],
-  };
-}
-
-function projectFixture(prefix) {
-  const root = mkdtempSync(path.join(tmpdir(), prefix));
-  const projectRoot = path.join(root, "project");
-  mkdirSync(path.join(projectRoot, ".git"), { recursive: true });
-  writeFileSync(path.join(projectRoot, "package.json"), '{"name":"p130-round10"}\n', "utf8");
-  return {
-    root,
-    projectRoot,
-    stateDir: path.join(root, "state"),
-    dbPath: path.join(root, "state", "runs.sqlite"),
   };
 }
 
@@ -115,16 +103,24 @@ test("reviewer PoC: Claude and Codex static interactive claims use the legal han
   );
 });
 
-test("reviewer PoC: an unexecuted worker plan is attributed to host handoff, not plan challenge", async () => {
-  const fixture = projectFixture("meta-kim-round10-worker-attribution-");
-  try {
-    const report = await runMetaTheoryGovernedExecution({
-      task: "请检查当前项目架构并给出只读改进建议。",
+test("reviewer PoC: an unexecuted worker plan is attributed to host handoff, not plan challenge", async (t) => {
+  const fixture = createGovernanceRuntimeFixtureScope(t);
+  refreshFixtureSourcePins(fixture);
+  const { runMetaTheoryGovernedExecution } = await fixture.import("scripts/run-meta-theory-governed-execution.mjs");
+  const task = "请检查当前项目架构并给出只读改进建议。";
+  const criticalInput = fixtureCritical({ task, successCriteria: [{ id: "source-advice", condition: task, evidenceRequired: "Current package metadata and source-bound architecture advice" }] });
+  const governanceTaskFacts = localProtocolFixtureTaskFacts(task);
+  const report = await runWithFixtureHostThinking(runMetaTheoryGovernedExecution, {
+      task,
       runId: "round10-worker-attribution",
-      projectRoot: fixture.projectRoot,
-      stateDir: fixture.stateDir,
-      dbPath: fixture.dbPath,
+      projectRoot: fixture.repoRoot,
+      stateDir: path.join(fixture.root, "state"),
+      dbPath: path.join(fixture.root, "runs.sqlite"),
       projectCapabilityMutationMode: "read_only",
+    }, {
+      criticalInput, governanceTaskFacts,
+      workOrders: preparation => [fixtureReadWorkOrder(preparation, { id: "architecture-source-read", owner: "analysis", todayTask: task,
+        output: "Source-bound architecture advice", criterionIds: ["source-advice"], taskFacts: governanceTaskFacts })],
     });
     assert.equal(report.preDecisionOptionFrame.planChallengeState.active, false);
     assert.equal(report.coreLoop.executionResult.actualWorkerExecution, false);
@@ -139,7 +135,4 @@ test("reviewer PoC: an unexecuted worker plan is attributed to host handoff, not
       ),
       true,
     );
-  } finally {
-    rmSync(fixture.root, { recursive: true, force: true });
-  }
 });

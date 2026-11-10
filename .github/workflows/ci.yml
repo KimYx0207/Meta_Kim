@@ -143,7 +143,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: KimYx0207/Kim_Service
-          ref: 34ff5ef2361214cdd36cddbdcb67c5dece64ad04
+          ref: 2f93f0ab23ee452918fe9cd0f1ff8d985dca398b
           path: Kim_Service
           persist-credentials: false
       - uses: actions/setup-node@v7
@@ -157,21 +157,57 @@ jobs:
         run: npm install --ignore-scripts --no-package-lock --no-audit --no-fund
       # Fixed synthetic requests and real stdlib Python/MCP. No models, provider
       # credentials, supplier contact or purchasing are involved.
-      - name: Test original request, existing route, real tool and delivery
+      # One isolated test-runner invocation reports both suites even if a test
+      # in the other suite fails. Every original file remains required.
+      - name: Test real calculations and complete professional handoff
         working-directory: Meta_Kim
         env:
           META_KIM_TEST_KIM_SERVICE_SOURCE: ${{ github.workspace }}/Kim_Service
-        run: node --test tests/governance/dependency-calculation.test.mjs tests/governance/dependency-calculation-handoff.test.mjs tests/governance/store-calculation-integration.test.mjs tests/governance/dependency-delivery-envelope.test.mjs
-      - name: Test complete professional knowledge and method handoff
+        run: node --test tests/governance/dependency-calculation-process.test.mjs tests/governance/dependency-calculation.test.mjs tests/governance/dependency-calculation-handoff.test.mjs tests/governance/store-calculation-integration.test.mjs tests/governance/dependency-delivery-envelope.test.mjs tests/governance/dependency-method-knowledge.test.mjs tests/governance/dependency-method-handoff.test.mjs
+
+  dsh-native:
+    name: Official DSH loading and MCP (no model)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: Meta_Kim
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/checkout@v7
+        with:
+          repository: KimYx0207/Kim_Service
+          ref: 2f93f0ab23ee452918fe9cd0f1ff8d985dca398b
+          path: Kim_Service
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Install reviewed host and existing dependencies without lifecycle scripts
         working-directory: Meta_Kim
-        env:
-          META_KIM_TEST_KIM_SERVICE_SOURCE: ${{ github.workspace }}/Kim_Service
-        run: node --test tests/governance/dependency-method-knowledge.test.mjs tests/governance/dependency-method-handoff.test.mjs
+        run: |
+          npm install --ignore-scripts --no-package-lock --no-audit --no-fund
+          npm install --ignore-scripts --no-audit --no-fund --prefix "$RUNNER_TEMP/dsh-host" @deepseek-ai/dsh@0.2.2-rc.1
+      - name: Build complete professional Skills from the reviewed source
+        working-directory: Kim_Service
+        run: node scripts/build-dsh-package.mjs --output "$RUNNER_TEMP/service-dsh"
+      # Only official config/Skill/MCP plugins are exercised; there is no model
+      # provider, agent loop, secret, business action or native acceptance claim.
+      - name: Verify packed lifecycle and official host loading
+        working-directory: Meta_Kim
+        run: node tests/setup/dsh-native-host-probe.mjs --dsh-root "$RUNNER_TEMP/dsh-host" --service-package "$RUNNER_TEMP/service-dsh" --report "$RUNNER_TEMP/dsh-native-report.json"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dsh-native-${{ github.sha }}
+          path: ${{ runner.temp }}/dsh-native-report.json
+          if-no-files-found: error
+          retention-days: 14
 
   package-candidate:
     name: Package candidate
     if: github.event_name != 'pull_request'
-    needs: [behavior-regression, setup-platform, planning-continuity, global-sync-policy, installer-regression, dependency-calculation]
+    needs: [behavior-regression, setup-platform, planning-continuity, global-sync-policy, installer-regression, dependency-calculation, dsh-native]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

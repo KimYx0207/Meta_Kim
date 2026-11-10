@@ -72,6 +72,28 @@ function packet(task, localGlobalAgents = [globalOwner]) {
   });
 }
 
+test("negative capability creation clauses produce no durable request while preserving separate affirmative requests", () => {
+  for (const task of [
+    "读取 package.json 并报告名称，同时显示 Agent、Skill、Command、MCP 的真实调用状态，不创建项目级能力。",
+    "只解释 agent 的职责，不创建 agent。",
+    "检查 skill 的现状，不再修改。",
+    "Read package.json and show Agent, Skill, Command, MCP status without creating project capabilities.",
+  ]) {
+    assert.deepEqual(durableCapabilityRequestsFromTask(task), [], task);
+    const result = packet(task);
+    assert.equal(result.decision, "use_global_directly", task);
+    assert.deepEqual(result.decisions, [], "A denial must not create a project capability candidate");
+  }
+  const separate = durableCapabilityRequestsFromTask("不创建 skill alpha；请创建 command beta，用于检查仓库状态。");
+  assert.equal(separate.length, 1);
+  assert.equal(separate[0].explicitCapabilityId, "beta");
+  assert.equal(separate[0].mutationAuthorized, true);
+  const scopedBoundary = durableCapabilityRequestsFromTask("请创建 skill project-auditor，用于审查发布内容，不修改用户文件。");
+  assert.equal(scopedBoundary.length, 1);
+  assert.equal(scopedBoundary[0].requestedAction, "create");
+  assert.equal(scopedBoundary[0].mutationAuthorized, true);
+});
+
 test("a fitting global capability with no iteration stays global and creates no project target", () => {
   const result = packet("全局 test-automator agent 已经够用，不需要迭代，直接复用");
   assert.equal(result.decision, "use_global_directly");

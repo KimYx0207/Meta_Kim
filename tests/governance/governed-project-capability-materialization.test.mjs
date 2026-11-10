@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import {
+  cpSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -16,6 +17,14 @@ import path from "node:path";
 import test from "node:test";
 import { copyProjectCapability } from "../../scripts/project-capability-copy.mjs";
 import { createGovernanceRuntimeFixture } from "../helpers/governance-runtime-fixture.mjs";
+import { fixtureCritical, fixtureInventoryProvider, fixtureReadWorkOrder, runFixtureHostCli } from "../helpers/host-reasoning-fixture.mjs";
+import { localProtocolFixtureTaskFacts } from "../helpers/task-design-facts.mjs";
+
+function childEnvironment(fixture) {
+  return { ...fixture.env, HOME: fixture.userHome, USERPROFILE: fixture.userHome,
+    CODEX_HOME: path.join(fixture.userHome, ".codex"), META_KIM_CODEX_HOME: path.join(fixture.userHome, ".codex"),
+    META_KIM_CALLER_CWD: fixture.projectDir, MCP_MEMORY_URL: "http://127.0.0.1:1", META_KIM_DISABLE_MEMORY_AUTOSTART: "1" };
+}
 
 function makeFixture(name, { projectMarker = true, freshGlobalInventory = true, reuseSourceRuntimeHome = false } = {}) {
   const sourceRuntime = createGovernanceRuntimeFixture(null);
@@ -32,51 +41,59 @@ function makeFixture(name, { projectMarker = true, freshGlobalInventory = true, 
   mkdirSync(userHome, { recursive: true });
   mkdirSync(stateDir, { recursive: true });
   mkdirSync(artifactDir, { recursive: true });
+  // These are actual disposable discovery inputs, not invented selected-provider
+  // records. Keep HOME isolated while retaining bounded role/creator fixtures.
+  if (!reuseSourceRuntimeHome) cpSync(path.join(sourceRuntime.home, ".codex"), path.join(userHome, ".codex"), { recursive: true });
+  const fixture = { root, projectDir, userHome, stateDir, artifactDir, sourceRoot: sourceRuntime.repoRoot, env: sourceRuntime.env };
   if (freshGlobalInventory) {
-    const globalInventoryPath = path.join(
-      userHome,
-      ".meta-kim",
-      "state",
-      "default",
-      "capability-index",
-      "global-capabilities.json",
-    );
-    mkdirSync(path.dirname(globalInventoryPath), { recursive: true });
-    writeFileSync(globalInventoryPath, `${JSON.stringify({
-      generatedAt: new Date().toISOString(),
-      registryName: "global-capabilities",
-      scope: "local-global-inventory",
-      profile: "default",
-      canonicalProjection: "config/capability-index/meta-kim-capabilities.json",
-      repoCanonicalIndex: "config/capability-index/meta-kim-capabilities.json",
-      localInventoryPath: ".meta-kim/state/default/capability-index/global-capabilities.json",
-      summary: {
-        totalAgents: 0,
-        totalSkills: 0,
-        totalHooks: 0,
-        totalMcpServers: 0,
-        totalMcpTools: 0,
-        totalPlugins: 0,
-        totalCommands: 0,
-        totalRules: 0,
-        totalPrompts: 0,
-      },
-      byPlatform: {},
-      byCapabilityType: {
-        agents: {},
-        skills: {},
-        hooks: {},
-        mcpServers: {},
-        mcpTools: {},
-        plugins: {},
-        commands: {},
-        rules: {},
-        prompts: {},
-      },
-    }, null, 2)}\n`, "utf8");
+    const discovery = sourceRuntime.run(["scripts/discover-global-capabilities.mjs", "--runtime-inventory-only"], { env: childEnvironment(fixture) });
+    assert.equal(discovery.status, 0, discovery.stderr || discovery.stdout);
   }
   if (projectMarker) writeFileSync(path.join(projectDir, "package.json"), "{}\n", "utf8");
-  return { root, projectDir, userHome, stateDir, artifactDir, sourceRoot: sourceRuntime.repoRoot, env: sourceRuntime.env };
+  // This readable fixture input is deliberately not a project-root marker.
+  writeFileSync(path.join(projectDir, "capability-fixture-input.md"), `# ${name}\nReview the requested capability, source binding and ownership boundaries. Only the separate reviewed materialization receiver may write capabilities. No native worker invocation is established.\n`);
+  return fixture;
+}
+
+// The test host supplies a bounded source-review work order after real Fetch.
+// Materialization remains a separate effect authorized by the original task
+// and checked by the production receiver; this input grants no worker execution.
+function materializationHostInputs(task) {
+  const criticalInput = fixtureCritical({ task, successCriteria: [{ id: "capability-materialization-boundary",
+    condition: "Apply only the explicitly requested, source-bound reviewed capability, or preserve the exact refusal and existing user files.",
+    evidenceRequired: "Project customization decisions, copied bytes and ownership manifest, with native worker execution still unverified." }] });
+  criticalInput.evidenceRefs = ["capability-fixture-input.md"];
+  const governanceTaskFacts = localProtocolFixtureTaskFacts(task, { change: { behaviorPreservingInternalOnly: false } });
+  return { criticalInput, governanceTaskFacts, workOrders: preparation => {
+    const projectCreators = preparation.fetchPacket.capabilityDiscovery.providers.filter(provider =>
+      provider.id === "meta-skill-creator" && provider.source === "project_runtime_skill_inventory" &&
+      provider.routeEligible !== false && provider.executionEligible !== false && !provider.cacheEvidenceOnly);
+    assert.ok(projectCreators.length <= 1, "The fixture must not invent a preference between ambiguous project creators");
+    const skillCreation = projectCreators[0] ?? fixtureInventoryProvider(preparation, "meta-skill-creator", "providers");
+    assert.match(skillCreation.inventoryRef, /^sha256:[a-f0-9]{64}$/u);
+    const packet = fixtureReadWorkOrder(preparation, { id: "capability-source-review", todayTask: task,
+      output: "Source and authorization findings for the requested local capability", criterionIds: ["capability-materialization-boundary"],
+      taskFacts: governanceTaskFacts, selectedProviders: { skill: skillCreation, skillCreation,
+        agentCreation: fixtureInventoryProvider(preparation, "create-agent", "providers") } });
+    return [{ ...packet, capabilityNeed: ["Review local capability sources and ownership"],
+      evidenceRefs: ["capability-fixture-input.md"], scopeFiles: ["capability-fixture-input.md"], shardScope: ["capability-fixture-input.md"],
+      selectionReason: "The test host selects discovered source-review and creator methods; project-local creator evidence takes precedence when this fixture provides it.",
+      referenceDirection: "Read capability-fixture-input.md and the supplied artifact bindings. Do not infer native invocation or authorize a different write.",
+      verifySteps: [{ id: "capability-source-review-check", step: "Compare the requested capability with the reviewed artifact and current source binding", verify: "The receiver records copied bytes or its precise refusal without changing an unmanaged user file" }] }];
+  } };
+}
+
+function fullGovernedSource(fixture, options) {
+  const moduleUrl = relative => pathToFileURL(path.join(fixture.sourceRoot, relative)).href;
+  return `
+    import assert from "node:assert/strict";
+    const { runMetaTheoryGovernedExecution } = await import(${JSON.stringify(moduleUrl("scripts/run-meta-theory-governed-execution.mjs"))});
+    const { fixtureCritical, fixtureInventoryProvider, fixtureReadWorkOrder, runWithFixtureHostThinking } = await import(${JSON.stringify(moduleUrl("tests/helpers/host-reasoning-fixture.mjs"))});
+    const { localProtocolFixtureTaskFacts } = await import(${JSON.stringify(moduleUrl("tests/helpers/task-design-facts.mjs"))});
+    const hostInputs = (${materializationHostInputs.toString()});
+    const options = ${JSON.stringify(options)};
+    await runWithFixtureHostThinking(runMetaTheoryGovernedExecution, options, hostInputs(options.task));
+  `;
 }
 
 function preparedCreationArtifact(fixture, { id, type }) {
@@ -118,9 +135,9 @@ function runGoverned(fixture, { task, runId, extraArgs = [], creationArtifacts =
     const packet = executeProjectCustomizationPacket({ packet: plan, runtime: options.runtime, runId: options.runId, projectRoot: options.projectRoot });
     fs.writeFileSync(${JSON.stringify(path.join(fixture.artifactDir, `${runId}.json`))}, JSON.stringify({ projectCustomizationPacket: packet }));
   `;
-  const result = spawnSync(
-    process.execPath,
-    receiverProvider ? ["--input-type=module", "--eval", receiverSource] : creationArtifacts ? ["--input-type=module", "--eval", `const { runMetaTheoryGovernedExecution } = await import(${JSON.stringify(pathToFileURL(runner).href)}); await runMetaTheoryGovernedExecution(${JSON.stringify(apiOptions)});`] : [
+  const processOptions = { cwd: fixture.projectDir, encoding: "utf8", timeout: 180_000,
+    maxBuffer: 32 * 1024 * 1024, env: childEnvironment(fixture) };
+  const cliArgs = [
       runner,
       "--task",
       task,
@@ -137,24 +154,10 @@ function runGoverned(fixture, { task, runId, extraArgs = [], creationArtifacts =
       "--output-language",
       "zh-CN",
       ...extraArgs,
-    ],
-    {
-      cwd: fixture.projectDir,
-      encoding: "utf8",
-      timeout: 180_000,
-      maxBuffer: 32 * 1024 * 1024,
-      env: {
-        ...fixture.env,
-        HOME: fixture.userHome,
-        USERPROFILE: fixture.userHome,
-        CODEX_HOME: path.join(fixture.userHome, ".codex"),
-        META_KIM_CODEX_HOME: path.join(fixture.userHome, ".codex"),
-        META_KIM_CALLER_CWD: fixture.projectDir,
-        MCP_MEMORY_URL: "http://127.0.0.1:1",
-        META_KIM_DISABLE_MEMORY_AUTOSTART: "1",
-      },
-    },
-  );
+    ];
+  const result = receiverProvider || creationArtifacts
+    ? spawnSync(process.execPath, ["--input-type=module", "--eval", receiverProvider ? receiverSource : fullGovernedSource(fixture, apiOptions)], processOptions)
+    : runFixtureHostCli({ ...fixture, run: args => spawnSync(process.execPath, args, processOptions) }, cliArgs, materializationHostInputs(task));
   assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
   return JSON.parse(readFileSync(path.join(fixture.artifactDir, `${runId}.json`), "utf8"));
 }
@@ -179,6 +182,8 @@ test("governed run materializes confirmed Agent, Skill, and Command with project
         "请在当前项目新建 command governed-release-report，用于输出发布报告并拒绝执行未授权命令。",
       ].join("\n"),
     });
+    assert.equal(artifact.projectCustomizationPacket.status, "completed", JSON.stringify({ execution: artifact.projectCustomizationPacket.execution,
+      creators: artifact.projectCustomizationPacket.decisions.map(decision => decision.creatorProvider) }));
 
     const expected = [
       path.join(fixture.projectDir, ".codex", "agents", "governed-release-auditor.toml"),
@@ -282,10 +287,9 @@ test("creator references follow their discovered source root while artifact refe
     // The local mock must remain responsive while the full API child runs.
     // Keep the established 180s API guard; do not block its server with spawnSync.
     await new Promise((resolve, reject) => {
-      const runner = pathToFileURL(path.join(fixture.sourceRoot, "scripts/run-meta-theory-governed-execution.mjs")).href;
-      const child = spawn(process.execPath, ["--input-type=module", "--eval", `const { runMetaTheoryGovernedExecution } = await import(${JSON.stringify(runner)}); await runMetaTheoryGovernedExecution(${JSON.stringify(options)});`], {
+      const child = spawn(process.execPath, ["--input-type=module", "--eval", fullGovernedSource(fixture, options)], {
         cwd: fixture.projectDir,
-        env: { ...fixture.env, HOME: fixture.userHome, USERPROFILE: fixture.userHome, CODEX_HOME: path.join(fixture.userHome, ".codex"), META_KIM_CODEX_HOME: path.join(fixture.userHome, ".codex"), META_KIM_CALLER_CWD: fixture.projectDir, MCP_MEMORY_URL: `http://127.0.0.1:${server.address().port}`, META_KIM_DISABLE_MEMORY_AUTOSTART: "1" },
+        env: { ...childEnvironment(fixture), MCP_MEMORY_URL: `http://127.0.0.1:${server.address().port}` },
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
       });
@@ -300,7 +304,7 @@ test("creator references follow their discovered source root while artifact refe
     const full = JSON.parse(readFileSync(path.join(fixture.artifactDir, "creator-origin-full-api.json"), "utf8")).projectCustomizationPacket;
     t.diagnostic(JSON.stringify({ tier: "isolated_full_governed_api", creatorProvider: full.decisions[0].creatorProvider, status: full.status, results: full.execution.results }));
     assert.equal(full.decisions[0].creatorProvider.source, "project_runtime_skill_inventory");
-    assert.equal(full.decisions[0].creatorProvider.sourceRoot, publishedBusinessRoot);
+    assert.equal(full.decisions[0].creatorProvider.sourceRoot, fixture.projectDir, "the internal Fetch handoff retains the actual project source root; published receiver roots are checked separately below");
     assert.equal(full.decisions[0].creatorProvider.contentDigest, methodDigest, "the real selector selected B's method, not A's same-name shadow");
     assert.equal(full.status, "completed");
     for (const rel of ["SKILL.md", "references/checklist.md"]) {
@@ -369,7 +373,9 @@ test("new capability creation requires reviewed creator output instead of genera
     assert.equal(artifact.status, "partial");
     assert.equal(artifact.projectCustomizationPacket.status, "partial");
     assert.equal(artifact.projectCustomizationPacket.execution.appliedCount, 0);
-    assert.equal(artifact.projectCustomizationPacket.execution.failedCount, 3);
+    assert.equal(artifact.projectCustomizationPacket.execution.failedCount, 3, JSON.stringify(artifact.projectCustomizationPacket));
+    assert.ok(artifact.projectCustomizationPacket.decisions.every(decision => decision.globalCandidateChecked.matched === false),
+      "reviewed-release-auditor must not be mistaken for the existing review Agent");
     assert.ok(artifact.projectCustomizationPacket.execution.results.every((result) => result.reason === "creator_output_required" && result.factoryNextStep));
     assert.equal(artifact.coreLoop.publicReadyDecision.publicReady, false);
     assert.ok(artifact.coreLoop.publicReadyDecision.blockedBy.includes("projectCustomizationPacket.status=partial."));
@@ -590,9 +596,10 @@ test("read-only governed run and unresolved project root do not claim materializ
   }
 });
 
-test("missing global inventory blocks project capability creation before materialization", () => {
+test("missing cached inventory cannot replace reviewed creator output for current source-bound capabilities", () => {
   const fixture = makeFixture("missing-inventory", { freshGlobalInventory: false });
   try {
+    assert.equal(existsSync(path.join(fixture.userHome, ".meta-kim/state/default/capability-index/global-capabilities.json")), false);
     const artifact = runGoverned(fixture, {
       runId: "governed-materialize-missing-inventory",
       task: "请在当前项目新建 command governed-inventory-gated-report，用于输出报告并拒绝执行未授权命令。",
@@ -601,7 +608,7 @@ test("missing global inventory blocks project capability creation before materia
     assert.equal(artifact.projectCustomizationPacket.execution.appliedCount, 0);
     assert.equal(
       artifact.projectCustomizationPacket.execution.results[0].reason,
-      "governed_route_not_execution_ready",
+      "creator_output_required",
     );
     assert.equal(
       existsSync(path.join(fixture.projectDir, ".codex", "commands", "governed-inventory-gated-report.md")),

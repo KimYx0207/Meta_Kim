@@ -1,81 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { existsSync } from "node:fs";
 import path from "node:path";
-
-import { runMetaTheoryGovernedExecution } from "../../scripts/run-meta-theory-governed-execution.mjs";
-
-const FIXED_NOW = "2026-01-01T00:00:00.000Z";
-
-function taskFacts(overrides = {}) {
-  const facts = {
-    schemaVersion: "governance-task-facts-v1",
-    intent: {
-      executable: true,
-      userRequestedReview: false,
-      durableLearningRequested: false,
-    },
-    clarity: { blockingUnknowns: [] },
-    evidence: {
-      currentExternalFactsRequired: false,
-      localEvidenceSufficient: true,
-      references: ["evidence:repo-targeted-source-read"],
-    },
-    change: {
-      multiStep: false,
-      crossModule: false,
-      dataMigration: false,
-      externalSideEffect: false,
-      complexArchitectureChange: false,
-      multipleCapabilities: false,
-      publicInterfaceChange: false,
-      complexBusinessLogic: false,
-      dataStructureChange: false,
-      behaviorPreservingInternalOnly: true,
-    },
-    decision: {
-      reasonableOptionCount: 1,
-      materialDimensions: [],
-      internalImplementationOnly: true,
-    },
-    security: {
-      auth: false,
-      permission: false,
-      credential: false,
-      secret: false,
-      payment: false,
-      production: false,
-      databaseDestructive: false,
-      systemConfiguration: false,
-      highPrivilegeDependency: false,
-      highRiskMcp: false,
-    },
-    verification: { deterministicChecks: ["check:targeted-test"] },
-  };
-
-  return {
-    ...facts,
-    ...overrides,
-    intent: { ...facts.intent, ...overrides.intent },
-    clarity: { ...facts.clarity, ...overrides.clarity },
-    evidence: { ...facts.evidence, ...overrides.evidence },
-    change: { ...facts.change, ...overrides.change },
-    decision: { ...facts.decision, ...overrides.decision },
-    security: { ...facts.security, ...overrides.security },
-    verification: { ...facts.verification, ...overrides.verification },
-  };
-}
-
-function legacyProjection(artifact) {
-  const selectedRoute = artifact.sourceArtifacts.orchestrationReport.selectedExecutionRoute;
-  return {
-    routeExecutionGate: selectedRoute.routeExecutionGate,
-    entryChoiceDecision: selectedRoute.entryChoiceDecision,
-    preDecisionOptionFrame: artifact.preDecisionOptionFrame,
-    status: artifact.status,
-  };
-}
+import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
+import { fixtureCritical, fixtureReadWorkOrder, refreshFixtureSourcePins, runWithFixtureHostThinking } from "../helpers/host-reasoning-fixture.mjs";
+import { localProtocolFixtureTaskFacts } from "../helpers/task-design-facts.mjs";
+import { buildGovernanceRequirementsShadow } from "../../scripts/governed-execution/governance-requirements-shadow-adapter.mjs";
 
 function namedPropertyPaths(value, property, currentPath = "") {
   if (value == null || typeof value !== "object") return [];
@@ -88,179 +18,106 @@ function namedPropertyPaths(value, property, currentPath = "") {
   });
 }
 
-async function withFrozenClock(work) {
-  const RealDate = globalThis.Date;
-  class FrozenDate extends RealDate {
-    constructor(...args) {
-      super(...(args.length > 0 ? args : [FIXED_NOW]));
-    }
-
-    static now() {
-      return new RealDate(FIXED_NOW).getTime();
-    }
-  }
-
-  globalThis.Date = FrozenDate;
-  try {
-    return await work();
-  } finally {
-    globalThis.Date = RealDate;
-  }
-}
-
-test("governance requirements derive CLI facts, compare legacy, and cut over only approved Gates", async () => {
-  const tempRoot = await mkdtemp(path.join(tmpdir(), "meta-kim-governance-shadow-integration-"));
-  const runId = "governance-requirements-shadow-integration";
-  const options = (name, governanceTaskFacts) => ({
-    task: "Refactor this internal module and run tests",
-    governanceTaskFacts,
-    runId,
-    stateDir: path.join(tempRoot, name, "state"),
-    artifactDir: path.join(tempRoot, name, "artifacts"),
-    dbPath: path.join(tempRoot, name, "runs.sqlite"),
-    runtime: "codex",
-    osTarget: "windows",
-    projectCapabilityMutationMode: "read_only",
+test("current task-bound facts drive approved Gates while legacy and invalid inputs cannot bypass host preparation", async (t) => {
+  const fixture = createGovernanceRuntimeFixtureScope(t);
+  refreshFixtureSourcePins(fixture);
+  const { runMetaTheoryGovernedExecution } = await fixture.import("scripts/run-meta-theory-governed-execution.mjs");
+  const task = "Inspect package.json and report its declared package name.";
+  const facts = localProtocolFixtureTaskFacts(task);
+  const criticalInput = fixtureCritical({ task, successCriteria: [{ id: "package-name", condition: "The package name matches the current package.json", evidenceRequired: "Current source read and exact package name" }] });
+  const options = (name) => ({
+    task, criticalInput, runId: name, projectRoot: fixture.repoRoot,
+    stateDir: path.join(fixture.root, name), dbPath: path.join(fixture.root, name + ".sqlite"),
+    runtime: "codex", osTarget: "windows", projectCapabilityMutationMode: "read_only",
   });
+  const legacyFacts = structuredClone(facts);
+  legacyFacts.schemaVersion = "governance-task-facts-v1";
+  delete legacyFacts.taskHash;
+  delete legacyFacts.design;
+  const invalidLegacyFacts = { ...legacyFacts, evidence: { ...legacyFacts.evidence,
+    references: ["sk-live-shadow-integration-raw-secret-must-not-persist"] } };
+  const malformedLegacyFacts = { schemaVersion: "governance-task-facts-v1",
+    rawStructuralMarker: "governance-shadow-structural-raw-must-not-persist" };
+  for (const [index, input] of [null, legacyFacts, invalidLegacyFacts, malformedLegacyFacts].entries()) {
+    const preparation = await runMetaTheoryGovernedExecution({ ...options("missing-current-facts-" + index), governanceTaskFacts: input });
+    assert.equal(preparation.artifactKind, "host_preparation");
+    assert.equal(preparation.hostInvocationRequestPacket.nextAction.action, "assess_current_task_design_facts");
+    assert.equal(preparation.taskDesignRoutePacket.route, "assess_unknowns");
+    assert.equal(preparation.governanceTaskFacts, null);
+    assert.deepEqual(preparation.workerTaskPackets, []);
+    assert.equal(preparation.coreLoop.stageDagPacket, undefined);
+    assert.equal(preparation.publicReadyDecision.publicReady, false);
+    assert.doesNotMatch(JSON.stringify(preparation), /sk-live-shadow-integration-raw-secret-must-not-persist|governance-shadow-structural-raw-must-not-persist/u);
+  }
 
-  try {
-    const { baseline, valid, malformed, structurallyMalformed } = await withFrozenClock(async () => {
-      const baseline = await runMetaTheoryGovernedExecution(options("baseline", null));
-      const valid = await runMetaTheoryGovernedExecution(options("valid", taskFacts()));
-      const malformed = await runMetaTheoryGovernedExecution(options("malformed", taskFacts({
-        evidence: {
-          references: ["sk-live-shadow-integration-raw-secret-must-not-persist"],
-        },
-      })));
-      const structurallyMalformed = await runMetaTheoryGovernedExecution(options("structurally-malformed", {
-        schemaVersion: "governance-task-facts-v1",
-        rawStructuralMarker: "governance-shadow-structural-raw-must-not-persist",
-      }));
-      return { baseline, valid, malformed, structurallyMalformed };
+  // The shadow sanitizer still rejects legacy payloads without serializing raw
+  // values; those payloads no longer reach a completed runner artifact because
+  // current task-bound facts are required before Thinking can dispatch.
+  for (const invalid of [invalidLegacyFacts, malformedLegacyFacts]) {
+    const shadow = buildGovernanceRequirementsShadow({ governanceTaskFacts: invalid });
+    assert.equal(shadow.evaluationStatus, "not_evaluated_invalid_normalized_facts");
+    assert.equal(shadow.evaluation, null);
+    assert.deepEqual(shadow.facts, { schemaVersion: null, fingerprint: null });
+    assert.doesNotMatch(JSON.stringify(shadow), /sk-live-shadow-integration-raw-secret-must-not-persist|governance-shadow-structural-raw-must-not-persist/u);
+    for (const property of ["error", "errorMessage", "stack"]) assert.equal(Object.hasOwn(shadow, property), false);
+  }
+  for (const [index, invalid] of [
+    { ...facts, evidence: invalidLegacyFacts.evidence },
+    { schemaVersion: "governance-task-facts-v2", rawStructuralMarker: "governance-shadow-structural-raw-must-not-persist" },
+    { ...facts, taskHash: "0".repeat(64) },
+  ].entries()) {
+    const invalidOptions = options("invalid-current-facts-" + index);
+    await assert.rejects(runMetaTheoryGovernedExecution({ ...invalidOptions, governanceTaskFacts: invalid }), (error) => {
+      assert.equal(error instanceof TypeError, true);
+      assert.doesNotMatch(error.message, /sk-live-shadow-integration-raw-secret-must-not-persist|governance-shadow-structural-raw-must-not-persist/u);
+      return true;
     });
+    assert.equal(existsSync(path.join(invalidOptions.stateDir, invalidOptions.runId + ".json")), false);
+  }
 
-    const absentShadow = baseline.sourceArtifacts.governanceRequirementsShadow;
-    assert.equal(absentShadow.evaluationStatus, "evaluated");
-    assert.equal(absentShadow.facts.schemaVersion, "governance-task-facts-v1");
-    assert.match(absentShadow.facts.fingerprint, /^sha256:[a-f0-9]{64}$/u);
-    assert.equal(absentShadow.evaluation.parityDiagnostics.mode, "compared");
-    assert.equal(absentShadow.evaluation.parityDiagnostics.legacySource, "legacy:governed-runner-v3");
+  const run = (name, governanceTaskFacts) => runWithFixtureHostThinking(runMetaTheoryGovernedExecution, options(name), {
+    criticalInput, governanceTaskFacts,
+    workOrders: preparation => [fixtureReadWorkOrder(preparation, { id: "package-name-read", todayTask: task,
+      output: "The source-bound package name", criterionIds: ["package-name"], taskFacts: governanceTaskFacts })],
+  });
+  const baseline = await run("current-facts", facts);
+  const reviewed = await run("current-review-facts", { ...facts, intent: { ...facts.intent, userRequestedReview: true } });
+  const cutoverPlan = baseline.governanceRequirementPlanPacket;
+  assert.equal(cutoverPlan.schemaVersion, "governance-requirement-cutover-v1");
+  assert.equal(cutoverPlan.mode, "gradual_cutover");
+  assert.equal(Object.keys(cutoverPlan.gates).length, 10);
+  for (const key of ["research", "planning", "review", "metaReview", "securityReview", "verification", "evolution"]) {
+    assert.equal(cutoverPlan.gates[key].effectiveSource, "domain", key);
+  }
+  for (const key of ["clarification", "humanDecision", "permission"]) {
+    assert.equal(cutoverPlan.gates[key].effectiveSource, "legacy", key);
+  }
+  assert.equal(cutoverPlan.gates.review.effectiveRequired, false);
+  assert.equal(reviewed.governanceRequirementPlanPacket.gates.review.effectiveRequired, true,
+    "Current task-bound review facts must affect the approved review gate");
 
-    const validShadow = valid.sourceArtifacts.governanceRequirementsShadow;
-    assert.equal(validShadow.evaluationStatus, "evaluated");
-    assert.equal(validShadow.evaluation.schemaVersion, "governance-requirements-v1");
-    assert.equal(validShadow.evaluation.governanceRequirements.verification.required, true);
-    assert.equal(validShadow.evaluation.parityDiagnostics.mode, "compared");
-    assert.equal(validShadow.evaluation.parityDiagnostics.legacySource, "legacy:governed-runner-v3");
-
-    const cutoverPlan = baseline.governanceRequirementPlanPacket;
-    assert.equal(cutoverPlan.schemaVersion, "governance-requirement-cutover-v1");
-    assert.equal(cutoverPlan.mode, "gradual_cutover");
-    assert.equal(Object.keys(cutoverPlan.gates).length, 10);
-    for (const key of ["research", "planning", "review", "metaReview", "securityReview", "verification", "evolution"]) {
-      assert.equal(cutoverPlan.gates[key].effectiveSource, "domain", key);
+  for (const artifact of [baseline, reviewed]) {
+    const shadow = artifact.sourceArtifacts.governanceRequirementsShadow;
+    const plan = artifact.governanceRequirementPlanPacket;
+    assert.equal(shadow.evaluationStatus, "evaluated");
+    assert.equal(shadow.facts.schemaVersion, "governance-task-facts-v2");
+    assert.match(shadow.facts.fingerprint, /^sha256:[a-f0-9]{64}$/u);
+    assert.equal(shadow.evaluation.schemaVersion, "governance-requirements-v1");
+    assert.equal(shadow.evaluation.governanceRequirements.verification.required, true);
+    assert.equal(shadow.evaluation.parityDiagnostics.mode, "compared");
+    assert.equal(shadow.evaluation.parityDiagnostics.legacySource, "legacy:governed-runner-v3");
+    assert.deepEqual(plan.authority, { execution: false, action: false, permission: false, host: false, durableMutation: false });
+    assert.deepEqual(shadow.authority, { gatesExecution: false, changesArtifactStatus: false, changesCoreLoop: false,
+      changesRouteGate: false, changesChoiceDecision: false, changesPreDecision: false, triggersNativeChoice: false, writesState: false });
+    assert.deepEqual(namedPropertyPaths(artifact, "governanceRequirementsShadow"), ["sourceArtifacts.governanceRequirementsShadow"]);
+    assert.deepEqual(namedPropertyPaths(artifact, "governanceRequirementPlanPacket"), ["governanceRequirementPlanPacket"]);
+    for (const [phase, gate] of [["planning", "planning"], ["review", "review"], ["meta_review", "metaReview"], ["verify", "verification"], ["evolve", "evolution"]]) {
+      assert.equal(artifact.businessPhasePlanPacket.phases.find(item => item.phase === phase).status === "skipped",
+        plan.gates[gate].effectiveRequired === false, `${phase} follows the effective ${gate} Gate`);
     }
-    for (const key of ["clarification", "humanDecision", "permission"]) {
-      assert.equal(cutoverPlan.gates[key].effectiveSource, "legacy", key);
-    }
-    assert.deepEqual(cutoverPlan.authority, {
-      execution: false,
-      action: false,
-      permission: false,
-      host: false,
-      durableMutation: false,
-    });
-    assert.deepEqual(
-      valid.governanceRequirementPlanPacket,
-      cutoverPlan,
-      "valid caller-supplied facts remain diagnostic and cannot replace internally derived effective facts",
-    );
-    for (const [phase, gate] of [
-      ["planning", "planning"],
-      ["review", "review"],
-      ["meta_review", "metaReview"],
-      ["verify", "verification"],
-      ["evolve", "evolution"],
-    ]) {
-      const phaseStatus = baseline.businessPhasePlanPacket.phases.find((item) => item.phase === phase).status;
-      assert.equal(
-        phaseStatus === "skipped",
-        cutoverPlan.gates[gate].effectiveRequired === false,
-        `${phase} must follow the effective ${gate} Gate`,
-      );
-    }
-    assert.equal(
-      baseline.contentEvidencePacket.researchRequired,
-      cutoverPlan.gates.research.effectiveRequired,
-      "workflow research selection must follow the effective research Gate",
-    );
-
-    const malformedShadow = malformed.sourceArtifacts.governanceRequirementsShadow;
-    assert.equal(malformedShadow.evaluationStatus, "not_evaluated_invalid_normalized_facts");
-    assert.equal(malformedShadow.evaluation, null);
-    assert.deepEqual(malformedShadow.facts, { schemaVersion: null, fingerprint: null });
-    assert(Object.values(malformed.governanceRequirementPlanPacket.gates).every(
-      (gate) => gate.effectiveSource === "legacy",
-    ));
-    const serializedMalformed = JSON.stringify(malformed);
-    assert.doesNotMatch(serializedMalformed, /sk-live-shadow-integration-raw-secret-must-not-persist/u);
-    for (const property of ["error", "errorMessage", "stack"]) {
-      assert.equal(Object.hasOwn(malformedShadow, property), false, `shadow must not serialize ${property}`);
-    }
-
-    const structurallyMalformedShadow = structurallyMalformed.sourceArtifacts.governanceRequirementsShadow;
-    assert.equal(structurallyMalformedShadow.evaluationStatus, "not_evaluated_invalid_normalized_facts");
-    assert.equal(structurallyMalformedShadow.evaluation, null);
-    assert.deepEqual(structurallyMalformedShadow.facts, { schemaVersion: null, fingerprint: null });
-    assert(Object.values(structurallyMalformed.governanceRequirementPlanPacket.gates).every(
-      (gate) => gate.effectiveSource === "legacy",
-    ));
-    assert.doesNotMatch(
-      JSON.stringify(structurallyMalformed),
-      /governance-shadow-structural-raw-must-not-persist/u,
-    );
-    for (const property of ["error", "errorMessage", "stack"]) {
-      assert.equal(
-        Object.hasOwn(structurallyMalformedShadow, property),
-        false,
-        `structural rejection must not serialize ${property}`,
-      );
-    }
-
-    for (const artifact of [baseline, valid, malformed, structurallyMalformed]) {
-      assert.deepEqual(
-        namedPropertyPaths(artifact, "governanceRequirementsShadow"),
-        ["sourceArtifacts.governanceRequirementsShadow"],
-        "the diagnostic shadow may exist only under sourceArtifacts",
-      );
-      assert.deepEqual(
-        namedPropertyPaths(artifact, "governanceRequirementPlanPacket"),
-        ["governanceRequirementPlanPacket"],
-        "the effective gradual-cutover plan has one canonical artifact location",
-      );
-      assert.deepEqual(artifact.sourceArtifacts.governanceRequirementsShadow.authority, {
-        gatesExecution: false,
-        changesArtifactStatus: false,
-        changesCoreLoop: false,
-        changesRouteGate: false,
-        changesChoiceDecision: false,
-        changesPreDecision: false,
-        triggersNativeChoice: false,
-        writesState: false,
-      });
-    }
-
-    const baselineLegacy = legacyProjection(baseline);
-    for (const artifact of [valid, malformed, structurallyMalformed]) {
-      const candidateLegacy = legacyProjection(artifact);
-      assert.equal(
-        JSON.stringify(candidateLegacy),
-        JSON.stringify(baselineLegacy),
-        "domain input must not byte-change legacy route, choice, pre-decision, or artifact status authority",
-      );
-      assert.deepEqual(candidateLegacy, baselineLegacy);
-    }
-  } finally {
-    await rm(tempRoot, { recursive: true, force: true });
+    assert.equal(artifact.contentEvidencePacket.researchRequired, plan.gates.research.effectiveRequired);
+    assert.equal(artifact.coreLoop.executionResult.actualWorkerExecution, false);
+    assert.equal(artifact.sourceArtifacts.orchestrationReport.selectedExecutionRoute.routeExecutionGate.canEnterExecution, false);
+    assert.equal(artifact.summaryPacket.publicReady, false);
   }
 });

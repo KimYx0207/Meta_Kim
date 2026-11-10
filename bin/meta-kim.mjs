@@ -48,6 +48,7 @@ ${status.usageHeading}:
   meta-kim release audit --tag <tag> [--verification-report <file>] [--package-file <tgz>] [--require-exact] [--verify-asset-download] [--json]
   meta-kim release close --issue <queue-id> --prd <repo-relative-file> [--profile default] [--json]
   meta-kim mcp serve
+  meta-kim dsh install|update|check|uninstall [--scope global|project] [--service-package <dir>]  Native DeepSeek Harness profile, Skills and MCP
   meta-kim runtime accept --report <file> --source-kind <kind> --runtime <runtime> --capability <capability> [--mode interactive_host]  # reference-only import
   meta-kim runtime produce --source <source> --runtimes <list> --capabilities <list> [source options]
   meta-kim runtime status [--runtimes <list>] [--capabilities <list>] [--require-fresh]
@@ -64,7 +65,7 @@ ${status.optionsHeading}:
 `;
 }
 
-const commands = new Set(["install", "update", "check", "live", "status", "doctor", "release", "uninstall", "project", "mcp", "runtime", "capability"]);
+const commands = new Set(["install", "update", "check", "live", "status", "doctor", "release", "uninstall", "project", "mcp", "runtime", "capability", "dsh"]);
 
 function fail(message, copy = statusCopy()) {
   console.error(`meta-kim: ${message}`);
@@ -73,6 +74,12 @@ function fail(message, copy = statusCopy()) {
 }
 
 function validateSetupOptions(args) {
+  const targetsIndex = args.indexOf("--targets");
+  const targets = args.find((arg) => arg.startsWith("--targets="))?.slice("--targets=".length)
+    ?? (targetsIndex >= 0 ? args[targetsIndex + 1] : "");
+  if (targets?.split(",").some((target) => ["dsh", "deepseek-harness"].includes(target.trim()))) {
+    fail(`DeepSeek Harness uses its native profile integration. Run 'meta-kim dsh ${command} --help' for the matching install, update or check command.`);
+  }
   try {
     validateSetupCliArgs(args);
   } catch (error) {
@@ -224,6 +231,9 @@ const command = commands.has(first) ? first : "install";
 const commandArgs = command === "install" && first !== "install" ? rawArgs : rawArgs.slice(1);
 
 switch (command) {
+  case "dsh":
+    run("scripts/dsh-profile-package.mjs", commandArgs);
+    break;
   case "install":
     validateSetupOptions(commandArgs);
     run("setup.mjs", commandArgs);

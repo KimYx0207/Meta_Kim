@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { taskOutcomeDigest } from "../../src/domain/governance/task-outcome.mjs";
 import { intentDialogueDigest } from "../../scripts/governed-execution/intent-dialogue.mjs";
@@ -40,20 +41,51 @@ export async function runWithFixtureHostThinking(run, options, { criticalInput, 
   assert.equal(preparation.coreLoop.stageDagPacket, undefined);
   assert.match(preparation.fetchPacket.capabilityDiscovery?.inventoryDigest ?? "", /^[a-f0-9]{64}$/u,
     JSON.stringify(preparation.hostInvocationRequestPacket.nextAction));
+  const thinkingInput = fixtureThinkingInput(preparation, { criticalInput, workOrders });
+  return run({ ...options, criticalInput, governanceTaskFacts, thinkingInput, previousPlanChallengeRunId: preparation.runId });
+}
+
+/** Build only from an actual preparation and explicit call-site work orders. */
+export function fixtureThinkingInput(preparation, { criticalInput, workOrders }) {
+  assert.equal(typeof workOrders, "function");
   const packets = workOrders(preparation);
-  const thinkingInput = { taskHash: criticalInput.taskHash, intentDigest: criticalInput.intentDigest,
+  return { taskHash: criticalInput.taskHash, intentDigest: criticalInput.intentDigest,
     requirementsDigest: preparation.requirementsDiscoveryPacket?.discoveryDigest ?? null,
     evidenceRefs: ["package.json"], intentPacket: structuredClone(criticalInput), fetchPacket: preparation.fetchPacket,
     thinkingPacket: { designFrame: "Explicit test-host judgment for bounded source inspection; no native invocation or completed user outcome is claimed.",
       consideredLanes: packets.map(packet => ({ id: packet.roleInstanceId, reason: packet.selectionReason })),
       omittedLanesWithReason: [{ id: "external-delivery", reason: "This test checks local handoff and binding only; no external writes are requested." }], workerTaskPackets: packets } };
-  return run({ ...options, criticalInput, governanceTaskFacts, thinkingInput, previousPlanChallengeRunId: preparation.runId });
+}
+
+/** Exercise the same prepare/resume protocol through the actual public CLI.
+ * This helper never intercepts fixture.run or supplies missing data implicitly. */
+export function runFixtureHostCli(fixture, argv, { criticalInput, governanceTaskFacts, workOrders }, options = {}) {
+  const at = (flag) => argv.indexOf(flag);
+  assert.ok(at("--run-id") >= 0 && at("--task") >= 0, "Fixture calls declare their task and run identity");
+  const task = argv[at("--task") + 1];
+  const runId = argv[at("--run-id") + 1];
+  assert.equal(criticalInput.taskHash, taskOutcomeDigest(task));
+  assert.equal(governanceTaskFacts.taskHash, criticalInput.taskHash);
+  const directory = path.join(fixture.root, "host-inputs", runId);
+  mkdirSync(directory, { recursive: true });
+  const write = (name, value) => { const file = path.join(directory, name + ".json"); writeFileSync(file, JSON.stringify(value)); return file; };
+  const inputs = ["--critical-input", write("critical", criticalInput), "--governance-task-facts-input", write("facts", governanceTaskFacts)];
+  const prepareArgs = [...argv];
+  prepareArgs[at("--run-id") + 1] = runId + "-fetch";
+  const prepared = fixture.run([...prepareArgs.filter(arg => arg !== "--emit-conversation-notice"), ...inputs, "--no-emit-conversation-notice"], options);
+  assert.equal(prepared.status, 0, prepared.stderr || prepared.stdout);
+  const summary = JSON.parse(prepared.stdout);
+  assert.equal(summary.status, "needs_thinking", JSON.stringify(summary.nextAction));
+  const preparation = JSON.parse(readFileSync(summary.input, "utf8"));
+  assert.deepEqual(preparation.workerTaskPackets, []);
+  const thinking = fixtureThinkingInput(preparation, { criticalInput, workOrders });
+  return fixture.run([...argv, ...inputs, "--thinking-input", write("thinking", thinking), "--previous-plan-challenge-run", preparation.runId], options);
 }
 
 /** Fixed read-only fixture packet. Call sites supply the specific outcome,
  * criterion IDs and task identity; this is not a general task planner. */
 export function fixtureReadWorkOrder(preparation, { id, todayTask, output, criterionIds, owner = "backend", selectedProviders = {}, taskFacts }) {
-  return { roleInstanceId: id, roleDisplayName: "backend", todayTask, output,
+  return { roleInstanceId: id, roleDisplayName: owner, todayTask, output,
     capabilityNeed: ["read package metadata"], evidenceRefs: ["package.json"], scopeFiles: ["package.json"], shardScope: ["package.json"],
     nonGoals: ["No source edits, native success claims, publication or deployment"], toolRequirements: [], dependsOn: [],
     acceptanceCriterionIds: criterionIds, verifySteps: [{ id: id + "-check", step: "Read the current package.json and compare the reported value", verify: "The value matches the current source; missing execution remains unverified" }],

@@ -3,6 +3,8 @@ import test from "node:test";
 import { projectWorkflowWorkerResults } from "../../scripts/governed-execution/worker-result-projection.mjs";
 import path from "node:path";
 import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
+import { refreshFixtureSourcePins } from "../helpers/host-reasoning-fixture.mjs";
+import { runDiagnosticReadPlan } from "../../scripts/diagnostic-host-protocol.mjs";
 import { buildLiveCompactProjection, buildLiveSnapshot } from "../../src/application/live/live-control-room-service.mjs";
 
 test("public workflow keeps the matching observed result instead of rebuilding a plan", () => {
@@ -18,11 +20,12 @@ test("public workflow keeps the matching observed result instead of rebuilding a
 
 test("real routed workflow construction keeps task identity and preserves observed output", async (t) => {
   const fixture = createGovernanceRuntimeFixtureScope(t, { graph: true });
+  refreshFixtureSourcePins(fixture);
   const { runMetaTheoryGovernedExecution, buildWorkflowContractPackets } = await fixture.import("scripts/run-meta-theory-governed-execution.mjs");
   const out = path.join(fixture.root, "result-projection");
-  const report = await runMetaTheoryGovernedExecution({ task: "Run meta-theory: inspect package.json and report the exact package name and version. Do not modify files.",
+  const report = await runDiagnosticReadPlan(runMetaTheoryGovernedExecution, { task: "Run meta-theory: inspect package.json and report the exact package name and version. Do not modify files.",
     runId: "worker-projection-integration", stateDir: out, artifactDir: out, dbPath: path.join(out, "runs.sqlite"),
-    projectRoot: fixture.repoRoot, projectCapabilityMutationMode: "read_only" });
+    projectRoot: fixture.repoRoot, projectCapabilityMutationMode: "read_only" }, ["package.json"]);
   const coreLoop = structuredClone(report.coreLoop);
   const selected = coreLoop.thinkingPacket.workerTaskPackets[0];
   const observed = { ...coreLoop.executionResult.workerResultPackets[0], runId: report.runId, taskPacketId: selected.taskPacketId,

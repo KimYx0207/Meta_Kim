@@ -1,3 +1,4 @@
+import { readOnlyWorkerPacket } from "../helpers/read-only-worker-packet.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -508,7 +509,7 @@ async function bridgeVariant(withRuntimeHealth) {
       runId,
       runtime: "codex",
       stageDagPacket,
-      workerTaskPackets: [{
+      workerTaskPackets: [readOnlyWorkerPacket({
         taskPacketId: "health-worker",
         ownerAgent: "test-automator",
         description: "Observe runtime health projection parity",
@@ -516,7 +517,7 @@ async function bridgeVariant(withRuntimeHealth) {
         dependsOn: [],
         executionMode: "primary_execution",
         externalWriteBoundary: false,
-      }],
+      })],
       workspaceRoot: process.cwd(),
       durable: {
         enabled: true,
@@ -613,7 +614,7 @@ test("75 — native-mode durable resume with zero current-run attempts stays not
     stageLanes: { Execution: [bridgeLane()], Review: [] },
     runtimeCapacity: 1,
   });
-  const workerTaskPackets = [{
+  const workerTaskPackets = [readOnlyWorkerPacket({
     taskPacketId: "health-worker",
     ownerAgent: "test-automator",
     description: "Settle the durable node before native resume",
@@ -621,7 +622,7 @@ test("75 — native-mode durable resume with zero current-run attempts stays not
     dependsOn: [],
     executionMode: "primary_execution",
     externalWriteBoundary: false,
-  }];
+  })];
   const kernel = await openDurableRunKernel();
   let resumeReadySetCalls = 0;
   try {
@@ -711,7 +712,7 @@ test("75 — native-mode preflight rejection records zero attempts and cannot be
       runId,
       runtime: "codex",
       stageDagPacket,
-      workerTaskPackets: [{
+      workerTaskPackets: [readOnlyWorkerPacket({
         taskPacketId: "health-worker",
         ownerAgent: "test-automator",
         description: "Reject side-effect work before runtime invocation",
@@ -719,7 +720,7 @@ test("75 — native-mode preflight rejection records zero attempts and cannot be
         dependsOn: [],
         executionMode: "primary_execution",
         externalWriteBoundary: true,
-      }],
+      })],
       workspaceRoot: process.cwd(),
       durable: {
         enabled: true,

@@ -72,8 +72,8 @@ test("calculation envelope refuses malformed, oversized and unbound inputs befor
 
 test("missing, wrong-task, stale-source and wrong-runtime host choices cannot launch a calculator", sourceOptions, async () => {
   const current = await assessment();
-  const original = childProcess.spawnSync; let launches = 0;
-  childProcess.spawnSync = (command, args, options) => {
+  const original = childProcess.spawn; let launches = 0;
+  childProcess.spawn = (command, args, options) => {
     if (args?.includes("--input-json")) { launches++; throw new Error("Unbound assessment launched Python"); }
     return original(command, args, options);
   }; syncBuiltinESMExports();
@@ -92,12 +92,12 @@ test("missing, wrong-task, stale-source and wrong-runtime host choices cannot la
     assert.equal((await run({ methodAssessment: { ...current, runtime: "cursor" } })).code, "host_method_runtime_binding_rejected");
     assert.equal((await run({ methodAssessment: { ...current, fitRationale: "x".repeat(16384) } })).code, "invalid_host_method_assessment");
     assert.equal(launches, 0);
-  } finally { childProcess.spawnSync = original; syncBuiltinESMExports(); }
+  } finally { childProcess.spawn = original; syncBuiltinESMExports(); }
 });
 
 test("unbound or blocked routes never launch the calculation process", sourceOptions, async () => {
-  const original = childProcess.spawnSync; let toolLaunches = 0;
-  childProcess.spawnSync = (command, args, options) => {
+  const original = childProcess.spawn; let toolLaunches = 0;
+  childProcess.spawn = (command, args, options) => {
     if (args?.includes("--input-json")) { toolLaunches++; throw new Error("Blocked route launched Python"); }
     return original(command, args, options);
   };
@@ -120,7 +120,7 @@ test("unbound or blocked routes never launch the calculation process", sourceOpt
     assert.equal(stale.toolInvoked, false); assert.equal(toolLaunches, 0);
   } finally {
     fs.writeFileSync(inventory, savedInventory);
-    childProcess.spawnSync = original; syncBuiltinESMExports();
+    childProcess.spawn = original; syncBuiltinESMExports();
   }
 });
 
@@ -186,6 +186,53 @@ test("original JSON duplicate keys reach the strict helper and cannot become a s
   const invalid = await run({ inputJson: raw });
   assert.equal(invalid.status, "invalid_input"); assert.equal(invalid.execution.exitCode, 2);
   assert.equal(invalid.receipt.quality.issues[0].code, "duplicate_json_key");
+});
+
+test("real Python receives a full 256-KiB request and still distinguishes valid and duplicate-key receipts", sourceOptions, async () => {
+  for (const duplicate of [false, true]) {
+    const source = duplicate ? inputJson().replace('"schemaVersion": 1', '"schemaVersion": 1, "schemaVersion": 1') : inputJson();
+    const raw = source + " ".repeat(262144 - Buffer.byteLength(source));
+    assert.equal(Buffer.byteLength(raw), 262144);
+    const result = await run({ inputJson: raw });
+    assert.equal(result.status, duplicate ? "invalid_input" : "completed");
+    assert.equal(result.execution.exitCode, duplicate ? 2 : 0);
+    assert.equal(result.execution.sourceUnchanged, true);
+    assert.equal(result.binding.inputSha256, createHash("sha256").update(raw).digest("hex"));
+    if (duplicate) assert.equal(result.receipt.quality.issues[0].code, "duplicate_json_key");
+    else assert.equal(result.receipt.normalizedQuotes[0].landedTotal, "335");
+  }
+});
+
+test("async transport never turns malformed output, stderr or an invalid exit/status pairing into a receipt", sourceOptions, async () => {
+  const receipt = { schemaVersion: 1, tool: "supplier-comparison-calculate", status: "completed", networkUsed: false, filesModified: false };
+  const receiptJson = JSON.stringify(receipt);
+  const envelope = { schemaVersion: 1, tool: receipt.tool, toolVersion: "0.1.0", status: "completed", networkUsed: false,
+    filesModified: false, calculationPerformed: true, brief: { request: task }, missing: [], questions: [], issues: [],
+    delivery: "test-only forged result", handoff: { status: "ready", code: null, questions: [] }, receipt, receiptJson,
+    receiptSha256: createHash("sha256").update(receiptJson).digest("hex") };
+  const original = childProcess.spawn;
+  let launches = 0;
+  try {
+    for (const [stdout, stderr, exitCode, expected] of [
+      ["not-json", "", 0, "calculation_receipt_or_source_changed"],
+      ["{}", "PRIVATE_TEST_MARKER", 0, "calculation_process_failed"],
+      [JSON.stringify(envelope), "", 2, "calculation_receipt_or_source_changed"],
+    ]) {
+      childProcess.spawn = (command, args, options) => {
+        if (!args?.includes("--input-json")) return original(command, args, options);
+        launches++;
+        const source = `process.stdin.resume(); process.stdin.on('end', ()=>{
+          process.stdout.write(${JSON.stringify(stdout)}); process.stderr.write(${JSON.stringify(stderr)}); process.exitCode=${exitCode};});`;
+        return original(process.execPath, ["-e", source], options);
+      };
+      syncBuiltinESMExports();
+      const rejected = await run();
+      assert.equal(rejected.code, expected);
+      assert.equal(Object.hasOwn(rejected, "receipt"), false);
+      assert.equal(JSON.stringify(rejected).includes("PRIVATE_TEST_MARKER"), false);
+    }
+    assert.equal(launches, 3, "each negative must reach the real asynchronous child transport");
+  } finally { childProcess.spawn = original; syncBuiltinESMExports(); }
 });
 
 test("missing-value clarification never hides duplicate JSON keys", sourceOptions, async () => {
