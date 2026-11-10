@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { promises as fs, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -79,7 +79,7 @@ test("MCP empty effective status returns results0 and exact missing10 without ex
 });
 
 test("required packaged resources fail closed when missing", async () => {
-  const root = mkdtempSync(path.join(os.tmpdir(), "meta-kim-mcp-required-"));
+  const root = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "meta-kim-mcp-required-")));
   try {
     await assert.rejects(
       readRequiredPackagedText(path.join(root, "missing.md"), {
@@ -101,7 +101,25 @@ test("packaged resource reads accept plain filesystem aliases but enforce lexica
   mkdirSync(packageRoot);
   const resource = path.join(packageRoot, "resource.md");
   writeFileSync(resource, "# Packaged fixture\n");
-  assert.equal(await readRequiredPackagedText(resource, { packageRoot }), "# Packaged fixture\n");
+  try {
+    assert.equal(await readRequiredPackagedText(resource, { packageRoot }), "# Packaged fixture\n");
+  } catch (error) {
+    // Only fixed-fixture numeric metadata is exposed, never paths or contents.
+    const observe = (stat) => Object.fromEntries([
+      ...["dev", "ino", "size", "mtimeNs"].map((key) => [key, String(stat[key])]),
+      ["regularFile", stat.isFile()],
+    ]);
+    let diagnostic;
+    try {
+      const pathStat = await fs.lstat(resource, { bigint: true });
+      const diagnosticHandle = await fs.open(resource, "r");
+      try {
+        diagnostic = { node: process.versions.node, platform: process.platform, pathStat: observe(pathStat), handleStat: observe(await diagnosticHandle.stat({ bigint: true })) };
+      } finally { await diagnosticHandle.close(); }
+    } catch { diagnostic = { status: "fixture_identity_diagnostic_unavailable" }; }
+    error.message += ` Fixture identity diagnostic: ${JSON.stringify(diagnostic).slice(0, 1024)}`;
+    throw error;
+  }
   const outside = path.join(root, "outside.md");
   writeFileSync(outside, "# Outside\n");
   await assert.rejects(readRequiredPackagedText(outside, { packageRoot }), /could not be read safely/u);
@@ -146,11 +164,116 @@ test("packaged resource reads reject linked parent chains and redact absolute pa
   }
 });
 
-test("packaged resource reader uses one handle with before/after stability checks", () => {
+test("packaged resource reader uses one content-reading handle with before/after stability checks", () => {
   const source = readFileSync("scripts/mcp/runtime-resource-contract.mjs", "utf8");
-  assert.match(source, /const before = await handle\.stat\(\)/u);
+  assert.match(source, /const before = await handle\.stat\(\{ bigint: true \}\)/u);
   assert.match(source, /const text = await handle\.readFile\("utf8"\)/u);
-  assert.match(source, /const after = await handle\.stat\(\)/u);
+  assert.match(source, /const after = await handle\.stat\(\{ bigint: true \}\)/u);
+  assert.equal([...source.matchAll(/\.readFile\(/gu)].length, 1);
+  assert.doesNotMatch(source, /verificationHandle\.readFile/u);
+});
+
+function identityFixture(context) {
+  const root = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "meta-kim-mcp-identity-")));
+  context.after(() => rmSync(root, { recursive: true, force: true }));
+  const file = path.join(root, "resource.md");
+  writeFileSync(file, "# Identity fixture\n");
+  return { root, file };
+}
+
+test("resource identity allows only Windows cross-API device representation differences", { concurrency: false }, async (context) => {
+  const { root, file } = identityFixture(context);
+  const open = fs.open.bind(fs);
+  let opened = 0, closed = 0, contentReads = 0;
+  context.mock.method(fs, "open", async (...args) => {
+    const handle = await open(...args); opened += 1;
+    const stat = handle.stat.bind(handle), close = handle.close.bind(handle), read = handle.readFile.bind(handle);
+    handle.stat = async (...options) => { const value = await stat(...options); value.dev += 1n << 40n; return value; };
+    handle.close = async () => { closed += 1; return close(); };
+    handle.readFile = async (...options) => { contentReads += 1; return read(...options); };
+    return handle;
+  });
+  if (process.platform === "win32") {
+    assert.equal(await readRequiredPackagedText(file, { packageRoot: root }), "# Identity fixture\n");
+    assert.equal(opened, 2);
+    assert.equal(contentReads, 1, "only the original content handle may read bytes");
+  } else {
+    await assert.rejects(readRequiredPackagedText(file, { packageRoot: root }), /could not be read safely/u);
+    assert.equal(contentReads, 0, "POSIX cross-API device mismatch must fail before content is read");
+  }
+  assert.equal(closed, opened, "all opened identity handles must close");
+});
+
+test("resource identity rejects distinct BigInt inode values that Number would round together", { concurrency: false }, async (context) => {
+  const { root, file } = identityFixture(context);
+  const lstat = fs.lstat.bind(fs), open = fs.open.bind(fs);
+  const pathInode = 1n << 60n, handleInode = pathInode + 1n;
+  assert.equal(Number(pathInode), Number(handleInode));
+  context.mock.method(fs, "lstat", async (...args) => { const value = await lstat(...args); value.ino = pathInode; return value; });
+  let closed = false;
+  context.mock.method(fs, "open", async (...args) => {
+    const handle = await open(...args), stat = handle.stat.bind(handle), close = handle.close.bind(handle);
+    handle.stat = async (...options) => { const value = await stat(...options); value.ino = handleInode; return value; };
+    handle.close = async () => { closed = true; return close(); };
+    return handle;
+  });
+  await assert.rejects(readRequiredPackagedText(file, { packageRoot: root }), /could not be read safely/u);
+  assert.equal(closed, true);
+});
+
+for (const family of ["path", "handle"]) {
+  test(`resource identity rejects a device change within the ${family} metadata API family`, { concurrency: false }, async (context) => {
+    const { root, file } = identityFixture(context);
+    if (family === "path") {
+      const lstat = fs.lstat.bind(fs); let calls = 0;
+      context.mock.method(fs, "lstat", async (...args) => {
+        const value = await lstat(...args);
+        if (path.resolve(args[0]) === file && ++calls === 2) value.dev += 1n;
+        return value;
+      });
+    } else {
+      const open = fs.open.bind(fs);
+      context.mock.method(fs, "open", async (...args) => {
+        const handle = await open(...args), stat = handle.stat.bind(handle); let calls = 0;
+        handle.stat = async (...options) => { const value = await stat(...options); if (++calls === 2) value.dev += 1n; return value; };
+        return handle;
+      });
+    }
+    await assert.rejects(readRequiredPackagedText(file, { packageRoot: root }), /could not be read safely/u);
+  });
+}
+
+test("resource verification rejects a replacement handle for another real file with identical contents", { concurrency: false }, async (context) => {
+  const { root, file } = identityFixture(context);
+  const replacement = path.join(root, "different-resource.md");
+  writeFileSync(replacement, readFileSync(file));
+  const open = fs.open.bind(fs);
+  let opened = 0, closed = 0;
+  context.mock.method(fs, "open", async (filePath, ...args) => {
+    const handle = await open(++opened === 2 ? replacement : filePath, ...args);
+    const close = handle.close.bind(handle);
+    handle.close = async () => { closed += 1; return close(); };
+    return handle;
+  });
+  await assert.rejects(readRequiredPackagedText(file, { packageRoot: root }), /could not be read safely/u);
+  assert.equal(opened, 2);
+  assert.equal(closed, opened, "the content and verification handles both close on mismatch");
+});
+
+test("resource identity rejects a real file replacement between plain inspection and the canonical path snapshot", { concurrency: false }, async (context) => {
+  const { root, file } = identityFixture(context);
+  const replacement = path.join(root, "replacement.md");
+  writeFileSync(replacement, readFileSync(file));
+  const lstat = fs.lstat.bind(fs), open = fs.open.bind(fs);
+  assert.notEqual((await lstat(file, { bigint: true })).ino, (await lstat(replacement, { bigint: true })).ino);
+  let pathCalls = 0, opened = 0;
+  context.mock.method(fs, "lstat", async (...args) => {
+    if (++pathCalls === 2) renameSync(replacement, file);
+    return lstat(...args);
+  });
+  context.mock.method(fs, "open", async (...args) => { opened += 1; return open(...args); });
+  await assert.rejects(readRequiredPackagedText(file, { packageRoot: root }), /could not be read safely/u);
+  assert.equal(opened, 0, "a replacement after the first observed identity must fail before open");
 });
 
 test("canonical MCP Markdown resources must remain structurally valid", () => {

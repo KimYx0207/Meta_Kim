@@ -6089,7 +6089,349 @@
         "unresolvedP0ToP2": 0,
         "humanOrNativeAcceptanceClaimed": false
       },
-      "evidenceBoundary": "All follow-up local runs used Linux Node v24.22.1. Each before/after source digest was stable; the agents record separate snapshot encodings. These are not Windows/macOS acceptance. Final remote checks for the follow-up commit are recorded on PR 133. Earlier complete-run counts are not reruns of this later patch. No production behavior changed after these final local observations; only this evidence record was appended."
+      "evidenceBoundary": "All follow-up local runs used Linux Node v24.22.1. Each before/after source digest was stable; the agents record separate snapshot encodings. These are not Windows/macOS acceptance. Final remote checks for the follow-up commit are recorded on PR 133. Earlier complete-run counts are not reruns of this later patch. No production behavior changed after these final local observations; only this evidence record was appended.",
+      "supersededForLatestSourceBy": "latestValidation.mcpIdentityFollowUp",
+      "laterSourceChange": "MCP-only exact identity correction after the second actual CI run; its original results remain scoped to that earlier source snapshot."
+    },
+    "mcpIdentityFollowUp": {
+      "stage": "MCP stat-family portability correction after the second actual CI run",
+      "previousHead": "688279e9f16d2df0d03b3b73958002ba330a9a83",
+      "previousTestMerge": "6364708777fb2985afafabfac900a6aa2a44c9fa",
+      "previousCi": "https://github.com/KimYx0207/Meta_Kim/actions/runs/42844058445",
+      "actualDependencyCi": {
+        "schemaVersion": 1,
+        "observation": "read_only_GitHub_Actions",
+        "repository": "KimYx0207/Meta_Kim",
+        "pullRequest": 133,
+        "headSha": "688279e9f16d2df0d03b3b73958002ba330a9a83",
+        "runId": 42844058445,
+        "mergePreviewSha": "6364708777fb2985afafabfac900a6aa2a44c9fa",
+        "serviceCommit": "34ff5ef2361214cdd36cddbdcb67c5dece64ad04",
+        "nodeVersion": "22.13.0",
+        "jobs": [
+          {
+            "os": "ubuntu-latest",
+            "id": 129926648958,
+            "conclusion": "success",
+            "pythonVersion": "3.12.16",
+            "calculation": {
+              "tests": 40,
+              "pass": 40,
+              "fail": 0,
+              "skipped": 0
+            },
+            "knowledge": {
+              "tests": 33,
+              "pass": 33,
+              "fail": 0,
+              "skipped": 0
+            },
+            "log": "pr133_followup_ubuntu_dependency.log",
+            "logSha256": "8aca807799ab0ce1d862fd8e5fcfbaf90e78f3ef7c1e5162a30ad4ed73c0e3ac"
+          },
+          {
+            "os": "macos-latest",
+            "id": 129926648934,
+            "conclusion": "success",
+            "pythonVersion": "3.12.10",
+            "calculation": {
+              "tests": 40,
+              "pass": 40,
+              "fail": 0,
+              "skipped": 0
+            },
+            "knowledge": {
+              "tests": 33,
+              "pass": 33,
+              "fail": 0,
+              "skipped": 0
+            },
+            "log": "pr133_followup_macos_dependency.log",
+            "logSha256": "b612b8a6511b850154d569f654fcacac75293185b3f4fcf1deeb12e65faf43f9"
+          },
+          {
+            "os": "windows-latest",
+            "id": 129926648867,
+            "conclusion": "failure",
+            "pythonVersion": "3.12.10",
+            "calculation": {
+              "tests": 40,
+              "pass": 36,
+              "fail": 3,
+              "skipped": 1,
+              "exitCode": 1,
+              "skipReason": "POSIX FIFO test"
+            },
+            "knowledge": {
+              "status": "skipped",
+              "reason": "preceding calculation step failed"
+            },
+            "failures": [
+              {
+                "file": "tests/governance/dependency-calculation.test.mjs",
+                "line": 265,
+                "name": "real MCP tool call delivers the same calculation without a native Agent or paid model"
+              },
+              {
+                "file": "tests/governance/dependency-calculation.test.mjs",
+                "line": 296,
+                "name": "MCP runtime comes from server configuration, never a default Codex identity"
+              },
+              {
+                "file": "tests/governance/store-calculation-integration.test.mjs",
+                "line": 275,
+                "name": "real MCP calculate_materials exposes and executes store inputs without a paid model or native Agent claim"
+              }
+            ],
+            "observedError": "MCP connection closed; server startup stderr: Meta_Kim theory reference could not be read safely.",
+            "observedSource": "scripts/mcp/runtime-resource-contract.mjs:80",
+            "rootCause": "specific underlying check not exposed by catch; do not infer exact predicate",
+            "log": "pr133_followup_windows_dependency.log",
+            "logSha256": "d93379625532514c10cab0466a8405e33a8634fd8b6650d6f79b2c7c91fe4e04"
+          }
+        ],
+        "limits": [
+          "No local tests or source modifications in this monitoring task",
+          "Deterministic tool/transport evidence does not establish paid model or professional semantic acceptance",
+          "Windows knowledge step was not executed"
+        ]
+      },
+      "otherSecondHeadResults": {
+        "core": {
+          "tests": 1668,
+          "pass": 1559,
+          "fail": 104,
+          "skipped": 5,
+          "newFailingIdentitiesAgainstOriginalBaseline": 0,
+          "comparison": "Exactly equals historical finalCoreRegression.commonFailures (104); one original-baseline reservation case varies versus the 103-pass snapshot."
+        },
+        "governance": {
+          "tests": 1165,
+          "pass": 1087,
+          "fail": 41,
+          "skipped": 37,
+          "newFailingIdentitiesAgainstOriginalBaseline": 0
+        },
+        "reservationVariation": {
+          "file": "tests/meta-theory/55-governed-run-surface.test.mjs",
+          "title": "exclusive reservation prevents concurrent explicit run creation",
+          "diagnostic": "Cannot update governed run reservation: transaction_in_progress",
+          "expectedText": "reserved|already exists",
+          "oneFulfilledAndOneRejectedAssertions": "passed",
+          "baselineObservation": "Same title and diagnostic verified in the original 107-failure baseline; the baseline log SHA matches the earlier committed evidence.",
+          "productionFunctions": "withDurableReservationLock/reserveExplicitRunId, acquireTransactionLock and withSafeManagedFileLock are byte-identical across original baseline and both PR heads.",
+          "interpretation": "Existing variable wording outcome, not an introduced regression or a proven fixed test; assertions were not changed and the test was not rerun to select a pass."
+        },
+        "setupUbuntu": {
+          "tests": 146,
+          "pass": 142,
+          "fail": 0,
+          "skipped": 4,
+          "processTests": 56,
+          "processPass": 56
+        },
+        "setupWindows": {
+          "tests": 146,
+          "pass": 142,
+          "fail": 1,
+          "skipped": 3,
+          "priorFourFailuresResolved": true,
+          "remaining": "New MCP legal-resource positive check rejected a plain file; process stage did not execute."
+        },
+        "setupMacos": {
+          "tests": 146,
+          "pass": 140,
+          "fail": 1,
+          "skipped": 5,
+          "remaining": "Missing-file fixture expected ENOENT but its uncanonicalized system /var ancestor was a real link; process stage did not execute."
+        },
+        "installerOwnership": {
+          "ubuntu": "36/36",
+          "windows": "36/36",
+          "macos": "36/36"
+        },
+        "graphify": {
+          "ubuntu": "success",
+          "macos": "success",
+          "perOsPythonTests": [
+            7,
+            11,
+            18
+          ],
+          "perOsNode": {
+            "tests": 151,
+            "pass": 150,
+            "fail": 0,
+            "skipped": 1
+          }
+        },
+        "runtimeEvidenceReview": {
+          "status": "due_soon",
+          "issueCount": 0,
+          "daysRemaining": 6,
+          "behaviorTests": 44,
+          "pass": 43,
+          "fail": 0,
+          "skipped": 1
+        }
+      },
+      "changeBoundary": "Only scripts/mcp/runtime-resource-contract.mjs and its existing test file changed after the second head, plus this evidence record. All other production code and the Service repository remain unchanged.",
+      "invariants": [
+        "Capture initial BigInt path identity before plain-chain inspection, then strictly compare it to canonical path identity before opening; same-content replacement must be rejected before open.",
+        "Keep exact cross-API regular-file, BigInt inode, size and nanosecond mtime binding; retain cross-API device equality on POSIX. Windows path/handle device numeric forms use different native APIs and are compared strictly within their own API families.",
+        "Read content through one handle, compare that handle before/after, reinspect original plain directory chains and lexical/physical containment, then compare path observations before/after.",
+        "Open a second read-only identity-verification handle and compare all same-API fields including device against the original handle. Close both handles through finally; never reread content through the verification handle.",
+        "Retain public error redaction and existing outside-root/junction rejection. These finite observations do not claim atomic protection against all concurrent path replacements.",
+        "The missing-resource test canonicalizes only its newly created owned temporary root. Bounded failure diagnostics expose only fixture metadata, never paths or text."
+      ],
+      "primarySource": "https://github.com/nodejs/node/blob/v22.13.0/deps/uv/src/win/fs.c",
+      "primarySourceInterpretation": "The pinned implementation uses distinct Windows path and handle volume-information paths. This supports the comparison design; the previous redacted CI error did not reveal which individual numeric predicate failed.",
+      "independentReview": {
+        "reviewer": "human_gate_scheduler",
+        "unresolvedP0ToP2": 0,
+        "initialSnapshotGapFoundAndCorrectedBeforeFinalTests": true,
+        "scope": "Exact two-file patch; first observation, cross/same API identity, single content read, closure, containment, redaction and retained negative cases."
+      },
+      "resourceAndPackedValidation": {
+        "scope": "MCP-only identity correction after actual Windows CI on published head 688279e; working tree includes the reviewed two-file patch.",
+        "primarySource": "https://raw.githubusercontent.com/nodejs/node/v22.13.0/deps/uv/src/win/fs.c",
+        "sourceFiles": [
+          {
+            "path": "scripts/mcp/runtime-resource-contract.mjs",
+            "sha256": "e9779873eaae5fb6bfd70ca65b3c32d87f044629bd5c1ca4724985e44e4159a8"
+          },
+          {
+            "path": "tests/setup/mcp-runtime-resource-contract.test.mjs",
+            "sha256": "0737e7f0c4598e1741ec2f6eb7ce90d98ce6e7da809a4385561e019d12da6b23"
+          }
+        ],
+        "results": [
+          {
+            "prefix": "pr133-mcp-identity-final",
+            "node": "v24.22.1",
+            "platform": "linux",
+            "startedAt": "2026-11-10T15:41:40.922Z",
+            "finishedAt": "2026-11-10T15:41:41.627Z",
+            "exit": {
+              "code": 0,
+              "signal": null
+            },
+            "sourceStable": true,
+            "sourceDigest": "b31ad3961df2345651d1dea9acf45af58153dcadc0d8330686d2cc63e9fce174",
+            "sourceDigestAlgorithm": "SHA256(JSON.stringify(sorted [{path,bytes,sha256}] records))",
+            "counts": {
+              "tests": 17,
+              "pass": 16,
+              "fail": 0,
+              "skipped": 1,
+              "cancelled": 0,
+              "todo": 0
+            },
+            "logSha256": "8b1123afab6dba7888ec2aa582f83d044f17ab51ebce09752b672cd3ead5c490",
+            "metadataSha256": "8e3b38365c0423be73f84dc15c3f683926f3e51670f6b6753d3cceede64625c7",
+            "command": [
+              "--test",
+              "--test-concurrency=1",
+              "tests/setup/mcp-runtime-resource-contract.test.mjs"
+            ],
+            "credentialIsolation": "isolated HOME/npmrc/gitconfig; no npm/Git/provider credentials restored",
+            "baseHead": "688279e9f16d2df0d03b3b73958002ba330a9a83",
+            "includesUncommittedMcpIdentityFollowUp": true
+          },
+          {
+            "prefix": "pr133-mcp-identity-packed-final",
+            "node": "v24.22.1",
+            "platform": "linux",
+            "startedAt": "2026-11-10T15:41:40.930Z",
+            "finishedAt": "2026-11-10T15:42:43.988Z",
+            "exit": {
+              "code": 0,
+              "signal": null
+            },
+            "sourceStable": true,
+            "sourceDigest": "b31ad3961df2345651d1dea9acf45af58153dcadc0d8330686d2cc63e9fce174",
+            "sourceDigestAlgorithm": "SHA256(JSON.stringify(sorted [{path,bytes,sha256}] records))",
+            "counts": {
+              "tests": 1,
+              "pass": 1,
+              "fail": 0,
+              "skipped": 0,
+              "cancelled": 0,
+              "todo": 0
+            },
+            "logSha256": "e11ba8449c5d559adad6df103d09478b05d4cf85b858791537a8a2962c78998c",
+            "metadataSha256": "085187db3975ac3045cffb650764f61272cb3a229abf71e50a1313352a9ca6b3",
+            "command": [
+              "--test",
+              "--test-concurrency=1",
+              "--test-name-pattern=packed sync materializes an idempotent source-independent durable MCP bundle",
+              "tests/setup/global-runtime-bundle.test.mjs"
+            ],
+            "credentialIsolation": "isolated HOME/npmrc/gitconfig; no npm/Git/provider credentials restored",
+            "baseHead": "688279e9f16d2df0d03b3b73958002ba330a9a83",
+            "includesUncommittedMcpIdentityFollowUp": true
+          }
+        ],
+        "serviceFingerprintCrossCheck": {
+          "fileCount": 1140,
+          "algorithm": "sorted path + NUL + original file bytes (readlink for symlink) + NUL",
+          "sha256": "215d65ff35417dd7c213a5ce90d85d7abdb279c50895a92e7bf9a5e3871c1aa0"
+        },
+        "limits": [
+          "Actual CI uses Node 22.13.0; local tests used Linux Node 24.22.1.",
+          "The single skipped test is the actual Windows junction containment reproduction.",
+          "Metadata injection is branch-level fault testing, not a Windows runtime claim.",
+          "Next exact-head Windows/macOS CI is required before claiming this correction verified on those platforms.",
+          "Public errors remain redacted; the prior actual Windows log did not expose the failed numeric predicate."
+        ]
+      },
+      "actualMcpValidation": {
+        "metaSourceBefore": {
+          "fileCount": 1140,
+          "sha256": "215d65ff35417dd7c213a5ce90d85d7abdb279c50895a92e7bf9a5e3871c1aa0"
+        },
+        "metaSourceAfter": {
+          "fileCount": 1140,
+          "sha256": "215d65ff35417dd7c213a5ce90d85d7abdb279c50895a92e7bf9a5e3871c1aa0"
+        },
+        "metaSourceStable": true,
+        "serviceCommit": "34ff5ef2361214cdd36cddbdcb67c5dece64ad04",
+        "serviceTree": "416fd6edde182cb9d2089e79d601d0d4924898f9",
+        "serviceTrackedDigestBefore": "66d1ea0e0e3c8db1d5d28a4c51712cce3836c00a3a72df78cd705d34820f3970",
+        "serviceTrackedDigestAfter": "66d1ea0e0e3c8db1d5d28a4c51712cce3836c00a3a72df78cd705d34820f3970",
+        "serviceUnchanged": true,
+        "ciNodeVersion": "22.13.0",
+        "actualNodeVersion": "v24.22.1",
+        "results": [
+          {
+            "command": [
+              "--test",
+              "--test-name-pattern=^(?:real MCP tool call delivers the same calculation without a native Agent or paid model|MCP runtime comes from server configuration, never a default Codex identity|real MCP calculate_materials exposes and executes store inputs without a paid model or native Agent claim)$",
+              "tests/governance/dependency-calculation.test.mjs",
+              "tests/governance/store-calculation-integration.test.mjs"
+            ],
+            "node": "v24.22.1",
+            "platform": "linux",
+            "startedAt": "2026-11-10T15:40:32.243Z",
+            "completedAt": "2026-11-10T15:40:36.615Z",
+            "exitCode": 0,
+            "signal": null,
+            "tests": 3,
+            "pass": 3,
+            "fail": 0,
+            "cancelled": 0,
+            "skipped": 0,
+            "todo": 0,
+            "log": "pr133_mcp_stat_final.log",
+            "logSha256": "aca92d8aa12d84677db97ff1c267f7a6809c9f88d937bd8ddbf4bf4c4880b7e9",
+            "skipLines": [],
+            "isolatedHome": true,
+            "credentialEnvironment": "OS allowlist only; empty fresh home; no inherited provider/Git/npm credentials",
+            "homeCleanedOnReturn": true
+          }
+        ]
+      },
+      "remoteFollowUp": "Final exact-head Windows/macOS/Ubuntu observations are recorded on PR 133; these final local observations are Linux Node v24.22.1, not native model or professional semantic acceptance."
     }
   }
 }

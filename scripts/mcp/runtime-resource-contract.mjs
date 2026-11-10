@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import process from "node:process";
 import { isDeepStrictEqual } from "node:util";
 import {
   HOST_SUPPORT_VALUES,
@@ -50,6 +51,21 @@ function assertInsideRoot(filePath, packageRoot) {
   return absolutePath;
 }
 
+function sameFileObservation(left, right, compareDevice = true) {
+  return left.isFile() && right.isFile()
+    && left.ino === right.ino && left.size === right.size && left.mtimeNs === right.mtimeNs
+    && (!compareDevice || left.dev === right.dev);
+}
+
+function sameOpenedFileObservation(pathStats, handleStats) {
+  // Node 22.13's Windows path-stat fast API and fd-stat API obtain dev from
+  // different volume-information structures; their numeric forms can differ.
+  // https://github.com/nodejs/node/blob/v22.13.0/deps/uv/src/win/fs.c
+  // Keep exact BigInt inode/content metadata across APIs, and compare dev
+  // strictly within each API family below. POSIX also retains cross-API dev.
+  return sameFileObservation(pathStats, handleStats, process.platform !== "win32");
+}
+
 export async function readRequiredPackagedText(filePath, {
   packageRoot,
   label = "MCP resource",
@@ -57,19 +73,38 @@ export async function readRequiredPackagedText(filePath, {
   try {
     const absoluteRoot = path.resolve(packageRoot);
     const absolutePath = assertInsideRoot(filePath, absoluteRoot);
+    const initialPath = await fs.lstat(absolutePath, { bigint: true });
     const root = inspectPlainAbsolutePath(absoluteRoot, { kind: "directory" });
     if (!root) throw new Error("unsafe package root");
     const file = inspectPlainAbsolutePath(absolutePath, { kind: "file" });
     if (!file) throw new Error("resource is not a plain regular file");
     const realRoot = root.realPath;
     const realFile = assertInsideRoot(file.realPath, realRoot);
+    const pathBefore = await fs.lstat(realFile, { bigint: true });
+    if (!sameFileObservation(initialPath, pathBefore)) throw new Error("resource changed during path inspection");
     const handle = await fs.open(realFile, "r");
     try {
-      const before = await handle.stat();
-      if (before.dev !== file.stats.dev || before.ino !== file.stats.ino || before.size !== file.stats.size || before.mtimeMs !== file.stats.mtimeMs) throw new Error("resource changed before open");
+      const before = await handle.stat({ bigint: true });
+      if (!sameOpenedFileObservation(pathBefore, before)) throw new Error("resource changed before open");
       const text = await handle.readFile("utf8");
-      const after = await handle.stat();
-      if (before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ino !== after.ino || before.dev !== after.dev) throw new Error("resource changed while read");
+      const after = await handle.stat({ bigint: true });
+      if (!sameFileObservation(before, after)) throw new Error("resource changed while read");
+      const checkedRoot = inspectPlainAbsolutePath(absoluteRoot, { kind: "directory" });
+      const checkedFile = inspectPlainAbsolutePath(absolutePath, { kind: "file" });
+      if (!checkedRoot || !checkedFile || checkedRoot.realPath !== realRoot || checkedFile.realPath !== realFile) throw new Error("resource path changed while read");
+      assertInsideRoot(checkedFile.realPath, checkedRoot.realPath);
+      const pathAfter = await fs.lstat(realFile, { bigint: true });
+      if (!sameFileObservation(pathBefore, pathAfter) || !sameOpenedFileObservation(pathAfter, after)) throw new Error("resource path identity changed while read");
+      // Read content only through handle. The second read-only handle verifies
+      // the current path using the same metadata API, including its full dev.
+      // These observations do not make concurrent path replacement atomic.
+      const verificationHandle = await fs.open(realFile, "r");
+      try {
+        const reopened = await verificationHandle.stat({ bigint: true });
+        if (!sameFileObservation(after, reopened) || !sameOpenedFileObservation(pathAfter, reopened)) throw new Error("resource identity changed before verification open");
+      } finally {
+        await verificationHandle.close();
+      }
       if (!text.trim() || text.includes("\0")) throw new Error("resource is empty or invalid");
       return text;
     } finally {
