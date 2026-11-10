@@ -7,7 +7,7 @@ import test, { before, after } from "node:test";
 import { syncBuiltinESMExports } from "node:module";
 import { fileURLToPath } from "node:url";
 import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
-import { fixtureCalculationAssessment, runWithCalculationHostThinking } from "../helpers/calculation-host-fixture.mjs";
+import { connectFixtureMcpWithDiagnostics, fixtureCalculationAssessment, runWithCalculationHostThinking } from "../helpers/calculation-host-fixture.mjs";
 import { refreshFixtureSourcePins } from "../helpers/host-reasoning-fixture.mjs";
 
 const dependencyRoot = process.env.META_KIM_TEST_KIM_SERVICE_SOURCE;
@@ -280,7 +280,7 @@ test("real MCP calculate_materials exposes and executes store inputs without a p
     env: { ...fixture.env, META_KIM_RUNTIME_FAMILY: "codex" }, stderr: "pipe" });
   const client = new Client({ name: "store-calculation-integration", version: "1.0.0" });
   try {
-    await client.connect(transport);
+    await connectFixtureMcpWithDiagnostics(client, transport);
     const tool = (await client.listTools()).tools.find((entry) => entry.name === "calculate_materials");
     assert.match(tool.description, /所选能力合同/); assert.equal(Object.hasOwn(tool.inputSchema.properties, "runtime"), false);
     const response = await client.callTool({ name: "calculate_materials", arguments: { task, inputJson: JSON.stringify(materials()), dependencyRoot,

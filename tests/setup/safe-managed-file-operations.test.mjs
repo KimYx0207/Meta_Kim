@@ -7,6 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -17,6 +18,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   executeSafeManagedFileTransaction,
+  inspectPlainAbsolutePath,
   sha256Buffer,
   sha256ManagedFile,
   validateManagedManifest,
@@ -70,6 +72,45 @@ async function waitForPath(filePath, timeoutMs = 5_000) {
 function tempRoot(prefix) {
   return mkdtempSync(path.join(os.tmpdir(), prefix));
 }
+
+test("plain absolute inspection accepts real filesystem aliases and preserves type and identity boundaries", (context) => {
+  // POSIX temp aliases such as /var are real symlinks and remain forbidden.
+  // Keep the Windows spelling to exercise the runner's ordinary 8.3 temp path.
+  const temporary = tempRoot("meta-kim-plain-path-");
+  const root = process.platform === "win32" ? temporary : realpathSync.native(temporary);
+  context.after(() => rmSync(temporary, { recursive: true, force: true }));
+  const directory = path.join(root, "Unicode 资料 Space");
+  mkdirSync(directory);
+  const file = path.join(directory, "resource.txt");
+  writeFileSync(file, "physical content\n");
+  for (const [entry, kind] of [[directory, "directory"], [file, "file"]]) {
+    const inspected = inspectPlainAbsolutePath(entry, { kind });
+    assert.equal(inspected.absolutePath, path.resolve(entry));
+    assert.equal(inspected.realPath, realpathSync.native(entry));
+    assert.equal(inspected.stats.ino, statSync(entry).ino);
+    assert.equal(inspected.stats.dev, statSync(entry).dev);
+  }
+  assert.equal(inspectPlainAbsolutePath(file, { kind: "directory" }), null);
+  assert.equal(inspectPlainAbsolutePath(directory, { kind: "file" }), null);
+  assert.equal(inspectPlainAbsolutePath("relative/resource.txt", { kind: "file" }), null);
+  assert.throws(() => inspectPlainAbsolutePath(path.join(root, "absent"), { kind: "file" }), { code: "ENOENT" });
+});
+
+test("plain absolute inspection rejects both an ancestor link and a linked terminal directory", (context) => {
+  const temporary = tempRoot("meta-kim-plain-linked-path-");
+  const root = realpathSync.native(temporary);
+  context.after(() => rmSync(temporary, { recursive: true, force: true }));
+  const physical = path.join(root, "physical");
+  const nested = path.join(physical, "nested");
+  mkdirSync(nested, { recursive: true });
+  writeFileSync(path.join(nested, "resource.txt"), "retain\n");
+  const linked = path.join(root, "linked");
+  symlinkSync(physical, linked, process.platform === "win32" ? "junction" : "dir");
+  assert.equal(inspectPlainAbsolutePath(linked, { kind: "directory" }), null);
+  assert.equal(inspectPlainAbsolutePath(path.join(linked, "nested"), { kind: "directory" }), null);
+  assert.equal(inspectPlainAbsolutePath(path.join(linked, "nested/resource.txt"), { kind: "file" }), null);
+  assert.equal(readFileSync(path.join(nested, "resource.txt"), "utf8"), "retain\n");
+});
 
 test("mixed identical adoption plus unmanaged conflict performs zero writes", () => {
   const root = tempRoot("meta-kim-managed-conflict-");

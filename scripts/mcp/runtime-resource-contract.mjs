@@ -8,6 +8,7 @@ import {
   aggregateLegacyCapabilitySummary,
 } from "../runtime-capability-claims.mjs";
 import { validateRuntimeEvidenceLedger } from "../runtime-capability-evidence.mjs";
+import { inspectPlainAbsolutePath } from "../safe-managed-file-operations.mjs";
 
 function isPlainObject(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -55,18 +56,17 @@ export async function readRequiredPackagedText(filePath, {
 } = {}) {
   try {
     const absoluteRoot = path.resolve(packageRoot);
-    const rootStat = await fs.lstat(absoluteRoot);
-    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw new Error("unsafe package root");
-    const realRoot = await fs.realpath(absoluteRoot);
-    if (realRoot !== absoluteRoot) throw new Error("package root resolves through a link");
-    const absolutePath = assertInsideRoot(filePath, realRoot);
-    const stat = await fs.lstat(absolutePath);
-    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("resource is not a regular file");
-    const realFile = await fs.realpath(absolutePath);
-    if (realFile !== absolutePath || !assertInsideRoot(realFile, realRoot)) throw new Error("resource parent chain resolves outside package root");
+    const absolutePath = assertInsideRoot(filePath, absoluteRoot);
+    const root = inspectPlainAbsolutePath(absoluteRoot, { kind: "directory" });
+    if (!root) throw new Error("unsafe package root");
+    const file = inspectPlainAbsolutePath(absolutePath, { kind: "file" });
+    if (!file) throw new Error("resource is not a plain regular file");
+    const realRoot = root.realPath;
+    const realFile = assertInsideRoot(file.realPath, realRoot);
     const handle = await fs.open(realFile, "r");
     try {
       const before = await handle.stat();
+      if (before.dev !== file.stats.dev || before.ino !== file.stats.ino || before.size !== file.stats.size || before.mtimeMs !== file.stats.mtimeMs) throw new Error("resource changed before open");
       const text = await handle.readFile("utf8");
       const after = await handle.stat();
       if (before.size !== after.size || before.mtimeMs !== after.mtimeMs || before.ino !== after.ino || before.dev !== after.dev) throw new Error("resource changed while read");

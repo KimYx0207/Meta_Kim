@@ -17,7 +17,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
 import process from "node:process";
 import { renameWithTransientRetry } from "./transient-rename.mjs";
 
@@ -69,6 +69,28 @@ export function inspectTrustedPath(trustedRoot, relPath, { allowMissing = false 
     if (!isInside(realpathSync(current), rootReal)) return null;
   }
   return { root, rootReal, rel, target, realPath: realpathSync(target) };
+}
+
+/**
+ * Inspect every segment from the filesystem anchor before resolving aliases.
+ * Windows case/8.3 names can identify a plain entry without being a link.
+ * This is an observed path/identity check, not an atomic filesystem guarantee.
+ */
+export function inspectPlainAbsolutePath(filePath, { kind } = {}) {
+  if (!["file", "directory"].includes(kind)) throw new TypeError("A plain path inspection needs a file or directory kind");
+  if (typeof filePath !== "string" || !isAbsolute(filePath)) return null;
+  const absolutePath = resolve(filePath);
+  // Keep real ENOENT diagnostics; an absent file is not an unsafe existing one.
+  const stats = lstatSync(absolutePath);
+  if (stats.isSymbolicLink() || !(kind === "directory" ? stats.isDirectory() : stats.isFile())) return null;
+  const anchor = parse(absolutePath).root;
+  const rel = relative(anchor, absolutePath);
+  if (rel && !inspectTrustedPath(anchor, rel)) return null;
+  const realPath = realpathSync.native(absolutePath);
+  const physicalStats = lstatSync(realPath);
+  if (physicalStats.isSymbolicLink() || !(kind === "directory" ? physicalStats.isDirectory() : physicalStats.isFile())) return null;
+  if (stats.dev !== physicalStats.dev || stats.ino !== physicalStats.ino) return null;
+  return { absolutePath, realPath, stats: physicalStats };
 }
 
 export function validateManagedManifest(manifest, { schemaVersion } = {}) {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -91,6 +91,36 @@ test("required packaged resources fail closed when missing", async () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("packaged resource reads accept plain filesystem aliases but enforce lexical package containment", async (context) => {
+  const temporary = mkdtempSync(path.join(os.tmpdir(), "meta-kim-mcp-plain-alias-"));
+  const root = process.platform === "win32" ? temporary : realpathSync.native(temporary);
+  context.after(() => rmSync(temporary, { recursive: true, force: true }));
+  const packageRoot = path.join(root, "Package 资料 Space");
+  mkdirSync(packageRoot);
+  const resource = path.join(packageRoot, "resource.md");
+  writeFileSync(resource, "# Packaged fixture\n");
+  assert.equal(await readRequiredPackagedText(resource, { packageRoot }), "# Packaged fixture\n");
+  const outside = path.join(root, "outside.md");
+  writeFileSync(outside, "# Outside\n");
+  await assert.rejects(readRequiredPackagedText(outside, { packageRoot }), /could not be read safely/u);
+  assert.equal(readFileSync(outside, "utf8"), "# Outside\n");
+});
+
+test("packaged resource reads reject a linked ancestor of a plain package root", async (context) => {
+  const temporary = mkdtempSync(path.join(os.tmpdir(), "meta-kim-mcp-root-ancestor-"));
+  const root = realpathSync.native(temporary);
+  context.after(() => rmSync(temporary, { recursive: true, force: true }));
+  const physical = path.join(root, "physical");
+  const packageRoot = path.join(physical, "package");
+  mkdirSync(packageRoot, { recursive: true });
+  writeFileSync(path.join(packageRoot, "resource.md"), "# Retained\n");
+  const linked = path.join(root, "linked");
+  symlinkSync(physical, linked, process.platform === "win32" ? "junction" : "dir");
+  const linkedRoot = path.join(linked, "package");
+  await assert.rejects(readRequiredPackagedText(path.join(linkedRoot, "resource.md"), { packageRoot: linkedRoot }), /could not be read safely/u);
+  assert.equal(readFileSync(path.join(packageRoot, "resource.md"), "utf8"), "# Retained\n");
 });
 
 test("packaged resource reads reject linked parent chains and redact absolute paths", async (context) => {

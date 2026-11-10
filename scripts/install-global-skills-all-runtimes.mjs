@@ -76,6 +76,7 @@ import { retirePlanningWithFiles } from "./retire-planning-with-files.mjs";
 import { retireAbsorbedDependencyCopies } from "../src/infrastructure/installer/retired-dependency-copies.mjs";
 import { installerAckLine } from "./installer-ack.mjs";
 import { createInstallerWriteBoundary, assertInstallerWritePath } from "./installer-write-boundary.mjs";
+import { inspectPlainAbsolutePath } from "./safe-managed-file-operations.mjs";
 import { LANG, t } from "./meta-kim-i18n.mjs";
 import { hookCommandNode, isNodeHookScriptCommand } from "./claude-settings-merge.mjs";
 import {
@@ -4192,9 +4193,7 @@ async function assertPlainComponentRoot(root, { installed = false } = {}) {
     await assertRealPathContained(os.homedir(), root, activeInstallerWriteBoundary);
     return;
   }
-  const canonical = await fs.realpath(root);
-  const normalize = (value) => process.platform === "win32" ? value.toLowerCase() : value;
-  if (normalize(canonical) !== normalize(path.resolve(root))) throw new Error("Component root cannot traverse a symlink or junction");
+  if (!inspectPlainAbsolutePath(root, { kind: "directory" })) throw new Error("Component root cannot traverse a symlink or junction");
 }
 
 async function isReusableSkillRoot(spec, root, { installed = true } = {}) {

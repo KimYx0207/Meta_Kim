@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { recordSetupRuntimeExecutableBindings } from "../../scripts/runtime-executable-binding.mjs";
+import { loadSetupBoundRuntimeExecutable, recordSetupRuntimeExecutableBindings } from "../../scripts/runtime-executable-binding.mjs";
 
 function fixture(t) {
   const root=mkdtempSync(path.join(os.tmpdir(),"meta-binding-probe-")),bin=path.join(root,"CLI Space");mkdirSync(bin);
@@ -37,6 +37,24 @@ test("default binding records a real healthy CLI without treating Windows docume
   assert.equal(result.bindings.codex.version,"fixture-cli 3.0.0");
   assert.equal(existsSync(f.inventory),true);
   assert.equal(result.executionAuthority,false);
+  if (process.platform === "win32") {
+    const physicalEntry = realpathSync.native(path.join(f.bin, "codex.js"));
+    assert.deepEqual(result.bindings.codex.launchDescriptor.argsPrefix, [physicalEntry]);
+    assert.equal(result.bindings.codex.launchDescriptor.jsEntry.realpath, physicalEntry);
+    const loaded = loadSetupBoundRuntimeExecutable({ projectRoot: f.root, runtime: "codex", pathResolver: () => [cli] });
+    assert.deepEqual(loaded.argsPrefix, [physicalEntry]);
+    assert.equal(loaded.executionAuthority, false);
+    const differentEntry = path.join(f.bin, "different-entry.js");
+    writeFileSync(differentEntry, readFileSync(physicalEntry));
+    const stored = JSON.parse(readFileSync(f.inventory, "utf8"));
+    stored.bindings.codex.launchDescriptor.argsPrefix[0] = realpathSync.native(differentEntry);
+    writeFileSync(f.inventory, JSON.stringify(stored));
+    assert.throws(
+      () => loadSetupBoundRuntimeExecutable({ projectRoot: f.root, runtime: "codex", pathResolver: () => [cli] }),
+      /argsPrefix is invalid/u,
+      "identical bytes at another path do not become the fingerprinted JS entry",
+    );
+  }
 });
 
 test("default binding rejects actual Windows PE bytes on POSIX and Windows GUI executables on Windows",t=>{

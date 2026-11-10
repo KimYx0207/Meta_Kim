@@ -10,6 +10,38 @@ import { readOnlyFixtureTaskFacts } from "./task-design-facts.mjs";
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 const digest = value => createHash("sha256").update(value).digest("hex");
 
+/** Capture only fixture server startup, before any calculation materials are
+ * sent. Keep at most 8 KiB, report it only on failed connection, and never use
+ * this diagnostic helper for transports carrying real user materials. */
+export async function connectFixtureMcpWithDiagnostics(client, transport) {
+  const limit = 8192;
+  let tail = Buffer.alloc(0);
+  const stderr = transport.stderr;
+  const capture = chunk => {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    tail = bytes.length >= limit
+      ? Buffer.from(bytes.subarray(bytes.length - limit))
+      : Buffer.concat([tail.subarray(Math.max(0, tail.length + bytes.length - limit)), bytes]);
+  };
+  stderr?.on("data", capture);
+  try {
+    await client.connect(transport);
+  } catch (error) {
+    const diagnostic = tail.toString("utf8").trim() || "<no startup stderr captured>";
+    throw new Error(`Fixture MCP connection failed: ${error.message}\nServer startup stderr (last ${limit} bytes):\n${diagnostic}`, { cause: error });
+  } finally {
+    stderr?.removeListener("data", capture);
+    stderr?.resume();
+  }
+}
+
+/** Failure diagnostics contain machine status only, never receipts or materials. */
+export function fixtureCalculationDiagnostics(value) {
+  return JSON.stringify({ status: value?.status, code: value?.code, toolInvoked: value?.toolInvoked,
+    gate: value?.gate ? { handoffStatus: value.gate.handoffStatus, blockedBy: value.gate.blockedBy } : undefined,
+  }).slice(0, 4096);
+}
+
 /** Test-host judgment is explicit at each call site. Only the source binding is
  * obtained mechanically from the real configured dependency; no lexical choice,
  * semantic quality result, user approval or native invocation is manufactured. */

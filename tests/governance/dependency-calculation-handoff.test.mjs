@@ -8,7 +8,7 @@ import test, { before, after } from "node:test";
 import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
 import { readDependencyCalculationInputFile, readDependencyCalculationMethodInputsFile } from "../../scripts/governed-execution/dependency-calculation-handoff.mjs";
 import { stableJson, sha256 } from "../../scripts/dependency-agent-discovery.mjs";
-import { runWithCalculationHostThinking } from "../helpers/calculation-host-fixture.mjs";
+import { fixtureCalculationDiagnostics, runWithCalculationHostThinking } from "../helpers/calculation-host-fixture.mjs";
 import { refreshFixtureSourcePins } from "../helpers/host-reasoning-fixture.mjs";
 
 const dependencyRoot = process.env.META_KIM_TEST_KIM_SERVICE_SOURCE;
@@ -444,7 +444,7 @@ test("CLI materials require current Critical and Thinking before the real missin
     ...Object.entries(files).flat()], { env: { ...fixture.env, META_KIM_KIM_SERVICE_ROOT: dependencyRoot } });
   assert.equal(ready.status, 0, ready.stderr || ready.stdout);
   const pending = JSON.parse(ready.stdout);
-  assert.equal(pending.dependencyCalculation.status, "needs_input");
+  assert.equal(pending.dependencyCalculation.status, "needs_input", fixtureCalculationDiagnostics(pending.dependencyCalculation));
   assert.equal(pending.stageRunner.status, "blocked");
   fs.writeFileSync(inputPath, "甲".repeat(90000));
   const oversized = fixture.run(["scripts/run-meta-theory-governed-execution.mjs", "--calculation-materials", inputPath, "--task", task, "--temp-output"]);
@@ -490,7 +490,7 @@ test("complete positional CLI carries private method inputs through real Python 
   { env: { ...fixture.env, META_KIM_KIM_SERVICE_ROOT: dependencyRoot, PATH: `${bin}${path.delimiter}${fixture.env.PATH}` } });
   assert.equal(completeRun.status, 0, completeRun.stderr || completeRun.stdout);
   const delivered = JSON.parse(completeRun.stdout);
-  assert.equal(delivered.dependencyCalculation.status, "ready_for_worker");
+  assert.equal(delivered.dependencyCalculation.status, "ready_for_worker", fixtureCalculationDiagnostics(delivered.dependencyCalculation));
   assert.equal(delivered.dependencyCalculation.toolInvoked, true);
   assert.equal(delivered.stageRunner.status, "pass", JSON.stringify(delivered.stageRunner));
   const received = fs.readFileSync(capture, "utf8");

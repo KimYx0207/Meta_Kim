@@ -10,7 +10,7 @@ The machine-readable companion [intent-to-delivery-20261110.json](intent-to-deli
 
 **Use `latestValidation` in the JSON companion for the current complete-run counts.** The earlier sections below retain the actual intermediate observations and review history. They are not additional test passes to sum together.
 
-**Final scoped acceptance:** actual calculation/delivery **40/40**, complete positional CLI **1/1**, complete professional knowledge/method handoff **33/33**, entry-classifier regression **26/26**, and the last real package lifecycle **1/1** all passed with zero failures or skips. The independent CLI check overlaps the calculation suite. The last package check retained real npm pack/prepack and actual MCP JSON-RPC after deleting the unpacked source. No executable behavior changed after these accepted observations. Staged whitespace checking removed one extra terminal blank line from the relocated source-integrity module; source pins were refreshed afterwards. The evidence write-up and calculation fixture alignment are identified separately.
+**Pre-publication scoped acceptance:** actual calculation/delivery **40/40**, complete positional CLI **1/1**, complete professional knowledge/method handoff **33/33**, entry-classifier regression **26/26**, and the last real package lifecycle **1/1** all passed with zero failures or skips. The independent CLI check overlaps the calculation suite. The last package check retained real npm pack/prepack and actual MCP JSON-RPC after deleting the unpacked source. At that publication snapshot, staged whitespace checking removed one extra terminal blank line from the relocated source-integrity module and source pins were refreshed. The later actual cross-platform CI findings, bounded portability correction and final focused reruns are recorded in the last section below; these earlier complete runs are not relabelled as validation of that later patch.
 
 | Complete run | Tests | Passed | Failed | Skipped | Comparison or scope |
 |---|---:|---:|---:|---:|---|
@@ -233,3 +233,34 @@ Registry revision 10 has canonical digest `sha256:f6009ee51df5e3cc9392e5685c7f6e
 The lifecycle suite checks current production source identity, exact approval binding, source drift, idempotent replay, stale/conflicting CAS, interrupted-write rollback, retained unknown state and reference-only authority. The earlier **87/87** scoped-gate regression and **6/6** first-party search regression remain evidence for their own scopes. No whole-repository or live-host acceptance claim is implied by these focused results.
 
 Rollback remains a fresh reviewed transition: restore only the prior catalog Git blob, verify its recorded whole-file hash, and create a new exact-approved upgrade against the then-current registry revision. Preserve unrelated state and all history; do not replace the registry with an old snapshot.
+
+## Actual cross-platform CI and portability follow-up
+
+PR [#133](https://github.com/KimYx0207/Meta_Kim/pull/133) first published head `d04289ee98419f570509e53d7ba125840eac19dc`. GitHub's test merge `2e88bb958722a7f2eada5e90cf3838bea40a3048` had the exact reviewed tree `019edb4f44a8bc157055d3fda742a2f5d24de0a0`. Its [actual CI run](https://github.com/KimYx0207/Meta_Kim/actions/runs/42839686833) used Node **22.13.0**.
+
+The complete core run's **103** and governance run's **41** failing identities exactly matched the final local failure sets, with zero unexplained new identities. Governance had 1,165 tests / 1,087 passed / 41 failed / 37 skipped: the extra independent CLI case was skipped because that lane does not select a Service checkout. The dedicated Ubuntu dependency job supplied the exact reviewed Service source and passed calculation **40/40** and knowledge **33/33**. The old main CI had stopped at a stale migration catalog before behavioral tests, so its red status is not claimed as remote reproduction of these same failures.
+
+Actual platform checks exposed additional bounded issues before merge:
+
+| First-head CI scope | Observed result | Follow-up |
+|---|---|---|
+| Windows setup | 109 passed, 4 failed, 2 skipped | Two dependency source and two JS launch cases mistook physical/lexical path aliases for an invalid binding |
+| Windows calculation | 36 passed, 3 failed, 1 skipped | Three MCP connections closed during startup; initial logs lacked child stderr, so that observation alone does not establish a root cause |
+| macOS calculation | 37 passed, 3 failed | One supplier MCP route and two CLI handoffs blocked; MCP startup succeeded |
+| Other first-head checks | Live, Ubuntu/macOS setup, all three OS installer ownership, planning and global sync passed | Graphify Ubuntu passed; Graphify macOS was cancelled and package-candidate was skipped, not passed |
+
+The production correction uses one inspector in the existing managed-file module. It walks every original path segment from the filesystem anchor and still refuses symbolic links/junctions before resolving Windows case or 8.3 aliases. MCP retains both lexical and physical containment and now also matches the inspected file identity against the opened handle. JS argv normalization requires the same already-fingerprinted physical file; an equally sized, byte-identical different script remains invalid.
+
+The macOS failure mechanism was reproduced on Linux with a controlled nested temporary-path alias. On the same stable source, the exact three cases failed **0/3** under the alias and passed **3/3** through the physical path. A single fixture correction establishes the physical root immediately after creating its own temporary directory, then derives repository, HOME, cwd, imports and cleanup consistently. It does not normalize user-supplied roots or relax production link refusal. After the correction both alias and physical-path cases passed **3/3**. This is a controlled mechanism reproduction on Linux, not a claim of macOS execution.
+
+| Final local follow-up | Tests | Passed | Failed | Skipped |
+|---|---:|---:|---:|---:|
+| Actual calculation, Python, MCP, CLI and private handoff | 40 | 40 | 0 | 0 |
+| Complete professional knowledge/method handoff | 33 | 33 | 0 | 0 |
+| Alias and physical-path controls, overlapping the calculation scope | 6 | 6 | 0 | 0 |
+| Eleven distinct portability/source/identity/resource test files | 214 | 205 | 0 | 9 |
+| Real packed lifecycle, including source removal and MCP JSON-RPC | 1 | 1 | 0 | 0 |
+
+All final local observations used **Linux Node v24.22.1** and stable before/after source snapshots. The 9 skips are 8 Windows-only scenarios and one optional explicit-Service installer scenario, not passed cases. The existing cross-platform CI command now keeps its original six files and adds the shared managed-file and MCP resource tests, so real Windows/macOS runners exercise their alias and junction assertions. Independent technical review found no unresolved P0–P2 issue in this bounded correction. Complete snapshots, commands, log hashes and before/after controls are retained in `latestValidation.portabilityFollowUp`; final remote results for the follow-up commit are attached to PR #133.
+
+The runtime-evidence check returned `due_soon`, zero validation issues and six days remaining on both exact baseline and initial PR head. No review date or native acceptance was manufactured to change that result. GitHub's automatic Codex review could not execute because the account's review quota was exhausted; no paid retry was requested. Existing complete-suite failures and earlier first-head failures remain recorded. This follow-up is not a release or a claim of all-host native model or professional-output acceptance.

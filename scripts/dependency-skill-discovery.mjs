@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { dependencyRootBinding } from "./managed-dependency-source.mjs";
+import { inspectPlainAbsolutePath } from "./safe-managed-file-operations.mjs";
 import {
   checkedPath, componentHash, stableJson, uniqueIds, stringArray, sha256,
   matchDependencyAgentContracts,
@@ -38,11 +39,7 @@ async function readIndex(project, binding, projectRoot) {
   assert.equal(project.interface.capabilityIndex.format, "component-capabilities-v1", "unsupported dependency capability index format");
   assert(typeof binding.value === "string" && binding.value.trim(), "dependency root binding must be a non-empty path");
   const root = path.resolve(projectRoot, binding.value);
-  const stat = await fs.lstat(root);
-  assert(stat.isDirectory() && !stat.isSymbolicLink(), "dependency root must be a directory, not a symlink or junction");
-  const real = await fs.realpath(root);
-  assert.equal(process.platform === "win32" ? real.toLowerCase() : real,
-    process.platform === "win32" ? root.toLowerCase() : root, "dependency root cannot traverse a symlink or junction");
+  assert(inspectPlainAbsolutePath(root, { kind: "directory" }), "dependency root must be a plain directory without a symlink or junction");
   const file = await checkedPath(root, project.interface.capabilityIndex.path);
   const indexBytes = await fs.readFile(file);
   const index = JSON.parse(indexBytes.toString("utf8"));

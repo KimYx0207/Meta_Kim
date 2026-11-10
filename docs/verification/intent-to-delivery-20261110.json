@@ -5627,11 +5627,14 @@
         "result": "No unresolved reproducible P0-P2 issue in the reviewed calculation binding, private typed input handoff, public issue projection, CLI consumer and installer read-authority changes",
         "limits": "Linux Node v24.22.1 locally. CI config Node 22.13.0 is not represented as the local interpreter. CLI worker is an isolated synthetic process; actual Python and MCP transport were exercised."
       },
-      "productionBehaviorUnchangedAfterTheseRuns": true,
+      "productionBehaviorUnchangedAfterTheseRuns": false,
       "postVerificationSourceFormatting": {
         "file": "src/infrastructure/capabilities/source-integrity.mjs",
         "change": "Remove one extra blank line at EOF found by staged git diff --check; no executable statement changed. Source pins refreshed and checked afterwards."
-      }
+      },
+      "supersededForLatestSourceBy": "latestValidation.portabilityFollowUp",
+      "scopeBoundary": "Pre-publication accepted snapshot; later portability correction and its own stable focused checks are retained separately.",
+      "laterProductionChange": "Bounded Windows plain-path and executable identity correction documented in portabilityFollowUp."
     },
     "finalChecks": [
       {
@@ -5690,6 +5693,403 @@
           "sha256": "4ed3d2784aaba6fe07214f10cdf3bf393f9f5137776f7a3e8bd7ec94a00c83f5"
         }
       }
-    ]
+    ],
+    "portabilityFollowUp": {
+      "stage": "post-publication cross-platform CI and bounded portability correction",
+      "pullRequest": "https://github.com/KimYx0207/Meta_Kim/pull/133",
+      "initialHead": "d04289ee98419f570509e53d7ba125840eac19dc",
+      "initialTestMerge": "2e88bb958722a7f2eada5e90cf3838bea40a3048",
+      "initialTree": "019edb4f44a8bc157055d3fda742a2f5d24de0a0",
+      "initialCi": "https://github.com/KimYx0207/Meta_Kim/actions/runs/42839686833",
+      "ciInterpreter": "Node v22.13.0",
+      "initialCiResults": {
+        "core": {
+          "tests": 1668,
+          "pass": 1560,
+          "fail": 103,
+          "skipped": 5,
+          "exactMatchesToFinalLocalFailureSet": 103,
+          "newFailingIdentities": 0
+        },
+        "governance": {
+          "tests": 1165,
+          "pass": 1087,
+          "fail": 41,
+          "skipped": 37,
+          "exactMatchesToFinalLocalFailureSet": 41,
+          "newFailingIdentities": 0,
+          "additionalSkippedCase": "Independent complete positional CLI is source-conditional; the dedicated dependency lane supplies Service."
+        },
+        "ubuntuActualDependency": {
+          "calculation": {
+            "tests": 40,
+            "pass": 40,
+            "fail": 0,
+            "skipped": 0
+          },
+          "knowledge": {
+            "tests": 33,
+            "pass": 33,
+            "fail": 0,
+            "skipped": 0
+          }
+        },
+        "windowsSetup": {
+          "tests": 115,
+          "pass": 109,
+          "fail": 4,
+          "skipped": 2,
+          "finding": "Two dependency source and two runtime launch binding failures at Windows physical/lexical path comparisons."
+        },
+        "windowsCalculation": {
+          "tests": 40,
+          "pass": 36,
+          "fail": 3,
+          "skipped": 1,
+          "knowledgeExecuted": false,
+          "finding": "Three MCP startup connection closures; original logs did not consume child stderr, so their root cause is not asserted from those logs alone."
+        },
+        "macosCalculation": {
+          "tests": 40,
+          "pass": 37,
+          "fail": 3,
+          "skipped": 0,
+          "knowledgeExecuted": false,
+          "finding": "One supplier MCP route and two CLI handoffs blocked; MCP startup itself succeeded."
+        },
+        "otherObservedJobs": {
+          "live": "success",
+          "setupUbuntuAndMacos": "success",
+          "installerOwnershipAllThreeOs": "success",
+          "planningAllThreeOs": "success",
+          "globalSyncAllThreeOs": "success",
+          "graphifyUbuntu": "success",
+          "graphifyMacos": "cancelled",
+          "packageCandidate": "skipped"
+        },
+        "runtimeReview": {
+          "status": "due_soon",
+          "issueCount": 0,
+          "daysRemaining": 6,
+          "identicalOnExactBaseline": true,
+          "reviewDatesRenewed": false
+        },
+        "automaticCodexReview": {
+          "status": "not_executed_usage_limit",
+          "paidRetryRequested": false
+        }
+      },
+      "historicalCiBoundary": {
+        "coreJobId": 126541516865,
+        "governanceJobId": 126541516275,
+        "node": "v22.13.0",
+        "earliestFailure": "meta:agents:migration-catalog:check",
+        "message": "Global Agent migration catalog is stale; regenerate it with --write and review the exact fingerprints.",
+        "behavioralTestsExecuted": false,
+        "note": "These historical CI failures are preflight failures, not remote reproduction of the behavior test identities. The current CI passed this preflight."
+      },
+      "correction": [
+        "One existing-module plain absolute path inspector checks every path segment from the filesystem anchor for symbolic links/junctions before accepting Windows case or 8.3 aliases; physical device/inode identity must agree.",
+        "MCP retains lexical and physical containment, regular-file type and handle identity before reading; existing read stability and public error redaction remain.",
+        "Raw JS argv[0] must resolve to the already fingerprinted physical entry before persisting canonical argv; stored digest/size and different-file rejection remain.",
+        "Trusted test fixture mkdtemp creation establishes one physical root for repo, HOME, cwd, imports and cleanup; caller-provided roots are not normalized to bypass production link gates.",
+        "Fixture-only startup stderr diagnostics retain at most 8 KiB on failed connect before materials are sent; status diagnostics contain bounded status/code/gate fields.",
+        "The original six cross-platform setup test files remain; existing safe-managed-file-operations and MCP resource contract tests are added so actual Windows/macOS runners execute alias and junction assertions."
+      ],
+      "controlledAliasBefore": {
+        "metaSourceBefore": {
+          "fileCount": 1140,
+          "sha256": "26bcbc946b618b96b6f2a2a29d4a5afb5af054f45423ce54b5e52e48c1f18a0e"
+        },
+        "metaSourceAfter": {
+          "fileCount": 1140,
+          "sha256": "26bcbc946b618b96b6f2a2a29d4a5afb5af054f45423ce54b5e52e48c1f18a0e"
+        },
+        "metaSourceStable": true,
+        "serviceCommit": "34ff5ef2361214cdd36cddbdcb67c5dece64ad04",
+        "serviceTree": "416fd6edde182cb9d2089e79d601d0d4924898f9",
+        "serviceTrackedDigestBefore": "66d1ea0e0e3c8db1d5d28a4c51712cce3836c00a3a72df78cd705d34820f3970",
+        "serviceTrackedDigestAfter": "66d1ea0e0e3c8db1d5d28a4c51712cce3836c00a3a72df78cd705d34820f3970",
+        "serviceUnchanged": true,
+        "ciNodeVersion": "22.13.0",
+        "actualNodeVersion": "v24.22.1",
+        "results": [
+          {
+            "tmpRootMode": "symlink_alias",
+            "command": "node --test --test-name-pattern=^(CLI.materials|complete.positional.CLI|real.MCP.tool.call) tests/governance/dependency-calculation.test.mjs tests/governance/dependency-calculation-handoff.test.mjs",
+            "node": "v24.22.1",
+            "platform": "linux",
+            "startedAt": "2026-11-10T15:12:25.154Z",
+            "completedAt": "2026-11-10T15:12:36.712Z",
+            "exitCode": 1,
+            "signal": null,
+            "tests": 3,
+            "pass": 0,
+            "fail": 3,
+            "cancelled": 0,
+            "skipped": 0,
+            "todo": 0,
+            "log": "pr133_mac_nested_alias_stable.log",
+            "logSha256": "9d736d602edf165428023a86b9a0fe8db5b3d93522f328f2b77dad3b50b0ee3a",
+            "skipLines": [],
+            "isolatedHome": true,
+            "credentialEnvironment": "OS allowlist only; empty fresh home; no inherited provider/Git/npm credentials",
+            "homeCleanedOnReturn": true
+          },
+          {
+            "tmpRootMode": "physical",
+            "command": "node --test --test-name-pattern=^(CLI.materials|complete.positional.CLI|real.MCP.tool.call) tests/governance/dependency-calculation.test.mjs tests/governance/dependency-calculation-handoff.test.mjs",
+            "node": "v24.22.1",
+            "platform": "linux",
+            "startedAt": "2026-11-10T15:12:25.161Z",
+            "completedAt": "2026-11-10T15:12:39.770Z",
+            "exitCode": 0,
+            "signal": null,
+            "tests": 3,
+            "pass": 3,
+            "fail": 0,
+            "cancelled": 0,
+            "skipped": 0,
+            "todo": 0,
+            "log": "pr133_mac_nested_physical_stable.log",
+            "logSha256": "aeaf3c00b10e1b55c71032e7c6917c5708505d0041c1e765f9e22e3f9641d88a",
+            "skipLines": [],
+            "isolatedHome": true,
+            "credentialEnvironment": "OS allowlist only; empty fresh home; no inherited provider/Git/npm credentials",
+            "homeCleanedOnReturn": true
+          }
+        ]
+      },
+      "controlledAliasAfter": {
+        "metaSourceBefore": {
+          "fileCount": 1140,
+          "sha256": "b335777ff3bb27c8c81b335d9018d3febbeefcd27d9ba76548d69d6a34000ac9"
+        },
+        "metaSourceAfter": {
+          "fileCount": 1140,
+          "sha256": "b335777ff3bb27c8c81b335d9018d3febbeefcd27d9ba76548d69d6a34000ac9"
+        },
+        "metaSourceStable": true,
+        "serviceCommit": "34ff5ef2361214cdd36cddbdcb67c5dece64ad04",
+        "serviceTree": "416fd6edde182cb9d2089e79d601d0d4924898f9",
+        "serviceTrackedDigestBefore": "66d1ea0e0e3c8db1d5d28a4c51712cce3836c00a3a72df78cd705d34820f3970",
+        "serviceTrackedDigestAfter": "66d1ea0e0e3c8db1d5d28a4c51712cce3836c00a3a72df78cd705d34820f3970",
+        "serviceUnchanged": true,
+        "ciNodeVersion": "22.13.0",
+        "actualNodeVersion": "v24.22.1",
+        "results": [
+          {
+            "tmpRootMode": "symlink_alias",
+            "command": "node --test --test-name-pattern=^(CLI.materials|complete.positional.CLI|real.MCP.tool.call) tests/governance/dependency-calculation.test.mjs tests/governance/dependency-calculation-handoff.test.mjs",
+            "node": "v24.22.1",
+            "platform": "linux",
+            "startedAt": "2026-11-10T15:14:47.867Z",
+            "completedAt": "2026-11-10T15:15:06.389Z",
+            "exitCode": 0,
+            "signal": null,
+            "tests": 3,
+            "pass": 3,
+            "fail": 0,
+            "cancelled": 0,
+            "skipped": 0,
+            "todo": 0,
+            "log": "pr133_mac_alias_afterpatch.log",
+            "logSha256": "ca8fe02e3cf9503cfd643594afc0273be312270b64e878b586991d7ac28d0482",
+            "skipLines": [],
+            "isolatedHome": true,
+            "credentialEnvironment": "OS allowlist only; empty fresh home; no inherited provider/Git/npm credentials",
+            "homeCleanedOnReturn": true
+          },
+          {
+            "tmpRootMode": "physical",
+            "command": "node --test --test-name-pattern=^(CLI.materials|complete.positional.CLI|real.MCP.tool.call) tests/governance/dependency-calculation.test.mjs tests/governance/dependency-calculation-handoff.test.mjs",
+            "node": "v24.22.1",
+            "platform": "linux",
+            "startedAt": "2026-11-10T15:14:47.870Z",
+            "completedAt": "2026-11-10T15:15:05.483Z",
+            "exitCode": 0,
+            "signal": null,
+            "tests": 3,
+            "pass": 3,
+            "fail": 0,
+            "cancelled": 0,
+            "skipped": 0,
+            "todo": 0,
+            "log": "pr133_mac_physical_afterpatch.log",
+            "logSha256": "0ddbaeef8f8d88cd22951fe5e849cf0e08f21f304008e9aa54042e4364495c22",
+            "skipLines": [],
+            "isolatedHome": true,
+            "credentialEnvironment": "OS allowlist only; empty fresh home; no inherited provider/Git/npm credentials",
+            "homeCleanedOnReturn": true
+          }
+        ]
+      },
+      "finalActualDependencyLocal": {
+        "metaSourceBefore": {
+          "fileCount": 1140,
+          "sha256": "b335777ff3bb27c8c81b335d9018d3febbeefcd27d9ba76548d69d6a34000ac9"
+        },
+        "metaSourceAfter": {
+          "fileCount": 1140,
+          "sha256": "b335777ff3bb27c8c81b335d9018d3febbeefcd27d9ba76548d69d6a34000ac9"
+        },
+        "metaSourceStable": true,
+        "serviceCommit": "34ff5ef2361214cdd36cddbdcb67c5dece64ad04",
+        "serviceTree": "416fd6edde182cb9d2089e79d601d0d4924898f9",
+        "serviceTrackedDigestBefore": "66d1ea0e0e3c8db1d5d28a4c51712cce3836c00a3a72df78cd705d34820f3970",
+        "serviceTrackedDigestAfter": "66d1ea0e0e3c8db1d5d28a4c51712cce3836c00a3a72df78cd705d34820f3970",
+        "serviceUnchanged": true,
+        "ciNodeVersion": "22.13.0",
+        "actualNodeVersion": "v24.22.1",
+        "results": [
+          {
+            "command": "node --test tests/governance/dependency-calculation.test.mjs tests/governance/dependency-calculation-handoff.test.mjs tests/governance/store-calculation-integration.test.mjs tests/governance/dependency-delivery-envelope.test.mjs",
+            "node": "v24.22.1",
+            "platform": "linux",
+            "startedAt": "2026-11-10T15:14:47.864Z",
+            "completedAt": "2026-11-10T15:15:53.971Z",
+            "exitCode": 0,
+            "signal": null,
+            "tests": 40,
+            "pass": 40,
+            "fail": 0,
+            "cancelled": 0,
+            "skipped": 0,
+            "todo": 0,
+            "log": "pr133_windows_boundary_calculation.log",
+            "logSha256": "4d10e780802fbc618a53366392314fa5247c290fabf9209622e034a8610bebdc",
+            "skipLines": [],
+            "isolatedHome": true,
+            "credentialEnvironment": "OS allowlist only; empty fresh home; no inherited provider/Git/npm credentials",
+            "homeCleanedOnReturn": true
+          },
+          {
+            "command": "node --test tests/governance/dependency-method-knowledge.test.mjs tests/governance/dependency-method-handoff.test.mjs",
+            "node": "v24.22.1",
+            "platform": "linux",
+            "startedAt": "2026-11-10T15:14:47.870Z",
+            "completedAt": "2026-11-10T15:14:52.857Z",
+            "exitCode": 0,
+            "signal": null,
+            "tests": 33,
+            "pass": 33,
+            "fail": 0,
+            "cancelled": 0,
+            "skipped": 0,
+            "todo": 0,
+            "log": "pr133_windows_boundary_knowledge.log",
+            "logSha256": "e04b4f282596c45c93f2f378fdf226fd4d756f269c94f076b020a46b9f28d9fd",
+            "skipLines": [],
+            "isolatedHome": true,
+            "credentialEnvironment": "OS allowlist only; empty fresh home; no inherited provider/Git/npm credentials",
+            "homeCleanedOnReturn": true
+          }
+        ]
+      },
+      "finalPortabilityLocal": {
+        "node": "v24.22.1",
+        "platform": "linux",
+        "startedAt": "2026-11-10T15:15:15.612Z",
+        "finishedAt": "2026-11-10T15:15:57.339Z",
+        "command": [
+          "--test",
+          "--test-concurrency=1",
+          "tests/setup/codex-config-merge.test.mjs",
+          "tests/setup/mcp-memory-process-control.test.mjs",
+          "tests/setup/managed-dependency-source.test.mjs",
+          "tests/setup/global-discovery-runtime-homes.test.mjs",
+          "tests/setup/runtime-cli-probe.test.mjs",
+          "tests/setup/runtime-cli-binding-probe.test.mjs",
+          "tests/setup/safe-managed-file-operations.test.mjs",
+          "tests/setup/mcp-runtime-resource-contract.test.mjs",
+          "tests/setup/runtime-executable-binding.test.mjs",
+          "tests/governance/dependency-skill-discovery.test.mjs",
+          "tests/setup/kim-service-source-installer.test.mjs"
+        ],
+        "exit": {
+          "code": 0,
+          "signal": null
+        },
+        "isolatedEnvironmentBuilder": "scripts/run-local-verification.mjs#buildIsolatedTestEnvironment",
+        "inheritedTransportKeys": [
+          "HTTP_PROXY",
+          "HTTPS_PROXY",
+          "ALL_PROXY",
+          "NO_PROXY",
+          "http_proxy",
+          "https_proxy",
+          "all_proxy",
+          "no_proxy",
+          "NODE_EXTRA_CA_CERTS",
+          "SSL_CERT_FILE"
+        ],
+        "credentialIsolation": "isolated HOME/npmrc/gitconfig; no npm/Git/provider credentials restored",
+        "beforeDigest": "6543ed7c75072563b7ff7187a1b903a73884bfe43ecfc48b8557215ab9551e38",
+        "afterDigest": "6543ed7c75072563b7ff7187a1b903a73884bfe43ecfc48b8557215ab9551e38",
+        "sourceStable": true,
+        "baseHead": "d04289ee98419f570509e53d7ba125840eac19dc",
+        "includesUncommittedPortabilityFollowUp": true,
+        "sourceFileCount": 1140,
+        "log": "pr133-portability-scoped-final.log",
+        "logSha256": "796f6fed98c987a36782e6332847c8339bd0182387345b7a1da9debd38e2c3aa",
+        "counts": {
+          "tests": 214,
+          "pass": 205,
+          "fail": 0,
+          "skipped": 9
+        }
+      },
+      "finalRealPackageLocal": {
+        "node": "v24.22.1",
+        "platform": "linux",
+        "startedAt": "2026-11-10T15:15:15.643Z",
+        "finishedAt": "2026-11-10T15:16:17.803Z",
+        "command": [
+          "--test",
+          "--test-concurrency=1",
+          "--test-name-pattern=packed sync materializes an idempotent source-independent durable MCP bundle",
+          "tests/setup/global-runtime-bundle.test.mjs"
+        ],
+        "exit": {
+          "code": 0,
+          "signal": null
+        },
+        "isolatedEnvironmentBuilder": "scripts/run-local-verification.mjs#buildIsolatedTestEnvironment",
+        "inheritedTransportKeys": [
+          "HTTP_PROXY",
+          "HTTPS_PROXY",
+          "ALL_PROXY",
+          "NO_PROXY",
+          "http_proxy",
+          "https_proxy",
+          "all_proxy",
+          "no_proxy",
+          "NODE_EXTRA_CA_CERTS",
+          "SSL_CERT_FILE"
+        ],
+        "credentialIsolation": "isolated HOME/npmrc/gitconfig; no npm/Git/provider credentials restored",
+        "beforeDigest": "6543ed7c75072563b7ff7187a1b903a73884bfe43ecfc48b8557215ab9551e38",
+        "afterDigest": "6543ed7c75072563b7ff7187a1b903a73884bfe43ecfc48b8557215ab9551e38",
+        "sourceStable": true,
+        "baseHead": "d04289ee98419f570509e53d7ba125840eac19dc",
+        "includesUncommittedPortabilityFollowUp": true,
+        "sourceFileCount": 1140,
+        "log": "pr133-portability-packed-final.log",
+        "logSha256": "f4048b69b0a225b1acdce43f25177df5cd2ff0cc0e55e5a1ebb0ff6b2c588502",
+        "counts": {
+          "tests": 1,
+          "pass": 1,
+          "fail": 0,
+          "skipped": 0
+        }
+      },
+      "independentReview": {
+        "reviewer": "human_gate_scheduler",
+        "scope": "Five production files, path/identity refusal invariants, bounded fixture diagnostics, trusted fixture root correction and preserved/extended three-OS test gate.",
+        "unresolvedP0ToP2": 0,
+        "humanOrNativeAcceptanceClaimed": false
+      },
+      "evidenceBoundary": "All follow-up local runs used Linux Node v24.22.1. Each before/after source digest was stable; the agents record separate snapshot encodings. These are not Windows/macOS acceptance. Final remote checks for the follow-up commit are recorded on PR 133. Earlier complete-run counts are not reruns of this later patch. No production behavior changed after these final local observations; only this evidence record was appended."
+    }
   }
 }

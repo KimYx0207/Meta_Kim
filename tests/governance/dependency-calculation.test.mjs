@@ -9,7 +9,7 @@ import { syncBuiltinESMExports } from "node:module";
 import { fileURLToPath } from "node:url";
 import { runDependencyCalculation as sourceRunDependencyCalculation } from "../../scripts/governed-execution/dependency-calculation.mjs";
 import { componentHash, stableJson } from "../../scripts/dependency-agent-discovery.mjs";
-import { fixtureCalculationAssessment } from "../helpers/calculation-host-fixture.mjs";
+import { connectFixtureMcpWithDiagnostics, fixtureCalculationAssessment, fixtureCalculationDiagnostics } from "../helpers/calculation-host-fixture.mjs";
 import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
 import { refreshFixtureSourcePins } from "../helpers/host-reasoning-fixture.mjs";
 
@@ -272,13 +272,13 @@ test("real MCP tool call delivers the same calculation without a native Agent or
     args: [path.join(repo, "scripts/mcp/meta-runtime-server.mjs")], cwd: home, env, stderr: "pipe" });
   const client = new Client({ name: "real-calculation-integration", version: "1.0.0" });
   try {
-    await client.connect(transport);
+    await connectFixtureMcpWithDiagnostics(client, transport);
     assert((await client.listTools()).tools.some((tool) => tool.name === "calculate_materials"));
     const response = await client.callTool({ name: "calculate_materials", arguments: { task, inputJson: inputJson(), dependencyRoot,
       methodAssessment: await assessment() } });
     assert.equal(response.isError, undefined);
     const result = JSON.parse(response.content[0].text);
-    assert.equal(result.status, "completed"); assert.equal(result.toolInvoked, true);
+    assert.equal(result.status, "completed", fixtureCalculationDiagnostics(result)); assert.equal(result.toolInvoked, true);
     assert.equal(result.execution.exitCode, 0); assert.match(result.delivery, /275 CNY/);
     const current = await assessment();
     for (const methodAssessment of [undefined, { ...current, taskHash: "0".repeat(64) },
@@ -305,7 +305,7 @@ test("MCP runtime comes from server configuration, never a default Codex identit
       args: [path.join(repo, "scripts/mcp/meta-runtime-server.mjs")], cwd: home, env, stderr: "pipe" });
     const client = new Client({ name: "runtime-binding-regression", version: "1.0.0" });
     try {
-      await client.connect(transport);
+      await connectFixtureMcpWithDiagnostics(client, transport);
       const tool = (await client.listTools()).tools.find((entry) => entry.name === "calculate_materials");
       assert.equal(Object.hasOwn(tool.inputSchema.properties, "runtime"), false);
       const response = await client.callTool({ name: "calculate_materials", arguments: { task, inputJson: inputJson(), dependencyRoot,
