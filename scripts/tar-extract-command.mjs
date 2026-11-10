@@ -4,7 +4,7 @@ import process from "node:process";
 /**
  * Builds the argv for extracting a tarball with the system `tar`.
  *
- * The only non-obvious part is that the archive is passed as a bare filename
+ * The only non-obvious part is that the archive is passed as a relative filename
  * with the working directory moved to its parent. GNU tar reads a colon that
  * appears before the first slash of `-f` as an rsh-style `host:path`, so an
  * absolute Windows path makes it fail with `Cannot connect to C: resolve
@@ -12,7 +12,7 @@ import process from "node:process";
  * bsdtar — which ships as `C:\Windows\System32\tar.exe` and is what a plain
  * cmd.exe or PowerShell session resolves — rejects the flag outright. Whichever
  * of the two comes first on PATH is not a caller's concern, and a filename with
- * no colon extracts identically under both.
+ * a leading ./ keeps even a colon-bearing filename local under both.
  *
  * `-C` is not affected: it is a plain chdir argument and takes an absolute path
  * under either implementation.
@@ -24,7 +24,7 @@ export function tarExtractCommand(archivePath, targetDir) {
   const archive = path.resolve(archivePath);
   return {
     command: process.platform === "win32" ? "tar.exe" : "tar",
-    args: ["-xf", path.basename(archive), "-C", path.resolve(targetDir)],
+    args: ["-xf", `./${path.basename(archive)}`, "-C", path.resolve(targetDir)],
     cwd: path.dirname(archive),
   };
 }

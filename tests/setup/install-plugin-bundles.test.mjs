@@ -1,6 +1,8 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -40,7 +42,7 @@ function runDryRun(extraArgs = [], extraEnv = {}) {
   };
 }
 
-function runFullDryRun(extraArgs = []) {
+function runFullDryRun(extraArgs = [], extraEnv = {}) {
   const result = spawnSync(process.execPath, [SCRIPT, "--dry-run", ...extraArgs], {
     encoding: "utf8",
     env: {
@@ -48,6 +50,7 @@ function runFullDryRun(extraArgs = []) {
       META_KIM_LANG: "en",
       FORCE_COLOR: "0",
       NO_COLOR: "1",
+      ...extraEnv,
     },
   });
   return {
@@ -180,20 +183,27 @@ describe("installPluginBundlesForNonClaudeRuntimes (dry-run e2e)", () => {
     assert.doesNotMatch(plain, /git clone https:\/\/github\.com\/affaan-m\/ECC\.git/);
   });
 
-  test("unknown --skills filter skips optional skill suite without installing generic fallback", () => {
+  test("unknown --skills filter skips optional skill suite without installing generic fallback", (t) => {
+    const home = mkdtempSync(path.join(tmpdir(), "meta-kim-unknown-skill-"));
+    t.after(() => rmSync(home, { recursive: true, force: true }));
+    const codexHome = path.join(home, ".codex");
+    mkdirSync(codexHome, { recursive: true });
+    const configPath = path.join(codexHome, "config.toml");
+    const userConfig = 'model = "user-model"\n[features]\nrequest_user_input = true\n';
+    writeFileSync(configPath, userConfig);
     const { status, out } = runFullDryRun([
       "--skills",
       "does-not-exist",
       "--targets",
       "claude,codex",
-    ]);
+    ], { HOME: home, USERPROFILE: home, META_KIM_CODEX_HOME: codexHome, META_KIM_SKIP_OPTIONAL_TOOLS: "1" });
     assert.equal(status, 0);
     const plain = stripAnsi(out);
     assert.match(plain, /Unknown skill id|No skill repositories matched/i);
     assert.doesNotMatch(plain, /skill-creator/);
     assert.doesNotMatch(plain, /git clone https:\/\/github\.com\//);
     assert.doesNotMatch(plain, /sparse install https:\/\/github\.com\//);
-    assert.match(plain, /ensure .*\.codex.*config\.toml preserves Codex App Browser\/Chrome\/Computer Use native controls/);
+    assert.equal(readFileSync(configPath, "utf8"), userConfig, "a scoped dependency dry-run must preserve the unrelated native configuration");
   });
 
   test("empty --skills filter means no selected third-party skill repos, not all repos", () => {

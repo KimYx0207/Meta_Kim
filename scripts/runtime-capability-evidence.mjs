@@ -61,11 +61,29 @@ const OFFICIAL_HOSTS = {
   codex: new Set(["developers.openai.com", "learn.chatgpt.com"]),
   openclaw: new Set(["docs.openclaw.ai"]),
   cursor: new Set(["cursor.com", "docs.cursor.com"]),
-  zcode: new Set(["cdn-zcode.z.ai"]),
+  zcode: new Set(["cdn-zcode.z.ai", "zcode.z.ai"]),
+  gemini: new Set(["geminicli.com"]),
 };
 const REPOSITORY_EVIDENCE_PREFIXES = ["canonical/", "config/", "scripts/"];
 const REPOSITORY_EVIDENCE_FILES = new Set(["setup.mjs", "AGENTS.md"]);
 const OFFICIAL_PATH_CAPABILITIES = {
+  gemini: [
+    [/^\/docs\/cli\/skills$/u, new Set(["skill", "skill discovery"])],
+    [/^\/docs\/core\/subagents$/u, new Set(["agent", "subagent", "custom agent"])],
+    [/^\/docs\/cli\/gemini-md$/u, new Set(["project rule file", "global rule file"])],
+    [/^\/docs\/hooks\/reference$/u, new Set(["hook", "hook discovery", "automation trigger"])],
+    [/^\/docs\/tools\/mcp-server$/u, new Set(["MCP"])],
+  ],
+  zcode: [
+    [/^\/en\/docs\/skill$/u, new Set(["skill", "skill discovery"])],
+    [/^\/en\/docs\/subagents$/u, new Set(["agent", "subagent", "custom agent"])],
+    [/^\/en\/docs\/qa$/u, new Set(["project rule file", "global rule file"])],
+    [/^\/en\/docs\/hooks$/u, new Set(["hook", "hook discovery", "automation trigger"])],
+    [/^\/en\/docs\/mcp-services$/u, new Set(["MCP"])],
+    // Keep the pinned 2026-10-17 guide snapshot as historical evidence. The
+    // current hook scope observation explicitly supersedes its project claim.
+    [/^\/zcode\/official-plugin\/marketplace\.json$/u, new Set(["agent", "subagent", "skill", "command", "hook", "MCP", "plugin", "instructions"])],
+  ],
   claude_code: [
     [/\/sub-agents$/u, new Set(["agent", "subagent", "custom agent"])],
     [/\/tools-reference$/u, new Set(["browser / web", "shell", "filesystem", "apply_patch / edit", "native choice surface", "background task", "human confirmation trigger"])],

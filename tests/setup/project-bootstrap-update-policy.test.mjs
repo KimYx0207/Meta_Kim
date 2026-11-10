@@ -8,9 +8,14 @@ import path from "node:path";
 
 import { classifyProjectProjectionUpdate } from "../../scripts/project-bootstrap-update-policy.mjs";
 import { buildIsolatedUserHomeEnv } from "../../scripts/isolated-user-home-env.mjs";
+import { applyNativeSkillPaths, buildPortableSkillContent } from "../../scripts/native-runtime-projection.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..", "..");
 const setupPath = path.join(repoRoot, "setup.mjs");
+function codexSkillProjection() {
+  const canonical = readFileSync(path.join(repoRoot, "canonical", "skills", "meta-theory", "SKILL.md"), "utf8");
+  return Buffer.from(buildPortableSkillContent(applyNativeSkillPaths(canonical, "codex")));
+}
 const testUserHome = mkdtempSync(
   path.join(os.tmpdir(), "meta-kim-bootstrap-policy-home-"),
 );
@@ -54,14 +59,14 @@ test("three-hash policy distinguishes managed merge/delta refresh, protected pro
   assert.equal(classifyProjectProjectionUpdate({ exists: true, currentHash: oldHash, sourceHash: newHash, previousManifestEntry: { contentHash: oldHash }, protectedProjectCapability: true }).action, "unchanged");
 });
 
-test("real bootstrap writes canonical bytes and a meta-kim Junction blocks all outside writes", () => {
+test("real bootstrap writes the portable canonical projection and a meta-kim Junction blocks all outside writes", () => {
   const projectRoot = mkdtempSync(path.join(os.tmpdir(), "meta-kim-bootstrap-content-"));
   const outsideRoot = mkdtempSync(path.join(os.tmpdir(), "meta-kim-bootstrap-outside-"));
   try {
     runBootstrap(["--project-bootstrap", "--targets", "codex", "--project-dir", projectRoot, "--apply", "--json"]);
     assert.deepEqual(
       readFileSync(path.join(projectRoot, ".agents", "skills", "meta-theory", "SKILL.md")),
-      readFileSync(path.join(repoRoot, "canonical", "skills", "meta-theory", "SKILL.md")),
+      codexSkillProjection(),
     );
 
     const blockedRoot = mkdtempSync(path.join(os.tmpdir(), "meta-kim-bootstrap-junction-"));
@@ -111,7 +116,7 @@ test("configured merge/delta replaces a manifest-managed projection but preserve
     runBootstrap(["--project-bootstrap", "--targets", "codex", "--project-dir", projectRoot, "--apply", "--json"]);
     assert.deepEqual(
       readFileSync(conflictPath),
-      readFileSync(path.join(repoRoot, "canonical", "skills", "meta-theory", "SKILL.md")),
+      codexSkillProjection(),
       "manifest-managed projection must refresh to the current package source",
     );
     assert.equal(existsSync(repairPath), true, "missing managed file must be repaired in the same transaction");

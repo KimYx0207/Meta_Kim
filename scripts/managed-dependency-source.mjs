@@ -5,7 +5,7 @@ import path from "node:path";
 import { directoryClosureSync, readManifest, openRecorder, CATEGORIES } from "./install-manifest.mjs";
 import { inspectTrustedPath } from "./safe-managed-file-operations.mjs";
 import { withFileLock } from "../canonical/runtime-assets/shared/hooks/spine-state-utils.mjs";
-import { checkedPath, componentHash, stableJson, sha256 } from "./dependency-source-integrity.mjs";
+import { checkedPath, componentHash, stableJson, sha256 } from "../src/infrastructure/capabilities/source-integrity.mjs";
 
 const PURPOSE = "kim-service-dependency-source";
 const SOURCE = "install-global-skills-all-runtimes";

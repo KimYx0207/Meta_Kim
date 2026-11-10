@@ -23,7 +23,7 @@ export const GOVERNANCE_ACTIONS = [
   "verify_user_goal",
   "evolve_writeback",
 ];
-export const RUNTIMES = ["claude_code", "codex", "openclaw", "cursor"];
+export const RUNTIMES = ["claude_code", "codex", "openclaw", "cursor", "gemini", "zcode"];
 export const OS_TARGETS = ["macos", "windows", "linux", "wsl2"];
 export const SUPPORT = ["native", "partial", "unsupported", "unknown"];
 export const CONFIDENCE = [

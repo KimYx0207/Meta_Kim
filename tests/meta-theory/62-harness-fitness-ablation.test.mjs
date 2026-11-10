@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { after, before, test } from "node:test";
@@ -95,6 +95,10 @@ test("62 — the scaffold ladder adds only the intended governance bundles", () 
   assert.match(full, /## Review/);
   assert.match(full, /## Meta-Review/);
   assert.match(full, /## Evolution/);
+  assert.equal(full.replace(/\n## Evolution\n[\s\S]*$/u, "\n"), reviewed,
+    "The evolution comparison must not also change verification order or wording");
+  assert.equal(reviewed.replace(/\n## Review\n[\s\S]*?(?=\n## Verification)/u, "\n"), slim);
+  assert.ok(reviewed.indexOf("## Review") < reviewed.indexOf("## Verification"));
 });
 
 test("62 — planner gives every P-135 task/group three deterministic repetitions", () => {
@@ -162,6 +166,18 @@ test("62 — completed fixture trials resume after the provider result became st
     first.report.results.map((result) => result.completedAt),
   );
   assert.ok(second.report.results.every((result) => typeof result.provider === "object"));
+  const prior = second.report.results[0];
+  assert.match(prior.instructionDigest, /^[a-f0-9]{64}$/u);
+  const priorPath = path.join(tempRoot, options.runId, "trials", prior.trialId, "result.json");
+  const planPath = path.join(tempRoot, options.runId, "plan.json");
+  const originalPlan = await readFile(planPath, "utf8");
+  await assert.rejects(runFitnessLab({ ...options, seed: "changed-seed" }), /trial identity or definition changed/);
+  assert.equal(await readFile(planPath, "utf8"), originalPlan);
+  const stored = JSON.parse(await readFile(priorPath, "utf8"));
+  stored.instructionDigest = "0".repeat(64);
+  await writeFile(priorPath, JSON.stringify(stored));
+  await assert.rejects(runFitnessLab(options), /trial identity or definition changed/);
+  assert.equal(await readFile(planPath, "utf8"), originalPlan, "Rejected instruction drift must not rewrite the plan");
 });
 
 function syntheticResults({ saturated = false, equalCosts = false } = {}) {

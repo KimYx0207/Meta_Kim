@@ -226,7 +226,7 @@ hasAll(
 );
 hasAll(
   projectProjectionLayer.selectionInvariant ?? "",
-  ["activeTargets", "claude,codex", "--targets", ".meta-kim/local.overrides.json", "all four supported targets are formal"],
+  ["activeTargets", "claude,codex", "--targets", ".meta-kim/local.overrides.json", "all declared supported targets are formal"],
   "project projection selection invariant",
 );
 const platformSupportTiers = contract.installExperienceModel?.platformSupportTiers ?? {};
@@ -246,12 +246,17 @@ assert(
   "default selected targets must be Claude Code + Codex",
 );
 assert(
-  sameMembers(platformSupportTiers.nonDefaultFormalProjectionTargets, [
-    "openclaw",
-    "cursor",
-  ]),
-  "non-default formal projection targets must be OpenClaw + Cursor",
+  sameMembers(platformSupportTiers.nonDefaultFormalProjectionTargets,
+    productIdsByTier(catalog, "runtime_projection").filter((id) => !platformSupportTiers.defaultSelectedTargets.includes(id))),
+  "non-default formal projection targets must match the catalog outside defaults",
 );
+for (const runtime of ["gemini", "zcode"]) {
+  hasAll(conditionalProjectionSets[runtime] ?? [], ["AGENTS.md", ".meta-kim/state", ".meta-kim/backups"], `${runtime} project projection layer`);
+}
+assert(contract.hostConfigMerge.nativeProjectionBoundary?.projectionDoesNotGrantExecution === true,
+  "native projection must not grant host execution authority");
+assert(contract.hostConfigMerge.nativeProjectionBoundary?.zcode?.nativeProjectHooks === false,
+  "ZCode project hooks are ignored by the host and cannot be projected as active");
 assert(
   sameMembers(
     platformSupportTiers.dependencyInstallTargets,

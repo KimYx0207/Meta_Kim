@@ -1,62 +1,535 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "contractId": "meta-kim-dependency-absorption-contract",
   "owner": "meta-artisan",
   "gateOwner": "meta-warden",
-  "mode": "single_project_sequential",
-  "maxActiveResearch": 1,
+  "mode": "per_dependency_evidence_gated",
   "crossProjectEvidenceReuse": false,
-  "nextProjectActivationAllowed": false,
-  "activeItem": {
-    "id": "planning-with-files",
-    "source": "OthmanAdi/planning-with-files",
-    "upstreamHead": "af9a1fab2f9b80995789e55cc3fb886a1c2f8b05",
-    "release": "v3.11.2",
-    "releaseCommit": "9e94390e5912b1ff296556505cd999ff84838160",
-    "license": "MIT",
-    "state": "DEPENDENCY_REMOVED_CLOSED",
-    "routeEligibility": "historical_evidence_only",
-    "installedState": "removed",
-    "deletionAuthorized": true
-  },
-  "lifecycle": [
-    "research_primary_sources",
-    "internalize_runtime_neutral_patterns",
-    "absence_test_without_external_project",
-    "independent_correctness_security_integrity_review",
-    "user_authorizes_single_deletion",
-    "delete_exactly_one_dependency",
-    "independent_deletion_closure_review",
-    "close_exactly_one_dependency",
-    "activate_next_project"
+  "historicalClosures": [
+    {
+      "schemaVersion": 1,
+      "contractId": "meta-kim-dependency-absorption-contract",
+      "owner": "meta-artisan",
+      "gateOwner": "meta-warden",
+      "mode": "single_project_sequential",
+      "maxActiveResearch": 1,
+      "crossProjectEvidenceReuse": false,
+      "nextProjectActivationAllowed": false,
+      "activeItem": {
+        "id": "planning-with-files",
+        "source": "OthmanAdi/planning-with-files",
+        "upstreamHead": "af9a1fab2f9b80995789e55cc3fb886a1c2f8b05",
+        "release": "v3.11.2",
+        "releaseCommit": "9e94390e5912b1ff296556505cd999ff84838160",
+        "license": "MIT",
+        "state": "DEPENDENCY_REMOVED_CLOSED",
+        "routeEligibility": "historical_evidence_only",
+        "installedState": "removed",
+        "deletionAuthorized": true
+      },
+      "lifecycle": [
+        "research_primary_sources",
+        "internalize_runtime_neutral_patterns",
+        "absence_test_without_external_project",
+        "independent_correctness_security_integrity_review",
+        "user_authorizes_single_deletion",
+        "delete_exactly_one_dependency",
+        "independent_deletion_closure_review",
+        "close_exactly_one_dependency",
+        "activate_next_project"
+      ],
+      "deletionGate": {
+        "required": [
+          "internalization implementation passes",
+          "real packed install and update evidence passes",
+          "absence tests prove no checkout, skill, hook, cache, network, or default-route fallback",
+          "independent review passes",
+          "user explicitly authorizes deletion of this one dependency"
+        ],
+        "currentDecision": "dependency_removed_closed",
+        "reason": "The user authorized deletion of planning-with-files. Install declarations, managed runtime copies, aliases, and legacy Codex Hook registrations were retired; historical evidence remains. Two independent deletion-closure reviews passed with no P0-P2 findings. Next-project activation remains separately blocked."
+      },
+      "closureReview": {
+        "decision": "REVIEW_PASS",
+        "completedAt": "2026-08-30",
+        "independentReviewCount": 2,
+        "blockingFindings": {
+          "p0": 0,
+          "p1": 0,
+          "p2": 0
+        },
+        "nextProjectActivationAuthorized": false
+      },
+      "forbidden": [
+        "activate more than one dependency research item",
+        "reuse evidence across dependency projects",
+        "bulk downgrade unrelated projects",
+        "bulk delete dependencies",
+        "treat an installed reference as runtime authority"
+      ]
+    }
   ],
-  "deletionGate": {
-    "required": [
-      "internalization implementation passes",
-      "real packed install and update evidence passes",
-      "absence tests prove no checkout, skill, hook, cache, network, or default-route fallback",
-      "independent review passes",
-      "user explicitly authorizes deletion of this one dependency"
+  "currentReview": {
+    "id": "dependency-disposition-2026-11-10",
+    "inspectedAt": "2026-11-10",
+    "authorizationScope": "Current user requested per-dependency method absorption, redundant entry cleanup, retention of indispensable engines, and implementation for merge.",
+    "status": "implemented_pending_independent_review",
+    "rules": [
+      "Every disposition has its own source and local consumer evidence.",
+      "Concept adoption does not establish full package equivalence.",
+      "Retire only listed install entries and exact unchanged install-owned copies; preserve user edits and independent Service packages.",
+      "Optional packages are never mandatory Fetch/Thinking or scheduling dependencies.",
+      "Preserve source, attribution and license for upstream execution engines; no engine disguised as first-party MCP.",
+      "Capability type and component/interface type are separate fields.",
+      "Structural and fixture passes do not establish native host or model-quality acceptance."
     ],
-    "currentDecision": "dependency_removed_closed",
-    "reason": "The user authorized deletion of planning-with-files. Install declarations, managed runtime copies, aliases, and legacy Codex Hook registrations were retired; historical evidence remains. Two independent deletion-closure reviews passed with no P0-P2 findings. Next-project activation remains separately blocked."
-  },
-  "closureReview": {
-    "decision": "REVIEW_PASS",
-    "completedAt": "2026-08-30",
-    "independentReviewCount": 2,
-    "blockingFindings": {
-      "p0": 0,
-      "p1": 0,
-      "p2": 0
-    },
-    "nextProjectActivationAuthorized": false
-  },
-  "forbidden": [
-    "activate more than one dependency research item",
-    "reuse evidence across dependency projects",
-    "bulk downgrade unrelated projects",
-    "bulk delete dependencies",
-    "treat an installed reference as runtime authority"
-  ]
+    "items": [
+      {
+        "id": "kim-decision",
+        "dependencyKind": "prompt_method",
+        "decision": "absorbed_install_retired",
+        "reason": "Meta owns decision-stage data and its local weapon; the second installed workflow is redundant.",
+        "license": "MIT OR Apache-2.0",
+        "upstreamEvidenceRefs": [
+          "https://github.com/KimYx0207/Kim_Service/tree/main/skills/kim-decision"
+        ],
+        "localEvidenceRefs": [
+          "config/governance/decision-pattern-catalog.json",
+          "scripts/select-execution-route.mjs"
+        ],
+        "adoptedConcepts": [
+          "real outcome before route",
+          "evidence gap is not a verdict",
+          "minimum falsification test",
+          "pass/kill review"
+        ],
+        "preservedCapabilities": [
+          "independent Service decision analysis"
+        ],
+        "reviewStatus": "implementation_requires_independent_review",
+        "liveExecutionClaim": false,
+        "managedCopyRetirement": {
+          "enabled": true,
+          "ownershipSource": "install-global-skills-all-runtimes",
+          "ownershipPurpose": "kim-decision-global-skill",
+          "relativePath": "skills/kim-decision",
+          "targets": [
+            "claude",
+            "codex",
+            "cursor",
+            "openclaw"
+          ],
+          "policy": "exact_manifest_owned_unchanged_closure_only",
+          "unknownOrEdited": "preserve",
+          "projectCopies": "preserve",
+          "globalRemovalClaim": false
+        }
+      },
+      {
+        "id": "agent-teams-playbook",
+        "dependencyKind": "prompt_method",
+        "decision": "methods_absorbed_optional_package",
+        "reason": "Native delegation plus the existing stage DAG owns scheduling; optional advice must not become a second orchestrator.",
+        "license": "MIT",
+        "upstreamEvidenceRefs": [
+          "https://github.com/KimYx0207/Kim_Service/tree/main/skills/agent-teams-playbook"
+        ],
+        "localEvidenceRefs": [
+          "config/contracts/core-loop-contract.json",
+          "scripts/governed-execution/stage-dag.mjs",
+          "scripts/select-execution-route.mjs"
+        ],
+        "adoptedConcepts": [
+          "bounded work orders",
+          "independent worker context",
+          "actual host schema",
+          "merge and collision boundaries"
+        ],
+        "preservedCapabilities": [
+          "standalone multi-agent playbook"
+        ],
+        "reviewStatus": "implementation_requires_independent_review",
+        "liveExecutionClaim": false
+      },
+      {
+        "id": "findskill",
+        "dependencyKind": "prompt_method",
+        "decision": "methods_absorbed_optional_package",
+        "reason": "Indexed local capability search is first-party; external marketplace search is an optional distinct capability.",
+        "license": "MIT",
+        "upstreamEvidenceRefs": [
+          "https://github.com/KimYx0207/Kim_Service/tree/main/skills/find-skill"
+        ],
+        "localEvidenceRefs": [
+          "scripts/search-capabilities.mjs",
+          "scripts/discover-global-capabilities.mjs"
+        ],
+        "adoptedConcepts": [
+          "sufficient local provider first",
+          "discovery is not installation",
+          "failed search is not absence"
+        ],
+        "preservedCapabilities": [
+          "external skills ecosystem search instructions"
+        ],
+        "reviewStatus": "implementation_requires_independent_review",
+        "liveExecutionClaim": false
+      },
+      {
+        "id": "superpowers",
+        "dependencyKind": "method_library",
+        "decision": "methods_absorbed_optional_package",
+        "reason": "Adopt bounded design, review and evidence methods without a competing always-on workflow.",
+        "license": "MIT",
+        "upstreamEvidenceRefs": [
+          "https://github.com/obra/superpowers/blob/main/README.md",
+          "https://github.com/obra/superpowers/blob/main/LICENSE"
+        ],
+        "localEvidenceRefs": [
+          "config/contracts/core-loop-contract.json",
+          "scripts/governed-execution/product-design.mjs"
+        ],
+        "adoptedConcepts": [
+          "intent before design",
+          "specification review before quality review",
+          "fresh evidence before completion"
+        ],
+        "preservedCapabilities": [
+          "upstream optional testing/debugging/worktree library"
+        ],
+        "reviewStatus": "implementation_requires_independent_review",
+        "liveExecutionClaim": false
+      },
+      {
+        "id": "goalpro",
+        "dependencyKind": "prompt_method",
+        "decision": "methods_absorbed_optional_specialist",
+        "reason": "Shared intent/evidence methods are internalized; copyable Goal/Loop Prompts without execution remain a distinct output.",
+        "license": "MIT",
+        "upstreamEvidenceRefs": [
+          "https://github.com/KimYx0207/Kim_Service/tree/main/skills/goalpro"
+        ],
+        "localEvidenceRefs": [
+          "scripts/governed-execution/intent-dialogue.mjs",
+          "scripts/governed-execution/advance-goal.mjs"
+        ],
+        "adoptedConcepts": [
+          "stated versus inferred intent",
+          "direct versus proxy evidence",
+          "goal versus plan versus output"
+        ],
+        "preservedCapabilities": [
+          "prompt-only Goal Prompt",
+          "conditional Loop Prompt with time/stop/resume contract"
+        ],
+        "reviewStatus": "implementation_requires_independent_review",
+        "liveExecutionClaim": false
+      },
+      {
+        "id": "hookprompt",
+        "dependencyKind": "hook_adapter",
+        "decision": "retain_optional_engine",
+        "reason": "Contains executable prompt-submit hooks; host-specific effects need review and are not required by ordinary Meta entry.",
+        "license": "MIT",
+        "upstreamEvidenceRefs": [
+          "https://github.com/KimYx0207/Kim_Service/tree/main/hooks/hookprompt"
+        ],
+        "localEvidenceRefs": [
+          "scripts/runtime-hook-mapping.mjs",
+          "canonical/runtime-assets/shared/hooks/activate-meta-theory-spine.mjs"
+        ],
+        "adoptedConcepts": [],
+        "preservedCapabilities": [
+          "upstream prompt optimizer and host-specific hook adapter"
+        ],
+        "reviewStatus": "implementation_requires_independent_review",
+        "liveExecutionClaim": false
+      },
+      {
+        "id": "ecc",
+        "dependencyKind": "mixed_tooling",
+        "decision": "retain_optional_engine",
+        "reason": "Includes a CLI, installer, security and memory tools; prompt text cannot replace this executable behavior.",
+        "license": "MIT",
+        "upstreamEvidenceRefs": [
+          "https://github.com/affaan-m/ECC",
+          "https://github.com/affaan-m/ECC/blob/main/LICENSE"
+        ],
+        "localEvidenceRefs": [
+          "scripts/install-global-skills-all-runtimes.mjs"
+        ],
+        "adoptedConcepts": [],
+        "preservedCapabilities": [
+          "selective upstream installer",
+          "upstream tool and skill implementations"
+        ],
+        "reviewStatus": "implementation_requires_independent_review",
+        "liveExecutionClaim": false
+      },
+      {
+        "id": "cli-anything",
+        "dependencyKind": "cli_harness_tooling",
+        "decision": "retain_optional_engine",
+        "reason": "Harness generation and application CLIs are executable capabilities, not duplicate governance prose.",
+        "license": "Apache-2.0",
+        "upstreamEvidenceRefs": [
+          "https://github.com/HKUDS/CLI-Anything",
+          "https://github.com/HKUDS/CLI-Anything/blob/main/LICENSE"
+        ],
+        "localEvidenceRefs": [
+          "scripts/install-global-skills-all-runtimes.mjs"
+        ],
+        "adoptedConcepts": [],
+        "preservedCapabilities": [
+          "application CLI harness generation and validation"
+        ],
+        "reviewStatus": "implementation_requires_independent_review",
+        "liveExecutionClaim": false
+      },
+      {
+        "id": "gstack",
+        "dependencyKind": "mixed_tooling",
+        "decision": "retain_explicit_reference",
+        "reason": "Preserve its existing explicit opt-in policy and upstream browser/QA tooling, without importing delivery governance.",
+        "license": "MIT",
+        "upstreamEvidenceRefs": [
+          "https://github.com/garrytan/gstack",
+          "https://github.com/garrytan/gstack/blob/main/LICENSE"
+        ],
+        "localEvidenceRefs": [
+          "config/skills.json",
+          "scripts/install-global-skills-all-runtimes.mjs"
+        ],
+        "adoptedConcepts": [],
+        "preservedCapabilities": [
+          "optional upstream browser and QA implementations"
+        ],
+        "reviewStatus": "implementation_requires_independent_review",
+        "liveExecutionClaim": false
+      },
+      {
+        "id": "meta-skill-creator",
+        "dependencyKind": "specialist_with_validators",
+        "decision": "retain_default_specialist",
+        "reason": "Authoring includes deterministic package and acceptance validators; it is not a substitute scheduler.",
+        "license": "MIT",
+        "upstreamEvidenceRefs": [
+          "https://github.com/KimYx0207/Kim_Service/tree/main/skills/meta-skill-creator"
+        ],
+        "localEvidenceRefs": [
+          "scripts/install-global-skills-all-runtimes.mjs"
+        ],
+        "adoptedConcepts": [],
+        "preservedCapabilities": [
+          "skill/agent/tool authoring methods",
+          "package and closed-loop validation"
+        ],
+        "reviewStatus": "implementation_requires_independent_review",
+        "liveExecutionClaim": false
+      },
+      {
+        "id": "kim-service",
+        "dependencyKind": "professional_contract_source",
+        "decision": "retain_source_contracts",
+        "reason": "Professional knowledge and hash-bound method contracts are independent of Meta governance.",
+        "license": "MIT",
+        "upstreamEvidenceRefs": [
+          "https://github.com/KimYx0207/Kim_Service"
+        ],
+        "localEvidenceRefs": [
+          "scripts/dependency-agent-discovery.mjs",
+          "scripts/dependency-agent-matching.mjs"
+        ],
+        "adoptedConcepts": [],
+        "preservedCapabilities": [
+          "professional agent knowledge and methods"
+        ],
+        "reviewStatus": "implementation_requires_independent_review",
+        "liveExecutionClaim": false
+      },
+      {
+        "id": "meta-kim-runtime",
+        "dependencyKind": "first_party_mcp",
+        "decision": "retain_engine",
+        "reason": "The MCP interface exposes existing governance metadata; it does not replace the host or DAG.",
+        "license": "MIT",
+        "upstreamEvidenceRefs": [],
+        "localEvidenceRefs": [
+          "scripts/mcp/meta-runtime-server.mjs"
+        ],
+        "adoptedConcepts": [],
+        "preservedCapabilities": [
+          "MCP inventory and agent metadata server"
+        ],
+        "reviewStatus": "implementation_requires_independent_review",
+        "liveExecutionClaim": false
+      },
+      {
+        "id": "planning-with-files",
+        "dependencyKind": "historical_reference",
+        "decision": "keep_prior_retirement",
+        "reason": "Preserve the prior closure as historical evidence; do not reuse it to authorize this review.",
+        "license": "MIT",
+        "upstreamEvidenceRefs": [
+          "https://github.com/OthmanAdi/planning-with-files"
+        ],
+        "localEvidenceRefs": [
+          "scripts/retire-planning-with-files.mjs"
+        ],
+        "adoptedConcepts": [],
+        "preservedCapabilities": [
+          "historical attribution only"
+        ],
+        "reviewStatus": "implementation_requires_independent_review",
+        "liveExecutionClaim": false
+      },
+      {
+        "id": "@inquirer/prompts",
+        "dependencyKind": "npm_library",
+        "decision": "retain_engine",
+        "reason": "Actual terminal input/selection primitives.",
+        "license": "MIT",
+        "upstreamEvidenceRefs": [
+          "https://github.com/SBoudrias/Inquirer.js"
+        ],
+        "localEvidenceRefs": [
+          "package.json",
+          "setup.mjs"
+        ],
+        "adoptedConcepts": [],
+        "preservedCapabilities": [
+          "upstream runtime library"
+        ],
+        "reviewStatus": "implementation_requires_independent_review",
+        "liveExecutionClaim": false
+      },
+      {
+        "id": "@modelcontextprotocol/sdk",
+        "dependencyKind": "npm_library",
+        "decision": "retain_engine",
+        "reason": "Actual MCP protocol, lifecycle and transport handling.",
+        "license": "MIT",
+        "upstreamEvidenceRefs": [
+          "https://github.com/modelcontextprotocol/typescript-sdk"
+        ],
+        "localEvidenceRefs": [
+          "package.json",
+          "scripts/mcp/meta-runtime-server.mjs"
+        ],
+        "adoptedConcepts": [],
+        "preservedCapabilities": [
+          "upstream protocol library"
+        ],
+        "reviewStatus": "implementation_requires_independent_review",
+        "liveExecutionClaim": false
+      },
+      {
+        "id": "zod",
+        "dependencyKind": "npm_library",
+        "decision": "retain_engine",
+        "reason": "Executable schema validation for the actual MCP interface.",
+        "license": "MIT",
+        "upstreamEvidenceRefs": [
+          "https://github.com/colinhacks/zod"
+        ],
+        "localEvidenceRefs": [
+          "package.json",
+          "scripts/mcp/meta-runtime-server.mjs"
+        ],
+        "adoptedConcepts": [],
+        "preservedCapabilities": [
+          "upstream validation library"
+        ],
+        "reviewStatus": "implementation_requires_independent_review",
+        "liveExecutionClaim": false
+      },
+      {
+        "id": "graphifyy",
+        "dependencyKind": "python_engine",
+        "decision": "retain_engine",
+        "reason": "Keep the pinned graph parser/query implementation; maps aid inspection but do not authorize deletion.",
+        "license": "Apache-2.0",
+        "upstreamEvidenceRefs": [
+          "https://pypi.org/project/graphifyy/0.9.56/"
+        ],
+        "localEvidenceRefs": [
+          "scripts/graphify-cli.mjs",
+          "setup.mjs"
+        ],
+        "adoptedConcepts": [],
+        "preservedCapabilities": [
+          "AST and knowledge graph engine"
+        ],
+        "reviewStatus": "implementation_requires_independent_review",
+        "liveExecutionClaim": false
+      },
+      {
+        "id": "mcp-memory-service",
+        "dependencyKind": "python_engine",
+        "decision": "retain_engine",
+        "reason": "Persistent storage and retrieval are not replaced by instructions; recalled memory is not policy.",
+        "license": "Apache-2.0",
+        "upstreamEvidenceRefs": [
+          "https://github.com/doobidoo/mcp-memory-service",
+          "https://github.com/doobidoo/mcp-memory-service/blob/main/LICENSE"
+        ],
+        "localEvidenceRefs": [
+          "setup.mjs",
+          "scripts/install-mcp-memory-hooks.mjs"
+        ],
+        "adoptedConcepts": [],
+        "preservedCapabilities": [
+          "persistent memory service and optional MCP interface"
+        ],
+        "reviewStatus": "implementation_requires_independent_review",
+        "liveExecutionClaim": false
+      },
+      {
+        "id": "agent-desktop",
+        "dependencyKind": "optional_ui_engine",
+        "decision": "retain_optional_upstream_engine",
+        "reason": "Only discover existing executable presence; keep permission/session/live verification pending.",
+        "license": "Apache-2.0",
+        "upstreamEvidenceRefs": [
+          "https://github.com/vercel-labs/agent-desktop",
+          "https://github.com/vercel-labs/agent-desktop/blob/main/LICENSE"
+        ],
+        "localEvidenceRefs": [
+          "src/infrastructure/capabilities/optional-engine-discovery.mjs"
+        ],
+        "adoptedConcepts": [],
+        "preservedCapabilities": [
+          "OS accessibility desktop engine through CLI and C library"
+        ],
+        "reviewStatus": "implementation_requires_independent_review",
+        "liveExecutionClaim": false
+      },
+      {
+        "id": "agent-browser",
+        "dependencyKind": "optional_ui_engine",
+        "decision": "retain_optional_upstream_engine",
+        "reason": "One browser engine exposes CLI, native stdio MCP and version-matched Skill instructions; no custom wrapper.",
+        "license": "Apache-2.0",
+        "upstreamEvidenceRefs": [
+          "https://github.com/vercel-labs/agent-browser",
+          "https://github.com/vercel-labs/agent-browser/blob/main/LICENSE"
+        ],
+        "localEvidenceRefs": [
+          "src/infrastructure/capabilities/optional-engine-discovery.mjs"
+        ],
+        "adoptedConcepts": [],
+        "preservedCapabilities": [
+          "upstream browser engine and native interfaces"
+        ],
+        "reviewStatus": "implementation_requires_independent_review",
+        "liveExecutionClaim": false
+      }
+    ],
+    "acceptanceRefs": [
+      "tests/governance/dependency-absorption.test.mjs",
+      "tests/governance/default-dependency-boundary.test.mjs",
+      "tests/governance/optional-engine-discovery.test.mjs",
+      "tests/setup/retire-absorbed-dependencies.test.mjs"
+    ]
+  }
 }

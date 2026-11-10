@@ -128,6 +128,15 @@ function addFingerprint(index, agentId, targetId, content) {
 }
 
 export async function buildGlobalAgentMigrationCatalog() {
+  // This catalog authorizes recognition of historical managed projections.
+  // A shallow log is incomplete even when the current projection is readable;
+  // accepting it would silently drop old fingerprints on --write and let the
+  // same truncated result pass --check.
+  if (git(["rev-parse", "--is-shallow-repository"]).trim() === "true") {
+    throw new Error(
+      "Global Agent migration catalog requires complete Git history. Run git fetch --unshallow before rebuilding or checking it; the existing catalog is preserved.",
+    );
+  }
   const manifest = await loadSyncManifest();
   const profiles = await loadRuntimeProfiles(manifest);
   const targetProjections = resolveGlobalAgentProjectionTargets(

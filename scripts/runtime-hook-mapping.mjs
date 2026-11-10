@@ -7,6 +7,16 @@
  */
 
 export const RUNTIME_HOOK_CAPABILITIES = {
+  gemini: {
+    configPath: ".gemini/settings.json", hookDir: ".gemini/hooks/meta-kim",
+    projectHooks: true, globalHooks: true,
+    events: { promptSubmit: "BeforeAgent", sessionStart: "SessionStart", preToolUse: "BeforeTool", postToolUse: "AfterTool", stop: "AfterAgent" },
+  },
+  zcode: {
+    configPath: "~/.zcode/cli/config.json", hookDir: ".zcode/hooks/meta-kim",
+    projectHooks: false, globalHooks: true,
+    events: { promptSubmit: "UserPromptSubmit", sessionStart: "SessionStart", preToolUse: "PreToolUse", postToolUse: "PostToolUse", stop: "Stop" },
+  },
   claude: {
     configPath: ".claude/settings.json",
     hookDir: ".claude/hooks",

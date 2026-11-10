@@ -743,7 +743,7 @@ Body content.
     assert.doesNotMatch(frontmatter, /^tools:/m);
   });
 
-  test("rewrites canonical agent references with runtime-native extensions", () => {
+  test("rewrites single-host agent references while the shared Codex/Gemini bundle stays neutral", () => {
     const source =
       "Agent source: canonical/agents/meta-warden.md, canonical/agents/*.md, and canonical/agents/{name}.md";
 
@@ -753,8 +753,9 @@ Body content.
     );
     assert.equal(
       applyRuntimePaths(source, "codex"),
-      "Agent source: .codex/agents/meta-warden.toml, .codex/agents/*.toml, and .codex/agents/{name}.toml",
+      source,
     );
+    assert.equal(applyRuntimePaths(source, "gemini"), applyRuntimePaths(source, "codex"));
     assert.equal(
       applyRuntimePaths(source, "cursor"),
       "Agent source: .cursor/agents/meta-warden.md, .cursor/agents/*.md, and .cursor/agents/{name}.md",

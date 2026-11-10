@@ -119,7 +119,36 @@ const LIVE_SOURCE_FILES = [
   "src/sdk/live/replay-theme.mjs",
   "src/sdk/live/runtime-adapter.mjs",
 ];
+// Explicitly reviewed additions to the existing M3 package boundary.
+// Keep this list independent of package.json so accidental widening fails.
+const APPROVED_HARNESS_ADDITIONS = [
+  "src/adapters/codex/desktop-decision-host-adapter.mjs",
+  "src/application/live/live-deliverables.mjs",
+  "src/application/live/live-graph-readability.mjs",
+  "src/application/live/live-human-gate-projection.mjs",
+  "src/application/live/live-native-codex-projection.mjs",
+  "src/application/live/live-native-zcode-projection.mjs",
+  "src/domain/design/software-design.mjs",
+  "src/domain/governance/numeric-measurement.mjs",
+  "src/domain/governance/task-outcome.mjs",
+  "src/domain/scheduling/human-gate-progress.mjs",
+  "src/infrastructure/capabilities/dependency-method-knowledge.mjs",
+  "src/infrastructure/capabilities/optional-engine-discovery.mjs",
+  "src/infrastructure/capabilities/source-integrity.mjs",
+  "src/infrastructure/installer/retired-dependency-copies.mjs",
+  "src/infrastructure/live/claude-native-session-reader.mjs",
+  "src/infrastructure/live/codex-native-session-reader.mjs",
+  "src/infrastructure/live/codex-native-turn-locator.mjs",
+  "src/infrastructure/live/live-native-bindings.mjs",
+  "src/infrastructure/live/zcode-native-session-reader.mjs",
+  "src/infrastructure/project/project-relations.mjs",
+  "src/presentation/live/live-feedback-copy.mjs",
+  "src/presentation/live/live-feedback-draft.mjs",
+  "src/presentation/live/live-run-overview.mjs",
+  "src/presentation/live/live-token-usage.mjs",
+];
 const PACKAGE_SOURCE_FILES = [
+  ...APPROVED_HARNESS_ADDITIONS,
   ...DECISION_PACKAGE_FILES,
   LEASE_CLAIM_AUTHORITY_DOMAIN,
   CONTINUATION_POLICY_DOMAIN,

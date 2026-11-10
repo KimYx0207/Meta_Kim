@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const repoRoot = resolve(import.meta.dirname, "..", "..");
 const skill = readFileSync(
@@ -30,7 +31,7 @@ test("60 — SKILL.md names the dispatcher as the single owner of capabilityInve
   );
 });
 
-test("60 — Claude canonical hooks contain runtime adapters and thin shared-core compatibility adapters", () => {
+test("60 — Claude canonical hooks contain runtime adapters and thin shared-core compatibility adapters", async () => {
   const hooksDir = resolve(repoRoot, "canonical/runtime-assets/claude/hooks");
   const hooks = readdirSync(hooksDir).filter((f) => f.endsWith(".mjs"));
   // Cross-runtime implementations live exclusively under shared/hooks and are
@@ -43,6 +44,7 @@ test("60 — Claude canonical hooks contain runtime adapters and thin shared-cor
     "conversation-binding.mjs",
     "ecc-permission-cache-wrapper.mjs",
     "enforce-agent-dispatch.mjs",
+    "governed-task-reference.mjs",
     "graphify-context.mjs",
     "meta-kim-memory-save.mjs",
     "post-console-log-warn.mjs",
@@ -57,6 +59,7 @@ test("60 — Claude canonical hooks contain runtime adapters and thin shared-cor
     "stop-save-progress.mjs",
     "stop-spine-cleanup.mjs",
     "subagent-context.mjs",
+    "task-progress.mjs",
     "utils.mjs",
   ];
   for (const f of expected) {
@@ -65,9 +68,14 @@ test("60 — Claude canonical hooks contain runtime adapters and thin shared-cor
       `expected hook present: ${f}`,
     );
   }
-  assert.ok(
-    hooks.length === expected.length,
-    `hook count drifted: actual=${hooks.length} expected=${expected.length}; ` +
-      `actual=[${hooks.join(", ")}]`,
-  );
+  assert.deepEqual(hooks.sort(), expected.sort(), "the complete required adapter closure remains explicit");
+  for (const fileName of ["governed-task-reference.mjs", "task-progress.mjs"]) {
+    const adapter = await import(pathToFileURL(resolve(hooksDir, fileName)).href);
+    const shared = await import(pathToFileURL(resolve(repoRoot, "canonical/runtime-assets/shared/hooks", fileName)).href);
+    assert.ok(Object.keys(shared).length > 0, `${fileName} exposes the shared core API`);
+    assert.deepEqual(Object.keys(adapter), Object.keys(shared));
+    for (const key of Object.keys(shared)) {
+      assert.equal(adapter[key], shared[key], `${fileName}:${key} reuses the actual shared implementation`);
+    }
+  }
 });

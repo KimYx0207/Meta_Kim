@@ -84,7 +84,7 @@
     "runtimes": {
       "type": "array",
       "uniqueItems": true,
-      "items": { "enum": ["claude_code", "codex", "cursor", "openclaw"] }
+      "items": { "enum": ["claude_code", "codex", "cursor", "openclaw", "gemini", "zcode"] }
     },
     "operatingSystems": {
       "type": "array",
@@ -228,7 +228,7 @@
         "installMethod": { "type": "string" },
         "runtimeAdapters": {
           "type": "object",
-          "propertyNames": { "enum": ["claude_code", "codex", "cursor", "openclaw"] },
+          "propertyNames": { "enum": ["claude_code", "codex", "cursor", "openclaw", "gemini", "zcode"] },
           "additionalProperties": {
             "type": "object",
             "additionalProperties": false,
@@ -286,7 +286,7 @@
             "skillsJsonIds": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
             "dependencyProjectIds": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
             "runtimeMatrixPlatforms": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
-            "runtimeTargets": { "type": "array", "items": { "enum": ["claude_code", "codex", "cursor", "openclaw"] }, "uniqueItems": true },
+            "runtimeTargets": { "type": "array", "items": { "enum": ["claude_code", "codex", "cursor", "openclaw", "gemini", "zcode"] }, "uniqueItems": true },
             "weaponRegistryIds": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
             "capabilityInventoryTypes": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
           }
@@ -343,7 +343,7 @@
             "default": { "$ref": "#/$defs/supportState" },
             "runtimes": {
               "type": "object",
-              "propertyNames": { "enum": ["claude_code", "codex", "cursor", "openclaw"] },
+              "propertyNames": { "enum": ["claude_code", "codex", "cursor", "openclaw", "gemini", "zcode"] },
               "additionalProperties": { "$ref": "#/$defs/supportState" }
             }
           }

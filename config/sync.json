@@ -4,13 +4,17 @@
     "claude",
     "codex",
     "openclaw",
-    "cursor"
+    "cursor",
+    "gemini",
+    "zcode"
   ],
   "supportedTargets": [
     "claude",
     "codex",
     "openclaw",
-    "cursor"
+    "cursor",
+    "gemini",
+    "zcode"
   ],
   "defaultTargets": [
     "claude",
@@ -105,6 +109,19 @@
       ".cursor/capability-index",
       ".cursor/mcp.json",
       ".cursor/rules"
+    ],
+    "gemini": [
+      ".gemini/agents",
+      ".agents/skills",
+      ".gemini/hooks",
+      ".gemini/settings.json",
+      ".gemini/capability-index"
+    ],
+    "zcode": [
+      ".zcode/agents",
+      ".zcode/skills",
+      ".zcode/config.json",
+      ".zcode/capability-index"
     ]
   }
 }

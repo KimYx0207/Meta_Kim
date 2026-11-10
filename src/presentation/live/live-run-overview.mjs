@@ -145,6 +145,23 @@ export function liveRunTaskNodes(snapshot) {
     && ["agent", "worker"].includes(overviewState(node.kind)) && (!node.runId || node.runId === runId));
 }
 
+/** Public display data only; no raw decision or artifact identity enters the page. */
+export function normalizeLiveHumanGates(value, runId) {
+  if (!value || value.schemaVersion !== "meta-kim-live-human-gates-v1" || value.runId !== runId
+    || value.provenance !== "recorded" || !Array.isArray(value.gates) || value.gates.length > 128) return null;
+  const allowed = ["accepted", "awaiting_producer", "awaiting_human", "invalidated", "revision_required", "returned"];
+  if (value.gates.some(gate => !allowed.includes(gate?.state))) return null;
+  const counts = {};
+  for (const name of ["requiredTaskCount", "completedTaskCount", "blockedTaskCount", "independentRunningCount", "independentReadyCount"]) {
+    if (!Number.isSafeInteger(value[name]) || value[name] < 0 || value[name] > 128) return null;
+    counts[name] = value[name];
+  }
+  const gates = value.gates.map(gate => ({ nodeId: overviewText(gate.nodeId), state: gate.state }));
+  return { schemaVersion: value.schemaVersion, runId, provenance: "recorded", gates, ...counts,
+    pendingGateCount: gates.filter(gate => gate.state !== "accepted").length,
+    executionAllowed: false, publicReady: false };
+}
+
 /** Root and organization rows do not turn seven finished work items into eight. */
 export function resolveLiveRunTaskLifecycle(snapshot) {
   const run = snapshot?.run;
@@ -159,6 +176,11 @@ export function resolveLiveRunTaskLifecycle(snapshot) {
   const states = [overviewState(run.displayState), overviewState(run.status)];
   if (states.includes("planned") || run.executionEvidenceState === "structural_planning_only") return { state: "not_started", detail: "not_dispatched", ...counts };
   const failure = states.find((state) => ["failed", "blocked", "cancelled"].includes(state));
+  const humanGates = normalizeLiveHumanGates(snapshot.humanGates, runId);
+  if (humanGates?.pendingGateCount > 0 && !["failed", "cancelled"].includes(failure)) return {
+    state: "in_progress", detail: "human_acceptance_pending", ...counts,
+    humanGatePendingCount: humanGates.pendingGateCount, independentRunningCount: humanGates.independentRunningCount,
+    independentReadyCount: humanGates.independentReadyCount };
   if (failure) return { state: "in_progress", detail: failure, ...counts };
   if (run.observationKind === "native_execution" && run.active === true) return { state: "in_progress", detail: "unfinished", ...counts };
   if (tasks.length) {
@@ -177,6 +199,10 @@ export function resolveLiveNodeTaskLifecycle(node, snapshot) {
   const runId = overviewText(snapshot?.run?.id || snapshot?.run?.runId);
   if (node?.isMain === true && runId && (!node.runId || node.runId === runId)
     && (Array.isArray(snapshot.nodes) ? snapshot.nodes : []).some((item) => item?.id === node.id && item.isMain === true)) return resolveLiveRunTaskLifecycle(snapshot);
+  const pending = normalizeLiveHumanGates(snapshot?.humanGates, runId)?.gates.find(gate => gate.nodeId === node?.id
+    && ["awaiting_human", "invalidated", "revision_required", "returned"].includes(gate.state));
+  if (pending && (!node.runId || node.runId === runId)) return { state: "in_progress",
+    detail: pending.state === "awaiting_human" ? "human_acceptance_pending" : "human_revision_required" };
   return resolveLiveTaskLifecycle(node, runId || node?.runId);
 }
 
@@ -184,14 +210,21 @@ export function resolveLiveNodeTaskLifecycle(node, snapshot) {
 export function liveTaskLifecycleCopy(lifecycle, language = "zh") {
   const copy = {
     zh: { not_started: "未开始", in_progress: "进行中", completed: "已完成", not_dispatched: "尚未派发", waiting: "等待开始",
-      verification_pending: "执行者已完成，独立验证待完成", failed: "执行失败，仍需处理", blocked: "工作受阻，等待处理", cancelled: "执行已取消，尚未完成",
+      verification_pending: "执行者已完成，独立验证待完成", human_acceptance_pending: "成果待人工验收", human_revision_required: "验收要求修改，相关后续工作等待中", failed: "执行失败，仍需处理", blocked: "工作受阻，等待处理", cancelled: "执行已取消，尚未完成",
       result_unconfirmed: "执行已返回，结果待确认", unconfirmed: "缺少执行记录，状态待确认", unfinished: "还有工作未完成", no_tasks: "尚无工作项记录", native_unconfirmed: "原生执行证据尚未确认。", observed: "已观察到执行", inspect: "查看任务" },
     en: { not_started: "Not started", in_progress: "In progress", completed: "Completed", not_dispatched: "Not dispatched", waiting: "Waiting to start",
-      verification_pending: "Worker finished; independent verification pending", failed: "Execution failed; action required", blocked: "Work blocked; action required", cancelled: "Execution cancelled; work unfinished",
+      verification_pending: "Worker finished; independent verification pending", human_acceptance_pending: "Output awaits human acceptance", human_revision_required: "Acceptance requires changes; dependent work is waiting", failed: "Execution failed; action required", blocked: "Work blocked; action required", cancelled: "Execution cancelled; work unfinished",
       result_unconfirmed: "Execution returned; outcome unconfirmed", unconfirmed: "Execution record missing; status unconfirmed", unfinished: "Work remains unfinished", no_tasks: "No work-item records yet", native_unconfirmed: "Native execution evidence is unconfirmed.", observed: "Execution observed", inspect: "Inspect task" },
   };
   const selected = copy[language === "zh" || language === "zh-CN" ? "zh" : "en"];
-  return { label: selected[lifecycle?.state] || selected.in_progress, detail: selected[lifecycle?.detail] || "", inspect: selected.inspect,
+  let detail = selected[lifecycle?.detail] || "";
+  if (lifecycle?.detail === "human_acceptance_pending" && lifecycle.humanGatePendingCount > 0) {
+    const running = lifecycle.independentRunningCount || 0;
+    const ready = lifecycle.independentReadyCount || 0;
+    detail = selected === copy.zh ? `${lifecycle.humanGatePendingCount} 项验收未完成；${running ? `记录时 ${running} 项独立工作执行中` : ready ? `记录时 ${ready} 项独立工作已就绪` : "已完成的工作已保存"}`
+      : `${lifecycle.humanGatePendingCount} acceptance gate(s) pending; ${running ? `${running} independent task(s) running at the last observation` : ready ? `${ready} independent task(s) ready at the last observation` : "completed work is preserved"}`;
+  }
+  return { label: selected[lifecycle?.state] || selected.in_progress, detail, inspect: selected.inspect,
     progress: Number.isSafeInteger(lifecycle?.totalCount) && lifecycle.totalCount > 0
       ? (selected === copy.zh ? "任务完成 " : "Tasks completed ") + lifecycle.completedCount + "/" + lifecycle.totalCount : "" };
 }
@@ -358,6 +391,6 @@ export function resolveLiveRunOverview(snapshot, language = "zh") {
 
 /** Ship the same tested selectors into the dependency-free page. */
 export function serializeLiveRunOverviewResolvers() {
-  return [overviewText, overviewState, overviewActivityState, normalizeLiveExecutionSummary, normalizeLiveRevisionReview, normalizeLiveGovernance, resolveLiveNativeActivity, overviewTimestamp, normalizeLiveOwnerReport, normalizeLiveNativeTaskReturn, resolveLiveTaskLifecycle, liveRunTaskNodes, resolveLiveRunTaskLifecycle, resolveLiveNodeTaskLifecycle, liveTaskLifecycleCopy, liveWorkOverviewCopy, plainLiveTaskLabel, liveTaskDisplayLabel, liveRunDisplayTitle, overviewHostExecutionEvent, overviewExecutionActivity, resolveLiveRunOverview]
+  return [overviewText, overviewState, overviewActivityState, normalizeLiveExecutionSummary, normalizeLiveRevisionReview, normalizeLiveGovernance, normalizeLiveHumanGates, resolveLiveNativeActivity, overviewTimestamp, normalizeLiveOwnerReport, normalizeLiveNativeTaskReturn, resolveLiveTaskLifecycle, liveRunTaskNodes, resolveLiveRunTaskLifecycle, resolveLiveNodeTaskLifecycle, liveTaskLifecycleCopy, liveWorkOverviewCopy, plainLiveTaskLabel, liveTaskDisplayLabel, liveRunDisplayTitle, overviewHostExecutionEvent, overviewExecutionActivity, resolveLiveRunOverview]
     .map((resolver) => resolver.toString()).join("\n");
 }

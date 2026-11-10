@@ -83,7 +83,7 @@ test("provider registry covers all provider kinds and required modeled providers
       assert.ok(provider[field], `${provider.id} missing ${field}`);
     }
     assert.equal(provider.providerKind, provider.providerType);
-    for (const runtime of ["claude_code", "codex", "cursor", "openclaw"]) {
+    for (const runtime of registry.runtimes) {
       assert.ok(provider.runtimeAdapters[runtime], `${provider.id} missing ${runtime} adapter`);
     }
     for (const osName of ["macos", "windows", "linux", "wsl2"]) {
@@ -268,9 +268,9 @@ test("runtime-scoped verified claims need verified state and unknown runtime key
   );
   provider.support.runtimes.codex.status = "verified";
   provider.runtimeAdapters.codex.status = "verified";
-  provider.support.runtimes.gemini = structuredClone(provider.support.runtimes.codex);
-  provider.runtimeAdapters.gemini = structuredClone(provider.runtimeAdapters.codex);
-  registry.runtimes.push("gemini");
+  provider.support.runtimes.unknown_test_runtime = structuredClone(provider.support.runtimes.codex);
+  provider.runtimeAdapters.unknown_test_runtime = structuredClone(provider.runtimeAdapters.codex);
+  registry.runtimes.push("unknown_test_runtime");
 
   const schema = JSON.parse(
     readFileSync("config/contracts/capability-provider.schema.json", "utf8"),

@@ -9,7 +9,9 @@
         "claude": "~/.claude",
         "codex": "~/.codex",
         "openclaw": "~/.openclaw",
-        "cursor": "~/.cursor"
+        "cursor": "~/.cursor",
+        "gemini": "~/.gemini",
+        "zcode": "~/.zcode"
       },
       "shellType": "zsh/bash",
       "pathSeparator": "/",
@@ -37,7 +39,9 @@
         "claude": "%USERPROFILE%/.claude",
         "codex": "%USERPROFILE%/.codex",
         "openclaw": "%USERPROFILE%/.openclaw",
-        "cursor": "%USERPROFILE%/.cursor"
+        "cursor": "%USERPROFILE%/.cursor",
+        "gemini": "%USERPROFILE%/.gemini",
+        "zcode": "%USERPROFILE%/.zcode"
       },
       "shellType": "PowerShell/CMD/Git Bash; detect current host",
       "pathSeparator": "\\",
@@ -65,7 +69,9 @@
         "claude": "~/.claude",
         "codex": "~/.codex",
         "openclaw": "~/.openclaw",
-        "cursor": "~/.cursor"
+        "cursor": "~/.cursor",
+        "gemini": "~/.gemini",
+        "zcode": "~/.zcode"
       },
       "shellType": "bash/zsh",
       "pathSeparator": "/",
@@ -93,7 +99,9 @@
         "claude": "~/.claude",
         "codex": "~/.codex",
         "openclaw": "~/.openclaw",
-        "cursor": "~/.cursor or Windows-host integration"
+        "cursor": "~/.cursor or Windows-host integration",
+        "gemini": "~/.gemini",
+        "zcode": "~/.zcode"
       },
       "shellType": "bash/zsh inside Linux distro",
       "pathSeparator": "/",

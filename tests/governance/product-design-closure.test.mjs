@@ -8,13 +8,15 @@ import { buildTaskGoalContract, taskOutcomeDigest } from "../../src/domain/gover
 import { normalizeRequirementsDiscovery, normalizeProductDesign, projectDesignWorkerTasks, evaluateProductOutcomeReview, projectProductReview } from "../../scripts/governed-execution/product-design.mjs";
 import { buildPlanChallengeState, selectReadyDecisionFrontier } from "../../scripts/governed-execution/plan-challenge-policy.mjs";
 import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
+import { fixtureCritical, fixtureReadWorkOrder, refreshFixtureSourcePins, runWithFixtureHostThinking, observeFixturePlanChoice } from "../helpers/host-reasoning-fixture.mjs";
+import { readOnlyFixtureTaskFacts } from "../helpers/task-design-facts.mjs";
 import { intentDialogueDigest } from "../../scripts/governed-execution/intent-dialogue.mjs";
 
 const task = "Run meta-theory: inspect package.json and produce a durable report of the exact package name. Do not modify source files.";
 const goal = buildTaskGoalContract({ task });
 const dialogue = { taskHash: taskOutcomeDigest(task), intentDigest: null, status: "not_supplied", acceptanceCriteria: goal.acceptanceCriteria, settledDecisionRefs: [] };
-const question = (id, resolutionClass = "material_user_decision", dependsOn = []) => ({ questionId: id, question: `Which concrete ${id} outcome?`, questionTarget: "wrong_goal_risk", decisionImpact: `Changes ${id} delivery`, impactPriority: 80, dependsOn, evidenceRefs: ["fixture:context"], resolutionClass, recommendedAnswer: "Keep the existing behavior", recommendationRationale: "Current project evidence supports it", options: [{ label: "Keep existing", tradeoff: "Maintains compatibility with a narrower scope" }, { label: "Replace", tradeoff: "Adds migration work and changes behavior" }] });
-const discoveryInput = (items) => ({ schemaVersion: 1, taskHash: dialogue.taskHash, intentDigest: null, evidenceRefs: ["fixture:context"], decisionItems: items });
+const question = (id, resolutionClass = "material_user_decision", dependsOn = []) => ({ questionId: id, question: `Which concrete ${id} outcome?`, questionTarget: "wrong_goal_risk", decisionImpact: `Changes ${id} delivery`, impactPriority: 80, dependsOn, evidenceRefs: ["package.json"], resolutionClass, recommendedAnswer: "Keep the existing behavior", recommendationRationale: "Current project evidence supports it", options: [{ label: "Keep existing", tradeoff: "Maintains compatibility with a narrower scope" }, { label: "Replace", tradeoff: "Adds migration work and changes behavior" }] });
+const discoveryInput = (items) => ({ schemaVersion: 1, taskHash: dialogue.taskHash, intentDigest: null, evidenceRefs: ["package.json"], decisionItems: items });
 const response = (questionId, sequence, extra = {}) => ({ questionId, sequence, status: "answered", userAnswer: `Answer ${questionId}`, trusted: true, binding: `plan-challenge-response:${questionId}`, selectionBinding: `plan-challenge-selection:${questionId}`, evidenceRefs: ["requirementsDiscoveryPacket.evidenceRefs[0]"], ...extra });
 function designInput() {
   return { schemaVersion: 1, taskHash: dialogue.taskHash, intentDigest: null, acceptanceDigest: goal.acceptanceDigest, designId: "package-inspection", revision: 1, mode: "delivery", sourceRefs: ["package.json"], settledDecisionRefs: [], domainTerms: [], userJourneys: [], artifactFlow: [],
@@ -118,39 +120,59 @@ test("review checks current artifact bytes, produces actionable revision and nev
 
 test("actual runner consumes discovery before design and later review without replaying Execution", async (t) => {
   const fixture = createGovernanceRuntimeFixtureScope(t);
+  refreshFixtureSourcePins(fixture);
   const { runMetaTheoryGovernedExecution, readGovernedExecutionRun } = await fixture.import("scripts/run-meta-theory-governed-execution.mjs");
-  const base = { task, stateDir: path.resolve("tmp/product"), dbPath: path.resolve("tmp/product.sqlite"), projectCapabilityMutationMode: "read_only" };
-  const discovery = await runMetaTheoryGovernedExecution({ ...base, runId: "requirements-before-design", designRequired: true, requirementsDiscoveryInput: discoveryInput([question("audience")]) });
-  assert.equal(discovery.productDesignPacket, null);
-  assert.equal(discovery.designRequirementPacket.status, "thinking_handoff_required");
+  const initialIntent = { taskHash: dialogue.taskHash, outcome: task, evidenceRefs: ["package.json"] };
+  const initialDigest = intentDialogueDigest(initialIntent);
+  const understanding = intent => ({ trusted: true, binding: "plan-challenge-understanding-confirmation", taskHash: dialogue.taskHash, intentDigest: intentDialogueDigest(intent), evidenceRefs: intent.evidenceRefs });
+  const criticalInput = fixtureCritical({ task, intentDigest: initialDigest, successCriteria: [task] });
+  const runtimeDiscovery = items => ({ ...discoveryInput(items), intentDigest: initialDigest });
+  const runtimeDesign = () => ({ ...designInput(), intentDigest: initialDigest });
+  const governanceTaskFacts = readOnlyFixtureTaskFacts(task);
+  const workOrders = preparation => [fixtureReadWorkOrder(preparation, { id: "package-report", todayTask: task, output: "Exact package name report", criterionIds: ["user-outcome"], taskFacts: readOnlyFixtureTaskFacts(task) })];
+  const base = { task, confirmedIntent: initialIntent, sharedUnderstandingConfirmed: understanding(initialIntent), criticalInput, governanceTaskFacts, stateDir: path.resolve("tmp/product"), dbPath: path.resolve("tmp/product.sqlite"), projectCapabilityMutationMode: "read_only" };
+  const discovery = await runMetaTheoryGovernedExecution({ ...base, runId: "requirements-before-design", designRequired: true, requirementsDiscoveryInput: runtimeDiscovery([question("audience")]) });
+  assert.equal(discovery.artifactKind, "host_preparation");
+  assert.deepEqual(discovery.workerTaskPackets, []);
+  assert.equal(discovery.thinkingPacket.status, "host_reasoning_required");
   assert.equal(discovery.preDecisionOptionFrame.readyDecisionFrontier[0].questionId, "audience");
-  assert.equal(discovery.stageRunnerBridgePacket, null);
+  assert.equal(discovery.stageRunnerBridgePacket, undefined);
   const discoveryValidation = fixture.run(["scripts/validate-run-artifact.mjs", discovery.paths.json]);
   assert.equal(discoveryValidation.status, 0, discoveryValidation.stderr || discoveryValidation.stdout);
   const factItems = [question("fact", "discoverable_fact"), question("audience", "material_user_decision", ["fact"])];
-  const factRun = await runMetaTheoryGovernedExecution({ ...base, runId: "facts-pending", designRequired: true, requirementsDiscoveryInput: discoveryInput(factItems) });
+  const factRun = await runMetaTheoryGovernedExecution({ ...base, runId: "facts-pending", designRequired: true, requirementsDiscoveryInput: runtimeDiscovery(factItems) });
   assert.equal(factRun.preDecisionOptionFrame.planChallengeState.phase, "awaiting_fact_discovery");
-  const resolvedDiscovery = { ...discoveryInput(factItems), resolvedFacts: [{ questionId: "fact", value: "Existing source is local", evidenceRefs: ["package.json"] }] };
-  const answeredRun = await runMetaTheoryGovernedExecution({ ...base, runId: "facts-resolved", previousPlanChallengeRunId: factRun.runId, designRequired: true, requirementsDiscoveryInput: resolvedDiscovery, planChallengeResponses: [response("audience", 1, { taskHash: dialogue.taskHash, intentDigest: null })] });
+  const resolvedDiscovery = { ...runtimeDiscovery(factItems), resolvedFacts: [{ questionId: "fact", value: "Existing source is local", evidenceRefs: ["package.json"] }] };
+  const readyQuestion = await runMetaTheoryGovernedExecution({ ...base, runId: "facts-now-resolved", previousPlanChallengeRunId: factRun.runId,
+    designRequired: true, requirementsDiscoveryInput: resolvedDiscovery });
+  assert.deepEqual(readyQuestion.preDecisionOptionFrame.readyDecisionFrontier.map(item => item.questionId), ["audience"]);
+  const choice = await observeFixturePlanChoice(fixture, readyQuestion, "audience");
+  const answeredRun = await runMetaTheoryGovernedExecution({ ...base, runId: "facts-resolved", previousPlanChallengeRunId: readyQuestion.runId,
+    ...choice, criticalInput: fixtureCritical({ task, intentDigest: choice.intentDigest, successCriteria: [task] }),
+    designRequired: true, requirementsDiscoveryInput: resolvedDiscovery });
   assert.equal(answeredRun.taskFingerprint, factRun.taskFingerprint);
   assert.notEqual(answeredRun.requirementsDiscoveryPacket.discoveryDigest, factRun.requirementsDiscoveryPacket.discoveryDigest);
   assert.equal(answeredRun.preDecisionOptionFrame.unresolvedQuestions.find((item) => item.questionId === "audience").status, "answered");
-  const expandedDiscovery = { ...resolvedDiscovery, decisionItems: [...factItems, question("reading-mode", "material_user_decision", ["audience"])] };
-  const continued = await runMetaTheoryGovernedExecution({ ...base, runId: "requirements-expanded", previousPlanChallengeRunId: answeredRun.runId, designRequired: true, requirementsDiscoveryInput: expandedDiscovery, priorChallengeState: { ...answeredRun.preDecisionOptionFrame, taskHash: dialogue.taskHash, intentDigest: null, trusted: true } });
+  const expandedDiscovery = { ...resolvedDiscovery, intentDigest: choice.intentDigest, decisionItems: [...factItems, question("reading-mode", "material_user_decision", ["audience"])] };
+  const continued = await runMetaTheoryGovernedExecution({ ...base, confirmedIntent: choice.confirmedIntent, sharedUnderstandingConfirmed: understanding(choice.confirmedIntent), criticalInput: fixtureCritical({ task, intentDigest: choice.intentDigest, successCriteria: [task] }), runId: "requirements-expanded", previousPlanChallengeRunId: answeredRun.runId, designRequired: true, requirementsDiscoveryInput: expandedDiscovery, priorChallengeState: { ...answeredRun.preDecisionOptionFrame, taskHash: dialogue.taskHash, intentDigest: choice.intentDigest, trusted: true } });
   assert.equal(continued.taskFingerprint, factRun.taskFingerprint);
   assert.equal(continued.preDecisionOptionFrame.unresolvedQuestions.find((item) => item.questionId === "audience").status, "answered");
   assert.deepEqual(continued.preDecisionOptionFrame.readyDecisionFrontier.map((item) => item.questionId), ["reading-mode"]);
-  assert.equal(continued.preDecisionOptionFrame.planChallengeState.decisionEvidence.find((item) => item.kind === "question_response").historical, true);
+  const retainedAudience = continued.preDecisionOptionFrame.unresolvedQuestions.find(item => item.questionId === "audience");
+  assert.equal(retainedAudience.resolutionSource, "existing_settled_decision");
+  assert.deepEqual(continued.preDecisionOptionFrame.intentBinding.settledDecisionRefs, choice.confirmedIntent.settledDecisions,
+    "The actual observed choice survives in the current intent; it is not replayed as a new public response flag");
+  assert.deepEqual(retainedAudience.answerEvidenceRefs, ["preDecisionOptionFrame.intentBinding.settledDecisionRefs[0].evidenceRefs[0]"]);
   const { loadPlanChallengeContinuationCandidate, bindVerifiedHostPlanChallengeDecision } = await fixture.import("scripts/governed-execution/plan-challenge-host-continuation.mjs");
-  const candidateOptions = { artifactPath: factRun.paths.json, previousRunId: factRun.runId, taskFingerprint: factRun.taskFingerprint, taskHash: dialogue.taskHash, intentDigest: null };
+  const candidateOptions = { artifactPath: factRun.paths.json, previousRunId: factRun.runId, taskFingerprint: factRun.taskFingerprint, taskHash: dialogue.taskHash, intentDigest: initialDigest };
   const candidate = await loadPlanChallengeContinuationCandidate(candidateOptions);
   assert.equal(candidate.planChallengeState.phase, "awaiting_fact_discovery");
   assert.equal(candidate.trusted, undefined, "Disk validation never becomes host authorization");
-  await assert.rejects(loadPlanChallengeContinuationCandidate({ ...candidateOptions, intentDigest: "changed-intent" }), /intent binding mismatch/);
+  await assert.rejects(loadPlanChallengeContinuationCandidate({ ...candidateOptions, intentDigest: "changed-intent" }), /intent binding mismatch|identity or paired material mismatch/);
   assert.equal(bindVerifiedHostPlanChallengeDecision({ verifiedDecision: { trusted: true }, continuationCandidate: candidate }).accepted, false);
   const confirmedIntent = { taskHash: dialogue.taskHash, outcome: task, evidenceRefs: ["fixture:host-conversation"], settledDecisions: [{ decisionId: "audience", value: "One local user", evidenceRefs: ["fixture:existing-user-decision"] }] };
   const intentDigest = intentDialogueDigest(confirmedIntent);
-  const settledRun = await runMetaTheoryGovernedExecution({ ...base, runId: "requirements-settled-host", designRequired: true, confirmedIntent,
+  const settledRun = await runMetaTheoryGovernedExecution({ ...base, runId: "requirements-settled-host", designRequired: true, confirmedIntent, criticalInput: fixtureCritical({ task, intentDigest, successCriteria: [task] }),
     sharedUnderstandingConfirmed: { trusted: true, binding: "plan-challenge-understanding-confirmation", taskHash: dialogue.taskHash, intentDigest, evidenceRefs: confirmedIntent.evidenceRefs },
     requirementsDiscoveryInput: { ...discoveryInput([question("audience"), question("routine", "routine_design_decision"), question("format", "material_user_decision", ["audience"])]), intentDigest } });
   assert.equal(settledRun.preDecisionOptionFrame.intentBinding.status, "host_provided_understanding");
@@ -159,8 +181,8 @@ test("actual runner consumes discovery before design and later review without re
   assert.deepEqual(settledAudience.answerEvidenceRefs, ["preDecisionOptionFrame.intentBinding.settledDecisionRefs[0].evidenceRefs[0]"]);
   const settledValidation = fixture.run(["scripts/validate-run-artifact.mjs", settledRun.paths.json]);
   assert.equal(settledValidation.status, 0, settledValidation.stderr || settledValidation.stdout);
-  const first = await runMetaTheoryGovernedExecution({ ...base, runId: "product-design-run", designInput: designInput() });
-  await assert.rejects(loadPlanChallengeContinuationCandidate({ artifactPath: first.paths.json, previousRunId: first.runId, taskFingerprint: first.taskFingerprint, taskHash: dialogue.taskHash, intentDigest: null }), /cannot resume terminal phase/);
+  const first = await runWithFixtureHostThinking(runMetaTheoryGovernedExecution, { ...base, runId: "product-design-run", designInput: runtimeDesign() }, { criticalInput, governanceTaskFacts, workOrders });
+  await assert.rejects(loadPlanChallengeContinuationCandidate({ artifactPath: first.paths.json, previousRunId: first.runId, taskFingerprint: first.taskFingerprint, taskHash: dialogue.taskHash, intentDigest: initialDigest }), /cannot resume terminal phase/);
   assert.equal(first.workerTaskPackets.length, 1);
   assert.equal(first.workerTaskPackets[0].designBinding.sliceId, "package-report");
   assert.equal(first.workerTaskPackets[0].workOrderReadiness, "ready");
@@ -168,12 +190,14 @@ test("actual runner consumes discovery before design and later review without re
   const designValidation = fixture.run(["scripts/validate-run-artifact.mjs", first.paths.json]);
   assert.equal(designValidation.status, 0, designValidation.stderr || designValidation.stdout);
   const original = await readFile(first.paths.json, "utf8");
-  await writeFile("tmp/final-report.md", "Source-bound package name report");
-  const hash = createHash("sha256").update("Source-bound package name report").digest("hex");
+  const packageName = JSON.parse(await readFile("package.json", "utf8")).name;
+  const reportText = `Package name: ${packageName}\nSource: package.json\n`;
+  await writeFile("tmp/final-report.md", reportText);
+  const hash = createHash("sha256").update(reportText).digest("hex");
   const currentGoal = first.goalContractPacket;
-  const review = { schemaVersion: 1, runId: first.runId, taskHash: currentGoal.taskHash, intentDigest: null, acceptanceDigest: currentGoal.acceptanceDigest, designDigest: first.productDesignPacket.designDigest, reviewRef: "fixture:review", artifactSnapshots: [{ ref: "tmp/final-report.md", sha256: hash, producerTaskId: first.workerTaskPackets[0].taskPacketId }], observations: [{ criterionId: "user-outcome", artifactRefs: ["tmp/final-report.md"], taskHash: currentGoal.taskHash, acceptanceDigest: currentGoal.acceptanceDigest, evidenceKind: "independent_review", verdict: "pass", producer: "fixture-producer", reviewer: "fixture-reviewer", evidenceRef: "fixture:assessment" }] };
+  const review = { schemaVersion: 1, runId: first.runId, taskHash: currentGoal.taskHash, intentDigest: initialDigest, acceptanceDigest: currentGoal.acceptanceDigest, designDigest: first.productDesignPacket.designDigest, reviewRef: "fixture:review", artifactSnapshots: [{ ref: "tmp/final-report.md", sha256: hash, producerTaskId: first.workerTaskPackets[0].taskPacketId }], observations: [{ criterionId: "user-outcome", artifactRefs: ["tmp/final-report.md"], taskHash: currentGoal.taskHash, intentDigest: initialDigest, acceptanceDigest: currentGoal.acceptanceDigest, evidenceKind: "independent_review", verdict: "pass", producer: "fixture-producer", reviewer: "fixture-reviewer", evidenceRef: "fixture:assessment" }] };
   const reviewEvents = [];
-  const reviewed = await runMetaTheoryGovernedExecution({ ...base, runId: first.runId, designInput: designInput(), outcomeReviewInput: review,
+  const reviewed = await runMetaTheoryGovernedExecution({ ...base, runId: first.runId, designInput: runtimeDesign(), outcomeReviewInput: review,
     onConversationProgress: (event) => reviewEvents.push(event) });
   assert.deepEqual(reviewEvents.map((event) => event.stage), ["Review"]);
   assert.equal(reviewEvents[0].status, "continue_verification");
@@ -197,24 +221,24 @@ test("actual runner consumes discovery before design and later review without re
     const outputText = "Synthetic transport test only; not a native or semantic success claim.";
     return { status: "pass", outputText, outputSha256: createHash("sha256").update(outputText).digest("hex"), runtimeProcessInvoked: false, durationMs: 1 };
   } };
-  const executed = await runMetaTheoryGovernedExecution({ ...base, runId: "design-durable", designInput: designInput(), stageRunner });
+  const executed = await runWithFixtureHostThinking(runMetaTheoryGovernedExecution, { ...base, runId: "design-durable", designInput: runtimeDesign(), stageRunner }, { criticalInput, governanceTaskFacts, workOrders });
   assert.equal(executed.stageRunnerBridgePacket.status, "pass", JSON.stringify({ failure: executed.stageRunnerBridgePacket.failure, gate: executed.stageRunnerBridgePacket.routeExecutionGate }));
   assert.equal(calls, 1);
   const newerLatest = await readFile(first.paths.latest, "utf8");
-  await runMetaTheoryGovernedExecution({ ...base, runId: first.runId, designInput: designInput(), outcomeReviewInput: review });
+  await runMetaTheoryGovernedExecution({ ...base, runId: first.runId, designInput: runtimeDesign(), outcomeReviewInput: review });
   assert.equal(await readFile(first.paths.latest, "utf8"), newerLatest, "Reviewing an older run leaves the newer latest pointer unchanged");
   const revisionEvents = [];
   const revisionReview = { ...review, observations: review.observations.map((item) => ({ ...item, verdict: "fail" })),
     revisionRequests: [{ taskId: first.workerTaskPackets[0].taskPacketId, criterionId: "user-outcome", returnToStage: "Execution",
       finding: "The exact package name is missing", requiredChange: "Include the exact package name from package.json", evidenceRefs: ["tmp/final-report.md"] }] };
-  const revision = await runMetaTheoryGovernedExecution({ ...base, runId: first.runId, designInput: designInput(), outcomeReviewInput: revisionReview,
+  const revision = await runMetaTheoryGovernedExecution({ ...base, runId: first.runId, designInput: runtimeDesign(), outcomeReviewInput: revisionReview,
     onConversationProgress: (event) => revisionEvents.push(event) });
   assert.deepEqual(revisionEvents.map((event) => event.status), ["revise"]);
   assert.match(revisionEvents[0].text, /Include the exact package name/u);
   assert.equal(revision.reviewPacket.revisionNeeded, true);
   assert.equal(revision.summaryPacket.publicReady, false);
   const durableReview = { ...review, runId: executed.runId, artifactSnapshots: [{ ...review.artifactSnapshots[0], producerTaskId: executed.workerTaskPackets[0].taskPacketId }] };
-  const resume = { ...base, runId: executed.runId, designInput: designInput(), stageRunner: { ...stageRunner, durableMode: "resume" } };
+  const resume = { ...base, runId: executed.runId, designInput: runtimeDesign(), stageRunner: { ...stageRunner, durableMode: "resume" } };
   const resumeEvents = [];
   const resumed = await runMetaTheoryGovernedExecution({ ...resume, outcomeReviewInput: durableReview,
     onConversationProgress: (event) => resumeEvents.push(event) });
@@ -224,7 +248,7 @@ test("actual runner consumes discovery before design and later review without re
   const resumedAgain = await runMetaTheoryGovernedExecution(resume);
   assert.equal(resumedAgain.outcomeReviewPacket.status, "pass");
   assert.equal(calls, 1);
-  const changed = designInput(); changed.revision++;
+  const changed = runtimeDesign(); changed.revision++;
   await assert.rejects(runMetaTheoryGovernedExecution({ ...resume, designInput: changed }), /fingerprint|identity/);
   await writeFile("tmp/requirements.json", JSON.stringify(discoveryInput([question("audience")])));
   const cli = fixture.run(["scripts/run-meta-theory-governed-execution.mjs", "--task", task, "--run-id", "cli-requirements", "--state-dir", "tmp/cli-product", "--db", "tmp/cli-product.sqlite", "--requirements-discovery-input", "tmp/requirements.json", "--design-required", "--read-only"]);

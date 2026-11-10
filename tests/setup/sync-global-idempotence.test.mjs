@@ -5,8 +5,12 @@ import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSyn
 import { join } from "node:path";
 import os from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
-import { directoryContentEqual } from "../../scripts/install-global-skills-all-runtimes.mjs";
 import { createGovernanceRuntimeFixture } from "../helpers/governance-runtime-fixture.mjs";
+
+// The CLI installer applies its proxy policy on import. Keep the already
+// credential-isolated caller environment for the independent real npm lane.
+const isolatedCallerEnv = { ...process.env };
+const { directoryContentEqual } = await import("../../scripts/install-global-skills-all-runtimes.mjs");
 
 const repoRoot = join(import.meta.dirname, "..", "..");
 
@@ -36,7 +40,7 @@ test("global skill and command sync is a content-identical mtime no-op", async (
     const claudeHome = join(root, ".claude");
     const codexHome = join(root, ".codex");
     const env = {
-      ...process.env,
+      ...isolatedCallerEnv,
       HOME: root,
       USERPROFILE: root,
       META_KIM_CLAUDE_HOME: claudeHome,

@@ -135,10 +135,10 @@ describe("runtime compatibility catalog", () => {
     }
   });
 
-  test("four beta adapters stay below primary runtimes and outside formal sync", () => {
+  test("remaining beta adapters stay below primary runtimes and outside formal sync", () => {
     const byId = new Map(catalog.products.map((product) => [product.id, product]));
 
-    for (const id of ["zcode", "deepseek-harness", "qoder", "trae"]) {
+    for (const id of ["deepseek-harness", "qoder", "trae"]) {
       const product = byId.get(id);
       assert.ok(product, id);
       assert.equal(product.tier, "beta_compatibility", id);
@@ -149,6 +149,19 @@ describe("runtime compatibility catalog", () => {
       assert.equal(syncManifest.supportedTargets.includes(id), false, id);
       assert.match(product.decision, /packed structural/i, id);
       assert.match(product.decision, /not.*formal|forbid formal/i, id);
+    }
+  });
+
+  test("Gemini and ZCode expose optional native projections without claiming live acceptance", () => {
+    for (const id of ["gemini", "zcode"]) {
+      const product = catalog.products.find((entry) => entry.id === id);
+      assert.equal(product.tier, "runtime_projection", id);
+      assert.equal(product.formalProjection.hasRuntimeProfile, true, id);
+      assert.equal(product.formalProjection.hasProjectionLayout, true, id);
+      assert.equal(product.formalProjection.isDefaultTarget, false, id);
+      assert.equal(product.genericCompatibility.status, "partial", id);
+      assert.match(product.decision, /projection_implemented/u, id);
+      assert.match(product.decision, /live_verified/u, id);
     }
   });
 

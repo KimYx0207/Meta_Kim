@@ -51,6 +51,7 @@ import {
   CATEGORIES,
   directoryClosureSync,
   manifestPathFor,
+  openRecorder,
   readManifest,
 } from "./install-manifest.mjs";
 import {
@@ -65,6 +66,9 @@ import {
   syncManifestPath,
 } from "./meta-kim-sync-config.mjs";
 import { resolveOpenClawWorkspaceOwnedFiles } from "./openclaw-workspace-projection.mjs";
+import { invertNativeJsonMutations, normalizeNativeJsonMutations } from "./native-runtime-projection.mjs";
+import { listJoinedProjectRegistryEntries } from "./project-registry.mjs";
+import { inspectTrustedPath } from "./safe-managed-file-operations.mjs";
 import {
   invertCodexConfigMutations,
   normalizeCodexConfigMutations,
@@ -274,7 +278,7 @@ function descriptorOwnershipIdentities(
         : null;
   if (exactSettingsPurpose) {
     return [{
-      kinds: new Set(["settings-merge", "toml-fragment-merge"]),
+      kinds: new Set(["settings-merge", "toml-fragment-merge", "json-fragment-merge"]),
       purpose: exactSettingsPurpose,
       matchesPath: (candidatePath) => pathKey(candidatePath) === pathKey(rootPath),
     }];
@@ -410,7 +414,7 @@ function buildGlobalRemovalPolicy() {
       !segment || segment === "." || segment === ".."
     );
   if (
-    projectionRule.scope !== "claude_codex" ||
+    !["claude_codex", "selected_runtime_projections"].includes(projectionRule.scope) ||
     projectionRule.category !== CATEGORIES.C ||
     projectionRule.sourceOwner !== "sync-global-meta-theory" ||
     projectionRule.bundlePurpose !== PRIMARY_PROJECTION_BUNDLE_PURPOSE ||
@@ -526,8 +530,9 @@ function resolveProjectionPackageCli(packageManifest) {
   const bins = packageManifest?.bin;
   if (!bins || typeof bins !== "object" || Array.isArray(bins)) return null;
   const preferredName = packageManifest.name?.split("/").at(-1);
-  const relativePath = bins[preferredName] ?? bins["meta-kim"] ??
+  const rawPath = bins[preferredName] ?? bins["meta-kim"] ??
     Object.values(bins)[0];
+  const relativePath = typeof rawPath === "string" ? rawPath.replace(/^\.\//u, "") : rawPath;
   if (
     typeof relativePath !== "string" ||
     !relativePath ||
@@ -682,6 +687,11 @@ export function manifestEntryToFinding(entry) {
       tomlMutationJournal: null,
       legacyUnstructuredTomlOwnership: true,
     };
+  }
+  if (entry.kind === "json-fragment-merge") {
+    let jsonMutationJournal = null;
+    try { jsonMutationJournal = normalizeNativeJsonMutations(entry.jsonMutationJournal); } catch {}
+    return { ...base, kind: "json-fragment-merge", jsonMutationJournal };
   }
   if (entry.kind === "settings-merge") {
     const commands = entry.mergedHookCommands || [];
@@ -940,7 +950,8 @@ export function manifestFindingsState({ scope, repoRoot }) {
       blockedReasons.push(`${manifestScope}:manifest_has_no_actionable_entries:${manifestPath}`);
       continue;
     }
-    findings.push(...currentFindings);
+    findings.push(...currentFindings.map((finding) => finding.kind === "json-fragment-merge"
+      ? { ...finding, manifestScope } : finding));
   }
   return { findings, blockedReasons };
 }
@@ -1233,6 +1244,31 @@ function isPrimaryProjectionReferenceFinding(finding) {
   );
 }
 
+/** A global uninstall must not strand a still-enrolled project's native hooks/MCP. */
+export async function joinedProjectPackageReferences(bundlePath, { homeDir = homedir() } = {}) {
+  const references = [];
+  const needle = path.resolve(bundlePath).replaceAll("\\", "/");
+  const containsReference = (value) => {
+    if (typeof value === "string") return value.replaceAll("\\", "/").includes(needle);
+    if (Array.isArray(value)) return value.some(containsReference);
+    return value && typeof value === "object" ? Object.values(value).some(containsReference) : false;
+  };
+  for (const project of await listJoinedProjectRegistryEntries({ homeDir })) {
+    for (const rel of [".gemini/settings.json", ".zcode/config.json"]) {
+      const safe = inspectTrustedPath(project.repoRoot, rel);
+      if (!safe || !existsSync(safe.target)) continue;
+      const stat = lstatSync(safe.target);
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 1024 * 1024) continue;
+      let config;
+      try { config = JSON.parse(readFileSync(safe.target, "utf8")); }
+      catch { continue; }
+      if (containsReference(config.hooks) || containsReference(config.mcpServers?.["meta-kim-runtime"]) ||
+          containsReference(config.mcp?.servers?.["meta-kim-runtime"])) references.push(safe.target);
+    }
+  }
+  return references;
+}
+
 function scanFindingMatchesCanonical(finding) {
   if (finding.source !== "scan") return true;
   if (finding.kind !== "file") return false;
@@ -1357,6 +1393,12 @@ function planActions({
         break;
       }
       case CATEGORIES.C: {
+        if (f.kind === "json-fragment-merge") {
+          actions.push({ kind: "revert-json-fragments", path: f.path, catLabel: "C",
+            mutationJournal: f.jsonMutationJournal, manifestScope: f.manifestScope,
+            purpose: f.purpose, primaryProjectionReferenceCleanup });
+          break;
+        }
         if (f.kind === "toml-fragment-merge") {
           actions.push({
             kind: "revert-toml-fragments",
@@ -1440,6 +1482,11 @@ function planActions({
         break;
       }
       case CATEGORIES.G: {
+        if (f.kind === "json-fragment-merge") {
+          actions.push({ kind: "revert-json-fragments", path: f.path, catLabel: "G",
+            mutationJournal: f.jsonMutationJournal, manifestScope: f.manifestScope, purpose: f.purpose });
+          break;
+        }
         if (f.kind === "toml-fragment-merge") {
           actions.push({
             kind: "revert-toml-fragments",
@@ -1541,6 +1588,8 @@ function describe(action, t) {
       return t.actStripSettings(action.path, action.expectedCount);
     case "revert-toml-fragments":
       return `  ~ revert exact managed TOML fragments in: ${action.path}`;
+    case "revert-json-fragments":
+      return `  ~ revert exact managed JSON fragments in: ${action.path}`;
     case "strip-mcp":
       return `  ~ strip managed MCP ${action.serverName} from: ${action.path}`;
     case "remove-bundle":
@@ -1704,6 +1753,23 @@ export function atomicRewriteFileFromSnapshot(
   } finally {
     if (!backupCommitted) rmSync(backupStagePath, { force: true });
     if (!targetCommitted) rmSync(targetStagePath, { force: true });
+  }
+}
+
+export function revertManagedJsonFragments(action, { beforeCommit, stageWriter } = {}) {
+  let originalBytes;
+  try {
+    const stat = lstatSync(action.path);
+    if (stat.isSymbolicLink() || !stat.isFile()) return { success: false, stripped: 0, reason: "unsafe_settings_file_type" };
+    originalBytes = readFileSync(action.path);
+    const journal = normalizeNativeJsonMutations(action.mutationJournal);
+    if (!journal.length) return { success: false, stripped: 0, reason: "no_exact_managed_fragments_recorded" };
+    const next = invertNativeJsonMutations(JSON.parse(originalBytes.toString("utf8")), journal);
+    const result = atomicRewriteFileFromSnapshot(action.path, originalBytes,
+      Buffer.from(`${JSON.stringify(next, null, 2)}\n`), { beforeCommit, stageWriter });
+    return { ...result, stripped: result.success ? journal.length : 0 };
+  } catch (error) {
+    return { success: false, stripped: 0, reason: `managed_fragment_changed:${error.message}` };
   }
 }
 
@@ -2164,9 +2230,11 @@ function firstPartyClosureSync(packageRoot, filePaths) {
   if (!Array.isArray(filePaths) || filePaths.length === 0) return null;
   const normalizedPaths = filePaths.map(safeFirstPartyRelativePath);
   if (normalizedPaths.some((entry) => !entry)) return null;
-  const sortedPaths = [...new Set(normalizedPaths)].sort((left, right) =>
-    left.localeCompare(right)
-  );
+  // Receipts use byte-stable JavaScript ordering in hashFirstPartyFiles.
+  // localeCompare sorts uppercase names differently on common hosts and would
+  // incorrectly classify an intact real npm package as user-modified.
+  const comparePortablePaths = (left, right) => left < right ? -1 : left > right ? 1 : 0;
+  const sortedPaths = [...new Set(normalizedPaths)].sort(comparePortablePaths);
   if (
     sortedPaths.length !== normalizedPaths.length ||
     JSON.stringify(sortedPaths) !== JSON.stringify(normalizedPaths)
@@ -2191,7 +2259,7 @@ function firstPartyClosureSync(packageRoot, filePaths) {
   } catch {
     return null;
   }
-  actualPaths.sort((left, right) => left.localeCompare(right));
+  actualPaths.sort(comparePortablePaths);
   if (JSON.stringify(actualPaths) !== JSON.stringify(sortedPaths)) return null;
 
   const entries = [];
@@ -2625,16 +2693,30 @@ async function main() {
     if (
       a.kind === "strip-settings" ||
       a.kind === "strip-mcp" ||
-      a.kind === "revert-toml-fragments"
+      a.kind === "revert-toml-fragments" ||
+      a.kind === "revert-json-fragments"
     ) {
       if (!existsSync(a.path)) continue;
+      const jsonOwnership = a.kind === "revert-json-fragments" && a.manifestScope
+        ? openRecorder({ scope: a.manifestScope, repoRoot, requireExistingValidManifest: true }) : null;
       const result = a.kind === "strip-mcp"
         ? removeManagedMcpFragmentFromFile(a)
+        : a.kind === "revert-json-fragments"
+          ? revertManagedJsonFragments(a)
         : a.kind === "revert-toml-fragments"
           ? revertManagedTomlFragments(a)
           : stripManagedSettingsFile(a);
       const { success, stripped, backupPath } = result;
       if (success) {
+        if (jsonOwnership) {
+          jsonOwnership.forget(a.path, a.purpose);
+          const flushed = await jsonOwnership.flush();
+          if (!flushed.ok) {
+            hadFailure = true;
+            recordPrimaryReferenceFailure(a, { success: false, reason: flushed.error });
+            console.error(`${C.yellow}${t.writeFailed(a.path, flushed.error)}${C.reset}`);
+          }
+        }
         strippedTotal += stripped;
         console.log(
           `${C.green}✓ ${t.actStripSettings(a.path, stripped)}${C.reset}`,
@@ -2660,6 +2742,13 @@ async function main() {
         }
       }
     } else if (a.kind === "remove-bundle") {
+      if (a.purpose === PRIMARY_PROJECTION_BUNDLE_PURPOSE) {
+        const references = await joinedProjectPackageReferences(a.path);
+        if (references.length > 0) {
+          console.log(`${C.yellow}Shared execution package preserved: ${references.length} enrolled project configuration(s) still use it. ${a.path}${C.reset}`);
+          continue;
+        }
+      }
       const result = a.purpose === PRIMARY_PROJECTION_BUNDLE_PURPOSE &&
           primaryProjectionReferenceCleanupFailures.length > 0
         ? {
@@ -2681,7 +2770,7 @@ async function main() {
         const message = result.reason?.startsWith("projection_reference_cleanup_failed:")
           ? t.writeFailed(a.path, result.reason)
           : result.preserved
-          ? t.preservedModified(a.path)
+          ? `${t.preservedModified(a.path)} (${result.reason})`
           : t.writeFailed(a.path, result.reason);
         console.error(`${C.yellow}${message}${C.reset}`);
       }

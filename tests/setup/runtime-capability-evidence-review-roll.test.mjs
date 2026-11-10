@@ -164,11 +164,16 @@ test("rolling the committed pair to today leaves freshness issues at zero under 
 
 test("the file-level roll re-validates and writes both files", (t) => {
   const { matrixPath, ledgerPath } = sandbox(t);
-  const now = "2026-10-20T00:00:00Z";
+  // The real ledger can gain later observations. Push the fixture clock beyond
+  // every retained observation instead of falsely backdating new evidence.
+  const ledger = JSON.parse(readFileSync(ledgerPath, "utf8"));
+  const anchor = Math.max(Date.parse("2026-10-05T00:00:00Z"), ...ledger.observations.map((entry) => Date.parse(entry.observedAt)));
+  const date = new Date(anchor).toISOString().slice(0, 10);
+  const now = new Date(anchor + 15 * 24 * 60 * 60 * 1000).toISOString();
   const result = rollReviewFiles({
     matrixPath,
     ledgerPath,
-    date: "2026-10-05",
+    date,
     rationale: "re-verified matrix and ledger projection sources end to end",
     now,
   });

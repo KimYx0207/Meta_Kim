@@ -60,211 +60,160 @@ function hasDecisionReason(packet) {
   return typeof packet.decisionReason === 'string' && packet.decisionReason.trim().length > 0;
 }
 
+function checkResult(status, reason, details = {}) {
+  return { status, pass: status === 'pass' ? true : status === 'fail' ? false : null, reason, ...details };
+}
+
 function allChecksPass(results) {
   return Object.entries(results)
     .filter(([key]) => key !== 'all')
-    .every(([, result]) => result?.pass === true);
+    .every(([, result]) => result?.pass === true || result?.status === 'not_applicable');
 }
 
-// Five Criteria验证
-export async function validateFiveCriteria(packet) {
-  const config = await loadEvolutionConfig();
+function hasFailedCheck(results) {
+  return Object.values(results).some((result) => result?.pass === false);
+}
+
+function mutationCandidatesFor(packet, options) {
+  return Array.isArray(options.mutationCandidates) ? options.mutationCandidates
+    : Array.isArray(packet.mutationCandidates) ? packet.mutationCandidates : [];
+}
+
+function hasDeclaredMutations(packet, options = {}) {
+  // A caller's empty override cannot make a candidate declared in the packet
+  // disappear from a no-writeback claim. Malformed declarations need review.
+  return [packet.mutationCandidates, options.mutationCandidates]
+    .some((value) => value != null && (!Array.isArray(value) || value.length > 0));
+}
+
+function approvalFor(packet, options) {
+  const approval = validateWardenWritebackApproval({
+    approvalPacket: options.approvalPacket ?? packet.approvalPacket ?? null,
+    candidates: mutationCandidatesFor(packet, options),
+  });
+  if (approval.ok && options.requiredApprovalScope && approval.normalized.scope !== options.requiredApprovalScope) {
+    return { ...approval, ok: false, status: 'invalid',
+      errors: [`approval scope must be ${options.requiredApprovalScope}`] };
+  }
+  return approval;
+}
+
+function reviewedCheck(packet, options, section, key, reason) {
+  // Review data belongs inside the existing exact-bound approval. Candidate
+  // prose and free-floating evidence refs never become write authorization.
+  const approval = approvalFor(packet, options);
+  const review = approval.ok ? approval.normalized.riskReview : null;
+  const assessment = review?.qualityChecks?.[section]?.[key];
+  const refs = assessment?.evidenceRefs;
+  if (review?.status !== 'accepted' || typeof review.owner !== 'string' || !review.owner.trim() ||
+      !['pass', 'fail'].includes(assessment?.verdict) || typeof assessment.reason !== 'string' || !assessment.reason.trim() ||
+      !Array.isArray(refs) || refs.length === 0 || refs.some((ref) => typeof ref !== 'string' || !ref.trim())) {
+    return checkResult('not_evaluated', reason, { evidenceRefs: [], evidenceLevel: 'not_assessed' });
+  }
+  return checkResult(assessment.verdict, assessment.reason, {
+    evidenceRefs: [...refs], reviewer: review.owner, approvalDigest: approval.approvalDigest,
+    evidenceLevel: 'reviewer_reported', evidenceContentVerified: false,
+  });
+}
+
+function noWritebackCheck(packet, options = {}) {
+  return isNoWritebackDecision(packet) && getWritebacks(packet).length === 0 &&
+    (packet.writebacks == null || Array.isArray(packet.writebacks)) &&
+    !hasDeclaredMutations(packet, options) && hasDecisionReason(packet);
+}
+
+// Structural checks can reject malformed candidates. Semantic properties are
+// explicitly unassessed until the exact-bound reviewer supplies an assessment.
+export async function validateFiveCriteria(packet, options = {}) {
   const writebacks = getWritebacks(packet);
   const targets = getWritebackTargets(packet);
-  const hasTargets = targets.length > 0;
-  const noWriteback = isNoWritebackDecision(packet);
-  const noWritebackHasTargets = noWriteback && writebacks.length > 0;
+  const noWriteback = noWritebackCheck(packet, options);
+  const assess = (key, reason) => noWriteback
+    ? checkResult('not_applicable', 'No durable mutation was requested; no candidate quality is claimed')
+    : reviewedCheck(packet, options, 'fiveCriteria', key, reason);
   const results = {
-    independent: null,
-    smallEnough: null,
-    clearBoundaries: null,
-    replaceable: null,
-    reusable: null,
-    all: false
+    independent: isNoWritebackDecision(packet)
+      ? checkResult(noWriteback ? 'pass' : 'fail', 'No-writeback closure requires a reason and zero mutation targets')
+      : targets.length === 0 ? checkResult('fail', 'Writeback candidates require explicit targets')
+        : assess('independent', 'Target presence does not demonstrate responsibility independence'),
+    smallEnough: writebacks.length > 3
+      ? checkResult('fail', 'A writeback review must cover no more than three targets')
+      : assess('smallEnough', 'A small target count does not demonstrate a single responsibility'),
+    clearBoundaries: targets.length !== writebacks.length || isNoWritebackDecision(packet) && writebacks.length > 0
+      ? checkResult('fail', 'Every writeback must resolve to a specific target')
+      : assess('clearBoundaries', 'Candidate responsibility boundaries have not been reviewed'),
+    replaceable: assess('replaceable', 'Replacement and rollback behavior have not been reviewed'),
+    reusable: !noWriteback && packet.signalSummary?.totalSignals === 0
+      ? checkResult('fail', 'Zero recorded signals cannot establish a reusable change')
+      : assess('reusable', 'Recurring signals and demonstrated future use require review evidence'),
   };
-
-  // 1. Independent - 产出不依赖其他meta输出
-  results.independent = {
-    pass: noWriteback
-      ? !noWritebackHasTargets && hasDecisionReason(packet)
-      : hasTargets,
-    reason: "Writeback packets need targets; no-writeback packets need a reason and no writeback targets"
-  };
-
-  // 2. Small Enough - 职责单一
-  results.smallEnough = {
-    pass: writebacks.length <= 3,
-    reason: "Writeback should target ≤3 agents to maintain focus"
-  };
-
-  // 3. Clear Boundaries - Own/Do Not Touch清晰
-  results.clearBoundaries = {
-    pass: noWriteback ? writebacks.length === 0 : targets.length === writebacks.length,
-    reason: "Each writeback must reference a specific agent/skill; no-writeback packets must not include targets"
-  };
-
-  // 4. Replaceable - 可替换
-  results.replaceable = {
-    pass: true,
-    reason: "Evolution system is designed to be replaceable"
-  };
-
-  // 5. Reusable - 可复用
-  results.reusable = {
-    pass: noWriteback
-      ? !noWritebackHasTargets && hasDecisionReason(packet)
-      : hasTargets && Boolean(packet.signalSummary?.totalSignals > 0 || hasTargets),
-    reason: "Triggered by recurring evolution signals"
-  };
-
   results.all = allChecksPass(results);
   return results;
 }
 
-// PRIN-ST验证
-export async function validatePrinStPrinciples(packet) {
-  const config = await loadEvolutionConfig();
+export async function validatePrinStPrinciples(packet, options = {}) {
   const targets = getWritebackTargets(packet);
+  const noWriteback = noWritebackCheck(packet, options);
+  const assess = (key, reason) => noWriteback
+    ? checkResult('not_applicable', 'No durable mutation was requested; no candidate quality is claimed')
+    : reviewedCheck(packet, options, 'prinSt', key, reason);
   const results = {
-    prinSt01: null,
-    prinSt02: null,
-    prinSt03: null,
-    prinSt04: null,
-    prinSt05: null,
-    all: false
+    prinSt01: assess('prinSt01', 'Loading gate configuration does not prove the candidate is configurable'),
+    prinSt02: new Set(targets).size !== targets.length
+      ? checkResult('fail', 'Duplicate writeback targets require consolidation')
+      : assess('prinSt02', 'Distinct targets do not prove a single source of truth'),
+    prinSt03: assess('prinSt03', 'Candidate dependency direction and layer ownership require review'),
+    prinSt04: assess('prinSt04', 'Candidate interface and dependency coupling require review'),
+    prinSt05: assess('prinSt05', 'Candidate user-facing language behavior requires review'),
   };
-
-  // PRIN-ST-01: Configurable
-  results.prinSt01 = {
-    pass: true,
-    reason: "Evolution thresholds loaded from evolution-contract.json"
-  };
-
-  // PRIN-ST-02: Single Source
-  results.prinSt02 = {
-    pass: new Set(targets).size === targets.length,
-    reason: "No duplicate writeback targets"
-  };
-
-  // PRIN-ST-03: Layering
-  results.prinSt03 = {
-    pass: true,
-    reason: "Gate operates at governance layer only"
-  };
-
-  // PRIN-ST-04: Decoupling
-  results.prinSt04 = {
-    pass: true,
-    reason: "Gate validates without implementing writeback logic"
-  };
-
-  // PRIN-ST-05: i18n
-  results.prinSt05 = {
-    pass: true,
-    reason: "Gate returns structured results; CLI status is diagnostic"
-  };
-
   results.all = allChecksPass(results);
   return results;
 }
 
-// 递归风险检查
-export async function checkRecursiveRisk(packet) {
+export async function checkRecursiveRisk(packet, options = {}) {
   const config = await loadEvolutionConfig();
   const targets = getWritebackTargets(packet);
+  const noWriteback = noWritebackCheck(packet, options);
+  const candidateTargets = [packet.mutationCandidates, options.mutationCandidates].filter(Array.isArray)
+    .flatMap((candidates) => candidates.map((candidate) => candidate?.targetRef)).filter((target) => typeof target === 'string');
+  const normalizedTargets = [...targets, ...candidateTargets]
+    .map((target) => target.trim().replaceAll('\\', '/').split('/').at(-1).toLowerCase().replace(/\.md$/u, ''));
+  const selfDetected = normalizedTargets.includes('meta-chrysalis');
   const risks = {
-    selfEvolution: null,
-    circularDependency: null,
-    transitiveOverflow: null,
-    thresholdGaming: null,
-    identityDrift: null,
-    detected: false
+    selfEvolution: { status: noWriteback ? 'not_applicable' : selfDetected ? 'fail' : 'pass', detected: selfDetected,
+      action: 'reject', reason: config.gate.recursiveProtection.selfEvolutionBlock.reason },
   };
-
-  // 1. Self-Evolution检查
-  risks.selfEvolution = {
-    detected: targets.includes('meta-chrysalis'),
-    action: 'reject',
-    reason: config.gate.recursiveProtection.selfEvolutionBlock.reason
-  };
-
-  // 2. Circular Dependency检查
-  risks.circularDependency = {
-    detected: false,
-    action: 'reject',
-    reason: config.gate.recursiveProtection.circularDependency.reason
-  };
-
-  // 3. Transitive Overflow检查
-  risks.transitiveOverflow = {
-    detected: false,
-    action: 'reject',
-    reason: config.gate.recursiveProtection.transitiveOverflow.reason
-  };
-
-  // 4. Threshold Gaming检查
-  risks.thresholdGaming = {
-    detected: packet.signalSummary &&
-                   packet.signalSummary.totalSignals > 5 &&
-                   targets.length > 0 &&
-                   new Set(targets).size === 1,
-    action: 'merge',
-    reason: config.gate.recursiveProtection.thresholdGaming.reason
-  };
-
-  // 5. Identity Drift检查
-  risks.identityDrift = {
-    detected: false,
-    action: 'reject',
-    reason: config.gate.recursiveProtection.identityDrift.reason
-  };
-
-  risks.detected = Object.entries(risks)
-    .filter(([key]) => key !== 'detected')
-    .some(([, risk]) => risk?.detected === true);
+  for (const key of ['circularDependency', 'transitiveOverflow', 'thresholdGaming', 'identityDrift']) {
+    const result = noWriteback
+      ? checkResult('not_applicable', 'No durable mutation requested')
+      : reviewedCheck(packet, options, 'recursiveRisk', key, `${key} has not been evaluated against this exact candidate`);
+    risks[key] = { ...result, detected: result.status === 'not_applicable' ? false : result.pass === null ? null : !result.pass,
+      action: config.gate.recursiveProtection[key].action };
+  }
+  risks.detected = Object.values(risks).some((risk) => risk?.detected === true);
+  risks.fullyEvaluated = Object.values(risks).filter((risk) => risk && typeof risk === 'object')
+    .every((risk) => ['pass', 'fail', 'not_applicable'].includes(risk.status));
   return risks;
 }
 
 // Gate决策
 export async function gateDecision(packet, options = {}) {
-  const fiveCriteria = await validateFiveCriteria(packet);
-  const prinSt = await validatePrinStPrinciples(packet);
-  const recursiveRisk = await checkRecursiveRisk(packet);
+  const fiveCriteria = await validateFiveCriteria(packet, options);
+  const prinSt = await validatePrinStPrinciples(packet, options);
+  const recursiveRisk = await checkRecursiveRisk(packet, options);
   const writebacks = getWritebacks(packet);
   const noWritebackDecision = isNoWritebackDecision(packet);
-  const noWriteback = noWritebackDecision && writebacks.length === 0;
-  const mutationCandidates = Array.isArray(options.mutationCandidates)
-    ? options.mutationCandidates
-    : Array.isArray(packet.mutationCandidates)
-      ? packet.mutationCandidates
-      : [];
-  let approvalValidation = noWriteback
-    ? null
-    : validateWardenWritebackApproval({
-        approvalPacket: options.approvalPacket ?? packet.approvalPacket ?? null,
-        candidates: mutationCandidates,
-      });
-  if (
-    approvalValidation?.ok === true &&
-    options.requiredApprovalScope &&
-    approvalValidation.normalized.scope !== options.requiredApprovalScope
-  ) {
-    approvalValidation = {
-      ...approvalValidation,
-      ok: false,
-      status: 'invalid',
-      errors: [`approval scope must be ${options.requiredApprovalScope}`],
-    };
-  }
+  const noWriteback = noWritebackCheck(packet, options);
+  const approvalValidation = noWriteback ? null : approvalFor(packet, options);
 
-  if (noWritebackDecision && writebacks.length > 0) {
+  if (noWritebackDecision && (writebacks.length > 0 || hasDeclaredMutations(packet, options))) {
     return {
       decision: 'reject',
       riskLevel: 'high',
       fiveCriteria,
       prinSt,
       recursiveRisk,
-      reason: 'No-writeback decisions cannot include writeback targets'
+      reason: 'No-writeback decisions cannot include writeback targets or mutation candidates'
     };
   }
 
@@ -286,24 +235,26 @@ export async function gateDecision(packet, options = {}) {
         reason: `Self-evolution blocked: ${recursiveRisk.selfEvolution.reason}`
       };
     }
-    if (recursiveRisk.circularDependency.detected) {
+    const rejectedRisk = ['circularDependency', 'transitiveOverflow', 'identityDrift']
+      .find((key) => recursiveRisk[key].detected === true);
+    if (rejectedRisk) {
       return {
         decision: 'reject',
         riskLevel: 'high',
         fiveCriteria,
         prinSt,
         recursiveRisk,
-        reason: `Circular dependency: ${recursiveRisk.circularDependency.reason}`
+        reason: `${rejectedRisk}: ${recursiveRisk[rejectedRisk].reason}`
       };
     }
   }
 
   // 确定risk level
-  if (!fiveCriteria.all || !prinSt.all) {
+  if (hasFailedCheck(fiveCriteria) || hasFailedCheck(prinSt)) {
     riskLevel = 'high';
     decision = 'escalate';
     reason = 'Five Criteria or PRIN-ST validation failed';
-  } else if (recursiveRisk.thresholdGaming.detected) {
+  } else if (recursiveRisk.thresholdGaming.detected === true) {
     riskLevel = 'medium';
     decision = 'merge';
     reason = 'Threshold gaming detected - merge writebacks';
@@ -315,6 +266,10 @@ export async function gateDecision(packet, options = {}) {
     riskLevel = 'medium';
     decision = 'defer';
     reason = 'Boundary modification requires user confirmation';
+  } else if (!fiveCriteria.all || !prinSt.all || !recursiveRisk.fullyEvaluated) {
+    riskLevel = 'medium';
+    decision = 'candidate_only';
+    reason = 'Candidate preserved; quality and recursive-risk checks require evidence in the exact-bound Warden review';
   } else if (!noWriteback && approvalValidation?.ok === true) {
     decision = 'approve';
     reason = 'Exact Warden approval covers every mutation candidate';
@@ -327,6 +282,8 @@ export async function gateDecision(packet, options = {}) {
     prinSt,
     recursiveRisk,
     approvalValidation,
+    qualityStatus: fiveCriteria.all && prinSt.all && recursiveRisk.fullyEvaluated ? 'reviewed' :
+      hasFailedCheck(fiveCriteria) || hasFailedCheck(prinSt) || recursiveRisk.detected ? 'failed' : 'not_evaluated',
     reason
   };
 }
@@ -347,12 +304,16 @@ export async function processEvolutionPacket(packet, options = {}) {
 
   if (decision.decision === 'defer') {
     console.log('[Evolution Gate] Deferred - user confirmation required');
-    return { ...decision, deferred: true };
+    return { ...decision, deferred: true, approved: false, canonicalWrites: 0 };
   }
 
   if (decision.decision === 'escalate') {
     console.log('[Evolution Gate] Escalated to Warden + Genesis review');
-    return { ...decision, escalated: true };
+    return { ...decision, escalated: true, approved: false, canonicalWrites: 0 };
+  }
+
+  if (decision.decision === 'merge') {
+    return { ...decision, mergeRequired: true, approved: false, canonicalWrites: 0 };
   }
 
   if (decision.decision === 'candidate_only') {

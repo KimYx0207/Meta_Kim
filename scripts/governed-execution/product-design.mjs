@@ -6,6 +6,7 @@ import { stageLaneNodeId } from "./stage-dag.mjs";
 import { normalizeResearchEvidence, researchForTask } from "./research-records.mjs";
 import { inspectTrustedPath } from "../safe-managed-file-operations.mjs";
 import { readCurrentTaskFacts } from "./task-design-dispatch.mjs";
+import { normalizeSoftwareDesign, softwareDesignForTask, softwareAffectedTasks } from "../../src/domain/design/software-design.mjs";
 
 const text = (value) => typeof value === "string" && value.trim().length > 0;
 const object = (value) => value && typeof value === "object" && !Array.isArray(value);
@@ -195,6 +196,13 @@ export function normalizeProductDesign({ input = null, dialogue, goalContract, r
     ...(slices.some(slice => slice.decisionRefs?.length) ? { decisions: structuredClone((dialogue.settledDecisionRefs ?? []).filter(decision => slices.some(slice => slice.decisionRefs?.includes(decision.decisionId)))) } : {}),
     ...(research || researchRequired ? { researchBinding: { required: researchRequired, digest: research?.digest ?? null,
       sourceIds: [...new Set([...researchRefs, ...slices.flatMap(slice => slice.researchRefs ?? [])])], gaps: researchGaps } } : {}) };
+  const softwareDesign = normalizeSoftwareDesign({ input: input.softwareDesign, design: normalized, settledDecisionIds: settled, criterionIds: criteria });
+  if (softwareDesign) {
+    normalized.softwareDesign = softwareDesign;
+    const softwareDecisions = new Set([...softwareDesign.architecture.decisionRefs,
+      ...softwareDesign.modules.flatMap(module => module.decisionRefs), ...slices.flatMap(slice => slice.decisionRefs ?? [])]);
+    normalized.decisions = structuredClone((dialogue.settledDecisionRefs ?? []).filter(decision => softwareDecisions.has(decision.decisionId)));
+  }
   const revisionImpact = deriveDesignRevisionImpact(normalized);
   return { ...normalized, designDigest: productDesignDigest(normalized), uncoveredCriteria, revisionImpact,
     readiness: researchGaps.length ? "research_incomplete" : input.mode === "delivery" && slices.length > 0 && uncoveredCriteria.length === 0 ? "structure_ready_not_reviewed" : "design_incomplete",
@@ -205,10 +213,13 @@ export function deriveDesignRevisionImpact(design) {
   const revision = design.revisionContext;
   if (!revision) return null;
   requireThat(text(revision.previousRunId) && text(revision.previousDesignDigest) && list(revision.changeEvidenceRefs) && revision.changeEvidenceRefs.length > 0, "Design revision needs prior identity and change evidence");
-  requireThat(list(revision.directlyAffectedTaskIds), "Revision requires explicit affected task IDs");
+  const declaredTasks = revision.directlyAffectedTaskIds ?? [];
+  requireThat(list(declaredTasks), "Revision requires explicit affected task IDs");
   const ids = new Set(design.taskSlices.map((slice) => slice.id));
-  requireThat(revision.directlyAffectedTaskIds.every((id) => ids.has(id)), "Revision references unknown affected task");
-  const affected = new Set(revision.directlyAffectedTaskIds);
+  requireThat(declaredTasks.every((id) => ids.has(id)), "Revision references unknown affected task");
+  const directlyAffectedTaskIds = [...new Set([...declaredTasks, ...softwareAffectedTasks(design.softwareDesign, revision, design.taskSlices)])];
+  requireThat(directlyAffectedTaskIds.length > 0, "Revision requires a concrete affected task, module, architecture or decision");
+  const affected = new Set(directlyAffectedTaskIds);
   let changed = true;
   while (changed) {
     changed = false;
@@ -217,7 +228,7 @@ export function deriveDesignRevisionImpact(design) {
   const candidates = revision.reuseCandidates ?? [];
   requireThat(Array.isArray(candidates), "Reuse candidates must be an array");
   for (const item of candidates) requireThat(ids.has(item.taskId ?? item.previousTaskId) && !affected.has(item.taskId ?? item.previousTaskId) && text(item.artifactRef) && /^[a-f0-9]{64}$/u.test(item.sha256 ?? "") && text(item.reason), "Invalid or affected reuse candidate");
-  return { previousRunId: revision.previousRunId, directlyAffectedTaskIds: [...revision.directlyAffectedTaskIds], affectedTaskIds: [...affected].sort(),
+  return { previousRunId: revision.previousRunId, directlyAffectedTaskIds, affectedTaskIds: [...affected].sort(),
     reuseCandidates: candidates.map((item) => ({ ...item, status: "requires_current_binding_and_review" })),
     status: "new_run_required", claimBoundary: "Explicit semantic impact plus dependency closure; old completion and review evidence are never copied." };
 }
@@ -243,14 +254,20 @@ export function projectDesignWorkerTasks({ design, runId, templates, research = 
       const bytes = readFileSync(checked.target);
       return { ref, status: "bound", sha256: createHash("sha256").update(bytes).digest("hex"), bytes: bytes.length };
     });
+    const softwareContext = softwareDesignForTask(design.softwareDesign, slice.id);
+    const decisionIds = new Set([...(slice.decisionRefs ?? []), ...(softwareContext?.architecture.decisionRefs ?? []),
+      ...(softwareContext?.modules.flatMap(module => module.decisionRefs) ?? [])]);
     const context = { schemaVersion: 1, taskPacketId, taskHash: design.taskHash, intentDigest: design.intentDigest, designDigest: design.designDigest,
       designId: design.designId, revision: design.revision, sliceId: slice.id,
       ...(design.selectedOptionId ? { selectedOption: design.solutionOptions.find(option => option.id === design.selectedOptionId), selectionRationale: design.selectionRationale } : {}),
-      journeys: design.userJourneys.filter(journey => slice.journeyRefs?.includes(journey.id)),
-      decisions: (design.decisions ?? []).filter(decision => slice.decisionRefs?.includes(decision.decisionId)),
+      journeys: design.userJourneys.filter(journey => slice.journeyRefs?.includes(journey.id) || softwareContext?.modules.some(module => module.journeyRefs.includes(journey.id))),
+      decisions: (design.decisions ?? []).filter(decision => decisionIds.has(decision.decisionId)),
       domainTerms: design.domainTerms.filter(term => !slice.domainTermRefs || slice.domainTermRefs.includes(term.id ?? term.term)),
-      sharedState: (design.sharedState ?? []).filter(state => slice.stateRefs ? slice.stateRefs.includes(state.id) : state.ownerTaskId === slice.id || state.consumerTaskIds?.includes(slice.id)),
-      interfaces: (design.interfaces ?? []).filter(contract => slice.interfaceRefs ? slice.interfaceRefs.includes(contract.id) : contract.producerTaskId === slice.id || contract.consumerTaskIds.includes(slice.id)),
+      sharedState: (design.sharedState ?? []).filter(state => softwareContext?.modules.some(module => module.stateRefs.includes(state.id)) ||
+        (slice.stateRefs ? slice.stateRefs.includes(state.id) : state.ownerTaskId === slice.id || state.consumerTaskIds?.includes(slice.id))),
+      interfaces: (design.interfaces ?? []).filter(contract => softwareContext?.modules.some(module => module.interfaceRefs.includes(contract.id)) ||
+        (slice.interfaceRefs ? slice.interfaceRefs.includes(contract.id) : contract.producerTaskId === slice.id || contract.consumerTaskIds.includes(slice.id))),
+      ...(design.softwareDesign ? { softwareDesign: softwareContext } : {}),
       artifactFlow: design.artifactFlow.filter(flow => flow.producerTaskId === slice.id || flow.consumerTaskIds.includes(slice.id)), sourceBindings };
     const designContext = { ...context, digest: productDesignDigest(context), authority: "Task-scoped projection of the single PRD; no user approval or tool permission" };
     const ready = design.readiness === "structure_ready_not_reviewed" && scopeFiles.length > 0 && packet.workOrderReadiness === "ready" && !sourceBindings.some(source => source.status === "unavailable");
@@ -267,6 +284,9 @@ export function projectDesignWorkerTasks({ design, runId, templates, research = 
       ...(slice.researchRefs?.length ? { researchEvidence: researchForTask({ research, sourceIds: slice.researchRefs }) } : {}),
       ...(projectContext ? { projectContextBinding: { digest: projectContext.digest, lifecycle: projectContext.lifecycle,
         modules: projectContext.modules.filter(module => !scopeFiles.length || scopeFiles.some(file => module.directory === "." || file.startsWith(module.directory + "/"))),
+        ...(projectContext.relatedCode ? { relatedCode: { ...projectContext.relatedCode,
+          relations: projectContext.relatedCode.relations.filter(edge => scopeFiles.some(file =>
+            file === edge.from || file === edge.to || edge.from.startsWith(file + "/") || edge.to.startsWith(file + "/"))) } } : {}),
         limitations: projectContext.limitations } } : {}),
       methodInputs: structuredClone(slice.methodInputs ?? null), ...(slice.methodCapabilityId ? { methodCapabilityId: slice.methodCapabilityId } : {}),
       designTask: { completionDemo: slice.completionDemo, inputRefs: slice.inputRefs, deliverables: slice.deliverables, journeyRefs: slice.journeyRefs ?? [], decisionRefs: slice.decisionRefs ?? [], dependencyReasons: slice.dependencyReasons ?? [] },

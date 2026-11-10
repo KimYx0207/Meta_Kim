@@ -46,7 +46,11 @@
     "zcode": {
       "runtimeId": "zcode",
       "headlessMode": "plan",
-      "forbiddenHeadlessModes": ["build", "edit", "yolo"],
+      "forbiddenHeadlessModes": [
+        "build",
+        "edit",
+        "yolo"
+      ],
       "hookSupport": "not_claimed",
       "mcpPolicy": "preserve_user_merge_plan_only",
       "modelInvocationDuringProbeOrTest": false,
@@ -95,5 +99,9 @@
       "installed-user acceptance",
       "default sync support"
     ]
+  },
+  "projectionSeparation": {
+    "zcode": "The legacy candidate-adapter plan API keeps every no-effect invariant. Separately, config/sync.json and native-runtime-projection.mjs now provide optional native file projection; this is not a promotion of candidate plans or live certification.",
+    "gemini": "Optional formal projection; live acceptance remains independent."
   }
 }

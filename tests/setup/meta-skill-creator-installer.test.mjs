@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
+  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -16,6 +17,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { afterEach, test } from "node:test";
+import { stableJson, sha256 } from "../../src/infrastructure/capabilities/source-integrity.mjs";
 
 import {
   buildGlobalCapabilityInventoryArgs,
@@ -68,6 +70,27 @@ function hashTree(root) {
 }
 
 function childEnv(root, sourceDir, overrides = {}) {
+  // The installer also preserves the indexed Service source for professional
+  // discovery. Supply that real closure in addition to the transaction fixture;
+  // these tests never need a remote clone merely to prepare the source store.
+  const serviceRoot = path.join(root, "service-source");
+  if (existsSync(sourceDir)) {
+    const component = path.join(serviceRoot, "skills/meta-skill-creator");
+    rmSync(component, { recursive: true, force: true });
+    mkdirSync(component, { recursive: true });
+    mkdirSync(path.join(serviceRoot, ".git"), { recursive: true });
+    cpSync(sourceDir, component, { recursive: true });
+    const contract = { schemaVersion: 1, id: "meta-skill-creator", componentVersion: "1.0.0", componentType: "skill", entrypoint: "SKILL.md", capabilities: [] };
+    writeFileSync(path.join(component, "capability.json"), JSON.stringify(contract));
+    const hash = createHash("sha256");
+    for (const filename of readdirSync(component).sort()) hash.update(filename).update("\0").update(readFileSync(path.join(component, filename))).update("\0");
+    mkdirSync(path.join(serviceRoot, "generated"), { recursive: true });
+    writeFileSync(path.join(serviceRoot, "generated/capabilities.json"), JSON.stringify({
+      schemaVersion: 1, componentCount: 1, capabilityCount: 0, capabilities: [],
+      components: [{ ...contract, path: "skills/meta-skill-creator", capabilityIds: [], capabilities: undefined,
+        contentSha256: hash.digest("hex"), contractSha256: sha256(stableJson(contract)) }],
+    }));
+  }
   return {
     ...process.env,
     HOME: root,
@@ -76,6 +99,7 @@ function childEnv(root, sourceDir, overrides = {}) {
     META_KIM_CODEX_HOME: path.join(root, "custom", "deep", "codex-home"),
     META_KIM_ALLOW_TEST_FIXTURES: "1",
     META_KIM_TEST_META_SKILL_SOURCE_DIR: sourceDir,
+    META_KIM_LOCAL_DEPENDENCY_ROOT: serviceRoot,
     META_KIM_SKIP_OPTIONAL_TOOLS: "1",
     ...overrides,
   };
@@ -90,6 +114,7 @@ function runInstaller(root, sourceDir, extraArgs = [], overrides = {}) {
       "claude,codex",
       "--skills",
       "meta-skill-creator",
+      "--prefer-local-dependencies",
       "--skip-plugins",
       "--skip-inventory-refresh",
       ...extraArgs,
@@ -117,6 +142,9 @@ test("setup-compatible empty --skills is accepted while real missing values fail
     /mutually exclusive/,
   );
   assert.doesNotThrow(() => validateInstallerArgs(["--all", "--targets", "codex"]));
+  assert.doesNotThrow(() => validateInstallerArgs(["--defaults", "--targets", "codex"]));
+  assert.throws(() => validateInstallerArgs(["--defaults", "--all"]), /mutually exclusive/);
+  assert.throws(() => validateInstallerArgs(["--defaults", "--skills", "ecc"]), /mutually exclusive/);
   assert.doesNotThrow(() => validateInstallerArgs(["--help"]));
   for (const language of ["en", "zh", "zh-CN", "ja", "ja-JP", "ko", "ko-KR"]) {
     assert.doesNotThrow(() => validateInstallerArgs(["--all", `--lang=${language}`]));
@@ -157,10 +185,10 @@ test("an existing user directory is not adopted without a current write or match
   assert.equal(shouldRecordManagedDependencyTarget({ wasWritten: true }), true);
 });
 
-test("legacy shell wrapper preserves explicit dependency selection for install and update", () => {
+test("legacy shell wrapper selects default dependencies for install and update", () => {
   const wrapper = readFileSync(path.join(repoRoot, "install-deps.sh"), "utf8");
-  assert.match(wrapper, /ARGS=\(--all --targets claude\)/u);
-  assert.match(wrapper, /ARGS=\(--update --all --targets claude\)/u);
+  assert.match(wrapper, /ARGS=\(--defaults --targets claude\)/u);
+  assert.match(wrapper, /ARGS=\(--update --defaults --targets claude\)/u);
 });
 
 test("split and equals language forms produce the same localized zero-write output", () => {
@@ -294,6 +322,42 @@ test("meta-skill transaction uses the same bounded Windows rename retry", async 
   assert.ok(attempts >= 4);
   assert.equal(hashTree(primary), hashTree(source));
   assert.equal(hashTree(compat), hashTree(source));
+});
+
+test("default install and update ignore stale optional selections and preserve independent copies", () => {
+  const root = tempRoot();
+  const fixture = path.join(root, "fixture");
+  writeFixture(fixture, "default-v1");
+  const runDefaults = (args = []) => spawnSync(process.execPath, [installer,
+    "--defaults", "--targets", "claude,codex", "--prefer-local-dependencies", "--skip-plugins", "--skip-inventory-refresh", ...args], {
+    cwd: repoRoot,
+    env: childEnv(root, fixture, { META_KIM_SKILL_IDS: "findskill,superpowers,agent-teams-playbook" }),
+    encoding: "utf8", timeout: 30000,
+  });
+  const selectedRoots = [path.join(root, "custom/claude-home/skills"), path.join(root, ".agents/skills"), path.join(root, "custom/deep/codex-home/skills")];
+  const fresh = runDefaults();
+  assert.equal(fresh.status, 0, fresh.stderr || fresh.stdout);
+  const sourceReceipt = JSON.parse(readFileSync(path.join(root, ".meta-kim/install-manifest.json"), "utf8"))
+    .entries.find((entry) => entry.purpose === "kim-service-dependency-source");
+  assert.ok(sourceReceipt);
+  const managedIndex = JSON.parse(readFileSync(path.join(sourceReceipt.path, "generated/capabilities.json"), "utf8"));
+  assert.equal(managedIndex.componentCount, 1, "test must bind its explicit fixture, never an incidental sibling checkout");
+  for (const skillRoot of selectedRoots) {
+    assert.deepEqual(readdirSync(skillRoot), ["meta-skill-creator"]);
+    assert.equal(hashTree(path.join(skillRoot, "meta-skill-creator")), hashTree(fixture));
+  }
+  const userCopy = path.join(selectedRoots[0], "findskill");
+  writeFixture(userCopy, "independent-user-copy");
+  const userHash = hashTree(userCopy);
+  writeFixture(fixture, "default-v2");
+  const updated = runDefaults(["--update"]);
+  assert.equal(updated.status, 0, updated.stderr || updated.stdout);
+  for (const skillRoot of selectedRoots) {
+    assert.equal(hashTree(path.join(skillRoot, "meta-skill-creator")), hashTree(fixture));
+    assert.equal(existsSync(path.join(skillRoot, "superpowers")), false);
+    assert.equal(existsSync(path.join(skillRoot, "agent-teams-playbook")), false);
+  }
+  assert.equal(hashTree(userCopy), userHash);
 });
 
 test("real child process fresh install and update cover Claude plus both Codex roots", () => {

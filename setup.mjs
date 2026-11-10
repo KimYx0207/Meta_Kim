@@ -59,6 +59,14 @@ import {
 } from "./scripts/runtime-executable-binding.mjs";
 import { probeRuntimeCli } from "./scripts/runtime-cli-probe.mjs";
 import {
+  NATIVE_PROJECTION_RUNTIME_IDS,
+  applyNativeSkillPaths,
+  buildPortableSkillContent,
+  buildNativeRuntimeAgent,
+  invertNativeJsonMutations,
+  planNativeRuntimeSettings,
+} from "./scripts/native-runtime-projection.mjs";
+import {
   adoptHistoricalWindowsMcpMemoryBootArtifactOwnership,
   isExactMcpMemoryBootManifestIdentity,
   repairOrphanMcpMemoryBootLaunchers,
@@ -124,6 +132,7 @@ import {
   resolveTargetContext,
   resolveRuntimeProfilesFromManifest,
   resolveRuntimeHomeDir,
+  resolveRuntimeProjection,
   writeLocalOverrides as persistLocalOverrides,
 } from "./scripts/meta-kim-sync-config.mjs";
 import {
@@ -1057,11 +1066,13 @@ const QUICK_PLATFORMS = [
   { id: "openclaw", labelKey: "npxQuickPlatformOpenclaw" },
   { id: "codex", labelKey: "npxQuickPlatformCodex" },
   { id: "cursor", labelKey: "npxQuickPlatformCursor" },
+  { id: "gemini", label: "Gemini CLI" },
+  { id: "zcode", label: "ZCode" },
   { id: "all", labelKey: "npxQuickPlatformAll" },
 ];
 
 async function askQuickPlatform() {
-  const labels = QUICK_PLATFORMS.map((p) => t[p.labelKey]);
+  const labels = QUICK_PLATFORMS.map((p) => p.label ?? t[p.labelKey]);
   const idx = await askSelect(t.npxQuickPlatformPrompt, labels);
   return QUICK_PLATFORMS[idx].id;
 }
@@ -1095,6 +1106,8 @@ const DEPLOY_PROTECTED_JSON_PATHS = new Set([
   ".codex/hooks.json",
   ".cursor/hooks.json",
   ".cursor/mcp.json",
+  ".gemini/settings.json",
+  ".zcode/config.json",
   "openclaw/openclaw.template.json",
 ]);
 
@@ -1119,6 +1132,7 @@ const GLOBAL_HOOK_PACKAGE_FILES_LIST = [
   "spine-state-gates.mjs",
   "spine-state.mjs",
   "governed-task-reference.mjs",
+  "task-progress.mjs",
   "governed-host-checkpoint.mjs",
   "activate-meta-theory-spine.mjs",
   "bash-readonly-whitelist.mjs",
@@ -1156,6 +1170,15 @@ const PROJECT_LOCAL_CAPABILITY_PREFIXES = [
   ".cursor/hooks/",
   ".cursor/rules/",
   ".cursor/capability-index/",
+  ".gemini/agents/",
+  ".gemini/skills/",
+  ".gemini/commands/",
+  ".gemini/hooks/",
+  ".gemini/capability-index/",
+  ".zcode/agents/",
+  ".zcode/skills/",
+  ".zcode/commands/",
+  ".zcode/capability-index/",
   "openclaw/workspaces/",
   "openclaw/skills/",
   "openclaw/capability-index/",
@@ -1167,6 +1190,8 @@ const PROJECT_SKILL_ROOTS_BY_PLATFORM = {
   codex: [".agents/skills"],
   cursor: [".cursor/skills"],
   openclaw: ["openclaw/skills"],
+  gemini: [".agents/skills"],
+  zcode: [".zcode/skills"],
 };
 
 const PROJECT_META_KIM_CONFIG_RELS_BY_PLATFORM = {
@@ -1174,6 +1199,8 @@ const PROJECT_META_KIM_CONFIG_RELS_BY_PLATFORM = {
   codex: [".codex/hooks.json", ".mcp.json"],
   cursor: [".cursor/hooks.json", ".cursor/mcp.json"],
   openclaw: ["openclaw/openclaw.template.json"],
+  gemini: [".gemini/settings.json"],
+  zcode: [".zcode/config.json"],
 };
 
 const PROJECT_META_KIM_LOCAL_STATE_RELS = [
@@ -1200,6 +1227,7 @@ const PROJECT_HOOK_SOURCE_CANDIDATES = {
     "spine-state-gates.mjs",
     "spine-state.mjs",
     "governed-task-reference.mjs",
+    "task-progress.mjs",
     "governed-host-checkpoint.mjs",
     "activate-meta-theory-spine.mjs",
     "bash-readonly-whitelist.mjs",
@@ -1224,6 +1252,7 @@ const PROJECT_HOOK_SOURCE_CANDIDATES = {
     "spine-state-gates.mjs",
     "spine-state.mjs",
     "governed-task-reference.mjs",
+    "task-progress.mjs",
     "governed-host-checkpoint.mjs",
     "activate-meta-theory-spine.mjs",
     "bash-readonly-whitelist.mjs",
@@ -1658,14 +1687,19 @@ function isMetaKimNamespacedProjectPath(relPath) {
     rel.startsWith(".claude/agents/meta-") ||
     rel.startsWith(".codex/agents/meta-") ||
     rel.startsWith(".cursor/agents/meta-") ||
+    rel.startsWith(".gemini/agents/meta-") ||
+    rel.startsWith(".zcode/agents/meta-") ||
     rel.startsWith("openclaw/workspaces/meta-") ||
     rel.startsWith(".claude/skills/meta-theory/") ||
     rel.startsWith(".agents/skills/meta-theory/") ||
     rel.startsWith(".cursor/skills/meta-theory/") ||
+    rel.startsWith(".zcode/skills/meta-theory/") ||
     rel.startsWith("openclaw/skills/meta-theory/") ||
     rel.startsWith(".claude/capability-index/meta-kim-") ||
     rel.startsWith(".codex/capability-index/meta-kim-") ||
     rel.startsWith(".cursor/capability-index/meta-kim-") ||
+    rel.startsWith(".gemini/capability-index/meta-kim-") ||
+    rel.startsWith(".zcode/capability-index/meta-kim-") ||
     rel.startsWith("openclaw/capability-index/meta-kim-") ||
     // Hook scripts under each platform's hooks dir are Meta_Kim-managed when
     // their basename is on the canonical hook-file whitelist. Without this,
@@ -1682,6 +1716,7 @@ function isMetaKimNamespacedProjectPath(relPath) {
 function isMetaKimManagedHookRelPath(rel) {
   if (typeof rel !== "string") return false;
   const normalized = rel.replace(/\\/g, "/");
+  if (normalized === ".gemini/hooks/meta-kim/native-runtime-adapter.mjs") return true;
   let basename = null;
   if (normalized.startsWith(".claude/hooks/")) {
     basename = normalized.slice(".claude/hooks/".length);
@@ -2064,6 +2099,7 @@ function projectDeployRootsForPlatform(platformId) {
     platformId === "openclaw" ||
     platformId === "codex" ||
     platformId === "cursor" ||
+    NATIVE_PROJECTION_RUNTIME_IDS.includes(platformId) ||
     platformId === "all"
   ) {
     add("AGENTS.md");
@@ -2103,7 +2139,22 @@ function projectDeployRootsForPlatform(platformId) {
     add("canonical/runtime-assets/cursor/hooks.json", ".cursor/hooks.json");
     add("canonical/runtime-assets/claude/mcp.json", ".cursor/mcp.json");
   }
+  for (const runtimeId of NATIVE_PROJECTION_RUNTIME_IDS) {
+    if (platformId !== runtimeId && platformId !== "all") continue;
+    const projection = resolveRuntimeProjection(runtimeId, "project", { projectRoot: PROJECT_DIR });
+    add("canonical/skills/meta-theory", relative(PROJECT_DIR, projection.skillRoot));
+    add("config/capability-index", relative(PROJECT_DIR, projection.capabilityIndexDir));
+  }
   return roots;
+}
+
+function projectDeploySourceContent(srcPath, relPath) {
+  const rel = normalizeDeployRelPath(relPath);
+  const portableRuntime = rel.startsWith(".agents/skills/") ? "codex"
+    : rel.startsWith(".zcode/skills/") ? "zcode" : null;
+  if (!portableRuntime || !rel.endsWith(".md")) return readFileSync(srcPath);
+  const raw = applyNativeSkillPaths(readFileSync(srcPath, "utf8"), portableRuntime);
+  return rel.endsWith("/SKILL.md") ? buildPortableSkillContent(raw) : raw;
 }
 
 function collectDeployFilePlansFromRoot(srcRoot, destRoot, context = {}) {
@@ -2173,7 +2224,7 @@ function projectDeployFilePlan(srcPath, destPath, relPath, targetDir, context = 
     ? `${JSON.stringify(plannedProtectedProjectDeployJson(srcPath, safeTarget.target, rel, targetDir), null, 2)}\n`
     : protectedText
       ? plannedProtectedProjectDeployText(srcPath, safeTarget.target, rel, targetDir)
-      : readFileSync(srcPath);
+      : projectDeploySourceContent(srcPath, rel);
   const sourceHash = createHash("sha256").update(plannedContent).digest("hex");
   const currentHash = exists ? projectFileHash(safeTarget.target) : null;
   const previousEntry = context.managedFileMap?.get(rel) ?? null;
@@ -2238,7 +2289,7 @@ function projectDeployFilePlan(srcPath, destPath, relPath, targetDir, context = 
   };
 }
 
-function projectGeneratedFilePlan(relPath, content, targetDir, source, protectedPaths) {
+function projectGeneratedFilePlan(relPath, content, targetDir, source, protectedPaths, { jsonMutationJournal = null } = {}) {
   const rel = normalizeDeployRelPath(relPath);
   const destPath = join(targetDir, rel);
   const protectedProjectCapability = isProtectedProjectCapabilityPath(
@@ -2259,6 +2310,7 @@ function projectGeneratedFilePlan(relPath, content, targetDir, source, protected
     sourceHash,
     previousManifestEntry: previousEntry,
     protectedProjectCapability,
+    mergeOwnedConfig: jsonMutationJournal !== null,
     managedProjectionUpdate:
       existingProjectProjectionUpdatePolicy().managedProjectionUpdate,
   });
@@ -2272,14 +2324,15 @@ function projectGeneratedFilePlan(relPath, content, targetDir, source, protected
     ownership: classification.ownership,
     action: protectedProjectCapability
       ? "skip"
-      : classification.action,
+      : jsonMutationJournal !== null && exists ? "merge" : classification.action,
     effectiveAction: protectedProjectCapability
       ? "unchanged"
       : contentStatus === "same"
       ? "unchanged"
-      : classification.action,
+      : jsonMutationJournal !== null && exists ? "merge" : classification.action,
     mergePolicy: protectedProjectCapability
       ? "preserve_project_copy"
+      : jsonMutationJournal !== null ? "exact_owned_json_fragments_preserve_user_state"
       : classification.action === "replace"
         ? "manifest_managed_projection_replace"
         : classification.action === "conflict"
@@ -2290,7 +2343,59 @@ function projectGeneratedFilePlan(relPath, content, targetDir, source, protected
     oldInstalledHash: classification.oldInstalledHash ?? null,
     currentHash,
     sourceHash,
+    ...(jsonMutationJournal !== null ? { jsonMutationJournal } : {}),
   };
+}
+
+let nativeProjectExecutionPackageRoot = PROJECT_DIR;
+
+async function ensureNativeProjectProjectionAuthority(activeTargets) {
+  if (!activeTargets.includes("all") && !activeTargets.some((id) => NATIVE_PROJECTION_RUNTIME_IDS.includes(id))) return;
+  if (executingStableProjectionPackage) {
+    nativeProjectExecutionPackageRoot = executingStableProjectionPackage.packageRoot;
+    return;
+  }
+  if (nativeProjectExecutionPackageRoot !== PROJECT_DIR) return;
+  const stable = await projectionPackageBoundary.materializeStablePackage();
+  nativeProjectExecutionPackageRoot = stable.packageRoot;
+}
+
+async function prepareNativeProjectReadAuthority(activeTargets, targetDir) {
+  nativeProjectExecutionPackageRoot = executingStableProjectionPackage?.packageRoot ?? PROJECT_DIR;
+  if (executingStableProjectionPackage ||
+      !activeTargets.some((id) => id === "all" || NATIVE_PROJECTION_RUNTIME_IDS.includes(id))) return;
+  const previousRoot = readProjectBootstrapManifest(targetDir)?.sourceChain?.packageRoot;
+  const verified = await projectionPackageBoundary.resolveMatchingReadAuthority(previousRoot);
+  if (verified) nativeProjectExecutionPackageRoot = verified.packageRoot;
+}
+
+function nativeProjectGeneratedPlans(runtimeId, targetDir, protectedPaths) {
+  if (!NATIVE_PROJECTION_RUNTIME_IDS.includes(runtimeId)) return [];
+  const projection = resolveRuntimeProjection(runtimeId, "project", { projectRoot: targetDir });
+  const label = (filePath) => normalizeDeployRelPath(relative(targetDir, filePath));
+  const plans = loadSetupAgents().map((agent) => projectGeneratedFilePlan(
+    label(join(projection.agentsDir, `${agent.id}.md`)), buildNativeRuntimeAgent(agent, runtimeId),
+    targetDir, agent.sourceFile, protectedPaths,
+  ));
+  const adapterPath = join(projection.hooksDir, "native-runtime-adapter.mjs");
+  if (runtimeId === "gemini") plans.push(projectGeneratedFilePlan(
+    label(adapterPath), readFileSync(join(PROJECT_DIR, "canonical/runtime-assets/shared/hooks/native-runtime-adapter.mjs")),
+    targetDir, "canonical/runtime-assets/shared/hooks/native-runtime-adapter.mjs", protectedPaths,
+  ));
+  const rel = label(projection.settingsFile);
+  const safe = projectPlanningPathInfo(targetDir, rel);
+  if (!safe) return [...plans, projectGeneratedFilePlan(rel, "{}\n", targetDir, "native-runtime-settings", protectedPaths)];
+  const previous = previousProjectManagedFileMap(targetDir).get(rel);
+  const compatibleInfo = runtimeId === "zcode" ? projectPlanningPathInfo(targetDir, ".agents/mcp.json") : null;
+  const compatibleMcpServers = compatibleInfo && existsSync(compatibleInfo.target)
+    ? readJsonObjectIfExists(compatibleInfo.target).mcpServers ?? {} : {};
+  const planned = planNativeRuntimeSettings(readJsonObjectIfExists(safe.target), {
+    runtimeId, scope: "project", packageRoot: nativeProjectExecutionPackageRoot, adapterPath,
+    previousJournal: previous?.jsonMutationJournal ?? [], compatibleMcpServers,
+  });
+  plans.push(projectGeneratedFilePlan(rel, `${JSON.stringify(planned.config, null, 2)}\n`, targetDir,
+    "scripts/native-runtime-projection.mjs", protectedPaths, { jsonMutationJournal: planned.mutations }));
+  return plans;
 }
 
 function projectDeployFileContentStatus(
@@ -2341,6 +2446,13 @@ function collectProjectDeployPlan(activeTargets, targetDir) {
       if (seen.has(plan.relPath)) continue;
       seen.add(plan.relPath);
       plans.push(plan);
+    }
+    for (const runtimeId of platformId === "all" ? NATIVE_PROJECTION_RUNTIME_IDS : [platformId]) {
+      for (const plan of nativeProjectGeneratedPlans(runtimeId, targetDir, protectedPaths)) {
+        if (seen.has(plan.relPath)) continue;
+        seen.add(plan.relPath);
+        plans.push(plan);
+      }
     }
   }
   return plans.sort((left, right) => left.relPath.localeCompare(right.relPath));
@@ -2503,6 +2615,8 @@ function projectInstructionRelPathsForTargets(activeTargets) {
   if (
     targets.includes("codex") ||
     targets.includes("cursor") ||
+    targets.includes("gemini") ||
+    targets.includes("zcode") ||
     targets.includes("openclaw")
   ) {
     rels.add("AGENTS.md");
@@ -3185,6 +3299,24 @@ function cleanupRedundantProjectConfigs(
     }
     const current = readJsonObjectIfExists(absPath);
     if (!current) continue;
+    const nativeJournal = previousProjectManagedFileMap(targetDir).get(rel)?.jsonMutationJournal;
+    if ([".gemini/settings.json", ".zcode/config.json"].includes(rel)) {
+      if (!Array.isArray(nativeJournal)) {
+        skipped.push({ relPath: rel, reason: "native_json_fragment_ownership_unproven_preserved" });
+        continue;
+      }
+      let next;
+      try { next = invertNativeJsonMutations(current, nativeJournal); }
+      catch { skipped.push({ relPath: rel, reason: "native_json_fragment_changed_preserved" }); continue; }
+      if (isGitTrackedProjectPath(targetDir, rel)) {
+        skipped.push({ relPath: rel, reason: "git_tracked_preserved" });
+        continue;
+      }
+      if (!jsonEquivalent(current, next) && !writeProjectFileWithVerifiedBackup(
+        targetDir, rel, `${JSON.stringify(next, null, 2)}\n`, backups,
+      )) skipped.push({ relPath: rel, reason: "backup_or_atomic_write_failed_preserved" });
+      continue;
+    }
     const stripped = stripMetaKimProjectConfig(rel, current);
     const ownershipProof = projectRemovalProof(targetDir, rel);
     if (!ownershipProof) {
@@ -3632,6 +3764,7 @@ const PROJECT_HOOK_FILE_WHITELIST_BY_PLATFORM = {
     "spine-state-gates.mjs",
     "spine-state.mjs",
     "governed-task-reference.mjs",
+    "task-progress.mjs",
     "governed-host-checkpoint.mjs",
     "activate-meta-theory-spine.mjs",
     "bash-readonly-whitelist.mjs",
@@ -3661,6 +3794,7 @@ const PROJECT_HOOK_FILE_WHITELIST_BY_PLATFORM = {
     "spine-state-gates.mjs",
     "spine-state.mjs",
     "governed-task-reference.mjs",
+    "task-progress.mjs",
     "governed-host-checkpoint.mjs",
     "activate-meta-theory-spine.mjs",
     "bash-readonly-whitelist.mjs",
@@ -3703,6 +3837,7 @@ const PROJECT_HOOK_FILE_WHITELIST_BY_PLATFORM = {
     "spine-state-gates.mjs",
     "spine-state.mjs",
     "governed-task-reference.mjs",
+    "task-progress.mjs",
     "governed-host-checkpoint.mjs",
     "activate-meta-theory-spine.mjs",
     "bash-readonly-whitelist.mjs",
@@ -3826,6 +3961,7 @@ async function migrateProjectMetaKimHooksForBootstrap(activeTargets, targetDir) 
 
 const PROJECT_MUTATION_SESSION_LOCK_KEY = "project-mutation-session";
 async function applyProjectBootstrapToDir(activeTargets, targetDir) {
+  await ensureNativeProjectProjectionAuthority(activeTargets);
   if (!existsSync(targetDir)) {
     if (!missingProjectTargetHasNoLinkedAncestor(targetDir)) {
       throw new Error("Project bootstrap blocked: target path has an unsafe linked ancestor");
@@ -3876,6 +4012,17 @@ function projectBootstrapTransactionalPlan(plan, targetDir, backup) {
     }
     if (!existsSync(info.target)) continue;
     const currentHash = projectFileHash(info.target);
+    if (Array.isArray(previousEntry.jsonMutationJournal)) {
+      // The manifest owns exact fragments, never the user's whole settings
+      // file. Unrelated edits must survive an explicit runtime retarget.
+      const stripped = invertNativeJsonMutations(readJsonObjectIfExists(info.target), previousEntry.jsonMutationJournal);
+      const content = `${JSON.stringify(stripped, null, 2)}\n`;
+      if (createHash("sha256").update(content).digest("hex") !== currentHash) {
+        operations.push({ kind: "write", phase: "content", relPath, content, expectedOldHash: currentHash });
+        cleanup.strippedHookConfigs.push(relPath);
+      }
+      continue;
+    }
     if (currentHash !== previousEntry.contentHash) {
       cleanup.skipped.push({ relPath, reason: "manifest_hash_mismatch_preserved" });
       continue;
@@ -4742,11 +4889,11 @@ async function runQuickDeploy() {
 
   // Copy platform files to target directory
   await withProgress(t.npxQuickCopyFiles, async () => {
-    assertNoProjectBootstrapConflicts(buildProjectBootstrapPlan([platformId], targetDir));
-    const count = deployPlatformFiles(platformId, targetDir);
+    const targets = platformId === "all" ? RUNTIME_CHOICES.map(({ id }) => id) : [platformId];
+    const bootstrap = await applyProjectBootstrapToDir(targets, targetDir);
     quickDeployDir = targetDir;
     quickDeployDirs = uniqueProjectDeployDirs([targetDir]);
-    return count > 0;
+    return bootstrap.applied || bootstrap.noOp;
   });
 
   // Install global skills
@@ -5199,6 +5346,25 @@ function checkSync(
     }
   }
 
+  for (const runtimeId of repoTargets.filter((id) => NATIVE_PROJECTION_RUNTIME_IDS.includes(id))) {
+    const projection = resolveRuntimeProjection(runtimeId, "project", { projectRoot });
+    const expected = META_AGENTS.map((id) => join(projection.agentsDir, `${id}.md`));
+    expected.push(join(projection.skillRoot, "SKILL.md"), projection.settingsFile);
+    if (runtimeId === "gemini") expected.push(join(projection.hooksDir, "native-runtime-adapter.mjs"));
+    const missing = expected.filter((file) => !existsSync(file));
+    if (missing.length) {
+      allOk = false;
+      for (const file of missing) fail(t.syncMissing(normalizeDeployRelPath(relative(projectRoot, file))));
+      continue;
+    }
+    try {
+      const config = readJsonObjectIfExists(projection.settingsFile);
+      const server = (runtimeId === "gemini" ? config.mcpServers : config.mcp?.servers)?.["meta-kim-runtime"];
+      if (!server?.command || !Array.isArray(server.args) || !existsSync(server.args[0])) throw new Error("native MCP command target is missing");
+      if (runtimeId === "gemini" && !Array.isArray(config.hooks?.BeforeTool)) throw new Error("native BeforeTool registration is missing");
+      ok(`${setupRuntimeProfiles[runtimeId].label}: projection installed; live_verified remains unverified.`);
+    } catch (error) { allOk = false; fail(`${setupRuntimeProfiles[runtimeId].label}: ${error.message}`); }
+  }
   console.log();
   if (allOk) info(t.syncOk);
   return allOk;
@@ -5250,6 +5416,8 @@ async function detectRuntimes() {
     codex: false,
     openclaw: false,
     cursor: false,
+    gemini: false,
+    zcode: false,
   };
 
   const claudeVer = detectCli("claude");
@@ -5276,11 +5444,18 @@ async function detectRuntimes() {
     runtimes.cursor = true;
   } else skip(t.cursorNotDetected);
 
+  for (const runtimeId of NATIVE_PROJECTION_RUNTIME_IDS) {
+    const version = detectCli(runtimeId);
+    runtimes[runtimeId] = Boolean(version);
+    if (version) ok(`${setupRuntimeProfiles[runtimeId].label}: ${version}`);
+    else skip(`${setupRuntimeProfiles[runtimeId].label}: CLI version not detected; native projection remains available by explicit selection.`);
+  }
+
   if (
     !runtimes.claude &&
     !runtimes.codex &&
     !runtimes.openclaw &&
-    !runtimes.cursor
+    !runtimes.cursor && !runtimes.gemini && !runtimes.zcode
   ) {
     console.log("");
     console.log(`${C.yellow}⚠ ${t.noRuntime}${C.reset}`);
@@ -5369,6 +5544,17 @@ function runNodeScript(
   extraArgs = [],
   envOverrides = {},
 ) {
+  if (childId === SETUP_NODE_CHILD.GLOBAL_SKILLS_INSTALLER) {
+    const index = extraArgs.indexOf("--targets");
+    if (index >= 0) {
+      const requested = String(extraArgs[index + 1] ?? "").split(",").filter(Boolean);
+      const supported = requested.filter((id) => setupRuntimeProfiles[id]?.activation?.supportsGlobalDependencyInstall !== false);
+      if (supported.length !== requested.length) info("ZCode: native Meta_Kim projection only; third-party dependency installation is not declared for this host.");
+      if (supported.length === 0) return { status: 0, skipped: true };
+      extraArgs = [...extraArgs];
+      extraArgs[index + 1] = supported.join(",");
+    }
+  }
   const spawnConfig = buildSetupNodeChildSpawn(
     process.execPath,
     PROJECT_DIR,
@@ -8254,6 +8440,8 @@ function showNextSteps(runtimes, selectedTargets = detectedTargetIds(runtimes)) 
     { id: "codex", name: t.platformCodex, cap: t.platformCodexCap },
     { id: "openclaw", name: t.platformOpenClaw, cap: t.platformOpenClawCap },
     { id: "cursor", name: t.platformCursor, cap: t.platformCursorCap },
+    { id: "gemini", name: "Gemini CLI", cap: "Native agents, Agent Skills, settings, MCP and project/user hooks; live host acceptance is separate." },
+    { id: "zcode", name: "ZCode", cap: "Native agents, Agent Skills, settings and MCP; hooks are user-scoped only, current-host acceptance is separate." },
   ].filter((row) => selectedTargets.includes(row.id));
   for (const row of platformRows) {
     console.log(`${C.dim}• ${row.name}: ${row.cap}${C.reset}`);
@@ -8540,12 +8728,23 @@ async function runProjectBootstrapCli() {
   const applyMode = projectBootstrapApply && !projectBootstrapDryRun;
   if (applyMode) {
     await assertProjectPersistentWriteBoundary(targetDirs, "project bootstrap");
+    if (activeTargets.some((id) => NATIVE_PROJECTION_RUNTIME_IDS.includes(id)) && !executingStableProjectionPackage) {
+      // Native project settings persist MCP and Hook commands. Use the same
+      // immutable package authority as global installation before writing them.
+      const stable = await projectionPackageBoundary.materializeStablePackage();
+      return (await projectionPackageBoundary.launchStableSetup(stable, {
+        args: ["--project-bootstrap", "--apply", "--targets", activeTargets.join(","),
+          ...targetDirs.flatMap((dir) => ["--project-dir", dir]),
+          ...(jsonOutputMode ? ["--json"] : []), "--lang", currentLangCode],
+      })) === 0;
+    }
   }
   const results = [];
   let ok = true;
 
   for (const targetDir of targetDirs) {
     try {
+      if (!applyMode) await prepareNativeProjectReadAuthority(activeTargets, targetDir);
       const plan = buildProjectBootstrapPlan(activeTargets, targetDir);
       if (!applyMode) {
         results.push(plan);
@@ -8629,11 +8828,13 @@ async function main() {
 
   if (projectBootstrapMode) {
     const ok = await runProjectBootstrapCli();
-    process.exit(ok ? 0 : 1);
+    process.exitCode = ok ? 0 : 1;
+    return;
   }
   if (projectCleanupMode) {
     const ok = await runProjectCleanupCli();
-    process.exit(ok ? 0 : 1);
+    process.exitCode = ok ? 0 : 1;
+    return;
   }
   if (rebindRuntimeLaunchMode) {
     const ok = await runRebindRuntimeLaunchCli();
@@ -8872,6 +9073,7 @@ async function runInstall() {
           skillIds: selectedSkillIds,
           preferLocalDependencies,
           skipInventoryRefresh: true,
+          retireAbsorbed: true,
         });
         // ).concat(["--log-file", INSTALL_LOG_FILE]);
         const installResult = runNodeScript(
@@ -9209,6 +9411,7 @@ async function runUpdate() {
       update: true,
       preferLocalDependencies,
       skipInventoryRefresh: true,
+      retireAbsorbed: true,
     });
     // ).concat(["--log-file", INSTALL_LOG_FILE]);
     const updateInstallResult = runNodeScript(

@@ -164,7 +164,9 @@ export async function discoverDependencySkillContracts({
       if (status === "selected") selected.set(entry.id, entry);
     }
   } else {
-    const match = matchDependencyAgentContracts(request, candidates);
+    // This selects which bounded source package to read, not an execution
+    // owner. Current host Thinking still chooses the capability it will use.
+    const match = matchDependencyAgentContracts(request, candidates, { discoveryOnly: true });
     const entry = match.selected;
     const status = !entry ? match.reason === "ambiguous_contract_matches" ? "ambiguous" : "no_match" : entry.capability.componentType !== "skill" ? "unsupported_type" : "selected";
     result.matches.push({ request, status, selected: status === "selected" ? entry.id : null, candidates: match.candidates, reason: match.reason });

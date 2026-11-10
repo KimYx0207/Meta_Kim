@@ -350,10 +350,10 @@ describe("47 - Meta-theory entry classifier", () => {
     const skill = await readFile("canonical/skills/meta-theory/SKILL.md");
     const combined = `${readme}\n${readmeZh}\n${agents}\n${skill}`;
 
-    assert.match(readme, /humans should be able to use plain task language/i);
-    assert.match(readme, /maintainer shortcuts, not the normal user path/i);
-    assert.match(readmeZh, /人类应该直接用自然语言说任务/);
-    assert.match(readmeZh, /维护者快捷方式，不是普通用户入口/);
+    assert.match(readme, /describe the outcome/i);
+    assert.match(readme, /do not need to memorize commands/i);
+    assert.match(readmeZh, /直接说想要的结果/);
+    assert.match(readmeZh, /不用背命令，也不用先报出技术角色/);
     assert.match(agents, /Do not require humans to know or type command words/);
     assert.match(skill, /ordinary natural-language durable work/);
     assert.match(skill, /not required human behavior/);

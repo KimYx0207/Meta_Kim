@@ -22,6 +22,12 @@ The runner persists immutable `research-<digest>.json` files inside the trusted 
 
 Workers receive selected `researchEvidence` entries containing a short finding, relevance, adaptation, URL/revision and `recordRef`/`recordSha256`/`researchDigest`. `readTaskResearchEvidence({projectRoot,evidence,taskHash,intentDigest})` validates the trusted path, current goal binding, immutable bytes, selected summary and source freshness before returning only the selected source entries. A source hash binds the record, not the truth of an external claim. Do not copy all research into every worker or create another task authority.
 
+## Software architecture and module views
+
+For software work, read [intent to delivery](intent-to-delivery.md). Optional `designInput.softwareDesign` adds an architecture baseline and detailed modules to this same PRD. `mode: exploration` allows architecture-only work and module outlines; `mode: delivery` requires evidenced technology versions, implementation details, acceptance coverage and actual interface/state boundaries. Worker context includes the relevant module's actual settled decisions and contracts. Module/architecture/decision changes feed the existing task dependency closure. No new queue or approval is created.
+
+Current project context also includes `relatedCode`: a bounded source-navigation snapshot with current-byte hashes, literal references and explicit limitations. Static absence of callers does not authorize deletion; check entry points, dynamic/generated paths and external consumers first.
+
 ## Design and production input
 
 The existing `designInput` can describe actual product `solutionOptions`, `selectedOptionId` and `selectionRationale`. These preserve the scenario, mechanism, user flow and tradeoffs; they do not attest user approval or prove semantic diversity. Optional `sharedState` and `interfaces` identify real task owners/consumers. Task slices use their existing journey/decision references and optional state/interface/domain-term references. These are normalized into the same `designDigest`, not another plan or PRD. Existing inputs without these optional additions retain their historical digest.

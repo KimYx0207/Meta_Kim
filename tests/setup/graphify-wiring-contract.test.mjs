@@ -451,8 +451,8 @@ console.log("forced rebuild ok");
     assert.doesNotMatch(body, /writePostCopyBootstrap\(targetDir, \[platformId\]\)/);
     assert.doesNotMatch(body, /installPythonTools\([\s\S]*?targetDir/);
     assert.ok(
-      body.includes("deployPlatformFiles(platformId, targetDir)"),
-      "quick deploy must still copy target runtime entry/config files",
+      body.includes("await applyProjectBootstrapToDir(targets, targetDir)"),
+      "quick deploy must use the same transactional runtime entry/config projection as project bootstrap",
     );
   });
 

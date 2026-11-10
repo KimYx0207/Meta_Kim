@@ -1978,7 +1978,7 @@ export async function openSqliteDurableRunRepository(dbPath = ":memory:", { enab
       });
     },
 
-    resumeRun({ runId, graphDigest, taskFingerprint }) {
+    resumeRun({ runId, graphDigest, taskFingerprint, includeClaimDefinitions = false }) {
       const run = assertRunBinding(db, { runId, graphDigest, taskFingerprint });
       const integrity = verifyDurableRunIntegrity(db, runId);
       if (!integrity.ok) {
@@ -1997,6 +1997,13 @@ export async function openSqliteDurableRunRepository(dbPath = ":memory:", { enab
         leaseOwner: claim.lease_owner,
         leaseExpiresAtMs: Number(claim.lease_expires_at_ms),
       }));
+      // An observer may need to prove an active peer belongs to this exact
+      // graph before observing an independent human gate. Read the existing
+      // attempt identity; this neither creates a second claim nor grants work.
+      if (includeClaimDefinitions === true) {
+        const definition = db.prepare("SELECT node_definition_hash FROM governed_node_attempts WHERE attempt_id = ? AND run_id = ? AND node_id = ?");
+        for (const claim of activeClaims) claim.nodeDefinitionHash = definition.get(claim.attemptId, runId, claim.nodeId)?.node_definition_hash ?? null;
+      }
       const result = {
         runId,
         rootRunId: run.root_run_id,

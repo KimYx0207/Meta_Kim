@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { scopeComparisonKey, scopeKeysAreProvablyDisjoint } from "../task-scope-comparison.mjs";
 
 const DEFAULT_STAGE_ORDER = Object.freeze([
   "Critical",
@@ -119,8 +120,10 @@ export function validateStageDagPacket(stageDagPacket, { requireDigest = false }
     )) {
       throw new TypeError(`stage DAG node ${node.nodeId} dependsOn must contain strings`);
     }
-    if (!Array.isArray(node.resourceScopes)) {
-      throw new TypeError(`stage DAG node ${node.nodeId} resourceScopes must be an array`);
+    if (!Array.isArray(node.resourceScopes) || node.resourceScopes.some(
+      (scope) => typeof scope !== "string" || !scope.trim()
+    )) {
+      throw new TypeError(`stage DAG node ${node.nodeId} resourceScopes must be an array of non-empty strings`);
     }
     nodeIdCounts.set(node.nodeId, (nodeIdCounts.get(node.nodeId) ?? 0) + 1);
   }
@@ -328,24 +331,18 @@ function nodeHasUnknownMutationScope(node) {
 
 function normalizeFilesystemScope(scope) {
   const match = String(scope ?? "").trim().match(/^(?:file|path):(.*)$/iu);
-  if (!match) return null;
-  let normalized = match[1]
-    .trim()
-    .replace(/\\/gu, "/")
-    .replace(/\/{2,}/gu, "/")
-    .replace(/^\.\//u, "")
-    .toLowerCase();
-  if (normalized.length > 1) normalized = normalized.replace(/\/+$/u, "");
-  return normalized;
+  return match ? { key: scopeComparisonKey(match[1].trim()) } : null;
 }
 
 function scopesConflict(leftScope, rightScope) {
   const leftFilesystemScope = normalizeFilesystemScope(leftScope);
   const rightFilesystemScope = normalizeFilesystemScope(rightScope);
+  if (leftFilesystemScope?.key === null || rightFilesystemScope?.key === null) return true;
   if (leftFilesystemScope !== null && rightFilesystemScope !== null) {
-    return leftFilesystemScope === rightFilesystemScope ||
-      leftFilesystemScope.startsWith(`${rightFilesystemScope}/`) ||
-      rightFilesystemScope.startsWith(`${leftFilesystemScope}/`);
+    // Use the same conservative lexical identity as fanout-policy. Unknown
+    // roots and aliases cannot prove independent writes; no physical sandbox
+    // or symlink isolation is implied by this scheduler comparison.
+    return !scopeKeysAreProvablyDisjoint(leftFilesystemScope.key, rightFilesystemScope.key);
   }
   return String(leftScope).trim() === String(rightScope).trim();
 }

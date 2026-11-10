@@ -6,6 +6,7 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  promises as fsPromises,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -165,15 +166,17 @@ function createPrimaryProjectionBundle(repo, { storeRoot = null } = {}) {
       name: "meta-kim",
       version: "2.0.22",
       type: "module",
-      bin: { "meta-kim": "bin/meta-kim.mjs" },
+      bin: { "meta-kim": "./bin/meta-kim.mjs" },
     })}\n`,
   );
   writeFileSync(proofByRole.cli, "cli\n");
   writeFileSync(proofByRole["sync-script"], "sync-script\n");
+  writeFileSync(path.join(packageRoot, "README.md"), "First-party package documentation\n");
   const dependency = path.join(digestDir, "bundle", "node_modules", "dependency", "index.js");
   mkdirSync(path.dirname(dependency), { recursive: true });
   writeFileSync(dependency, "dependency\n");
   const firstPartyFiles = [
+    "README.md",
     "bin/meta-kim.mjs",
     "package.json",
     "scripts/sync-global-meta-theory.mjs",
@@ -2090,9 +2093,52 @@ describe("uninstall / durable runtime bundle ownership", () => {
       releaseHolder();
       await holder;
       const result = await uninstall;
-      assert.equal(result.success, true);
+      assert.equal(result.success, true, result.reason);
       assert.equal(existsSync(bundle.digestDir), false);
     } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test("primary projection uninstall retries when a competing digest lock disappears after rename fails", async (t) => {
+    const repo = mkdtempSync(path.join(tmpdir(), "meta-kim-uninstall-lock-race-"));
+    let releaseHolder;
+    let holder;
+    try {
+      mkdirSync(path.join(repo, ".meta-kim"), { recursive: true });
+      const bundle = createPrimaryProjectionBundle(repo);
+      const layout = resolveGlobalProjectionPackageLayout({
+        homeRoot: repo, packageName: "meta-kim", packageVersion: "2.0.22",
+        packageTarballSha256: "a".repeat(64),
+      });
+      let entered;
+      const ready = new Promise((resolve) => { entered = resolve; });
+      holder = withProjectionDigestLock(layout, async () => {
+        entered();
+        await new Promise((resolve) => { releaseHolder = resolve; });
+      }, { homeRoot: repo });
+      await ready;
+      const lockDir = path.join(layout.versionRoot, `.projection-package-lock-${"a".repeat(24)}`);
+      const originalLstat = fsPromises.lstat;
+      let releasedBetweenRenameAndInspect = false;
+      t.mock.method(fsPromises, "lstat", async (target, ...options) => {
+        if (path.resolve(String(target)) === lockDir && !releasedBetweenRenameAndInspect) {
+          // Force the genuine filesystem race at its boundary: the first
+          // rename has failed, but the owner leaves before existence readback.
+          releasedBetweenRenameAndInspect = true;
+          releaseHolder();
+          await holder;
+        }
+        return originalLstat(target, ...options);
+      });
+      const result = await removeExactManagedRuntimeBundleWithLock(bundle.action, { homeRoot: repo });
+      assert.equal(releasedBetweenRenameAndInspect, true);
+      assert.equal(result.success, true, result.reason);
+      assert.equal(existsSync(bundle.digestDir), false);
+    } finally {
+      t.mock.restoreAll();
+      releaseHolder?.();
+      await holder;
       rmSync(repo, { recursive: true, force: true });
     }
   });

@@ -13,7 +13,7 @@ import {
 import { runEvaluation } from "./evaluate-agent-design-quality.mjs";
 import { runGovernanceAgentProcessMvp } from "./run-governance-agent-process-mvp.mjs";
 import { runCapabilityGapRealInputReplay } from "./run-capability-gap-real-input-replay.mjs";
-import { runCapabilityGapCompleteProduct } from "./run-capability-gap-complete-product.mjs";
+import { runCapabilityGapCompleteProduct, writeGovernedPreparationReport } from "./run-capability-gap-complete-product.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
@@ -477,7 +477,17 @@ export async function runCoreMvpAcceptance({
     jsonPath: path.join(tempDir, "complete-product.json"),
     markdownPath: path.join(tempDir, "complete-product.md"),
     dbPath: path.join(tempDir, "complete-product.sqlite"),
+    preparationStateDir: path.join(path.dirname(jsonPath), "governed-preparation"),
   });
+  if (completeProduct.artifactKind === "host_preparation") {
+    try {
+      return await writeGovernedPreparationReport(completeProduct, {
+        jsonPath, markdownPath, consumer: "core_mvp_acceptance",
+      });
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  }
   await fs.rm(tempDir, { recursive: true, force: true });
 
   const frChecks = buildFrChecks({
@@ -572,6 +582,7 @@ async function main() {
         status: report.status,
         summary: report.summary,
         report: relative(markdownPath),
+        ...(report.artifactKind === "host_preparation" ? { nextAction: report.nextAction, preparation: report.preparation.status } : {}),
       },
       null,
       2

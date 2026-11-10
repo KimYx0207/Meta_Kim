@@ -13,7 +13,8 @@
         "openclaw",
         "cursor"
       ],
-      "subdir": "skills/agent-teams-playbook"
+      "subdir": "skills/agent-teams-playbook",
+      "defaultSelected": false
     },
     {
       "id": "findskill",
@@ -28,7 +29,8 @@
         "openclaw",
         "cursor"
       ],
-      "subdir": "skills/find-skill"
+      "subdir": "skills/find-skill",
+      "defaultSelected": false
     },
     {
       "id": "hookprompt",
@@ -101,7 +103,8 @@
         "claude": [
           "hooks/hookprompt/.claude/hooks"
         ]
-      }
+      },
+      "defaultSelected": false
     },
     {
       "id": "superpowers",
@@ -127,7 +130,8 @@
         "openclaw",
         "cursor",
         "opencode"
-      ]
+      ],
+      "defaultSelected": false
     },
     {
       "id": "ecc",
@@ -202,7 +206,8 @@
         "codebuddy",
         "antigravity",
         "joycode"
-      ]
+      ],
+      "defaultSelected": false
     },
     {
       "id": "cli-anything",
@@ -227,7 +232,8 @@
         "codex",
         "openclaw",
         "cursor"
-      ]
+      ],
+      "defaultSelected": false
     },
     {
       "id": "meta-skill-creator",
@@ -285,42 +291,8 @@
         "codex",
         "openclaw",
         "cursor"
-      ]
-    },
-    {
-      "id": "kim-decision",
-      "repo": "${skillOwner}/Kim_Service",
-      "installMethod": "subdirExtraction",
-      "subdir": "skills/kim-decision",
-      "capabilities": [
-        "decision-protocol-reference",
-        "path-selection",
-        "pass-kill-gate"
       ],
-      "platformSupport": {
-        "claude": {
-          "status": "native",
-          "adapter": "claude-global-skill"
-        },
-        "codex": {
-          "status": "native",
-          "adapter": "codex-global-skill"
-        },
-        "cursor": {
-          "status": "native",
-          "adapter": "cursor-global-skill"
-        },
-        "openclaw": {
-          "status": "degraded",
-          "adapter": "openclaw-global-skill"
-        }
-      },
-      "targets": [
-        "claude",
-        "codex",
-        "openclaw",
-        "cursor"
-      ]
+      "defaultSelected": false
     }
   ]
 }

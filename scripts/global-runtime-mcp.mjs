@@ -86,7 +86,7 @@ export function resolvePortableMetaKimPackageIdentity(packageManifest, distribut
 
 export function metaKimMcpRuntimeEnvironment(runtimeFamily) {
   if (runtimeFamily === undefined) return {};
-  if (!["claude", "codex", "cursor", "openclaw"].includes(runtimeFamily)) {
+  if (!["claude", "codex", "cursor", "openclaw", "gemini", "zcode"].includes(runtimeFamily)) {
     throw new Error("MCP runtime binding requires an explicit supported host runtime.");
   }
   return { META_KIM_RUNTIME_FAMILY: runtimeFamily };

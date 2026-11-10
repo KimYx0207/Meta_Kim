@@ -13,7 +13,7 @@ import {
 } from "../live-acceptance/observe-host-events.mjs";
 import { spawnCli } from "../runtime-cli-invocation.mjs";
 import { inspectTrustedPath } from "../safe-managed-file-operations.mjs";
-import { loadDependencyAgentMethod } from "../dependency-agent-discovery.mjs";
+import { loadDependencyAgentMethod, stableJson } from "../dependency-agent-discovery.mjs";
 import { projectWorkerProgressEvent } from "./worker-result-projection.mjs";
 import { calculationHandoffForWorker } from "./dependency-calculation-handoff.mjs";
 import { taskOutcomeDigest } from "../../src/domain/governance/task-outcome.mjs";
@@ -1496,6 +1496,17 @@ export async function runStageRunnerBridge({
               node, packet, requestTask, upstreamResults });
             const calculationContext = calculationHandoffForWorker({ handoff: dependencyCalculationHandoff,
               runId, runtime: normalizedRuntime, requestTask, packet });
+            let invocationPacket = packet;
+            if (calculationContext?.materials.methodInputs) {
+              const privateInputs = calculationContext.materials.methodInputs;
+              if (packet.methodInputs != null && stableJson(packet.methodInputs) !== stableJson(privateInputs)) {
+                throw Object.assign(new Error("Public and private method inputs conflict"), { code: "calculation_method_inputs_conflict" });
+              }
+              // Only this invocation receives the private host mapping. Keep the
+              // persisted work order unchanged; both transports still run the
+              // same source method's required-input validator.
+              invocationPacket = { ...packet, methodInputs: structuredClone(privateInputs) };
+            }
             if (calculationContext) prompt = buildReadOnlyWorkerPrompt({ runId, runtime: normalizedRuntime,
               node, packet, requestTask, upstreamResults, calculationContext });
             if (!nativeRuntimeInvokerSelected && !localToolInvokerSelected &&
@@ -1503,7 +1514,7 @@ export async function runStageRunnerBridge({
               sourceValidationPending = true;
               const method = await loadDependencyAgentMethod({ packet, environment: workerEnv, projectRoot: resolvedWorkspace });
               sourceValidationPending = false;
-              const methodContext = buildMethodInvocationContext({ method, packet, upstreamResults });
+              const methodContext = buildMethodInvocationContext({ method, packet: invocationPacket, upstreamResults });
               assertMethodInputsReady(methodContext);
               prompt = appendOwnerMethod(appendMethodInvocationContext(prompt, methodContext), method);
               methodBinding = method ? {
@@ -1519,7 +1530,7 @@ export async function runStageRunnerBridge({
               workspaceRoot: resolvedWorkspace,
               timeoutMs,
               node,
-              packet,
+              packet: invocationPacket,
               upstreamResults,
               signal,
               env: workerEnv,

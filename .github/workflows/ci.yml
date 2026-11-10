@@ -139,11 +139,11 @@ jobs:
         with:
           path: Meta_Kim
           persist-credentials: false
-      - name: Check out the reviewed first-party calculator source
+      - name: Check out the reviewed professional capability source
         uses: actions/checkout@v7
         with:
           repository: KimYx0207/Kim_Service
-          ref: 67d19a5d612e7038a9e8ad33a4e80e30f7159ddc
+          ref: 34ff5ef2361214cdd36cddbdcb67c5dece64ad04
           path: Kim_Service
           persist-credentials: false
       - uses: actions/setup-node@v7
@@ -162,6 +162,11 @@ jobs:
         env:
           META_KIM_TEST_KIM_SERVICE_SOURCE: ${{ github.workspace }}/Kim_Service
         run: node --test tests/governance/dependency-calculation.test.mjs tests/governance/dependency-calculation-handoff.test.mjs tests/governance/store-calculation-integration.test.mjs tests/governance/dependency-delivery-envelope.test.mjs
+      - name: Test complete professional knowledge and method handoff
+        working-directory: Meta_Kim
+        env:
+          META_KIM_TEST_KIM_SERVICE_SOURCE: ${{ github.workspace }}/Kim_Service
+        run: node --test tests/governance/dependency-method-knowledge.test.mjs tests/governance/dependency-method-handoff.test.mjs
 
   package-candidate:
     name: Package candidate

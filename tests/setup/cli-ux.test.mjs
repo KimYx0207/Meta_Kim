@@ -202,7 +202,14 @@ describe("stable package CLI UX", () => {
     assert.match(result.stderr, /unknown doctor hooks option/);
   });
 
-  test("status accepts language aliases and keeps concise, detailed, and JSON layers compatible", () => {
+  test("status accepts language aliases and keeps concise, detailed, and JSON layers compatible", (t) => {
+    const home = mkdtempSync(path.join(tmpdir(), "meta-kim-cli-status-home-"));
+    t.after(() => rmSync(home, { recursive: true, force: true }));
+    const claudeHome = path.join(home, ".claude");
+    const skillDir = path.join(claudeHome, "skills", "meta-theory");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(path.join(skillDir, "SKILL.md"), "---\nname: meta-theory\ndescription: Isolated status discovery fixture.\n---\n");
+    const env = { HOME: home, USERPROFILE: home, META_KIM_CLAUDE_HOME: claudeHome };
     const locales = [
       ["en", /Meta_Kim status/],
       ["zh", /Meta_Kim 状态/],
@@ -210,7 +217,7 @@ describe("stable package CLI UX", () => {
       ["ko", /Meta_Kim 상태/],
     ];
     for (const [language, title] of locales) {
-      const concise = run(cli, ["status", "--lang", language]);
+      const concise = run(cli, ["status", "--lang", language], env);
       assert.equal(concise.status, 0, concise.stderr);
       assert.match(concise.stdout, title);
       assert.match(concise.stdout, /status --details/);
@@ -219,12 +226,12 @@ describe("stable package CLI UX", () => {
       assert.match(concise.stdout, /\.meta-kim\/state/);
       assert.doesNotMatch(concise.stdout, /^A\. /m);
 
-      const equalsForm = run(cli, ["status", `--lang=${language}`, "--json"]);
+      const equalsForm = run(cli, ["status", `--lang=${language}`, "--json"], env);
       assert.equal(equalsForm.status, 0, equalsForm.stderr);
       assert.doesNotThrow(() => JSON.parse(equalsForm.stdout));
     }
 
-    const detailed = run(cli, ["status", "--lang", "en", "--details"]);
+    const detailed = run(cli, ["status", "--lang", "en", "--details"], env);
     assert.equal(detailed.status, 0, detailed.stderr);
     assert.match(detailed.stdout, /A\. Global runtime skills/);
 

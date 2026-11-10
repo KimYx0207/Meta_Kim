@@ -25,7 +25,7 @@ import {
 
 const MANIFEST_REL = ".meta-kim/state/default/project-capabilities.json";
 const MANIFEST_SCHEMA = "meta-kim-project-capabilities-v0.1";
-const RUNTIMES = new Set(["claude", "codex", "cursor", "openclaw"]);
+const RUNTIMES = new Set(["claude", "codex", "cursor", "openclaw", "gemini", "zcode"]);
 const TYPES = new Set(["agent", "skill", "command"]);
 const MODES = new Set(["create", "iterate"]);
 
@@ -78,6 +78,8 @@ function assertProjectRoot(projectDir) {
 
 function targetBase(runtime, type, id) {
   const targets = {
+    gemini: { agent: `.gemini/agents/${id}.md`, skill: `.agents/skills/${id}`, command: `.gemini/commands/${id}.toml` },
+    zcode: { agent: `.zcode/agents/${id}.md`, skill: `.zcode/skills/${id}`, command: `.zcode/commands/${id}.md` },
     claude: {
       agent: `.claude/agents/${id}.md`,
       skill: `.claude/skills/${id}`,
@@ -188,6 +190,9 @@ export function copyProjectCapability(options) {
   if (!TYPES.has(type)) throw new Error(`Unsupported capability type: ${type || "missing"}`);
   if (!MODES.has(mode)) throw new Error(`Unsupported copy mode: ${mode || "missing"}`);
   if (!options.source || !existsSync(resolveSource(options.source))) throw new Error("Capability source does not exist.");
+  if (runtime === "gemini" && type === "command" && !String(options.source).endsWith(".toml")) {
+    throw new Error("Gemini custom commands require a native TOML source; Markdown commands cannot be relabeled.");
+  }
 
   const manifest = readManifest(projectRoot);
   const capabilityKey = `${runtime}:${type}:${id}`;

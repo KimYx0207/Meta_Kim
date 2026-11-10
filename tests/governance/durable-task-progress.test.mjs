@@ -13,6 +13,9 @@ import { buildTaskGoalContract } from "../../src/domain/governance/task-outcome.
 import { checkedTaskProgress, recordTaskProgress, taskProgressGoal } from "../../canonical/runtime-assets/shared/hooks/task-progress.mjs";
 
 const digest = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+// Reopening a consumer acquires/releases a scheduler lease. That coordination
+// history must not be confused with replayed task progress or outcome reviews.
+const businessEvents = (context) => context.kernel.getEvents(context.runId).filter((event) => !event.eventType.startsWith("RunCoordinator"));
 
 /** Temporary kernel and discovery-only contract; no CLI, model, Graph or user data. */
 async function fixture(t, taskIds = ["a"], { criterionIds = ["report"] } = {}) {
@@ -142,10 +145,10 @@ test("durable task progress reconciles a failed attempt after restart without re
   await context.reopen();
   const first = await context.advance();
   assert.equal(first.taskProgress.tasks[0].unresolvedAttempts, 1);
-  const eventCount = context.kernel.getEvents(context.runId).length;
+  const eventCount = businessEvents(context).length;
   const replay = await context.advance();
   assert.equal(replay.taskProgress.tasks[0].unresolvedAttempts, 1);
-  assert.equal(context.kernel.getEvents(context.runId).length, eventCount);
+  assert.equal(businessEvents(context).length, eventCount);
 });
 
 test("durable task progress deduplicates reviewed attempts and rejects conflicting terminal review before persistence", async (t) => {
@@ -156,14 +159,14 @@ test("durable task progress deduplicates reviewed attempts and rejects conflicti
   const failure = await reviewed(context, context.packets[0], artifact, "fail", "fixture:failure-review");
   const first = await context.advance({ outcomeReview: failure });
   assert.equal(first.taskProgress.tasks[0].ineffectiveAttempts, 1);
-  const eventCount = context.kernel.getEvents(context.runId).length;
+  const eventCount = businessEvents(context).length;
   await context.reopen();
   const replay = await context.advance({ outcomeReview: failure });
   assert.equal(replay.taskProgress.tasks[0].ineffectiveAttempts, 1);
-  assert.equal(context.kernel.getEvents(context.runId).length, eventCount);
+  assert.equal(businessEvents(context).length, eventCount);
   const conflicting = await reviewed(context, context.packets[0], artifact, "pass", "fixture:conflicting-review");
   await assert.rejects(context.advance({ outcomeReview: conflicting }), /task_progress_attempt_conflict/);
-  assert.equal(context.kernel.getEvents(context.runId).length, eventCount, "Rejected terminal reclassification must not poison stored review history");
+  assert.equal(businessEvents(context).length, eventCount, "Rejected terminal reclassification must not poison stored review history");
 });
 
 test("durable task progress blocks only the repeated logical task while independent ready work stays admitted", async (t) => {

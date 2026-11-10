@@ -25,7 +25,7 @@ import { inspectTrustedPath, withSafeManagedFileLock } from "./safe-managed-file
 import { scopeComparisonKey, scopeKeysAreProvablyDisjoint } from "./task-scope-comparison.mjs";
 import { projectWorkflowWorkerResults } from "./governed-execution/worker-result-projection.mjs";
 import { classifyTaskShape } from "./governance-lib.mjs";
-import { prepareDependencyCalculationInput, bindDependencyCalculationWorkOrder, prepareDependencyCalculationHandoff, readDependencyCalculationInputFile } from "./governed-execution/dependency-calculation-handoff.mjs";
+import { prepareDependencyCalculationInput, bindDependencyCalculationWorkOrder, prepareDependencyCalculationHandoff, readDependencyCalculationInputFile, readDependencyCalculationMethodInputsFile } from "./governed-execution/dependency-calculation-handoff.mjs";
 import { resolveDependencyProjectRoot } from "./dependency-agent-discovery.mjs";
 import {
   openRunStateStore,
@@ -102,6 +102,7 @@ import { advanceGovernedGoal } from "./governed-execution/advance-goal.mjs";
 import { prepareIntentDialogue, normalizeHostCritical, normalizeHostThinking, hostCriticalGoalCriteria, sameHostCriticalMeaning, intentDialogueDigest, bindIntentToWorkerTasks, applyTaskCriterionAssignments, normalizeTaskCriterionAssignments, buildIntentCriterionCoverage, routeCandidateOptions } from "./governed-execution/intent-dialogue.mjs";
 import { normalizeRequirementsDiscovery, normalizeProductDesign, projectDesignWorkerTasks, projectDesignHumanMilestones, evaluateProductOutcomeReview, projectProductReview, productDesignDigest } from "./governed-execution/product-design.mjs";
 import { inspectProjectContext } from "./governed-execution/project-context.mjs";
+import { extractActionPaths } from "./task-action-decomposition.mjs";
 import { persistResearchEvidence, readTaskResearchEvidence } from "./governed-execution/research-records.mjs";
 import {
   buildTaskGoalContract as buildGoalContractPacket,
@@ -11885,9 +11886,6 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
     evidenceRefs: [...new Set([...packet.evidenceRefs, ...requirementsContext.evidenceRefs, "requirementsDiscoveryPacket"])],
     referenceDirection: `${packet.referenceDirection}\nConsume the current proposed requirements exploration at requirementsDiscoveryPacket (${requirementsContext.discoveryDigest}) and its actual source files. Preserve the original task, unknowns and constraints; findings are neither an accepted design nor human answers or execution permission.`,
   }));
-  if (!design && calculationRequest) plannedPackets = await bindDependencyCalculationWorkOrder({
-    request: calculationRequest, runId, route: routeResult, workerTaskPackets: plannedPackets, environment, projectRoot,
-  });
   const designRouteEvidence = [];
   const designCapabilityGaps = [];
   const hostWorkOrderRecords = [];
@@ -12038,6 +12036,9 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
       if (assigned.some((packet, index) => JSON.stringify([...packet.acceptanceCriterionIds].sort()) !== JSON.stringify([...plannedPackets[index].acceptanceCriterionIds].sort()))) throw new TypeError("Explicit criterion assignment conflicts with the product design");
     }
   }
+  if (!design && calculationRequest) plannedPackets = await bindDependencyCalculationWorkOrder({
+    request: calculationRequest, runId, route: routeResult, workerTaskPackets: plannedPackets, environment, projectRoot,
+  });
   const designMissing = designRequirement?.required === true && !design;
   if (designMissing || (design && design.readiness !== "structure_ready_not_reviewed")) {
     routeResult.routeExecutionGate = { ...routeResult.routeExecutionGate, canHandoffToHost: false, handoffStatus: "blocked", hostAction: "return_to_thinking", reason: designMissing ? "A host design must follow requirements discovery before execution" : "Product design is not ready for delivery" };
@@ -12269,6 +12270,20 @@ async function writeHostPreparation({ task, runId, taskFingerprint, outputDir, l
   const ready = stopped ? [] : preview.readyDecisionFrontier.filter((question) => declared.has(question.questionId));
   const open = questions.filter((question) => question.status === "open" && question.resolutionClass === "material_user_decision");
   const factQuestions = questions.filter((question) => question.status === "open" && question.resolutionClass === "discoverable_fact");
+  const selectedQuestion = ready[0] ?? null;
+  const currentQuestion = selectedQuestion ? { questionId: selectedQuestion.questionId, displayText: selectedQuestion.question,
+    recommendationState: selectedQuestion.recommendationState, recommendedAnswer: selectedQuestion.recommendedAnswer } : null;
+  // The typed question ledger is authoritative. Filtering provisional lexical
+  // questions must also remove their presentation pointers from this projection.
+  const questionFrame = { ...preview, intentBinding: dialogue, unresolvedQuestions: questions,
+    readyDecisionFrontier: ready, pendingFactRequests: factQuestions,
+    planChallengeState: { ...preview.planChallengeState, selectedQuestionId: selectedQuestion?.questionId ?? null, currentQuestion,
+      ...(!stopped && !questions.length ? { active: false, planChallengeSatisfied: false, phase: "inactive", authorizationRequired: false } : {}),
+      pendingUserChoice: selectedQuestion ? { ...preview.planChallengeState.pendingUserChoice, status: "required_not_invoked",
+        question: { binding: `plan-challenge-response:${selectedQuestion.questionId}`, displayText: selectedQuestion.question,
+          recommendation: selectedQuestion.recommendationState === "recommended" ? selectedQuestion.recommendedAnswer : null } }
+        : !questions.length || factQuestions.length || stopped ? { status: "not_required", question: null, controls: [] }
+          : preview.planChallengeState.pendingUserChoice } };
   const factIds = new Set(factQuestions.map((question) => question.questionId));
   const needsInput = open.length > 0 || (critical?.blockingUnknowns.some((id) => !factIds.has(id)) ?? false);
   const researchGaps = researchRequired || requirementsDiscovery?.research?.required
@@ -12291,7 +12306,7 @@ async function writeHostPreparation({ task, runId, taskFingerprint, outputDir, l
     nextAction.stage = "Critical";
     nextAction.action = "declare_current_material_options_for_native_choice";
   }
-  const materialView = { intentPacket: critical, requirementsDiscoveryPacket: requirementsDiscovery, preDecisionOptionFrame: { ...preview, unresolvedQuestions: questions } };
+  const materialView = { intentPacket: critical, requirementsDiscoveryPacket: requirementsDiscovery, preDecisionOptionFrame: questionFrame };
   const commonMaterials = stopped ? { bindings: [], gaps: [] } : collectPlanChallengeMaterials({ artifact: materialView, projectRoot });
   const materialBindings = commonMaterials.bindings;
   const bindingDigest = productDesignDigest({ taskHash: goalContract.taskHash, intentDigest: dialogue.intentDigest ?? null,
@@ -12321,7 +12336,7 @@ async function writeHostPreparation({ task, runId, taskFingerprint, outputDir, l
   const text = ["# 宿主准备", "", "状态：" + status,
     ...ready.map((question) => question.question), "", "项目分析：" + (projectContext?.lifecycle ?? "unavailable"),
     ...(requirementsDiscovery?.research ? ["研究记录：" + requirementsDiscovery.research.recordRef,
-      "匹配 GitHub 参考：" + requirementsDiscovery.research.matchingRepositoryCount + "（最低3，目标5）", ...researchGaps.map(gap => "研究缺口：" + gap)] : []),
+      "匹配 GitHub 参考：" + requirementsDiscovery.research.matchingRepositoryCount + "；按当前决策问题与来源充分性判断，数量不等于结论", ...researchGaps.map(gap => "研究缺口：" + gap)] : []),
     "", "下一步：" + nextAction.action,
     "尚未形成正式执行工单或执行图；候选库存不是实际调用、权限或验收。", ""].join("\n");
   const artifact = { schemaVersion: 1, artifactKind: "host_preparation", runId: id, task, taskFingerprint, status: stopped ? "stopped_by_user" : "partial",
@@ -12332,7 +12347,7 @@ async function writeHostPreparation({ task, runId, taskFingerprint, outputDir, l
     taskDesignRoutePacket: taskDesignRoute, governanceTaskFacts,
     intentPacket: { ...(critical ?? {}), stage: "Critical", realIntent: dialogue.outcome, intentBinding: dialogue,
       status: critical ? "host_provided_not_independently_verified" : "host_reasoning_required" },
-    preDecisionOptionFrame: { ...preview, unresolvedQuestions: questions, readyDecisionFrontier: ready },
+    preDecisionOptionFrame: questionFrame,
     fetchPacket: fetchResult?.fetchPacket ?? { stage: "Fetch", status: "not_started_before_critical" },
     thinkingPacket: { stage: "Thinking", status: "host_reasoning_required", workerTaskPackets: [] },
     workerTaskPackets: [], dispatchBoard: null, selectedExecutionRoute: null,
@@ -12654,7 +12669,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
         trusted: true, binding: "plan-challenge-understanding-confirmation", taskHash: priorIntent.taskHash, intentDigest: newDigest, evidenceRefs: confirmedIntentSnapshot.evidenceRefs };
     }
   }
-  const projectContext = await inspectProjectContext({ projectRoot: path.resolve(projectRoot) });
+  const projectContext = await inspectProjectContext({ projectRoot: path.resolve(projectRoot), focusPaths: extractActionPaths(task) });
   const intentDialogue = prepareIntentDialogue({ task: normalizedTask, confirmedIntent: confirmedIntentSnapshot, sharedUnderstandingConfirmed: understandingSnapshot });
   if (consumedPlanChoice?.status === "consumed") {
     intentDialogue.settledDecisionRefs = [...confirmedIntentSnapshot.settledDecisions];
@@ -12864,16 +12879,18 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     (existing.goalContractPacket?.intentBinding?.intentDigest ?? null) === (intentDialogue.intentDigest ?? null) &&
     existing.coreLoop?.stageDagPacket && existing.workerTaskPackets?.length > 0 &&
     existing.sourceArtifacts?.orchestrationReport?.workerTaskPackets?.length > 0;
-  if (existingPlan && outcomeReviewSnapshot && durableMode !== "resume" && !hostThinking) {
-    return applyPersistedOutcomeReview({ artifact: existing, input: outcomeReviewSnapshot, projectRoot, jsonPath: existingPath, outputDir });
-  }
+  const existingOutcomeReview = Boolean(existingPlan && outcomeReviewSnapshot && durableMode !== "resume" && !hostThinking);
   const existingExecutionResume = Boolean(existingPlan && durableMode === "resume");
   if (existingExecutionResume) requireCurrentDispatchPolicy(existing);
   if (existingExecutionResume && currentTaskFacts && productDesignDigest(currentTaskFacts) !== productDesignDigest(existing.governanceTaskFacts)) {
     throw new TypeError("Changed task design facts need a one-way successor; the committed execution identity cannot be overwritten");
   }
-  if (!existingExecutionResume && (preparationPending || !hostThinking)) {
-    const fetched = !preparationPending ? await selectExecutionRoute({ task: normalizedTask, actionTask: normalizedTask,
+  if (!existingExecutionResume && !existingOutcomeReview && (preparationPending || !hostThinking)) {
+    // Current Critical understanding admits read-only capability discovery even
+    // while research, design or a material decision remains unfinished. Those
+    // gaps still prevent workers and a DAG; they must not hide the methods that
+    // can help the host resolve them. Explicit stops already returned above.
+    const fetched = hostCritical ? await selectExecutionRoute({ task: normalizedTask, actionTask: normalizedTask,
       runtime, os: osTarget, projectRoot, environment: calculationEnvironment, fetchOnly: true }) : null;
     return writeHostPreparation({ task: normalizedTask, runId, taskFingerprint, outputDir, language: resolvedOutputLanguage,
       goalContract: designGoal, dialogue: intentDialogue, confirmedIntent: confirmedIntentSnapshot, requirementsDiscovery,
@@ -12966,6 +12983,11 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
       } : null,
     } } : {}) };
   };
+  if (existingOutcomeReview) {
+    const reviewed = await applyPersistedOutcomeReview({ artifact: existing, input: outcomeReviewSnapshot, projectRoot, jsonPath: existingPath, outputDir });
+    await notifyReviewed(reviewed);
+    return currentCallNotice(reviewed);
+  }
   if (durableMode === "resume") {
     const reservation = await readDurableReservation(reservationPath, {
       runId: effectiveRunId,
@@ -14240,49 +14262,7 @@ function truthyEnvFlag(value) {
 }
 
 function positionalTask(fallback = null) {
-  const positional = [];
-  for (let index = 2; index < process.argv.length; index += 1) {
-    const value = process.argv[index];
-    if (
-      [
-        "--task",
-        "--run-id",
-        "--state-dir",
-        "--artifact-dir",
-        "--db",
-        "--approval-evidence",
-        "--approval-packet",
-        "--canonical-root",
-        "--host-visible-subagents",
-        "--host-invocation-evidence",
-        "--native-choice-evidence",
-        "--confirmed-intent",
-        "--requirements-discovery-input",
-        "--critical-input",
-        "--thinking-input",
-        "--governance-task-facts-input",
-        "--design-input",
-        "--outcome-review-input",
-        "--local-tool-input",
-        "--calculation-materials",
-        "--codex-host-tool-schema",
-        "--runtime",
-        "--os",
-        "--lang",
-        "--output-language",
-        "--stage-runner-runtime",
-        "--stage-runner-orchestrator",
-        "--stage-runner-timeout-ms",
-        "--stage-runner-capacity",
-        "--durable-db",
-      ].includes(value)
-    ) {
-      index += 1;
-      continue;
-    }
-    if (value.startsWith("--")) continue;
-    positional.push(value);
-  }
+  const positional = rawPositionals();
   return positional.length > 0 ? positional.join(" ") : fallback;
 }
 
@@ -14305,10 +14285,16 @@ function rawPositionals() {
         "--native-choice-evidence",
         "--confirmed-intent",
         "--requirements-discovery-input",
+        "--critical-input",
+        "--thinking-input",
+        "--governance-task-facts-input",
+        "--plan-challenge-host-input",
+        "--previous-plan-challenge-run",
         "--design-input",
         "--outcome-review-input",
         "--local-tool-input",
         "--calculation-materials",
+        "--calculation-method-inputs",
         "--codex-host-tool-schema",
         "--runtime",
         "--os",
@@ -14333,7 +14319,7 @@ function rawPositionals() {
 async function main() {
   if (process.argv.includes("--help")) {
     process.stdout.write("Product workflow: --requirements-discovery-input <json-file> proposes source-backed questions, recommendations and tradeoffs before design; --design-required requests a Thinking handoff when a design is absent; --design-input <json-file> consumes the resulting bound design; --outcome-review-input <json-file> attaches an independent review of current artifact bytes, including to an existing same-identity run without repeating Execution. Files are content, not native invocation proof, user answers or permissions. Default remains planned_only.\n\n");
-    process.stdout.write("Calculation handoff: --calculation-materials <utf8-json-file> supplies complete materials (procurement max 262144 bytes; store rows max 65536 bytes with schemaVersion:1 and required rows, optional definitions/comparison); configure META_KIM_KIM_SERVICE_ROOT for the reviewed dependency. Add --execute-stage-dag for the existing read-only worker bridge. The selected AGENT.md determines the output contract; store definition conflicts retain row metrics without cross-period comparisons or attribution. Materials alone do not execute tools or models, waive route/choice gates, or establish a native invocation. The public API accepts dependencyCalculationInput={inputJson,dependencyRoot?}; request/intent/owner bindings are created internally.\n\n");
+    process.stdout.write("Calculation handoff: --calculation-materials <utf8-json-file> supplies complete materials (procurement max 262144 bytes; store rows max 65536 bytes with schemaVersion:1 and required rows, optional definitions/comparison); configure META_KIM_KIM_SERVICE_ROOT for the reviewed dependency. Add --execute-stage-dag for the existing read-only worker bridge. The selected AGENT.md determines the output contract; store definition conflicts retain row metrics without cross-period comparisons or attribution. Materials alone do not execute tools or models, waive route/choice gates, or establish a native invocation. The public API accepts dependencyCalculationInput={inputJson,dependencyRoot?,methodInputs?}; CLI --calculation-method-inputs <bounded-json-object-file> supplies the same private mapping. Optional methodInputs are an explicit unverified host mapping of the original materials for the selected professional contract, kept private with digest bindings. Current Critical/Fetch/Thinking is still required; request/intent/owner bindings are created internally.\n\n");
     process.stdout.write("Usage: node scripts/run-meta-theory-governed-execution.mjs --task <request> [--confirmed-intent <json-file>] [--local-tool-input <json-file>] [--execute-stage-dag]\n\n--local-tool-input binds {taskHash,intentDigest,input:{schemaVersion:1,workspaceRoot,target,rules?}}. It is planning input, not an execution flag or a native Permission grant. --execute-stage-dag requests execution through the existing bridge; confirmed host understanding, exact authorized scope and the reviewed local contract remain required. Caller-supplied CLI intent JSON remains advisory. A host may call the public runMetaTheoryGovernedExecution API with its existing confirmed understanding; the built-in local worker is then selected automatically without a callback. Local receipts do not prove native/model invocation or complete source security.\n");
     return;
   }
@@ -14442,6 +14428,19 @@ async function main() {
     process.stdout.write(`${JSON.stringify({ status: "invalid_input", dependencyCalculationPacket: dependencyCalculationInput.error })}\n`);
     process.exitCode = 1;
     return;
+  }
+  const calculationMethodInputsPath = argValue("--calculation-method-inputs", null);
+  if (calculationMethodInputsPath) {
+    const privateInputs = dependencyCalculationInput
+      ? await readDependencyCalculationMethodInputsFile(path.resolve(calculationMethodInputsPath))
+      : { error: { schemaVersion: 1, status: "invalid_input", code: "calculation_materials_required_for_method_inputs",
+        toolInvoked: false, nativeAgentInvocation: false, modelSemanticAcceptance: false } };
+    if (privateInputs.error) {
+      process.stdout.write(`${JSON.stringify({ status: "invalid_input", dependencyCalculationPacket: privateInputs.error })}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    dependencyCalculationInput.methodInputs = privateInputs.methodInputs;
   }
   const confirmedIntent = confirmedIntentPath ? JSON.parse(await fs.readFile(path.resolve(confirmedIntentPath), "utf8")) : null;
   const readContentInput = async (flag) => { const file = argValue(flag, null); return file ? JSON.parse(await fs.readFile(path.resolve(file), "utf8")) : null; };

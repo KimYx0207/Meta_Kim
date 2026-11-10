@@ -5,12 +5,13 @@ import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkedPath, componentHash, discoverDependencyAgentContracts } from "../dependency-agent-discovery.mjs";
+import { checkedPath, componentHash, discoverDependencyAgentContracts, matchDependencyAgentContracts } from "../dependency-agent-discovery.mjs";
 import { runRouteQuery } from "../run-route-query.mjs";
 
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 export const MAX_CALCULATION_INPUT_BYTES = 262144;
+export const MAX_CALCULATION_ASSESSMENT_BYTES = 16384;
 const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const strings = (value) => Array.isArray(value) && value.every((entry) => typeof entry === "string");
 
@@ -57,8 +58,9 @@ export function validateDeliveryEnvelope(value, tool, task) {
  * This bridge never invents conversation confirmation or executes arbitrary
  * dependency commands. Only reviewed script bytes can cross this boundary.
  */
-export async function runDependencyCalculation({ task, inputJson, dependencyRoot = process.env.META_KIM_KIM_SERVICE_ROOT,
-  runtime = process.env.META_KIM_RUNTIME_FAMILY, osTarget = process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux" } = {}) {
+export async function runDependencyCalculation({ task, inputJson, methodAssessment = null, dependencyRoot = process.env.META_KIM_KIM_SERVICE_ROOT,
+  runtime = process.env.META_KIM_RUNTIME_FAMILY, osTarget = process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux",
+  projectRoot = repoRoot, environment = process.env } = {}) {
   if (typeof task !== "string" || !task.trim() || task.length > 6000 || typeof inputJson !== "string"
     || Buffer.byteLength(inputJson) > MAX_CALCULATION_INPUT_BYTES) return result("invalid_input", { code: "invalid_request_envelope" });
   let materials;
@@ -73,6 +75,16 @@ export async function runDependencyCalculation({ task, inputJson, dependencyRoot
     return result("unavailable", { code: "explicit_dependency_root_required", nextAction: "Configure META_KIM_KIM_SERVICE_ROOT with the existing Kim_Service checkout." });
   }
   const binding = { requestSha256: digest(task), inputSha256: digest(inputJson), intentSource: "host_supplied_request_and_materials" };
+  if (methodAssessment == null) return result("unavailable", { code: "host_method_assessment_required", binding,
+    nextAction: "The current host must inspect the discovered contract and supply its task/source/runtime-bound method assessment." });
+  let assessmentJson;
+  try {
+    assert(isObject(methodAssessment));
+    assessmentJson = JSON.stringify(methodAssessment);
+    assert(Buffer.byteLength(assessmentJson, "utf8") <= MAX_CALCULATION_ASSESSMENT_BYTES);
+  } catch { return result("invalid_input", { code: "invalid_host_method_assessment", binding }); }
+  const assessmentRuntime = methodAssessment.runtime === "claude" ? "claude_code" : methodAssessment.runtime;
+  if (assessmentRuntime !== runtime) return result("unavailable", { code: "host_method_runtime_binding_rejected", binding });
   let componentRoot, policy, tool, deliveryTool, sourceHash, route;
   const reviewedFiles = new Map();
   try {
@@ -81,9 +93,15 @@ export async function runDependencyCalculation({ task, inputJson, dependencyRoot
     assert.equal(process.platform === "win32" ? real.toLowerCase() : real,
       process.platform === "win32" ? sourceRoot.toLowerCase() : sourceRoot);
     const projects = JSON.parse(await fs.readFile(path.join(repoRoot, "config/capability-index/dependency-project-registry.json"), "utf8")).projects;
-    const env = { ...process.env, META_KIM_KIM_SERVICE_ROOT: sourceRoot };
-    const discovered = await discoverDependencyAgentContracts({ projects, projectRoot: repoRoot, environment: env });
-    route = await runRouteQuery({ task, runtime, os: osTarget, env });
+    const env = { ...environment, META_KIM_KIM_SERVICE_ROOT: sourceRoot };
+    const discovered = await discoverDependencyAgentContracts({ projects, projectRoot, environment: env });
+    // Reuse the current host's assessment; lexical recall never chooses a tool.
+    // Source freshness is checked again here, before any Python can be launched.
+    const match = matchDependencyAgentContracts(task, discovered.agents, { hostSelection: methodAssessment });
+    if (!match.selected) return result("unavailable", { code: "host_method_assessment_rejected", binding,
+      assessmentReason: match.reason });
+    route = await runRouteQuery({ task, runtime, os: osTarget, env,
+      extraArgs: ["--project-root", projectRoot, "--method-assessment-json", assessmentJson] });
     if (route.entryClassification?.path === "fast_path") return result("not_applicable", { code: "request_is_not_execution", binding });
     const policies = JSON.parse(await fs.readFile(path.join(repoRoot, "config/contracts/dependency-calculation-tools.json"), "utf8"));
     policy = policies.tools.find((entry) => entry.ownerId === route.recommendedRoute?.owner);

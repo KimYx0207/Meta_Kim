@@ -88,7 +88,7 @@ Before searching externally, Scout must name the `coreProblem` in one sentence: 
 ## Workflow
 
 1. **Establish Capability Baseline** — read project + `meta-kim-capabilities.json` (compat mirror: `global-capabilities.json`) and local indexes; confirm the gap is real vs already covered (DRY / no duplicate recommendations)
-2. **Search External Ecosystem** — only after baseline is documented: findskill + web_search + iterative-retrieval. For research runs, Scout is invoked only when `researchCapabilityDiscovery` shows a required external retrieval capability is missing, blocked, partial, or too weak for the evidence standard; Scout recommends capability options but does not perform the downstream research task.
+2. **Search External Ecosystem** — only after the relevant baseline is documented and a concrete gap remains: choose an available web search, registry or iterative-retrieval interface suited to that gap. Use `findskill` only when installed and appropriate; no named external package is required for first-party capability discovery. For research runs, Scout is invoked only when `researchCapabilityDiscovery` shows a required external retrieval capability is missing, blocked, partial, or too weak for the evidence standard; Scout recommends capability options but does not perform the downstream research task.
 3. **Parallel Candidate Evaluation** — evaluate multiple options simultaneously against the baseline
 4. **Security Screening** — CVE scanning, maintenance posture checks, obvious key leak / supply-chain red flags
 5. **Submit Recommendation Report** — [Scout Analysis Report] format, clearly separating "preliminary screening" from "final security approval", and including any handoff-ready install/adoption brief without executing it

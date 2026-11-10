@@ -8,7 +8,8 @@ const repoRoot = path.resolve(import.meta.dirname, "..", "..");
 const readJson = async (relative) => JSON.parse(await readFile(path.join(repoRoot, relative), "utf8"));
 
 test("planning-with-files is removed while its historical evidence remains", async () => {
-  const contract = await readJson("config/contracts/dependency-absorption-contract.json");
+  const current = await readJson("config/contracts/dependency-absorption-contract.json");
+  const contract = current.historicalClosures.find((item) => item.activeItem?.id === "planning-with-files");
   const manifest = await readJson("config/skills.json");
   assert.equal(contract.maxActiveResearch, 1);
   assert.equal(contract.activeItem.id, "planning-with-files");
@@ -22,12 +23,13 @@ test("planning-with-files is removed while its historical evidence remains", asy
   assert.equal(manifest.skills.some((skill) => skill.id === "planning-with-files"), false);
 });
 
-test("unrelated projects are not reclassified by this gate", async () => {
+test("optional upstream implementations stay installable without default activation", async () => {
   const manifest = await readJson("config/skills.json");
   for (const id of ["superpowers", "ecc", "cli-anything"]) {
     const skill = manifest.skills.find((entry) => entry.id === id);
     assert.equal(skill.dependencyClass, undefined, `${id} was reclassified`);
     assert.equal(skill.installPolicy, undefined, `${id} install policy was changed`);
+    assert.equal(skill.defaultSelected, false, `${id} must not activate by default`);
   }
 });
 
@@ -50,5 +52,19 @@ test("dependency absorption validator passes", () => {
     encoding: "utf8",
   });
   assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.match(result.stdout, /planning-with-files closed; next dependency blocked/);
+  assert.match(result.stdout, /historical planning-with-files closed; 20 current dispositions; unknown user copies preserved/);
+});
+
+test("only the duplicate Meta decision install is retired; independent specialist and engines remain", async () => {
+  const contract = await readJson("config/contracts/dependency-absorption-contract.json");
+  const manifest = await readJson("config/skills.json");
+  const byId = new Map(contract.currentReview.items.map((item) => [item.id, item]));
+  assert.deepEqual(manifest.skills.filter((skill) => skill.defaultSelected !== false && skill.installPolicy !== "explicit_reference_opt_in").map((skill) => skill.id), ["meta-skill-creator"]);
+  assert.equal(manifest.skills.some((skill) => skill.id === "kim-decision"), false);
+  assert.equal(byId.get("kim-decision").managedCopyRetirement.unknownOrEdited, "preserve");
+  assert.equal(byId.get("goalpro").decision, "methods_absorbed_optional_specialist");
+  for (const id of ["ecc", "cli-anything", "graphifyy", "mcp-memory-service", "agent-desktop", "agent-browser"]) {
+    assert.match(byId.get(id).decision, /^retain_/u);
+    assert.equal(byId.get(id).liveExecutionClaim, false);
+  }
 });

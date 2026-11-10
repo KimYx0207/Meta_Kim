@@ -44,7 +44,9 @@
     "claude_code",
     "codex",
     "cursor",
-    "openclaw"
+    "openclaw",
+    "gemini",
+    "zcode"
   ],
   "operatingSystems": [
     "macos",
@@ -104,22 +106,62 @@
       "providerKind": "dependency_project",
       "summary": "Kim Service professional role contracts discovered from an explicitly bound local package; native execution remains unverified.",
       "sourceOfTruth": "config/capability-index/dependency-project-registry.json",
-      "mappings": { "dependencyProjectIds": ["kim-service"] },
-      "source": { "sourceOfTruth": "config/capability-index/dependency-project-registry.json", "mappings": { "dependencyProjectIds": ["kim-service"] } },
-      "capabilities": ["professional_agent_contract_discovery", "industry_owner_candidate_matching"],
+      "mappings": {
+        "dependencyProjectIds": [
+          "kim-service"
+        ]
+      },
+      "source": {
+        "sourceOfTruth": "config/capability-index/dependency-project-registry.json",
+        "mappings": {
+          "dependencyProjectIds": [
+            "kim-service"
+          ]
+        }
+      },
+      "capabilities": [
+        "professional_agent_contract_discovery",
+        "industry_owner_candidate_matching"
+      ],
       "activation": {
-        "installLayers": ["dependency_registry"],
+        "installLayers": [
+          "dependency_registry"
+        ],
         "trigger": "Fetch explicit dependency agent contract discovery",
         "outputConsumption": "reference_only"
       },
-      "trust": { "review": "explicit_local_contract_and_hash_review", "required": true },
+      "trust": {
+        "review": "explicit_local_contract_and_hash_review",
+        "required": true
+      },
       "installMethod": "dependency_registry",
-      "installLayers": ["dependency_registry"],
-      "exposedArtifacts": ["dependency:kim-service/generated/capabilities.json", "dependency:kim-service/agents/<component>/AGENT.md"],
-      "activationEvents": ["Fetch explicit dependency agent contract discovery"],
-      "outputContracts": { "consumption": "reference_only", "mustEnterModelContext": false, "mustEnforcePolicy": false },
-      "risk": { "trustReview": "explicit_local_contract_and_hash_review", "notes": ["Selection is run-scoped; hashes prove local integrity, not native loading or live model quality."] },
-      "safetyBoundary": { "trustReview": "explicit_local_contract_and_hash_review", "notes": ["Read-only contracts; discovery never installs roles, executes dependency code, or authorizes external writes."] },
+      "installLayers": [
+        "dependency_registry"
+      ],
+      "exposedArtifacts": [
+        "dependency:kim-service/generated/capabilities.json",
+        "dependency:kim-service/agents/<component>/AGENT.md"
+      ],
+      "activationEvents": [
+        "Fetch explicit dependency agent contract discovery"
+      ],
+      "outputContracts": {
+        "consumption": "reference_only",
+        "mustEnterModelContext": false,
+        "mustEnforcePolicy": false
+      },
+      "risk": {
+        "trustReview": "explicit_local_contract_and_hash_review",
+        "notes": [
+          "Selection is run-scoped; hashes prove local integrity, not native loading or live model quality."
+        ]
+      },
+      "safetyBoundary": {
+        "trustReview": "explicit_local_contract_and_hash_review",
+        "notes": [
+          "Read-only contracts; discovery never installs roles, executes dependency code, or authorizes external writes."
+        ]
+      },
       "verification": {
         "method": "isolated contract-index and route-selection regression",
         "command": "node scripts/run-node-tests.mjs tests/governance/dependency-agent-discovery.test.mjs --concurrency 1"
@@ -128,25 +170,145 @@
         "default": {
           "state": "declared",
           "status": "needs_probe",
-          "installLayers": { "dependency_registry": "declared" },
-          "os": { "macos": "needs_probe", "windows": "needs_probe", "linux": "needs_probe", "wsl2": "needs_probe" },
+          "installLayers": {
+            "dependency_registry": "declared"
+          },
+          "os": {
+            "macos": "needs_probe",
+            "windows": "needs_probe",
+            "linux": "needs_probe",
+            "wsl2": "needs_probe"
+          },
           "reason": "Source contracts can be discovered locally; runtime-native loading and model delivery require separate evidence."
         },
-        "runtimes": {}
+        "runtimes": {
+          "gemini": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "dependency_registry": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          },
+          "zcode": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "dependency_registry": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          }
+        }
       },
       "runtimeAdapters": {
-        "claude_code": { "state": "declared", "status": "needs_probe", "installLayers": { "dependency_registry": "declared" }, "activationEvent": "Fetch explicit dependency agent contract discovery", "outputContract": "reference_only", "reason": "Source contracts can be discovered locally; runtime-native loading and model delivery require separate evidence." },
-        "codex": { "state": "declared", "status": "needs_probe", "installLayers": { "dependency_registry": "declared" }, "activationEvent": "Fetch explicit dependency agent contract discovery", "outputContract": "reference_only", "reason": "Source contracts can be discovered locally; runtime-native loading and model delivery require separate evidence." },
-        "cursor": { "state": "declared", "status": "needs_probe", "installLayers": { "dependency_registry": "declared" }, "activationEvent": "Fetch explicit dependency agent contract discovery", "outputContract": "reference_only", "reason": "Source contracts can be discovered locally; runtime-native loading and model delivery require separate evidence." },
-        "openclaw": { "state": "declared", "status": "needs_probe", "installLayers": { "dependency_registry": "declared" }, "activationEvent": "Fetch explicit dependency agent contract discovery", "outputContract": "reference_only", "reason": "Source contracts can be discovered locally; runtime-native loading and model delivery require separate evidence." }
+        "claude_code": {
+          "state": "declared",
+          "status": "needs_probe",
+          "installLayers": {
+            "dependency_registry": "declared"
+          },
+          "activationEvent": "Fetch explicit dependency agent contract discovery",
+          "outputContract": "reference_only",
+          "reason": "Source contracts can be discovered locally; runtime-native loading and model delivery require separate evidence."
+        },
+        "codex": {
+          "state": "declared",
+          "status": "needs_probe",
+          "installLayers": {
+            "dependency_registry": "declared"
+          },
+          "activationEvent": "Fetch explicit dependency agent contract discovery",
+          "outputContract": "reference_only",
+          "reason": "Source contracts can be discovered locally; runtime-native loading and model delivery require separate evidence."
+        },
+        "cursor": {
+          "state": "declared",
+          "status": "needs_probe",
+          "installLayers": {
+            "dependency_registry": "declared"
+          },
+          "activationEvent": "Fetch explicit dependency agent contract discovery",
+          "outputContract": "reference_only",
+          "reason": "Source contracts can be discovered locally; runtime-native loading and model delivery require separate evidence."
+        },
+        "openclaw": {
+          "state": "declared",
+          "status": "needs_probe",
+          "installLayers": {
+            "dependency_registry": "declared"
+          },
+          "activationEvent": "Fetch explicit dependency agent contract discovery",
+          "outputContract": "reference_only",
+          "reason": "Source contracts can be discovered locally; runtime-native loading and model delivery require separate evidence."
+        },
+        "gemini": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "dependency_registry": "needs_probe"
+          },
+          "activationEvent": "Fetch explicit dependency agent contract discovery",
+          "outputContract": "reference_only",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
+        },
+        "zcode": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "dependency_registry": "needs_probe"
+          },
+          "activationEvent": "Fetch explicit dependency agent contract discovery",
+          "outputContract": "reference_only",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
+        }
       },
       "osAdapters": {
-        "macos": { "status": "needs_probe", "risks": ["No native role loading claim."] },
-        "windows": { "status": "needs_probe", "risks": ["No native role loading claim."] },
-        "linux": { "status": "needs_probe", "risks": ["No native role loading claim."] },
-        "wsl2": { "status": "needs_probe", "risks": ["No native role loading claim."] }
+        "macos": {
+          "status": "needs_probe",
+          "risks": [
+            "No native role loading claim."
+          ]
+        },
+        "windows": {
+          "status": "needs_probe",
+          "risks": [
+            "No native role loading claim."
+          ]
+        },
+        "linux": {
+          "status": "needs_probe",
+          "risks": [
+            "No native role loading claim."
+          ]
+        },
+        "wsl2": {
+          "status": "needs_probe",
+          "risks": [
+            "No native role loading claim."
+          ]
+        }
       },
-      "degradation": { "statusByRuntime": { "claude_code": "needs_probe", "codex": "needs_probe", "cursor": "needs_probe", "openclaw": "needs_probe" }, "reason": "Bind reviewed Markdown contracts to a run; do not project durable governance agents or claim native invocation." },
+      "degradation": {
+        "statusByRuntime": {
+          "claude_code": "needs_probe",
+          "codex": "needs_probe",
+          "cursor": "needs_probe",
+          "openclaw": "needs_probe"
+        },
+        "reason": "Bind reviewed Markdown contracts to a run; do not project durable governance agents or claim native invocation."
+      },
       "owner": "meta-artisan",
       "reviewOwner": "meta-prism",
       "evolutionKey": "provider:kim-service-agent-contracts"
@@ -217,6 +379,38 @@
               "windows": "partial",
               "linux": "partial",
               "wsl2": "partial"
+            }
+          },
+          "gemini": {
+            "state": "blocked_for_execution",
+            "status": "blocked",
+            "reason": "provider is scoped exclusively to claude_code",
+            "installLayers": {
+              "runtime_native": "unsupported",
+              "project_projection": "unsupported",
+              "global_home": "unsupported"
+            },
+            "os": {
+              "macos": "unsupported",
+              "windows": "unsupported",
+              "linux": "unsupported",
+              "wsl2": "unsupported"
+            }
+          },
+          "zcode": {
+            "state": "blocked_for_execution",
+            "status": "blocked",
+            "reason": "provider is scoped exclusively to claude_code",
+            "installLayers": {
+              "runtime_native": "unsupported",
+              "project_projection": "unsupported",
+              "global_home": "unsupported"
+            },
+            "os": {
+              "macos": "unsupported",
+              "windows": "unsupported",
+              "linux": "unsupported",
+              "wsl2": "unsupported"
             }
           }
         }
@@ -315,6 +509,30 @@
           "activationEvent": null,
           "outputContract": "runtime_call",
           "reason": "provider is scoped exclusively to claude_code"
+        },
+        "gemini": {
+          "state": "blocked_for_execution",
+          "status": "blocked",
+          "installLayers": {
+            "runtime_native": "unsupported",
+            "project_projection": "unsupported",
+            "global_home": "unsupported"
+          },
+          "activationEvent": null,
+          "outputContract": "runtime_call",
+          "reason": "provider is scoped exclusively to claude_code"
+        },
+        "zcode": {
+          "state": "blocked_for_execution",
+          "status": "blocked",
+          "installLayers": {
+            "runtime_native": "unsupported",
+            "project_projection": "unsupported",
+            "global_home": "unsupported"
+          },
+          "activationEvent": null,
+          "outputContract": "runtime_call",
+          "reason": "provider is scoped exclusively to claude_code"
         }
       },
       "osAdapters": {
@@ -348,7 +566,9 @@
           "claude_code": "none",
           "codex": "blocked",
           "cursor": "blocked",
-          "openclaw": "blocked"
+          "openclaw": "blocked",
+          "gemini": "blocked",
+          "zcode": "blocked"
         },
         "reason": null
       },
@@ -422,6 +642,38 @@
               "windows": "partial",
               "linux": "partial",
               "wsl2": "partial"
+            }
+          },
+          "gemini": {
+            "state": "blocked_for_execution",
+            "status": "blocked",
+            "reason": "provider is scoped exclusively to codex",
+            "installLayers": {
+              "runtime_native": "unsupported",
+              "project_projection": "unsupported",
+              "global_home": "unsupported"
+            },
+            "os": {
+              "macos": "unsupported",
+              "windows": "unsupported",
+              "linux": "unsupported",
+              "wsl2": "unsupported"
+            }
+          },
+          "zcode": {
+            "state": "blocked_for_execution",
+            "status": "blocked",
+            "reason": "provider is scoped exclusively to codex",
+            "installLayers": {
+              "runtime_native": "unsupported",
+              "project_projection": "unsupported",
+              "global_home": "unsupported"
+            },
+            "os": {
+              "macos": "unsupported",
+              "windows": "unsupported",
+              "linux": "unsupported",
+              "wsl2": "unsupported"
             }
           }
         }
@@ -520,6 +772,30 @@
           "activationEvent": null,
           "outputContract": "runtime_call",
           "reason": "provider is scoped exclusively to codex"
+        },
+        "gemini": {
+          "state": "blocked_for_execution",
+          "status": "blocked",
+          "installLayers": {
+            "runtime_native": "unsupported",
+            "project_projection": "unsupported",
+            "global_home": "unsupported"
+          },
+          "activationEvent": null,
+          "outputContract": "runtime_call",
+          "reason": "provider is scoped exclusively to codex"
+        },
+        "zcode": {
+          "state": "blocked_for_execution",
+          "status": "blocked",
+          "installLayers": {
+            "runtime_native": "unsupported",
+            "project_projection": "unsupported",
+            "global_home": "unsupported"
+          },
+          "activationEvent": null,
+          "outputContract": "runtime_call",
+          "reason": "provider is scoped exclusively to codex"
         }
       },
       "osAdapters": {
@@ -553,7 +829,9 @@
           "claude_code": "blocked",
           "codex": "none",
           "cursor": "blocked",
-          "openclaw": "blocked"
+          "openclaw": "blocked",
+          "gemini": "blocked",
+          "zcode": "blocked"
         },
         "reason": null
       },
@@ -630,6 +908,40 @@
               "windows": "partial",
               "linux": "partial",
               "wsl2": "needs_probe"
+            }
+          },
+          "gemini": {
+            "state": "blocked_for_execution",
+            "status": "blocked",
+            "reason": "provider is scoped exclusively to cursor",
+            "installLayers": {
+              "runtime_native": "unsupported",
+              "project_projection": "unsupported",
+              "global_home": "unsupported",
+              "rule_projection": "unsupported"
+            },
+            "os": {
+              "macos": "unsupported",
+              "windows": "unsupported",
+              "linux": "unsupported",
+              "wsl2": "unsupported"
+            }
+          },
+          "zcode": {
+            "state": "blocked_for_execution",
+            "status": "blocked",
+            "reason": "provider is scoped exclusively to cursor",
+            "installLayers": {
+              "runtime_native": "unsupported",
+              "project_projection": "unsupported",
+              "global_home": "unsupported",
+              "rule_projection": "unsupported"
+            },
+            "os": {
+              "macos": "unsupported",
+              "windows": "unsupported",
+              "linux": "unsupported",
+              "wsl2": "unsupported"
             }
           }
         }
@@ -733,6 +1045,32 @@
           "activationEvent": null,
           "outputContract": "runtime_call",
           "reason": "provider is scoped exclusively to cursor"
+        },
+        "gemini": {
+          "state": "blocked_for_execution",
+          "status": "blocked",
+          "installLayers": {
+            "runtime_native": "unsupported",
+            "project_projection": "unsupported",
+            "global_home": "unsupported",
+            "rule_projection": "unsupported"
+          },
+          "activationEvent": null,
+          "outputContract": "runtime_call",
+          "reason": "provider is scoped exclusively to cursor"
+        },
+        "zcode": {
+          "state": "blocked_for_execution",
+          "status": "blocked",
+          "installLayers": {
+            "runtime_native": "unsupported",
+            "project_projection": "unsupported",
+            "global_home": "unsupported",
+            "rule_projection": "unsupported"
+          },
+          "activationEvent": null,
+          "outputContract": "runtime_call",
+          "reason": "provider is scoped exclusively to cursor"
         }
       },
       "osAdapters": {
@@ -766,7 +1104,9 @@
           "claude_code": "blocked",
           "codex": "blocked",
           "cursor": "none",
-          "openclaw": "blocked"
+          "openclaw": "blocked",
+          "gemini": "blocked",
+          "zcode": "blocked"
         },
         "reason": null
       },
@@ -841,6 +1181,38 @@
               "windows": "partial",
               "linux": "partial",
               "wsl2": "needs_probe"
+            }
+          },
+          "gemini": {
+            "state": "blocked_for_execution",
+            "status": "blocked",
+            "reason": "provider is scoped exclusively to openclaw",
+            "installLayers": {
+              "runtime_native": "unsupported",
+              "project_projection": "unsupported",
+              "plugin_bundle": "unsupported"
+            },
+            "os": {
+              "macos": "unsupported",
+              "windows": "unsupported",
+              "linux": "unsupported",
+              "wsl2": "unsupported"
+            }
+          },
+          "zcode": {
+            "state": "blocked_for_execution",
+            "status": "blocked",
+            "reason": "provider is scoped exclusively to openclaw",
+            "installLayers": {
+              "runtime_native": "unsupported",
+              "project_projection": "unsupported",
+              "plugin_bundle": "unsupported"
+            },
+            "os": {
+              "macos": "unsupported",
+              "windows": "unsupported",
+              "linux": "unsupported",
+              "wsl2": "unsupported"
             }
           }
         }
@@ -939,6 +1311,30 @@
           "activationEvent": "OpenClaw workspace/template projection",
           "outputContract": "runtime_call",
           "reason": "typed plugin policy adapter not installed"
+        },
+        "gemini": {
+          "state": "blocked_for_execution",
+          "status": "blocked",
+          "installLayers": {
+            "runtime_native": "unsupported",
+            "project_projection": "unsupported",
+            "plugin_bundle": "unsupported"
+          },
+          "activationEvent": null,
+          "outputContract": "runtime_call",
+          "reason": "provider is scoped exclusively to openclaw"
+        },
+        "zcode": {
+          "state": "blocked_for_execution",
+          "status": "blocked",
+          "installLayers": {
+            "runtime_native": "unsupported",
+            "project_projection": "unsupported",
+            "plugin_bundle": "unsupported"
+          },
+          "activationEvent": null,
+          "outputContract": "runtime_call",
+          "reason": "provider is scoped exclusively to openclaw"
         }
       },
       "osAdapters": {
@@ -972,7 +1368,9 @@
           "claude_code": "blocked",
           "codex": "blocked",
           "cursor": "blocked",
-          "openclaw": "degraded"
+          "openclaw": "degraded",
+          "gemini": "blocked",
+          "zcode": "blocked"
         },
         "reason": "typed plugin policy adapter not installed"
       },
@@ -1020,7 +1418,38 @@
             "wsl2": "partial"
           }
         },
-        "runtimes": {}
+        "runtimes": {
+          "gemini": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "canonical_source": "needs_probe",
+              "project_projection": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          },
+          "zcode": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "canonical_source": "needs_probe",
+              "project_projection": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          }
+        }
       },
       "providerKind": "canonical_agent",
       "capabilities": [
@@ -1103,6 +1532,28 @@
           "activationEvent": "governed run entry and Warden gate",
           "outputContract": "model_context",
           "reason": null
+        },
+        "gemini": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "canonical_source": "needs_probe",
+            "project_projection": "needs_probe"
+          },
+          "activationEvent": "governed run entry and Warden gate",
+          "outputContract": "model_context",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
+        },
+        "zcode": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "canonical_source": "needs_probe",
+            "project_projection": "needs_probe"
+          },
+          "activationEvent": "governed run entry and Warden gate",
+          "outputContract": "model_context",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
         }
       },
       "osAdapters": {
@@ -1178,7 +1629,40 @@
             "wsl2": "partial"
           }
         },
-        "runtimes": {}
+        "runtimes": {
+          "gemini": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "canonical_source": "needs_probe",
+              "project_projection": "needs_probe",
+              "global_home": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          },
+          "zcode": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "canonical_source": "needs_probe",
+              "project_projection": "needs_probe",
+              "global_home": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          }
+        }
       },
       "providerKind": "canonical_skill",
       "capabilities": [
@@ -1266,6 +1750,30 @@
           "activationEvent": "meta-theory skill trigger words",
           "outputContract": "model_context",
           "reason": null
+        },
+        "gemini": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "canonical_source": "needs_probe",
+            "project_projection": "needs_probe",
+            "global_home": "needs_probe"
+          },
+          "activationEvent": "meta-theory skill trigger words",
+          "outputContract": "model_context",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
+        },
+        "zcode": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "canonical_source": "needs_probe",
+            "project_projection": "needs_probe",
+            "global_home": "needs_probe"
+          },
+          "activationEvent": "meta-theory skill trigger words",
+          "outputContract": "model_context",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
         }
       },
       "osAdapters": {
@@ -1342,7 +1850,38 @@
             "wsl2": "partial"
           }
         },
-        "runtimes": {}
+        "runtimes": {
+          "gemini": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "global_home": "needs_probe",
+              "dependency_registry": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          },
+          "zcode": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "global_home": "needs_probe",
+              "dependency_registry": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          }
+        }
       },
       "providerKind": "external_skill",
       "capabilities": [
@@ -1431,6 +1970,28 @@
           "activationEvent": "agent-teams-playbook skill selection",
           "outputContract": "model_context",
           "reason": null
+        },
+        "gemini": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "global_home": "needs_probe",
+            "dependency_registry": "needs_probe"
+          },
+          "activationEvent": "agent-teams-playbook skill selection",
+          "outputContract": "model_context",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
+        },
+        "zcode": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "global_home": "needs_probe",
+            "dependency_registry": "needs_probe"
+          },
+          "activationEvent": "agent-teams-playbook skill selection",
+          "outputContract": "model_context",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
         }
       },
       "osAdapters": {
@@ -1507,7 +2068,38 @@
             "wsl2": "partial"
           }
         },
-        "runtimes": {}
+        "runtimes": {
+          "gemini": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "global_home": "needs_probe",
+              "dependency_registry": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          },
+          "zcode": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "global_home": "needs_probe",
+              "dependency_registry": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          }
+        }
       },
       "providerKind": "external_skill",
       "capabilities": [
@@ -1596,6 +2188,28 @@
           "activationEvent": "findskill capability discovery",
           "outputContract": "model_context",
           "reason": null
+        },
+        "gemini": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "global_home": "needs_probe",
+            "dependency_registry": "needs_probe"
+          },
+          "activationEvent": "findskill capability discovery",
+          "outputContract": "model_context",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
+        },
+        "zcode": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "global_home": "needs_probe",
+            "dependency_registry": "needs_probe"
+          },
+          "activationEvent": "findskill capability discovery",
+          "outputContract": "model_context",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
         }
       },
       "osAdapters": {
@@ -1690,6 +2304,36 @@
               "linux": "partial",
               "wsl2": "needs_probe"
             }
+          },
+          "gemini": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "global_home": "needs_probe",
+              "dependency_registry": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          },
+          "zcode": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "global_home": "needs_probe",
+              "dependency_registry": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
           }
         }
       },
@@ -1782,6 +2426,28 @@
           "activationEvent": "prompt submit hook",
           "outputContract": "model_context",
           "reason": "workspace instruction fallback only"
+        },
+        "gemini": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "global_home": "needs_probe",
+            "dependency_registry": "needs_probe"
+          },
+          "activationEvent": "prompt submit hook",
+          "outputContract": "model_context",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
+        },
+        "zcode": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "global_home": "needs_probe",
+            "dependency_registry": "needs_probe"
+          },
+          "activationEvent": "prompt submit hook",
+          "outputContract": "model_context",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
         }
       },
       "osAdapters": {
@@ -1829,9 +2495,9 @@
       "summary": "Meta_Kim-owned planning continuity kernel for initialization, attested recovery, structured ledger, doctor, and bounded completion gating.",
       "sourceOfTruth": "canonical/runtime-assets/shared/hooks/planning-continuity.mjs",
       "mappings": {
-      "runtimeTargets": [
-        "claude_code",
-        "codex"
+        "runtimeTargets": [
+          "claude_code",
+          "codex"
         ],
         "capabilityInventoryTypes": [
           "hook",
@@ -1855,7 +2521,7 @@
         "notes": [
           "Attestation is explicit and must not be auto-granted to pre-existing files.",
           "findings.md remains untrusted evidence and is never auto-injected.",
-      "Cursor and OpenClaw have no executable planning Hook adapter."
+          "Cursor and OpenClaw have no executable planning Hook adapter."
         ]
       },
       "support": {
@@ -1874,21 +2540,21 @@
           }
         },
         "runtimes": {
-      "cursor": {
-        "state": "blocked_for_execution",
-        "status": "blocked",
-        "installLayers": {
-          "project_projection": "unsupported",
-          "global_home": "unsupported"
-        },
-        "os": {
-          "macos": "unsupported",
-          "windows": "unsupported",
-          "linux": "unsupported",
-          "wsl2": "unsupported"
-        },
-        "reason": "Meta_Kim has no verified Cursor planning-continuity Hook adapter."
-      },
+          "cursor": {
+            "state": "blocked_for_execution",
+            "status": "blocked",
+            "installLayers": {
+              "project_projection": "unsupported",
+              "global_home": "unsupported"
+            },
+            "os": {
+              "macos": "unsupported",
+              "windows": "unsupported",
+              "linux": "unsupported",
+              "wsl2": "unsupported"
+            },
+            "reason": "Meta_Kim has no verified Cursor planning-continuity Hook adapter."
+          },
           "openclaw": {
             "state": "blocked_for_execution",
             "status": "blocked",
@@ -1903,6 +2569,36 @@
               "wsl2": "unsupported"
             },
             "reason": "Meta_Kim has no typed OpenClaw planning-continuity Hook adapter."
+          },
+          "gemini": {
+            "state": "blocked_for_execution",
+            "status": "blocked",
+            "reason": "provider is scoped exclusively to claude_code,codex",
+            "installLayers": {
+              "project_projection": "unsupported",
+              "global_home": "unsupported"
+            },
+            "os": {
+              "macos": "unsupported",
+              "windows": "unsupported",
+              "linux": "unsupported",
+              "wsl2": "unsupported"
+            }
+          },
+          "zcode": {
+            "state": "blocked_for_execution",
+            "status": "blocked",
+            "reason": "provider is scoped exclusively to claude_code,codex",
+            "installLayers": {
+              "project_projection": "unsupported",
+              "global_home": "unsupported"
+            },
+            "os": {
+              "macos": "unsupported",
+              "windows": "unsupported",
+              "linux": "unsupported",
+              "wsl2": "unsupported"
+            }
           }
         }
       },
@@ -1918,9 +2614,9 @@
       "source": {
         "sourceOfTruth": "canonical/runtime-assets/shared/hooks/planning-continuity.mjs",
         "mappings": {
-      "runtimeTargets": [
-        "claude_code",
-        "codex"
+          "runtimeTargets": [
+            "claude_code",
+            "codex"
           ],
           "capabilityInventoryTypes": [
             "hook",
@@ -1946,8 +2642,8 @@
         "SessionStart",
         "UserPromptSubmit",
         "PostToolUse",
-    "PreCompact",
-    "Stop"
+        "PreCompact",
+        "Stop"
       ],
       "outputContracts": {
         "consumption": "model_context",
@@ -1985,16 +2681,16 @@
           "outputContract": "model_context_and_bounded_stop_decision",
           "reason": null
         },
-    "cursor": {
-      "state": "blocked_for_execution",
-      "status": "blocked",
-      "installLayers": {
-        "project_projection": "unsupported",
-        "global_home": "unsupported"
-      },
-      "activationEvent": null,
-      "outputContract": "none",
-      "reason": "Meta_Kim has no verified Cursor planning-continuity Hook adapter."
+        "cursor": {
+          "state": "blocked_for_execution",
+          "status": "blocked",
+          "installLayers": {
+            "project_projection": "unsupported",
+            "global_home": "unsupported"
+          },
+          "activationEvent": null,
+          "outputContract": "none",
+          "reason": "Meta_Kim has no verified Cursor planning-continuity Hook adapter."
         },
         "openclaw": {
           "state": "blocked_for_execution",
@@ -2006,6 +2702,28 @@
           "activationEvent": null,
           "outputContract": "none",
           "reason": "Meta_Kim has no typed OpenClaw planning-continuity Hook adapter."
+        },
+        "gemini": {
+          "state": "blocked_for_execution",
+          "status": "blocked",
+          "installLayers": {
+            "project_projection": "unsupported",
+            "global_home": "unsupported"
+          },
+          "activationEvent": null,
+          "outputContract": "model_context",
+          "reason": "provider is scoped exclusively to claude_code,codex"
+        },
+        "zcode": {
+          "state": "blocked_for_execution",
+          "status": "blocked",
+          "installLayers": {
+            "project_projection": "unsupported",
+            "global_home": "unsupported"
+          },
+          "activationEvent": null,
+          "outputContract": "model_context",
+          "reason": "provider is scoped exclusively to claude_code,codex"
         }
       },
       "osAdapters": {
@@ -2036,12 +2754,14 @@
       },
       "degradation": {
         "statusByRuntime": {
-      "claude_code": "needs_probe",
-      "codex": "needs_probe",
-      "cursor": "blocked",
-          "openclaw": "blocked"
+          "claude_code": "needs_probe",
+          "codex": "needs_probe",
+          "cursor": "blocked",
+          "openclaw": "blocked",
+          "gemini": "blocked",
+          "zcode": "blocked"
         },
-    "reason": "Claude Code and Codex remain partial until packed/live evidence passes; Cursor and OpenClaw are blocked because no verified adapter exists."
+        "reason": "Claude Code and Codex remain partial until packed/live evidence passes; Cursor and OpenClaw are blocked because no verified adapter exists."
       },
       "owner": "meta-conductor",
       "reviewOwner": "meta-prism",
@@ -2098,7 +2818,40 @@
             "wsl2": "partial"
           }
         },
-        "runtimes": {}
+        "runtimes": {
+          "gemini": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "plugin_marketplace": "needs_probe",
+              "global_home": "needs_probe",
+              "dependency_registry": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          },
+          "zcode": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "plugin_marketplace": "needs_probe",
+              "global_home": "needs_probe",
+              "dependency_registry": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          }
+        }
       },
       "providerKind": "plugin_marketplace",
       "capabilities": [
@@ -2198,6 +2951,30 @@
           "activationEvent": "CLI-specific skill/plugin selection",
           "outputContract": "model_context",
           "reason": null
+        },
+        "gemini": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "plugin_marketplace": "needs_probe",
+            "global_home": "needs_probe",
+            "dependency_registry": "needs_probe"
+          },
+          "activationEvent": "CLI-specific skill/plugin selection",
+          "outputContract": "model_context",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
+        },
+        "zcode": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "plugin_marketplace": "needs_probe",
+            "global_home": "needs_probe",
+            "dependency_registry": "needs_probe"
+          },
+          "activationEvent": "CLI-specific skill/plugin selection",
+          "outputContract": "model_context",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
         }
       },
       "osAdapters": {
@@ -2282,7 +3059,38 @@
             "wsl2": "partial"
           }
         },
-        "runtimes": {}
+        "runtimes": {
+          "gemini": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "global_home": "needs_probe",
+              "dependency_registry": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          },
+          "zcode": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "global_home": "needs_probe",
+              "dependency_registry": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          }
+        }
       },
       "providerKind": "external_skill",
       "capabilities": [
@@ -2371,6 +3179,28 @@
           "activationEvent": "gstack skill selection",
           "outputContract": "model_context",
           "reason": null
+        },
+        "gemini": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "global_home": "needs_probe",
+            "dependency_registry": "needs_probe"
+          },
+          "activationEvent": "gstack skill selection",
+          "outputContract": "model_context",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
+        },
+        "zcode": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "global_home": "needs_probe",
+            "dependency_registry": "needs_probe"
+          },
+          "activationEvent": "gstack skill selection",
+          "outputContract": "model_context",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
         }
       },
       "osAdapters": {
@@ -2505,6 +3335,36 @@
               "linux": "needs_probe",
               "wsl2": "needs_probe"
             }
+          },
+          "gemini": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "global_home": "needs_probe",
+              "dependency_registry": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          },
+          "zcode": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "global_home": "needs_probe",
+              "dependency_registry": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
           }
         }
       },
@@ -2598,6 +3458,28 @@
           "activationEvent": null,
           "outputContract": "not_consumed",
           "reason": "No upstream OpenClaw installation contract is declared."
+        },
+        "gemini": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "global_home": "needs_probe",
+            "dependency_registry": "needs_probe"
+          },
+          "activationEvent": "skill creation, refactor, review, or release-preparation workflow",
+          "outputContract": "model_context",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
+        },
+        "zcode": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "global_home": "needs_probe",
+            "dependency_registry": "needs_probe"
+          },
+          "activationEvent": "skill creation, refactor, review, or release-preparation workflow",
+          "outputContract": "model_context",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
         }
       },
       "osAdapters": {
@@ -2693,6 +3575,36 @@
               "macos": "partial",
               "windows": "partial",
               "linux": "partial",
+              "wsl2": "needs_probe"
+            }
+          },
+          "gemini": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "plugin_marketplace": "needs_probe",
+              "global_home": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          },
+          "zcode": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "plugin_marketplace": "needs_probe",
+              "global_home": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
               "wsl2": "needs_probe"
             }
           }
@@ -2791,6 +3703,28 @@
           "activationEvent": "runtime native plugin install",
           "outputContract": "model_context",
           "reason": "skills fallback, no native marketplace proof"
+        },
+        "gemini": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "plugin_marketplace": "needs_probe",
+            "global_home": "needs_probe"
+          },
+          "activationEvent": "runtime native plugin install",
+          "outputContract": "model_context",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
+        },
+        "zcode": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "plugin_marketplace": "needs_probe",
+            "global_home": "needs_probe"
+          },
+          "activationEvent": "runtime native plugin install",
+          "outputContract": "model_context",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
         }
       },
       "osAdapters": {
@@ -2889,6 +3823,38 @@
             "status": "needs_probe",
             "installLayers": {
               "plugin_marketplace": "unsupported",
+              "command_path": "needs_probe",
+              "global_home": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          },
+          "gemini": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "plugin_marketplace": "needs_probe",
+              "command_path": "needs_probe",
+              "global_home": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          },
+          "zcode": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "plugin_marketplace": "needs_probe",
               "command_path": "needs_probe",
               "global_home": "needs_probe"
             },
@@ -2999,6 +3965,30 @@
           "activationEvent": "claude plugin install or ecc upstream CLI",
           "outputContract": "model_context",
           "reason": null
+        },
+        "gemini": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "plugin_marketplace": "needs_probe",
+            "command_path": "needs_probe",
+            "global_home": "needs_probe"
+          },
+          "activationEvent": "claude plugin install or ecc upstream CLI",
+          "outputContract": "model_context",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
+        },
+        "zcode": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "plugin_marketplace": "needs_probe",
+            "command_path": "needs_probe",
+            "global_home": "needs_probe"
+          },
+          "activationEvent": "claude plugin install or ecc upstream CLI",
+          "outputContract": "model_context",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
         }
       },
       "osAdapters": {
@@ -3101,6 +4091,36 @@
               "linux": "needs_probe",
               "wsl2": "needs_probe"
             }
+          },
+          "gemini": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "mcp_config": "needs_probe",
+              "project_projection": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          },
+          "zcode": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "mcp_config": "needs_probe",
+              "project_projection": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
           }
         }
       },
@@ -3194,6 +4214,28 @@
           "activationEvent": "MCP tool call",
           "outputContract": "runtime_call",
           "reason": null
+        },
+        "gemini": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "mcp_config": "needs_probe",
+            "project_projection": "needs_probe"
+          },
+          "activationEvent": "MCP tool call",
+          "outputContract": "runtime_call",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
+        },
+        "zcode": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "mcp_config": "needs_probe",
+            "project_projection": "needs_probe"
+          },
+          "activationEvent": "MCP tool call",
+          "outputContract": "runtime_call",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
         }
       },
       "osAdapters": {
@@ -3299,6 +4341,36 @@
               "linux": "partial",
               "wsl2": "partial"
             }
+          },
+          "gemini": {
+            "state": "blocked_for_execution",
+            "status": "blocked",
+            "reason": "provider is scoped exclusively to codex",
+            "installLayers": {
+              "project_projection": "unsupported",
+              "global_home": "unsupported"
+            },
+            "os": {
+              "macos": "unsupported",
+              "windows": "unsupported",
+              "linux": "unsupported",
+              "wsl2": "unsupported"
+            }
+          },
+          "zcode": {
+            "state": "blocked_for_execution",
+            "status": "blocked",
+            "reason": "provider is scoped exclusively to codex",
+            "installLayers": {
+              "project_projection": "unsupported",
+              "global_home": "unsupported"
+            },
+            "os": {
+              "macos": "unsupported",
+              "windows": "unsupported",
+              "linux": "unsupported",
+              "wsl2": "unsupported"
+            }
           }
         }
       },
@@ -3393,6 +4465,28 @@
           "activationEvent": null,
           "outputContract": "model_context",
           "reason": "provider is scoped exclusively to codex"
+        },
+        "gemini": {
+          "state": "blocked_for_execution",
+          "status": "blocked",
+          "installLayers": {
+            "project_projection": "unsupported",
+            "global_home": "unsupported"
+          },
+          "activationEvent": null,
+          "outputContract": "model_context",
+          "reason": "provider is scoped exclusively to codex"
+        },
+        "zcode": {
+          "state": "blocked_for_execution",
+          "status": "blocked",
+          "installLayers": {
+            "project_projection": "unsupported",
+            "global_home": "unsupported"
+          },
+          "activationEvent": null,
+          "outputContract": "model_context",
+          "reason": "provider is scoped exclusively to codex"
         }
       },
       "osAdapters": {
@@ -3426,7 +4520,9 @@
           "claude_code": "blocked",
           "codex": "none",
           "cursor": "blocked",
-          "openclaw": "blocked"
+          "openclaw": "blocked",
+          "gemini": "blocked",
+          "zcode": "blocked"
         },
         "reason": null
       },
@@ -3497,6 +4593,36 @@
               "windows": "partial",
               "linux": "partial",
               "wsl2": "partial"
+            }
+          },
+          "gemini": {
+            "state": "blocked_for_execution",
+            "status": "blocked",
+            "reason": "provider is scoped exclusively to cursor",
+            "installLayers": {
+              "project_projection": "unsupported",
+              "global_home": "unsupported"
+            },
+            "os": {
+              "macos": "unsupported",
+              "windows": "unsupported",
+              "linux": "unsupported",
+              "wsl2": "unsupported"
+            }
+          },
+          "zcode": {
+            "state": "blocked_for_execution",
+            "status": "blocked",
+            "reason": "provider is scoped exclusively to cursor",
+            "installLayers": {
+              "project_projection": "unsupported",
+              "global_home": "unsupported"
+            },
+            "os": {
+              "macos": "unsupported",
+              "windows": "unsupported",
+              "linux": "unsupported",
+              "wsl2": "unsupported"
             }
           }
         }
@@ -3592,6 +4718,28 @@
           "activationEvent": null,
           "outputContract": "model_context",
           "reason": "provider is scoped exclusively to cursor"
+        },
+        "gemini": {
+          "state": "blocked_for_execution",
+          "status": "blocked",
+          "installLayers": {
+            "project_projection": "unsupported",
+            "global_home": "unsupported"
+          },
+          "activationEvent": null,
+          "outputContract": "model_context",
+          "reason": "provider is scoped exclusively to cursor"
+        },
+        "zcode": {
+          "state": "blocked_for_execution",
+          "status": "blocked",
+          "installLayers": {
+            "project_projection": "unsupported",
+            "global_home": "unsupported"
+          },
+          "activationEvent": null,
+          "outputContract": "model_context",
+          "reason": "provider is scoped exclusively to cursor"
         }
       },
       "osAdapters": {
@@ -3625,7 +4773,9 @@
           "claude_code": "blocked",
           "codex": "blocked",
           "cursor": "none",
-          "openclaw": "blocked"
+          "openclaw": "blocked",
+          "gemini": "blocked",
+          "zcode": "blocked"
         },
         "reason": null
       },
@@ -3671,7 +4821,36 @@
             "wsl2": "partial"
           }
         },
-        "runtimes": {}
+        "runtimes": {
+          "gemini": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "command_path": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          },
+          "zcode": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "command_path": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          }
+        }
       },
       "providerKind": "command",
       "capabilities": [
@@ -3749,6 +4928,26 @@
           "activationEvent": "npm run meta:providers:validate",
           "outputContract": "command_output",
           "reason": null
+        },
+        "gemini": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "command_path": "needs_probe"
+          },
+          "activationEvent": "npm run meta:providers:validate",
+          "outputContract": "command_output",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
+        },
+        "zcode": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "command_path": "needs_probe"
+          },
+          "activationEvent": "npm run meta:providers:validate",
+          "outputContract": "command_output",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
         }
       },
       "osAdapters": {
@@ -3822,7 +5021,38 @@
             "wsl2": "needs_probe"
           }
         },
-        "runtimes": {}
+        "runtimes": {
+          "gemini": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "rule_projection": "needs_probe",
+              "project_projection": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          },
+          "zcode": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "rule_projection": "needs_probe",
+              "project_projection": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          }
+        }
       },
       "providerKind": "rule_file",
       "capabilities": [
@@ -3905,6 +5135,28 @@
           "activationEvent": "Cursor rule context",
           "outputContract": "model_context",
           "reason": null
+        },
+        "gemini": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "rule_projection": "needs_probe",
+            "project_projection": "needs_probe"
+          },
+          "activationEvent": "Cursor rule context",
+          "outputContract": "model_context",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
+        },
+        "zcode": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "rule_projection": "needs_probe",
+            "project_projection": "needs_probe"
+          },
+          "activationEvent": "Cursor rule context",
+          "outputContract": "model_context",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
         }
       },
       "osAdapters": {
@@ -3990,7 +5242,36 @@
             "wsl2": "verified"
           }
         },
-        "runtimes": {}
+        "runtimes": {
+          "gemini": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "dependency_registry": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          },
+          "zcode": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "dependency_registry": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          }
+        }
       },
       "providerKind": "dependency_project",
       "capabilities": [
@@ -4104,6 +5385,26 @@
           "activationEvent": "Fetch dependency capability search",
           "outputContract": "reference_only",
           "reason": null
+        },
+        "gemini": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "dependency_registry": "needs_probe"
+          },
+          "activationEvent": "Fetch dependency capability search",
+          "outputContract": "reference_only",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
+        },
+        "zcode": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "dependency_registry": "needs_probe"
+          },
+          "activationEvent": "Fetch dependency capability search",
+          "outputContract": "reference_only",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
         }
       },
       "osAdapters": {
@@ -4191,7 +5492,40 @@
             "wsl2": "needs_probe"
           }
         },
-        "runtimes": {}
+        "runtimes": {
+          "gemini": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "memory_service": "needs_probe",
+              "global_home": "needs_probe",
+              "project_projection": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          },
+          "zcode": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "memory_service": "needs_probe",
+              "global_home": "needs_probe",
+              "project_projection": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          }
+        }
       },
       "providerKind": "memory_provider",
       "capabilities": [
@@ -4283,6 +5617,30 @@
           "activationEvent": "SessionStart/UserPromptSubmit/Stop hooks",
           "outputContract": "runtime_call",
           "reason": null
+        },
+        "gemini": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "memory_service": "needs_probe",
+            "global_home": "needs_probe",
+            "project_projection": "needs_probe"
+          },
+          "activationEvent": "SessionStart/UserPromptSubmit/Stop hooks",
+          "outputContract": "runtime_call",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
+        },
+        "zcode": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "memory_service": "needs_probe",
+            "global_home": "needs_probe",
+            "project_projection": "needs_probe"
+          },
+          "activationEvent": "SessionStart/UserPromptSubmit/Stop hooks",
+          "outputContract": "runtime_call",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
         }
       },
       "osAdapters": {
@@ -4368,7 +5726,38 @@
             "wsl2": "partial"
           }
         },
-        "runtimes": {}
+        "runtimes": {
+          "gemini": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "graph_index": "needs_probe",
+              "command_path": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          },
+          "zcode": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "graph_index": "needs_probe",
+              "command_path": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          }
+        }
       },
       "providerKind": "graph_provider",
       "capabilities": [
@@ -4455,6 +5844,28 @@
           "activationEvent": "npm run meta:graphify:*",
           "outputContract": "reference_only",
           "reason": null
+        },
+        "gemini": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "graph_index": "needs_probe",
+            "command_path": "needs_probe"
+          },
+          "activationEvent": "npm run meta:graphify:*",
+          "outputContract": "reference_only",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
+        },
+        "zcode": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "graph_index": "needs_probe",
+            "command_path": "needs_probe"
+          },
+          "activationEvent": "npm run meta:graphify:*",
+          "outputContract": "reference_only",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
         }
       },
       "osAdapters": {
@@ -4545,7 +5956,36 @@
             "wsl2": "partial"
           }
         },
-        "runtimes": {}
+        "runtimes": {
+          "gemini": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "command_path": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          },
+          "zcode": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "command_path": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          }
+        }
       },
       "providerKind": "command",
       "capabilities": [
@@ -4639,6 +6079,26 @@
           "activationEvent": "package.json governance commands",
           "outputContract": "command_output",
           "reason": null
+        },
+        "gemini": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "command_path": "needs_probe"
+          },
+          "activationEvent": "package.json governance commands",
+          "outputContract": "command_output",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
+        },
+        "zcode": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "command_path": "needs_probe"
+          },
+          "activationEvent": "package.json governance commands",
+          "outputContract": "command_output",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
         }
       },
       "osAdapters": {
@@ -4726,7 +6186,38 @@
             "wsl2": "partial"
           }
         },
-        "runtimes": {}
+        "runtimes": {
+          "gemini": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "global_home": "needs_probe",
+              "dependency_registry": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          },
+          "zcode": {
+            "state": "unknown",
+            "status": "needs_probe",
+            "reason": "Native projection exists; this provider has no current-host acceptance for this runtime.",
+            "installLayers": {
+              "global_home": "needs_probe",
+              "dependency_registry": "needs_probe"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          }
+        }
       },
       "providerKind": "external_skill",
       "capabilities": [
@@ -4819,6 +6310,28 @@
           "activationEvent": "goal prompt, loop prompt, or fuzzy goal contract request",
           "outputContract": "model_context",
           "reason": null
+        },
+        "gemini": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "global_home": "needs_probe",
+            "dependency_registry": "needs_probe"
+          },
+          "activationEvent": "goal prompt, loop prompt, or fuzzy goal contract request",
+          "outputContract": "model_context",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
+        },
+        "zcode": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "global_home": "needs_probe",
+            "dependency_registry": "needs_probe"
+          },
+          "activationEvent": "goal prompt, loop prompt, or fuzzy goal contract request",
+          "outputContract": "model_context",
+          "reason": "Native projection exists; this provider has no current-host acceptance for this runtime."
         }
       },
       "osAdapters": {
@@ -4861,185 +6374,896 @@
       "evolutionKey": "provider:external-skill-goalpro"
     },
     {
-      "id": "external-skill-kim-decision",
-      "providerType": "external_skill",
-      "summary": "Kim_Decision reference-only decision protocol provider for path selection and pass/kill judgment.",
-      "sourceOfTruth": "config/skills.json",
+      "id": "runtime-native-gemini",
+      "providerType": "runtime_native",
+      "summary": "Gemini CLI native-format projection; installation is locally checked, current-host execution remains unverified.",
+      "sourceOfTruth": "config/runtime-capability-matrix.json",
       "mappings": {
-        "skillsJsonIds": [
-          "kim-decision"
+        "runtimeMatrixPlatforms": [
+          "gemini"
         ],
-        "dependencyProjectIds": [
-          "kim-decision"
+        "capabilityInventoryTypes": [
+          "runtime_tool"
+        ],
+        "runtimeTargets": [
+          "gemini"
         ]
       },
       "activation": {
         "installLayers": [
+          "runtime_native",
+          "project_projection",
           "global_home",
-          "dependency_registry"
+          "rule_projection"
         ],
-        "trigger": "branch-changing decision, path selection, or pass/kill review",
-        "outputConsumption": "reference_only"
+        "trigger": "Gemini CLI native agents/skills/MCP and project/user hooks",
+        "outputConsumption": "runtime_call"
       },
       "verification": {
-        "method": "dependency compatibility and route validation",
-        "command": "npm run meta:deps:compat && npm run meta:route:validate"
+        "method": "isolated native projection lifecycle and current-host acceptance tracked separately",
+        "command": "node --test tests/setup/native-runtime-projection.test.mjs"
       },
       "risk": {
-        "trustReview": "reference_only_external_skill",
+        "trustReview": "native_runtime",
         "notes": [
-          "Kim_Decision must not become a callable code executor or implementation owner."
+          "projection_implemented is separate from live_verified; no current-host behavior or OS acceptance is inferred from installation."
         ]
       },
       "support": {
         "default": {
-          "state": "declared",
-          "status": "partial",
+          "state": "blocked_for_execution",
+          "status": "blocked",
+          "reason": "provider is scoped exclusively to gemini",
           "installLayers": {
-            "global_home": "needs_probe",
-            "dependency_registry": "verified"
+            "runtime_native": "unsupported",
+            "project_projection": "unsupported",
+            "global_home": "unsupported",
+            "rule_projection": "unsupported"
           },
           "os": {
-            "macos": "partial",
-            "windows": "partial",
-            "linux": "partial",
-            "wsl2": "partial"
+            "macos": "unsupported",
+            "windows": "unsupported",
+            "linux": "unsupported",
+            "wsl2": "unsupported"
           }
         },
-        "runtimes": {}
+        "runtimes": {
+          "gemini": {
+            "state": "projected",
+            "status": "needs_probe",
+            "reason": "projection_implemented is separate from live_verified; no current-host behavior or OS acceptance is inferred from installation.",
+            "installLayers": {
+              "runtime_native": "needs_probe",
+              "project_projection": "projected",
+              "global_home": "projected",
+              "rule_projection": "projected"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          },
+          "zcode": {
+            "state": "blocked_for_execution",
+            "status": "blocked",
+            "reason": "provider is scoped exclusively to gemini",
+            "installLayers": {
+              "runtime_native": "unsupported",
+              "project_projection": "unsupported",
+              "global_home": "unsupported",
+              "rule_projection": "unsupported"
+            },
+            "os": {
+              "macos": "unsupported",
+              "windows": "unsupported",
+              "linux": "unsupported",
+              "wsl2": "unsupported"
+            }
+          }
+        }
       },
-      "providerKind": "external_skill",
+      "providerKind": "runtime_native",
       "capabilities": [
-        "Decision protocol reference for real intent, path selection, minimum test, and pass/kill gates.",
-        "kim-decision",
-        "decision-protocol-reference",
-        "path-selection",
-        "pass-kill-gate"
+        "Gemini CLI native-format projection; installation is locally checked, current-host execution remains unverified.",
+        "runtime_tool"
       ],
       "source": {
-        "sourceOfTruth": "config/skills.json",
+        "sourceOfTruth": "config/runtime-capability-matrix.json",
         "mappings": {
-          "skillsJsonIds": [
-            "kim-decision"
+          "runtimeMatrixPlatforms": [
+            "gemini"
           ],
-          "dependencyProjectIds": [
-            "kim-decision"
+          "capabilityInventoryTypes": [
+            "runtime_tool"
+          ],
+          "runtimeTargets": [
+            "gemini"
           ]
         }
       },
       "trust": {
-        "review": "reference_only_external_skill",
+        "review": "native_runtime",
+        "required": false
+      },
+      "installMethod": "runtimeNative",
+      "installLayers": [
+        "runtime_native",
+        "project_projection",
+        "global_home",
+        "rule_projection"
+      ],
+      "exposedArtifacts": [
+        ".gemini/agents/meta-*.md",
+        ".agents/skills/meta-theory/SKILL.md",
+        ".gemini/settings.json"
+      ],
+      "activationEvents": [
+        "Gemini CLI native agents/skills/MCP and project/user hooks"
+      ],
+      "outputContracts": {
+        "consumption": "runtime_call",
+        "mustEnterModelContext": false,
+        "mustEnforcePolicy": false
+      },
+      "safetyBoundary": {
+        "trustReview": "native_runtime",
+        "notes": [
+          "projection_implemented is separate from live_verified; no current-host behavior or OS acceptance is inferred from installation."
+        ]
+      },
+      "runtimeAdapters": {
+        "claude_code": {
+          "state": "blocked_for_execution",
+          "status": "blocked",
+          "installLayers": {
+            "runtime_native": "unsupported",
+            "project_projection": "unsupported",
+            "global_home": "unsupported",
+            "rule_projection": "unsupported"
+          },
+          "activationEvent": null,
+          "outputContract": "runtime_call",
+          "reason": "provider is scoped exclusively to gemini"
+        },
+        "codex": {
+          "state": "blocked_for_execution",
+          "status": "blocked",
+          "installLayers": {
+            "runtime_native": "unsupported",
+            "project_projection": "unsupported",
+            "global_home": "unsupported",
+            "rule_projection": "unsupported"
+          },
+          "activationEvent": null,
+          "outputContract": "runtime_call",
+          "reason": "provider is scoped exclusively to gemini"
+        },
+        "cursor": {
+          "state": "blocked_for_execution",
+          "status": "blocked",
+          "installLayers": {
+            "runtime_native": "unsupported",
+            "project_projection": "unsupported",
+            "global_home": "unsupported",
+            "rule_projection": "unsupported"
+          },
+          "activationEvent": null,
+          "outputContract": "runtime_call",
+          "reason": "provider is scoped exclusively to gemini"
+        },
+        "openclaw": {
+          "state": "blocked_for_execution",
+          "status": "blocked",
+          "installLayers": {
+            "runtime_native": "unsupported",
+            "project_projection": "unsupported",
+            "global_home": "unsupported",
+            "rule_projection": "unsupported"
+          },
+          "activationEvent": null,
+          "outputContract": "runtime_call",
+          "reason": "provider is scoped exclusively to gemini"
+        },
+        "gemini": {
+          "state": "projected",
+          "status": "needs_probe",
+          "installLayers": {
+            "runtime_native": "needs_probe",
+            "project_projection": "projected",
+            "global_home": "projected",
+            "rule_projection": "projected"
+          },
+          "activationEvent": "Gemini CLI native agents/skills/MCP and project/user hooks",
+          "outputContract": "runtime_call",
+          "reason": "projection_implemented is separate from live_verified; no current-host behavior or OS acceptance is inferred from installation."
+        },
+        "zcode": {
+          "state": "blocked_for_execution",
+          "status": "blocked",
+          "installLayers": {
+            "runtime_native": "unsupported",
+            "project_projection": "unsupported",
+            "global_home": "unsupported",
+            "rule_projection": "unsupported"
+          },
+          "activationEvent": null,
+          "outputContract": "runtime_call",
+          "reason": "provider is scoped exclusively to gemini"
+        }
+      },
+      "osAdapters": {
+        "macos": {
+          "status": "needs_probe",
+          "risks": [
+            "projection_implemented is separate from live_verified; no current-host behavior or OS acceptance is inferred from installation."
+          ]
+        },
+        "windows": {
+          "status": "needs_probe",
+          "risks": [
+            "projection_implemented is separate from live_verified; no current-host behavior or OS acceptance is inferred from installation."
+          ]
+        },
+        "linux": {
+          "status": "needs_probe",
+          "risks": [
+            "projection_implemented is separate from live_verified; no current-host behavior or OS acceptance is inferred from installation."
+          ]
+        },
+        "wsl2": {
+          "status": "needs_probe",
+          "risks": [
+            "projection_implemented is separate from live_verified; no current-host behavior or OS acceptance is inferred from installation."
+          ]
+        }
+      },
+      "degradation": {
+        "statusByRuntime": {
+          "claude_code": "blocked",
+          "codex": "blocked",
+          "cursor": "blocked",
+          "openclaw": "blocked",
+          "gemini": "needs_probe",
+          "zcode": "blocked"
+        },
+        "reason": "projection_implemented is separate from live_verified; no current-host behavior or OS acceptance is inferred from installation."
+      },
+      "owner": "meta-sentinel",
+      "reviewOwner": "meta-prism",
+      "evolutionKey": "provider:runtime-native-gemini"
+    },
+    {
+      "id": "runtime-native-zcode",
+      "providerType": "runtime_native",
+      "summary": "ZCode native-format projection; installation is locally checked, current-host execution remains unverified.",
+      "sourceOfTruth": "config/runtime-capability-matrix.json",
+      "mappings": {
+        "runtimeMatrixPlatforms": [
+          "zcode"
+        ],
+        "capabilityInventoryTypes": [
+          "runtime_tool"
+        ],
+        "runtimeTargets": [
+          "zcode"
+        ]
+      },
+      "activation": {
+        "installLayers": [
+          "runtime_native",
+          "project_projection",
+          "global_home",
+          "rule_projection"
+        ],
+        "trigger": "ZCode native agents/skills/MCP and user hooks only",
+        "outputConsumption": "runtime_call"
+      },
+      "verification": {
+        "method": "isolated native projection lifecycle and current-host acceptance tracked separately",
+        "command": "node --test tests/setup/native-runtime-projection.test.mjs"
+      },
+      "risk": {
+        "trustReview": "native_runtime",
+        "notes": [
+          "projection_implemented is separate from live_verified; no current-host behavior or OS acceptance is inferred from installation."
+        ]
+      },
+      "support": {
+        "default": {
+          "state": "blocked_for_execution",
+          "status": "blocked",
+          "reason": "provider is scoped exclusively to zcode",
+          "installLayers": {
+            "runtime_native": "unsupported",
+            "project_projection": "unsupported",
+            "global_home": "unsupported",
+            "rule_projection": "unsupported"
+          },
+          "os": {
+            "macos": "unsupported",
+            "windows": "unsupported",
+            "linux": "unsupported",
+            "wsl2": "unsupported"
+          }
+        },
+        "runtimes": {
+          "zcode": {
+            "state": "projected",
+            "status": "needs_probe",
+            "reason": "projection_implemented is separate from live_verified; no current-host behavior or OS acceptance is inferred from installation.",
+            "installLayers": {
+              "runtime_native": "needs_probe",
+              "project_projection": "projected",
+              "global_home": "projected",
+              "rule_projection": "projected"
+            },
+            "os": {
+              "macos": "needs_probe",
+              "windows": "needs_probe",
+              "linux": "needs_probe",
+              "wsl2": "needs_probe"
+            }
+          },
+          "gemini": {
+            "state": "blocked_for_execution",
+            "status": "blocked",
+            "reason": "provider is scoped exclusively to zcode",
+            "installLayers": {
+              "runtime_native": "unsupported",
+              "project_projection": "unsupported",
+              "global_home": "unsupported",
+              "rule_projection": "unsupported"
+            },
+            "os": {
+              "macos": "unsupported",
+              "windows": "unsupported",
+              "linux": "unsupported",
+              "wsl2": "unsupported"
+            }
+          }
+        }
+      },
+      "providerKind": "runtime_native",
+      "capabilities": [
+        "ZCode native-format projection; installation is locally checked, current-host execution remains unverified.",
+        "runtime_tool"
+      ],
+      "source": {
+        "sourceOfTruth": "config/runtime-capability-matrix.json",
+        "mappings": {
+          "runtimeMatrixPlatforms": [
+            "zcode"
+          ],
+          "capabilityInventoryTypes": [
+            "runtime_tool"
+          ],
+          "runtimeTargets": [
+            "zcode"
+          ]
+        }
+      },
+      "trust": {
+        "review": "native_runtime",
+        "required": false
+      },
+      "installMethod": "runtimeNative",
+      "installLayers": [
+        "runtime_native",
+        "project_projection",
+        "global_home",
+        "rule_projection"
+      ],
+      "exposedArtifacts": [
+        ".zcode/agents/meta-*.md",
+        ".zcode/skills/meta-theory/SKILL.md",
+        ".zcode/config.json"
+      ],
+      "activationEvents": [
+        "ZCode native agents/skills/MCP and user hooks only"
+      ],
+      "outputContracts": {
+        "consumption": "runtime_call",
+        "mustEnterModelContext": false,
+        "mustEnforcePolicy": false
+      },
+      "safetyBoundary": {
+        "trustReview": "native_runtime",
+        "notes": [
+          "projection_implemented is separate from live_verified; no current-host behavior or OS acceptance is inferred from installation."
+        ]
+      },
+      "runtimeAdapters": {
+        "claude_code": {
+          "state": "blocked_for_execution",
+          "status": "blocked",
+          "installLayers": {
+            "runtime_native": "unsupported",
+            "project_projection": "unsupported",
+            "global_home": "unsupported",
+            "rule_projection": "unsupported"
+          },
+          "activationEvent": null,
+          "outputContract": "runtime_call",
+          "reason": "provider is scoped exclusively to zcode"
+        },
+        "codex": {
+          "state": "blocked_for_execution",
+          "status": "blocked",
+          "installLayers": {
+            "runtime_native": "unsupported",
+            "project_projection": "unsupported",
+            "global_home": "unsupported",
+            "rule_projection": "unsupported"
+          },
+          "activationEvent": null,
+          "outputContract": "runtime_call",
+          "reason": "provider is scoped exclusively to zcode"
+        },
+        "cursor": {
+          "state": "blocked_for_execution",
+          "status": "blocked",
+          "installLayers": {
+            "runtime_native": "unsupported",
+            "project_projection": "unsupported",
+            "global_home": "unsupported",
+            "rule_projection": "unsupported"
+          },
+          "activationEvent": null,
+          "outputContract": "runtime_call",
+          "reason": "provider is scoped exclusively to zcode"
+        },
+        "openclaw": {
+          "state": "blocked_for_execution",
+          "status": "blocked",
+          "installLayers": {
+            "runtime_native": "unsupported",
+            "project_projection": "unsupported",
+            "global_home": "unsupported",
+            "rule_projection": "unsupported"
+          },
+          "activationEvent": null,
+          "outputContract": "runtime_call",
+          "reason": "provider is scoped exclusively to zcode"
+        },
+        "gemini": {
+          "state": "blocked_for_execution",
+          "status": "blocked",
+          "installLayers": {
+            "runtime_native": "unsupported",
+            "project_projection": "unsupported",
+            "global_home": "unsupported",
+            "rule_projection": "unsupported"
+          },
+          "activationEvent": null,
+          "outputContract": "runtime_call",
+          "reason": "provider is scoped exclusively to zcode"
+        },
+        "zcode": {
+          "state": "projected",
+          "status": "needs_probe",
+          "installLayers": {
+            "runtime_native": "needs_probe",
+            "project_projection": "projected",
+            "global_home": "projected",
+            "rule_projection": "projected"
+          },
+          "activationEvent": "ZCode native agents/skills/MCP and user hooks only",
+          "outputContract": "runtime_call",
+          "reason": "projection_implemented is separate from live_verified; no current-host behavior or OS acceptance is inferred from installation."
+        }
+      },
+      "osAdapters": {
+        "macos": {
+          "status": "needs_probe",
+          "risks": [
+            "projection_implemented is separate from live_verified; no current-host behavior or OS acceptance is inferred from installation."
+          ]
+        },
+        "windows": {
+          "status": "needs_probe",
+          "risks": [
+            "projection_implemented is separate from live_verified; no current-host behavior or OS acceptance is inferred from installation."
+          ]
+        },
+        "linux": {
+          "status": "needs_probe",
+          "risks": [
+            "projection_implemented is separate from live_verified; no current-host behavior or OS acceptance is inferred from installation."
+          ]
+        },
+        "wsl2": {
+          "status": "needs_probe",
+          "risks": [
+            "projection_implemented is separate from live_verified; no current-host behavior or OS acceptance is inferred from installation."
+          ]
+        }
+      },
+      "degradation": {
+        "statusByRuntime": {
+          "claude_code": "blocked",
+          "codex": "blocked",
+          "cursor": "blocked",
+          "openclaw": "blocked",
+          "gemini": "blocked",
+          "zcode": "needs_probe"
+        },
+        "reason": "projection_implemented is separate from live_verified; no current-host behavior or OS acceptance is inferred from installation."
+      },
+      "owner": "meta-sentinel",
+      "reviewOwner": "meta-prism",
+      "evolutionKey": "provider:runtime-native-zcode"
+    },
+    {
+      "id": "optional-engine-agent-desktop",
+      "providerType": "dependency_project",
+      "providerKind": "dependency_project",
+      "summary": "Optional computer_use engine candidate through upstream CLI and C library; discovery observes PATH presence without executing the engine.",
+      "sourceOfTruth": "config/capability-index/dependency-project-registry.json",
+      "mappings": {
+        "dependencyProjectIds": [
+          "agent-desktop"
+        ]
+      },
+      "source": {
+        "sourceOfTruth": "config/capability-index/dependency-project-registry.json",
+        "mappings": {
+          "dependencyProjectIds": [
+            "agent-desktop"
+          ]
+        }
+      },
+      "capabilities": [
+        "computer_use",
+        "optional_engine_presence_discovery"
+      ],
+      "activation": {
+        "installLayers": [
+          "dependency_registry"
+        ],
+        "trigger": "Fetch optional engine metadata and read-only PATH observation",
+        "outputConsumption": "reference_only"
+      },
+      "trust": {
+        "review": "explicit_upstream_license_permission_and_current_host_review",
         "required": true
       },
-      "installMethod": "globalHome",
+      "installMethod": "dependency_registry",
       "installLayers": [
-        "global_home",
         "dependency_registry"
       ],
       "exposedArtifacts": [
-        "config/skills.json",
-        "config/skills.json#kim-decision",
-        "dependency-project-registry.json#kim-decision",
-        "config/governance/decision-pattern-catalog.json"
+        "config/capability-index/dependency-project-registry.json#agent-desktop"
       ],
       "activationEvents": [
-        "branch-changing decision, path selection, or pass/kill review"
+        "Fetch optional engine metadata and read-only PATH observation"
       ],
       "outputContracts": {
         "consumption": "reference_only",
         "mustEnterModelContext": false,
         "mustEnforcePolicy": false
       },
-      "safetyBoundary": {
-        "trustReview": "reference_only_external_skill",
+      "risk": {
+        "trustReview": "explicit_upstream_license_permission_and_current_host_review",
         "notes": [
-          "Reference-only dependency may guide Critical, Thinking, and Review; it may not execute implementation work."
+          "Capability type and invocation interface are distinct. PATH presence does not establish version, integrity, native support or permission."
         ]
+      },
+      "safetyBoundary": {
+        "trustReview": "explicit_upstream_license_permission_and_current_host_review",
+        "notes": [
+          "Discovery does not invoke or install engine code, obtain operating system permissions, open sessions or authorize external writes. Reuse the upstream engine; do not wrap it in an invented native interface."
+        ]
+      },
+      "verification": {
+        "method": "read-only executable-presence and unqualified-candidate regression; live host execution unverified",
+        "command": "node --test tests/governance/optional-engine-discovery.test.mjs"
+      },
+      "support": {
+        "default": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "dependency_registry": "declared"
+          },
+          "os": {
+            "macos": "needs_probe",
+            "windows": "needs_probe",
+            "linux": "needs_probe",
+            "wsl2": "needs_probe"
+          },
+          "reason": "Only official documentation and non-executing presence discovery are integrated; current-host version, trust, permission and execution remain unverified."
+        },
+        "runtimes": {}
       },
       "runtimeAdapters": {
         "claude_code": {
-          "state": "declared",
-          "status": "partial",
+          "state": "unknown",
+          "status": "needs_probe",
           "installLayers": {
-            "global_home": "needs_probe",
-            "dependency_registry": "verified"
+            "dependency_registry": "declared"
           },
-          "activationEvent": "branch-changing decision, path selection, or pass/kill review",
+          "activationEvent": "Fetch optional engine metadata and read-only PATH observation",
           "outputContract": "reference_only",
-          "reason": null
+          "reason": "Only official documentation and non-executing presence discovery are integrated; current-host version, trust, permission and execution remain unverified."
         },
         "codex": {
-          "state": "declared",
-          "status": "partial",
+          "state": "unknown",
+          "status": "needs_probe",
           "installLayers": {
-            "global_home": "needs_probe",
-            "dependency_registry": "verified"
+            "dependency_registry": "declared"
           },
-          "activationEvent": "branch-changing decision, path selection, or pass/kill review",
+          "activationEvent": "Fetch optional engine metadata and read-only PATH observation",
           "outputContract": "reference_only",
-          "reason": null
+          "reason": "Only official documentation and non-executing presence discovery are integrated; current-host version, trust, permission and execution remain unverified."
         },
         "cursor": {
-          "state": "declared",
-          "status": "partial",
+          "state": "unknown",
+          "status": "needs_probe",
           "installLayers": {
-            "global_home": "needs_probe",
-            "dependency_registry": "verified"
+            "dependency_registry": "declared"
           },
-          "activationEvent": "branch-changing decision, path selection, or pass/kill review",
+          "activationEvent": "Fetch optional engine metadata and read-only PATH observation",
           "outputContract": "reference_only",
-          "reason": null
+          "reason": "Only official documentation and non-executing presence discovery are integrated; current-host version, trust, permission and execution remain unverified."
         },
         "openclaw": {
-          "state": "declared",
-          "status": "partial",
+          "state": "unknown",
+          "status": "needs_probe",
           "installLayers": {
-            "global_home": "needs_probe",
-            "dependency_registry": "verified"
+            "dependency_registry": "declared"
           },
-          "activationEvent": "branch-changing decision, path selection, or pass/kill review",
+          "activationEvent": "Fetch optional engine metadata and read-only PATH observation",
           "outputContract": "reference_only",
-          "reason": null
+          "reason": "Only official documentation and non-executing presence discovery are integrated; current-host version, trust, permission and execution remain unverified."
+        },
+        "gemini": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "dependency_registry": "declared"
+          },
+          "activationEvent": "Fetch optional engine metadata and read-only PATH observation",
+          "outputContract": "reference_only",
+          "reason": "Only official documentation and non-executing presence discovery are integrated; current-host version, trust, permission and execution remain unverified."
+        },
+        "zcode": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "dependency_registry": "declared"
+          },
+          "activationEvent": "Fetch optional engine metadata and read-only PATH observation",
+          "outputContract": "reference_only",
+          "reason": "Only official documentation and non-executing presence discovery are integrated; current-host version, trust, permission and execution remain unverified."
         }
       },
       "osAdapters": {
         "macos": {
-          "status": "partial",
+          "status": "needs_probe",
           "risks": [
-            "Reference-only dependency must not enter execution routes."
+            "Engine execution and operating system permissions are unverified."
           ]
         },
         "windows": {
-          "status": "partial",
+          "status": "needs_probe",
           "risks": [
-            "Reference-only dependency must not enter execution routes."
+            "Engine execution and operating system permissions are unverified."
           ]
         },
         "linux": {
-          "status": "partial",
+          "status": "needs_probe",
           "risks": [
-            "Reference-only dependency must not enter execution routes."
+            "Engine execution and operating system permissions are unverified."
           ]
         },
         "wsl2": {
-          "status": "partial",
+          "status": "needs_probe",
           "risks": [
-            "Reference-only dependency must not enter execution routes."
+            "Engine execution and operating system permissions are unverified."
           ]
         }
       },
       "degradation": {
         "statusByRuntime": {
-          "claude_code": "none",
-          "codex": "none",
-          "cursor": "none",
-          "openclaw": "none"
+          "claude_code": "needs_probe",
+          "codex": "needs_probe",
+          "cursor": "needs_probe",
+          "openclaw": "needs_probe",
+          "gemini": "needs_probe",
+          "zcode": "needs_probe"
         },
-        "reason": null
+        "reason": "Only official documentation and non-executing presence discovery are integrated; current-host version, trust, permission and execution remain unverified."
       },
       "owner": "meta-artisan",
       "reviewOwner": "meta-prism",
-      "evolutionKey": "provider:external-skill-kim-decision"
+      "evolutionKey": "provider:optional-engine-agent-desktop"
+    },
+    {
+      "id": "optional-engine-agent-browser",
+      "providerType": "dependency_project",
+      "providerKind": "dependency_project",
+      "summary": "Optional browser_automation engine candidate through upstream CLI, native MCP stdio and version-matched Skill; discovery observes PATH presence without executing the engine.",
+      "sourceOfTruth": "config/capability-index/dependency-project-registry.json",
+      "mappings": {
+        "dependencyProjectIds": [
+          "agent-browser"
+        ]
+      },
+      "source": {
+        "sourceOfTruth": "config/capability-index/dependency-project-registry.json",
+        "mappings": {
+          "dependencyProjectIds": [
+            "agent-browser"
+          ]
+        }
+      },
+      "capabilities": [
+        "browser_automation",
+        "optional_engine_presence_discovery"
+      ],
+      "activation": {
+        "installLayers": [
+          "dependency_registry"
+        ],
+        "trigger": "Fetch optional engine metadata and read-only PATH observation",
+        "outputConsumption": "reference_only"
+      },
+      "trust": {
+        "review": "explicit_upstream_license_permission_and_current_host_review",
+        "required": true
+      },
+      "installMethod": "dependency_registry",
+      "installLayers": [
+        "dependency_registry"
+      ],
+      "exposedArtifacts": [
+        "config/capability-index/dependency-project-registry.json#agent-browser"
+      ],
+      "activationEvents": [
+        "Fetch optional engine metadata and read-only PATH observation"
+      ],
+      "outputContracts": {
+        "consumption": "reference_only",
+        "mustEnterModelContext": false,
+        "mustEnforcePolicy": false
+      },
+      "risk": {
+        "trustReview": "explicit_upstream_license_permission_and_current_host_review",
+        "notes": [
+          "Capability type and invocation interface are distinct. PATH presence does not establish version, integrity, native support or permission."
+        ]
+      },
+      "safetyBoundary": {
+        "trustReview": "explicit_upstream_license_permission_and_current_host_review",
+        "notes": [
+          "Discovery does not invoke or install engine code, obtain operating system permissions, open sessions or authorize external writes. Reuse the upstream engine; do not wrap it in an invented native interface."
+        ]
+      },
+      "verification": {
+        "method": "read-only executable-presence and unqualified-candidate regression; live host execution unverified",
+        "command": "node --test tests/governance/optional-engine-discovery.test.mjs"
+      },
+      "support": {
+        "default": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "dependency_registry": "declared"
+          },
+          "os": {
+            "macos": "needs_probe",
+            "windows": "needs_probe",
+            "linux": "needs_probe",
+            "wsl2": "needs_probe"
+          },
+          "reason": "Only official documentation and non-executing presence discovery are integrated; current-host version, trust, permission and execution remain unverified."
+        },
+        "runtimes": {}
+      },
+      "runtimeAdapters": {
+        "claude_code": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "dependency_registry": "declared"
+          },
+          "activationEvent": "Fetch optional engine metadata and read-only PATH observation",
+          "outputContract": "reference_only",
+          "reason": "Only official documentation and non-executing presence discovery are integrated; current-host version, trust, permission and execution remain unverified."
+        },
+        "codex": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "dependency_registry": "declared"
+          },
+          "activationEvent": "Fetch optional engine metadata and read-only PATH observation",
+          "outputContract": "reference_only",
+          "reason": "Only official documentation and non-executing presence discovery are integrated; current-host version, trust, permission and execution remain unverified."
+        },
+        "cursor": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "dependency_registry": "declared"
+          },
+          "activationEvent": "Fetch optional engine metadata and read-only PATH observation",
+          "outputContract": "reference_only",
+          "reason": "Only official documentation and non-executing presence discovery are integrated; current-host version, trust, permission and execution remain unverified."
+        },
+        "openclaw": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "dependency_registry": "declared"
+          },
+          "activationEvent": "Fetch optional engine metadata and read-only PATH observation",
+          "outputContract": "reference_only",
+          "reason": "Only official documentation and non-executing presence discovery are integrated; current-host version, trust, permission and execution remain unverified."
+        },
+        "gemini": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "dependency_registry": "declared"
+          },
+          "activationEvent": "Fetch optional engine metadata and read-only PATH observation",
+          "outputContract": "reference_only",
+          "reason": "Only official documentation and non-executing presence discovery are integrated; current-host version, trust, permission and execution remain unverified."
+        },
+        "zcode": {
+          "state": "unknown",
+          "status": "needs_probe",
+          "installLayers": {
+            "dependency_registry": "declared"
+          },
+          "activationEvent": "Fetch optional engine metadata and read-only PATH observation",
+          "outputContract": "reference_only",
+          "reason": "Only official documentation and non-executing presence discovery are integrated; current-host version, trust, permission and execution remain unverified."
+        }
+      },
+      "osAdapters": {
+        "macos": {
+          "status": "needs_probe",
+          "risks": [
+            "Engine execution and operating system permissions are unverified."
+          ]
+        },
+        "windows": {
+          "status": "needs_probe",
+          "risks": [
+            "Engine execution and operating system permissions are unverified."
+          ]
+        },
+        "linux": {
+          "status": "needs_probe",
+          "risks": [
+            "Engine execution and operating system permissions are unverified."
+          ]
+        },
+        "wsl2": {
+          "status": "needs_probe",
+          "risks": [
+            "Engine execution and operating system permissions are unverified."
+          ]
+        }
+      },
+      "degradation": {
+        "statusByRuntime": {
+          "claude_code": "needs_probe",
+          "codex": "needs_probe",
+          "cursor": "needs_probe",
+          "openclaw": "needs_probe",
+          "gemini": "needs_probe",
+          "zcode": "needs_probe"
+        },
+        "reason": "Only official documentation and non-executing presence discovery are integrated; current-host version, trust, permission and execution remain unverified."
+      },
+      "owner": "meta-artisan",
+      "reviewOwner": "meta-prism",
+      "evolutionKey": "provider:optional-engine-agent-browser"
     }
   ]
 }

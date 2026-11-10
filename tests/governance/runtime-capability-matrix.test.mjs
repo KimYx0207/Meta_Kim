@@ -6,7 +6,7 @@ import { readJson } from "../meta-theory/_helpers.mjs";
 test("runtime matrix covers platforms and critical constraints", async () => {
   const matrix = await readJson("config/runtime-capability-matrix.json");
   const platforms = new Map(matrix.platforms.map((entry) => [entry.platform, entry]));
-  for (const runtime of ["claude_code", "codex", "openclaw", "cursor"]) {
+  for (const runtime of ["claude_code", "codex", "openclaw", "cursor", "gemini", "zcode"]) {
     assert.ok(platforms.has(runtime), `missing ${runtime}`);
   }
   const raw = JSON.stringify(matrix);
@@ -17,9 +17,14 @@ test("runtime matrix covers platforms and critical constraints", async () => {
   // this structural test. Real-clock expiry is checked by the maintenance gate.
   assert.match(matrix.lastReviewedAt, /^\d{4}-\d{2}-\d{2}$/u);
   assert.equal(new Date(matrix.lastReviewedAt).toISOString().slice(0, 10), matrix.lastReviewedAt);
+  const assertReviewDate = (date) => {
+    assert.match(date, /^\d{4}-\d{2}-\d{2}$/u);
+    assert.equal(new Date(date).toISOString().slice(0, 10), date);
+    assert.ok(date <= matrix.lastReviewedAt, "a source review cannot postdate the matrix that records it");
+  };
   const ledger = await readJson(matrix.evidenceLedger);
   for (const review of ledger.observations.filter((entry) => entry.observationClass === "conservative_review")) {
-    assert.equal(review.observedAt, matrix.lastReviewedAt);
+    assertReviewDate(review.observedAt);
   }
   const nestedReviewDates = new Set();
   const collectReviewDates = (value) => {
@@ -28,7 +33,9 @@ test("runtime matrix covers platforms and critical constraints", async () => {
     for (const nested of Object.values(value)) collectReviewDates(nested);
   };
   collectReviewDates(matrix);
-  assert.deepEqual([...nestedReviewDates], [matrix.lastReviewedAt]);
+  // Updating one runtime does not renew older row reviews or their evidence.
+  // Each date remains explicit; the maintenance gate evaluates the oldest age.
+  for (const date of nestedReviewDates) assertReviewDate(date);
   for (const osName of ["macos", "windows", "wsl2"]) assert.match(raw, new RegExp(osName));
   for (const platform of matrix.platforms) {
     for (const capability of platform.capabilities ?? []) {

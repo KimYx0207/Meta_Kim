@@ -373,8 +373,12 @@ async function acquireProjectionDigestLock(layout, homeRoot) {
       } catch (error) {
         const stat = await lstatIfExists(lockDir);
         if (!stat) {
+          // Another owner may release the nonempty directory after rename
+          // reports contention but before this inspection. The candidate is
+          // still ours; retry its atomic publication with the same ownership
+          // proof instead of treating a successfully released lock as drift.
           if (
-            !["EACCES", "EBUSY", "EPERM"].includes(error?.code) ||
+            !["EACCES", "EBUSY", "EPERM", "EEXIST", "ENOTEMPTY"].includes(error?.code) ||
             attempt === 1_199
           ) throw error;
           await delay(50);

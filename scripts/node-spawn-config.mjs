@@ -41,11 +41,13 @@ export function buildGlobalSkillsInstallerArgs({
   update = false,
   preferLocalDependencies = false,
   skipInventoryRefresh = false,
+  retireAbsorbed = false,
 } = {}) {
   const args = [];
   if (update) args.push("--update");
   if (preferLocalDependencies) args.push("--prefer-local-dependencies");
   if (skipInventoryRefresh) args.push("--skip-inventory-refresh");
+  if (retireAbsorbed) args.push("--retire-absorbed");
   args.push(
     "--targets",
     normalizeTargetList(targets),
@@ -66,7 +68,7 @@ export function buildGlobalMetaTheorySyncArgs({
     targetList
       .split(",")
       .map((target) => target.trim())
-      .some((target) => ["claude", "codex"].includes(target))
+      .some((target) => ["claude", "codex", "cursor", "gemini", "zcode"].includes(target))
   ) {
     args.push("--with-global-hooks");
   }
@@ -106,10 +108,11 @@ export function buildNodeScriptSpawn(
   extraArgs = [],
   childCli = {},
 ) {
+  const paths = path.win32.isAbsolute(projectDir) && !path.posix.isAbsolute(projectDir) ? path.win32 : path;
   return {
     command: nodeExecPath,
     args: [
-      path.join(projectDir, scriptRelative),
+      paths.join(projectDir, scriptRelative),
       ...buildNodeScriptArgs(extraArgs, childCli),
     ],
     options: {
