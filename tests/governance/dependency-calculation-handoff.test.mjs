@@ -175,14 +175,14 @@ test("formal entry passes complete >2000-character materials and real receipt to
     packet, prompt, env: captures[0].env });
   assert.equal(plan.ownerMethodBinding.sourceVerified, true);
   assert.deepEqual(JSON.parse(plan.args[plan.args.indexOf("--agents") + 1])["supplier-comparison-analyst"].tools, ["Read"]);
-  const originalSpawn = childProcess.spawnSync; let resumePythonCalls = 0;
-  childProcess.spawnSync = (command, args, opts) => {
+  const originalSpawn = childProcess.spawn; let resumePythonCalls = 0;
+  childProcess.spawn = (command, args, opts) => {
     if (args?.includes("--input-json")) { resumePythonCalls++; throw new Error("Materialized resume invoked helper"); }
     return originalSpawn(command, args, opts);
   }; syncBuiltinESMExports();
   let resumed;
   try { resumed = await runner({ ...config, stageRunner: { ...config.stageRunner, durableMode: "resume" } }); }
-  finally { childProcess.spawnSync = originalSpawn; syncBuiltinESMExports(); }
+  finally { childProcess.spawn = originalSpawn; syncBuiltinESMExports(); }
   assert.equal(resumePythonCalls, 0);
   assert.equal(captures.length, 1, "materialized resume does not invoke helper/worker again");
   assert.equal(resumed.dependencyCalculationPacket.toolInvoked, false);
@@ -258,8 +258,8 @@ test("handoff clones, altered bindings and unverified owner contracts cannot inv
   const prepared = await handoffApi.prepareDependencyCalculationHandoff(args);
   assert.equal(prepared.summary.status, "ready_for_worker");
   const packet = planned.workerTaskPackets.find((value) => value.taskPacketId === prepared.handoff.taskPacketId);
-  const original = childProcess.spawnSync; let pythonCalls = 0;
-  childProcess.spawnSync = (command, argv, opts) => {
+  const original = childProcess.spawn; let pythonCalls = 0;
+  childProcess.spawn = (command, argv, opts) => {
     if (argv?.includes("--input-json")) { pythonCalls++; throw new Error("Rejected binding executed helper"); }
     return original(command, argv, opts);
   }; syncBuiltinESMExports();
@@ -314,7 +314,7 @@ test("handoff clones, altered bindings and unverified owner contracts cannot inv
     prepared.handoff.calculation.receipt.normalizedQuotes[0].landedTotal = "0";
     assert.throws(() => handoffApi.calculationHandoffForWorker({ handoff: prepared.handoff, runId: config.runId,
       runtime: "codex", requestTask: task, packet }), /calculation_handoff_binding_rejected/u);
-  } finally { childProcess.spawnSync = original; syncBuiltinESMExports(); }
+  } finally { childProcess.spawn = original; syncBuiltinESMExports(); }
 });
 
 test("changed quantities and partial fees reach the real helper and worker", sourceOptions, async () => {
@@ -372,8 +372,8 @@ test("missing materials, conflicts and forged receipt content cannot launch a wo
 });
 
 test("missing host reasoning, invalid inputs and wrong runtime cannot launch Python or a worker", sourceOptions, async () => {
-  const original = childProcess.spawnSync; let pythonCalls = 0, workerCalls = 0;
-  childProcess.spawnSync = (command, args, opts) => {
+  const original = childProcess.spawn; let pythonCalls = 0, workerCalls = 0;
+  childProcess.spawn = (command, args, opts) => {
     if (args?.includes("--input-json")) { pythonCalls++; throw new Error("Python must not execute"); }
     return original(command, args, opts);
   }; syncBuiltinESMExports();
@@ -395,12 +395,12 @@ test("missing host reasoning, invalid inputs and wrong runtime cannot launch Pyt
     await assert.rejects(runner(config), /Pending preparation identity or paired material mismatch/u);
     assert.equal(pythonCalls, 0);
     assert.equal(workerCalls, 0);
-  } finally { childProcess.spawnSync = original; syncBuiltinESMExports(); }
+  } finally { childProcess.spawn = original; syncBuiltinESMExports(); }
 });
 
 test("real Python launch unavailable reaches owner as explicitly uncomputed materials", sourceOptions, async () => {
-  const original = childProcess.spawnSync;
-  childProcess.spawnSync = (command, args, opts) => args?.includes("--input-json")
+  const original = childProcess.spawn;
+  childProcess.spawn = (command, args, opts) => args?.includes("--input-json")
     ? original(path.join(fixture.root, "missing-python"), args, opts) : original(command, args, opts);
   syncBuiltinESMExports();
   try {
@@ -410,7 +410,7 @@ test("real Python launch unavailable reaches owner as explicitly uncomputed mate
     assert.equal(captures[0].context.calculation.code, "calculation_process_failed");
     assert.equal(captures[0].context.calculation.toolInvoked, false);
     assert.equal(captures[0].context.calculation.receipt, null);
-  } finally { childProcess.spawnSync = original; syncBuiltinESMExports(); }
+  } finally { childProcess.spawn = original; syncBuiltinESMExports(); }
 });
 
 test("CLI materials require current Critical and Thinking before the real missing-material gate; oversized bytes are rejected", sourceOptions, async () => {

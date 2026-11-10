@@ -10,7 +10,12 @@
     "scripts/governed-execution/plan-challenge-host-continuation.mjs": "d17476243387fb2b15d56484a376afad4e073070fc8765c0f325c7a5779d2fbd",
     "scripts/run-meta-theory-governed-execution.mjs": "124dcb07b8b32b388857c25ffb67573e2e22de3be511fe06b634c73b27f4f50d",
     "scripts/governed-execution/method-delivery.mjs": "894b715511b22be2435647bd38e23dca1400a380a92e537f42df86066ed5f58e",
-    "scripts/dependency-agent-discovery.mjs": "baa2e4001248c7f93493388ff2399163252f82c2aa48d5b4cc12b2cf711f081b"
+    "scripts/dependency-agent-discovery.mjs": "baa2e4001248c7f93493388ff2399163252f82c2aa48d5b4cc12b2cf711f081b",
+    "scripts/governed-execution/calculation-process.mjs": "3fc0e45a1c889e6223cae98a134eae39097db24f78ccf86b614601ce30a74564",
+    "scripts/governed-execution/dependency-calculation.mjs": "b3519d28389b47725c2ce50eece87c6f6059bdb6ee762e115db4afe2c54c0772",
+    "tests/governance/dependency-calculation-process.test.mjs": "0effe992bf8ce39d4f85b071e763c67a0f9006d6acc5ac426d5f5c99bf5a2f98",
+    "tests/governance/dependency-calculation.test.mjs": "cc3816c1bb2fc6fd85808dd6858ee6aac749ade8a8a1258828408577603a2f97",
+    "tests/governance/dependency-calculation-handoff.test.mjs": "664dec7c74c5dcb69cdfe15a7f8d80e2072837578c34bdbe3bebdb0d3cf19adc"
   },
   "checks": {
     "meta-theory-resumed.log": {
@@ -116,6 +121,54 @@
     "meta-setup-packed-resumed.log": {
       "sha256": "134b5d409524e4f9e1c72a43fdc99fb8734a913d5dae457e5bcc98521bb5aa3d",
       "bytes": 18252
+    },
+    "meta-native-runtime-projection-final.log": {
+      "sha256": "a4e2324f0b59488d2a38f52a6ab8c883a6d779c7d8e52ebb025dac4216f83b1d",
+      "bytes": 1053,
+      "lastReportedCounts": {
+        "tests": 9,
+        "pass": 9,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0
+      }
+    },
+    "meta-async-calculation-process.log": {
+      "sha256": "cb57322b8ddf7a489849a7cc907b5090e3bda1873a3198c1f836eec81bb85167",
+      "bytes": 732,
+      "lastReportedCounts": {
+        "tests": 6,
+        "pass": 6,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0
+      }
+    },
+    "meta-async-calculation-integration.log": {
+      "sha256": "add04dd684252e9f01ecb945bda93018b61726ca03398e39f384ea343a093258",
+      "bytes": 3433,
+      "lastReportedCounts": {
+        "tests": 30,
+        "pass": 30,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0
+      }
+    },
+    "meta-async-calculation-independent-review.log": {
+      "sha256": "029b64d5a9e79b083e38448e5980d995c52dcb20c0e5ba66e6f6e06c471db5c1",
+      "bytes": 733,
+      "lastReportedCounts": {
+        "tests": 6,
+        "pass": 6,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0
+      }
+    },
+    "meta-inventory-final-async.log": {
+      "sha256": "2447e6fb683dc15d66fba9ef542249d04335d45dc84cda959442072416898bb7",
+      "bytes": 663
     }
   },
   "nativeDshReport": "dsh-native-host-20261111.json",
@@ -142,7 +195,7 @@
       "skipped": 37,
       "failed": 0,
       "exitCode": 0,
-      "scope": "Complete unchanged test selection, native process isolation, after the final continuation fix.",
+      "scope": "Complete suite after the continuation fix and before the later asynchronous calculation transport change; the latter has separate affected-suite results and final PR CI.",
       "log": {
         "filename": "meta-governance-final.log",
         "sha256": "9ce22cd0369c471e3eb076ac0feb64e0430cc0f49d3dc02c2a2e3dbd1d993299"
@@ -252,7 +305,7 @@
     ],
     "claim": "No global install success is inferred for this ChatGPT environment; isolated package lifecycle checks remain separate."
   },
-  "reviewedServiceCommit": "d637ee67ba90c1a563bfab28e41e22e822b772d0",
+  "reviewedServiceCommit": "5034d62512691dbea8da7133c3005a6037bf695d",
   "packedSuiteRecovery": {
     "initialRun": {
       "tests": 100,
@@ -282,5 +335,118 @@
       }
     },
     "scope": "Affected files and cases rerun; the unrelated long bundle suite was not rerun and is not represented as one 100/100 run."
+  },
+  "asyncCalculation": {
+    "status": "implementation_and_local_validation_complete",
+    "productionScope": "Replace only the reviewed calculation child transport with asynchronous bounded stdin/stdout; retain source, route, receipt, task, runtime and exit-status checks.",
+    "transport": {
+      "deadlineMs": 10000,
+      "maxCombinedStdoutStderrBytes": 4194304,
+      "terminationGraceMs": 250,
+      "inputTransport": "stdin_json_with_explicit_end",
+      "cleanupAfter": "child_close",
+      "retries": 0,
+      "exit2": "Only a validated invalid_input receipt is accepted; EPIPE on exit 2 is not an acceptance decision."
+    },
+    "tests": [
+      {
+        "command": "node --test tests/governance/dependency-calculation-process.test.mjs",
+        "tests": 6,
+        "pass": 6,
+        "fail": 0,
+        "skip": 0,
+        "log": {
+          "sha256": "cb57322b8ddf7a489849a7cc907b5090e3bda1873a3198c1f836eec81bb85167",
+          "bytes": 732,
+          "filename": "meta-async-calculation-process.log"
+        }
+      },
+      {
+        "command": "META_KIM_TEST_KIM_SERVICE_SOURCE=<reviewed-Kim_Service> node --test --test-concurrency=2 tests/governance/dependency-calculation.test.mjs tests/governance/dependency-calculation-handoff.test.mjs",
+        "tests": 30,
+        "pass": 30,
+        "fail": 0,
+        "skip": 0,
+        "composition": "17 direct calculation/MCP tests plus all 13 existing handoff tests",
+        "durationMs": 145720.731221,
+        "log": {
+          "sha256": "add04dd684252e9f01ecb945bda93018b61726ca03398e39f384ea343a093258",
+          "bytes": 3433,
+          "filename": "meta-async-calculation-integration.log"
+        }
+      },
+      {
+        "reviewer": "reference_review",
+        "tests": 6,
+        "pass": 6,
+        "fail": 0,
+        "skip": 0,
+        "review": "No blocking finding; independent actual-process rerun and npm-pack inclusion check",
+        "log": {
+          "sha256": "029b64d5a9e79b083e38448e5980d995c52dcb20c0e5ba66e6f6e06c471db5c1",
+          "bytes": 733,
+          "filename": "meta-async-calculation-independent-review.log"
+        },
+        "command": "Independent reviewer rerun"
+      }
+    ],
+    "serviceCheckoutUsedForRecordedIntegration": {
+      "commit": "de050a705f6306edf0b17472c29c21a32f0d4de8"
+    },
+    "implementationFiles": {
+      "scripts/governed-execution/calculation-process.mjs": "3fc0e45a1c889e6223cae98a134eae39097db24f78ccf86b614601ce30a74564",
+      "scripts/governed-execution/dependency-calculation.mjs": "b3519d28389b47725c2ce50eece87c6f6059bdb6ee762e115db4afe2c54c0772",
+      "tests/governance/dependency-calculation-process.test.mjs": "0effe992bf8ce39d4f85b071e763c67a0f9006d6acc5ac426d5f5c99bf5a2f98",
+      "tests/governance/dependency-calculation.test.mjs": "cc3816c1bb2fc6fd85808dd6858ee6aac749ade8a8a1258828408577603a2f97",
+      "tests/governance/dependency-calculation-handoff.test.mjs": "664dec7c74c5dcb69cdfe15a7f8d80e2072837578c34bdbe3bebdb0d3cf19adc"
+    },
+    "crossPlatformCoverage": "New transport test included in the explicit dependency-calculation CI matrix command. Final remote platform results are still required.",
+    "limitations": [
+      "Local tests ran on Linux, with real Python calculators and synthetic worker callbacks; no native model or professional quality improvement is claimed.",
+      "Test groups overlap; do not sum independent review with the main six tests."
+    ]
+  },
+  "nativeDshEvidenceScope": "The local report binds its exact package/manifest hashes. CI rebuilds the complete Service package from reviewedServiceCommit and runs the official no-model probe again on the PR head.",
+  "testInventory": {
+    "trackedTests": 434,
+    "unmatchedTrackedTests": [],
+    "suiteCommandMismatches": [],
+    "testSuiteCoverageOk": true
+  },
+  "zcodeActualBuild": {
+    "schemaVersion": 1,
+    "scope": "Actual clean, fixed-commit two-repository content build; not ZCode native model invocation or installation.",
+    "meta": {
+      "repository": "https://github.com/KimYx0207/Meta_Kim",
+      "commit": "c5682dd7dbe775ac22e2acafb12f699e0a7db64c"
+    },
+    "kim": {
+      "repository": "https://github.com/KimYx0207/Kim_Service",
+      "commit": "5034d62512691dbea8da7133c3005a6037bf695d"
+    },
+    "command": "node scripts/build-zcode-marketplace.mjs --meta-root <clean Meta source> --meta-commit c5682dd7dbe775ac22e2acafb12f699e0a7db64c --kim-root <clean Service source> --kim-commit 5034d62512691dbea8da7133c3005a6037bf695d --output <fresh output>",
+    "result": {
+      "files": 1011,
+      "sourceCopies": 957,
+      "derivedEntrypoints": 46,
+      "agentEntrypoints": 45,
+      "skillRoots": 16,
+      "closureSha256": "539dc9273cf68cc87154dd559b86f14c406855dda00fd286f8d8ceb20138a104",
+      "sourceManifestSha256": "8be3cbd8faff276d5dafcb6e43dee534515033124f7359cce97e4f1d1a0a50c4",
+      "bundleManifestSha256": "28f6f3fff089c9cc0da9ccd92b2e64b5d6a17f323f2fa2155c5f6adb14fca4c6",
+      "installed": false,
+      "nativeInvocation": false
+    },
+    "independentVerification": {
+      "listedAndActualFilesEqual": true,
+      "noOutputSymbolicLinks": true,
+      "allClosureByteCountsAndHashesMatch": true,
+      "allSourceGitBlobsBelongToSelectedCommits": true,
+      "allOriginalCopiesByteIdentical": true,
+      "allDerivedEntrypointHashesMatch": true,
+      "bothSourcesCleanAndAtExpectedHeads": true,
+      "protectedOriginalAssets": 3,
+      "protectedAssetHashesMatch": true
+    }
   }
 }

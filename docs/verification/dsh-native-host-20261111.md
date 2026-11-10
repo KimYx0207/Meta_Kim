@@ -12,7 +12,7 @@ The installed official `@deepseek-ai/dsh` version was `0.2.2-rc.1`, running with
 | Global native Skill catalogue | 62 Skills discovered and loaded |
 | Project native Skill catalogue | 62 Skills discovered and loaded; project versions selected over global versions |
 | Complete primary methods | 144 parts read per scope and reconstructed byte for byte |
-| Complete text and code resources | 1,636 resources, 3,430 parts, including 524 JSON resources and 234 executable-source resources |
+| Complete text and code resources | 1,636 resources, 3,432 parts, including 524 JSON resources and 234 executable-source resources |
 | Native read and result-pruner checks | Largest rendered result 6,726 characters; zero bounded results pruned; unbounded JSON/code controls demonstrated pruning |
 | Local native MCP integration | 11 tools and 5 resources discovered; role listing and canonical Skill resource read succeeded |
 | Packed lifecycle | Install, unchanged update, integrity check, uninstall and reinstall passed |

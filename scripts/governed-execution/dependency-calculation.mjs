@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
-import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkedPath, componentHash, discoverDependencyAgentContracts, matchDependencyAgentContracts } from "../dependency-agent-discovery.mjs";
 import { runRouteQuery } from "../run-route-query.mjs";
+import { runCalculationProcess } from "./calculation-process.mjs";
 
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 const digest = (value) => createHash("sha256").update(value).digest("hex");
@@ -189,14 +189,12 @@ export async function runDependencyCalculation({ task, inputJson, methodAssessme
     const env = { PATH: process.env.PATH ?? "", HOME: temporary, USERPROFILE: temporary,
       TMPDIR: temporary, TEMP: temporary, TMP: temporary, PYTHONDONTWRITEBYTECODE: "1", PYTHONUTF8: "1" };
     for (const key of ["SystemRoot", "SYSTEMROOT", "WINDIR"]) if (process.env[key]) env[key] = process.env[key];
-    const run = spawnSync(python, ["-I", "-B", entrypoint, ...deliveryTool.invocation.argv], {
-      cwd: temporary, env, shell: false, windowsHide: true, encoding: "utf8", input: JSON.stringify({ task, inputJson }),
-      // Receipt JSON and its escaped byte-preserving transport are both bounded.
-      timeout: 10000, maxBuffer: 4 * 1024 * 1024,
-    });
+    const run = await runCalculationProcess({ command: python,
+      args: ["-I", "-B", entrypoint, ...deliveryTool.invocation.argv],
+      cwd: temporary, env, input: JSON.stringify({ task, inputJson }) });
     if (run.error || run.signal || ![0, 2].includes(run.status) || run.stderr) {
       return result("unavailable", { toolInvoked: Boolean(run.pid), code: "calculation_process_failed", binding, brief, route: selectedRoute,
-        diagnostics: { exitCode: run.status, signal: run.signal ?? null, timedOut: run.error?.code === "ETIMEDOUT" } });
+        diagnostics: { exitCode: run.status, signal: run.signal ?? null, timedOut: run.timedOut } });
     }
     let delivered;
     try {

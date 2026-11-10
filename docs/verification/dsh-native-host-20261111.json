@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "observedAt": "2026-11-10T22:24:53.339Z",
+  "observedAt": "2026-11-10T22:41:17.994Z",
   "evidenceKind": "native-host-loading-and-mcp",
   "upstream": {
     "repository": "https://github.com/deepseek-ai/deepseek-harness",
@@ -21,13 +21,13 @@
   "nativeHookEnforcement": false,
   "nativeStageRunner": false,
   "businessQualityAccepted": false,
-  "immutablePackageTarballSha256": "2b0266d14ad63bebcac50d0f5033a6ef01f14f2cff9282f751c3b5b47de44a02",
+  "immutablePackageTarballSha256": "356605314347f8cfc7f5108d7f2b918ee46ab624316f8c5575401964cd9c2639",
   "implementationSha256": {
     "scripts/dsh-profile-package.mjs": "ac1595ab15ee4e9b5f7e39a8b596decc1a654468721b24712a9ba71cf83f7cfb",
     "bin/meta-kim.mjs": "e7c725aa33907408965ffdb8f65209d306183d06974bbaf4164aff7fb3468816",
     "canonical/runtime-assets/dsh/host-contract.json": "5188384c59457e83c875955725d43ce81bf77bc5c5c51684a9554d628fa99393"
   },
-  "servicePackageManifestSha256": "89c589715603a97f0fc9f3be0973f021771a0be06b1478326b998d09d78fede6",
+  "servicePackageManifestSha256": "3eedae6a96f5c8095328c2c8b1068cab9d577900a8350a902df010b4ad11125f",
   "serviceComponents": 51,
   "packedCliLifecycle": {
     "install": "committed",
@@ -202,7 +202,7 @@
   "nativeReadAndPruning": {
     "ok": true,
     "resourceCount": 1636,
-    "partCount": 3430,
+    "partCount": 3432,
     "jsonResourceCount": 524,
     "codeResourceCount": 234,
     "maxRenderedCharacters": 6726,
