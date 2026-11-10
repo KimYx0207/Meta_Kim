@@ -18,7 +18,8 @@
     "tests/governance/dependency-calculation-handoff.test.mjs": "664dec7c74c5dcb69cdfe15a7f8d80e2072837578c34bdbe3bebdb0d3cf19adc",
     "config/runtime-capability-evidence.json": "86b1ed05527c91638e9e1e11624e8ea5ff596c0ca110affaa1679d00f1874b8b",
     "config/runtime-capability-matrix.json": "b581bdf2851b0bf1a74cd9ce1a55646177ae122cf653e6a7b36a67411340a1a7",
-    "tests/governance/store-calculation-integration.test.mjs": "19aeb440a087b97041a189bc339ee4a4148d054951bd489b2d4847ebf8219ca6"
+    "tests/governance/store-calculation-integration.test.mjs": "19aeb440a087b97041a189bc339ee4a4148d054951bd489b2d4847ebf8219ca6",
+    "tests/governance/dependency-method-knowledge.test.mjs": "e995205dee1aef9f4e8dfd02d8de7ae68963593ffc99fb15314f9fffc7df0139"
   },
   "checks": {
     "meta-theory-resumed.log": {
@@ -578,5 +579,96 @@
     "canonicalResources": 68,
     "uncoveredResources": 0,
     "knowledgeRegistryRevision": 12
+  },
+  "professionalKnowledgeDecisionFixture": {
+    "schemaVersion": 1,
+    "scope": "Meta_Kim real-source professional handoff fixture repair",
+    "sourceCommit": "2f93f0ab23ee452918fe9cd0f1ff8d985dca398b",
+    "metaCiHead": "2a6f05d3edbe4ba68243b2fe8b955e6361b2446d",
+    "changedFiles": [
+      "tests/governance/dependency-method-knowledge.test.mjs"
+    ],
+    "productionChanges": false,
+    "failureEvidence": {
+      "runId": 42920302327,
+      "jobIds": {
+        "ubuntu": 130193163792,
+        "windows": 130193163874,
+        "macos": 130193163900
+      },
+      "firstStep": {
+        "ubuntu": {
+          "tests": 48,
+          "pass": 48,
+          "fail": 0,
+          "skipped": 0
+        },
+        "macos": {
+          "tests": 48,
+          "pass": 48,
+          "fail": 0,
+          "skipped": 0
+        },
+        "windows": {
+          "tests": 48,
+          "pass": 46,
+          "fail": 0,
+          "skipped": 2,
+          "skipReasons": [
+            "POSIX FIFO material checks",
+            "unexpected process signal test"
+          ]
+        }
+      },
+      "knowledgeStep": {
+        "tests": 45,
+        "pass": 8,
+        "fail": 37,
+        "skipped": 0,
+        "leafFailures": 36,
+        "reason": "current_subtask_decision_evidence_required"
+      }
+    },
+    "fix": [
+      "Use an explicit synthetic focused-probe assessment for this exact source-transport subtask",
+      "Require clean explicitly selected Kim_Service checkout and bind its exact Git HEAD",
+      "Read the real source method and assets before recording source-transport findings, hashes and applicability limits",
+      "Persist current task/criteria-bound research via existing normalizeResearchEvidence/persistResearchEvidence/researchForTask APIs",
+      "Assert missing evidence, wrong task binding and altered source summary are rejected before every actual positive invocation",
+      "Preserve all 36 real source invocation, complete bytes/hash, output standard and no-acceptance-authority assertions"
+    ],
+    "review": {
+      "reviewer": "reference_review",
+      "result": "no_blocking_findings",
+      "productionGateWeakened": false
+    },
+    "verification": {
+      "command": "META_KIM_TEST_KIM_SERVICE_SOURCE=<reviewed-Kim_Service> node --test tests/governance/dependency-calculation-process.test.mjs tests/governance/dependency-calculation.test.mjs tests/governance/dependency-calculation-handoff.test.mjs tests/governance/store-calculation-integration.test.mjs tests/governance/dependency-delivery-envelope.test.mjs tests/governance/dependency-method-knowledge.test.mjs tests/governance/dependency-method-handoff.test.mjs",
+      "tests": 93,
+      "pass": 93,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "durationMs": 106680.889678,
+      "log": {
+        "filename": "meta-cross-repo-final-seven-files.log",
+        "sha256": "7bd19dd15c375b46babcf074bd347fec3f4d60c8641b72f4a161b08db9378cb7",
+        "bytes": 17595
+      }
+    },
+    "claimBoundary": "Source integrity, prompt assembly, real deterministic Python and synthetic worker transport only; no native model execution or professional output quality certification."
+  },
+  "ciIntegrationGrouping": {
+    "files": 7,
+    "allOriginalFilesRetained": true,
+    "isolation": "default per-file child process",
+    "platforms": [
+      "ubuntu-latest",
+      "windows-latest",
+      "macos-latest"
+    ],
+    "timeoutMinutes": 10,
+    "anyTestFailureFailsJob": true,
+    "reason": "Report calculation and knowledge failures in the same run instead of suppressing the second step after a first-step failure."
   }
 }

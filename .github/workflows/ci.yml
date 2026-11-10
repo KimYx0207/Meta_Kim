@@ -157,16 +157,13 @@ jobs:
         run: npm install --ignore-scripts --no-package-lock --no-audit --no-fund
       # Fixed synthetic requests and real stdlib Python/MCP. No models, provider
       # credentials, supplier contact or purchasing are involved.
-      - name: Test original request, existing route, real tool and delivery
+      # One isolated test-runner invocation reports both suites even if a test
+      # in the other suite fails. Every original file remains required.
+      - name: Test real calculations and complete professional handoff
         working-directory: Meta_Kim
         env:
           META_KIM_TEST_KIM_SERVICE_SOURCE: ${{ github.workspace }}/Kim_Service
-        run: node --test tests/governance/dependency-calculation-process.test.mjs tests/governance/dependency-calculation.test.mjs tests/governance/dependency-calculation-handoff.test.mjs tests/governance/store-calculation-integration.test.mjs tests/governance/dependency-delivery-envelope.test.mjs
-      - name: Test complete professional knowledge and method handoff
-        working-directory: Meta_Kim
-        env:
-          META_KIM_TEST_KIM_SERVICE_SOURCE: ${{ github.workspace }}/Kim_Service
-        run: node --test tests/governance/dependency-method-knowledge.test.mjs tests/governance/dependency-method-handoff.test.mjs
+        run: node --test tests/governance/dependency-calculation-process.test.mjs tests/governance/dependency-calculation.test.mjs tests/governance/dependency-calculation-handoff.test.mjs tests/governance/store-calculation-integration.test.mjs tests/governance/dependency-delivery-envelope.test.mjs tests/governance/dependency-method-knowledge.test.mjs tests/governance/dependency-method-handoff.test.mjs
 
   dsh-native:
     name: Official DSH loading and MCP (no model)

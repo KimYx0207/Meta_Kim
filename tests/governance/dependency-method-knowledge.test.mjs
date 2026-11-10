@@ -2,13 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtemp, mkdir, rm, writeFile, symlink, readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import os from "node:os";
 import { loadMethodKnowledgeAssets, METHOD_KNOWLEDGE_LIMITS } from "../../src/infrastructure/capabilities/dependency-method-knowledge.mjs";
 import { buildMethodInvocationContext, appendMethodInvocationContext, assertMethodInputsReady, buildMethodDeliveryEnvelope } from "../../scripts/governed-execution/method-delivery.mjs";
 import { prepareReadOnlyRuntimeInvocation } from "../../scripts/governed-execution/stage-runner-bridge.mjs";
-import { readOnlyFixtureTaskFacts } from "../helpers/task-design-facts.mjs";
+import { normalizeResearchEvidence, persistResearchEvidence, researchForTask } from "../../scripts/governed-execution/research-records.mjs";
+import { localProtocolFixtureTaskFacts } from "../helpers/task-design-facts.mjs";
 
 async function fixture(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), "meta-method-knowledge-"));
@@ -90,6 +93,14 @@ test("all real professional packages deliver complete knowledge through the regi
   const { buildDependencyMethodHandoff } = await import("../../scripts/dependency-method-handoff.mjs");
   const projectRoot = fileURLToPath(new URL("../../", import.meta.url));
   const serviceRoot = path.resolve(process.env.META_KIM_TEST_KIM_SERVICE_SOURCE);
+  const git = promisify(execFile);
+  assert.equal((await git("git", ["-C", serviceRoot, "status", "--porcelain"])).stdout, "",
+    "Commit-bound research must read a clean source checkout");
+  const sourceRevision = (await git("git", ["-C", serviceRoot, "rev-parse", "HEAD"])).stdout.trim();
+  assert.match(sourceRevision, /^[a-f0-9]{40}$/u);
+  await mkdir(path.join(projectRoot, "tmp"), { recursive: true });
+  const researchOutputDir = await mkdtemp(path.join(projectRoot, "tmp", "method-knowledge-decision-"));
+  t.after(() => rm(researchOutputDir, { recursive: true, force: true }));
   const environment = { ...process.env, META_KIM_KIM_SERVICE_ROOT: serviceRoot };
   const { projects } = JSON.parse(await readFile(path.join(projectRoot, "config/capability-index/dependency-project-registry.json"), "utf8"));
   const discovery = await discoverDependencyAgentContracts({ projects, projectRoot, environment });
@@ -123,7 +134,10 @@ test("all real professional packages deliver complete knowledge through the regi
       assert.ok(example, "The real source supplies a bounded authored example of its declared input");
       assert.equal(cases.evaluationStatus, "not_evaluated", "Authored examples do not claim professional quality");
       const packet = { ...handoff.recommendation, taskPacketId: `knowledge-audit-${role}`, coreProblem: task,
-        todayTask: task, taskFactsSubject: task, taskFacts: readOnlyFixtureTaskFacts(task),
+        todayTask: task, taskFactsSubject: task, taskFacts: localProtocolFixtureTaskFacts(task, {
+          evidence: { references: [`evidence:knowledge-audit-${role}`, `sha256:${owner.ownerContract.componentContentSha256}`] },
+          design: { uncertainty: "focused_unknown", verification: "needs_probe" },
+        }),
         methodCapabilityId: contract.capabilities[0].id, methodInputs: example.input,
         scopeFiles: [`agents/${role}/references/professional-method.md`], nonGoals: ["No writes or native-success claims"],
         acceptanceCriterionIds: example.input.acceptanceCriteria?.map(criterion => criterion.id) ?? ["transport-only"] };
@@ -131,6 +145,36 @@ test("all real professional packages deliver complete knowledge through the regi
       assert.ok(method.knowledgeAssets.length > 0);
       const context = buildMethodInvocationContext({ method, packet });
       assertMethodInputsReady(context);
+      const prepare = candidate => prepareReadOnlyRuntimeInvocation({ runtime: "codex", workspaceRoot: projectRoot,
+        packet: candidate, prompt: "Bounded source-review task", env: environment });
+      await assert.rejects(prepare(packet), /current_subtask_decision_evidence_required/,
+        "Verified source metadata alone does not resolve this subtask's focused decision");
+      // The test host has actually loaded this selected package. Its decision
+      // records only source/transport suitability, never a web visit, model run
+      // or proof that the authored professional examples produce good work.
+      const sourceId = `${role}-method`;
+      const research = normalizeResearchEvidence({ taskHash: packet.taskFacts.taskHash, input: {
+        schemaVersion: 2, taskHash: packet.taskFacts.taskHash, intentDigest: null, required: true,
+        topics: [{ id: "source-knowledge-handoff", question: `Which reviewed ${role} assets must reach this bounded method invocation?`,
+          keywords: [role], sourceIds: [sourceId], queries: [], decisionRefs: packet.acceptanceCriterionIds,
+          decisionImpact: "Select the actual source-bound knowledge and authored checks for this transport probe",
+          status: "resolved", conclusion: `Load the verified method and all ${method.knowledgeAssets.length} selected knowledge assets; quality remains not evaluated.` }],
+        sources: [{ id: sourceId, kind: "github",
+          url: `https://github.com/KimYx0207/Kim_Service/blob/${sourceRevision}/agents/${role}/method.json`,
+          revision: sourceRevision, observedAt: new Date().toISOString(),
+          relevance: `Read locally from the explicitly selected checkout for ${packet.taskPacketId}; no network request is claimed.`,
+          findings: `Verified component ${owner.ownerContract.componentContentSha256}; method ${method.methodSha256}; ` +
+            method.knowledgeAssets.map(asset => `${asset.id}: ${asset.bytes} bytes, sha256 ${asset.sha256}`).join("; "),
+          adaptation: "Only prompt assembly and exact source delivery are tested. No native model invocation, professional-quality acceptance or external action is authorized." }],
+      } });
+      assert.equal(research.readiness, "ready");
+      const persisted = await persistResearchEvidence({ research, outputDir: researchOutputDir, projectRoot });
+      packet.researchEvidence = researchForTask({ research: persisted, sourceIds: [sourceId] });
+      packet.researchContextBinding = { taskHash: packet.taskFacts.taskHash, intentDigest: null };
+      await assert.rejects(prepare({ ...packet, researchContextBinding: { ...packet.researchContextBinding, taskHash: "0".repeat(64) } }),
+        /Research must bind the current task and intent/);
+      await assert.rejects(prepare({ ...packet, researchEvidence: packet.researchEvidence.map(item => ({ ...item, summary: "Unreviewed replacement decision" })) }),
+        /Task research summary differs from its stored source/);
       const invocation = await prepareReadOnlyRuntimeInvocation({ runtime: "codex", workspaceRoot: projectRoot, packet,
         prompt: "Bounded source-review task", env: environment });
       const prompt = invocation.input;
