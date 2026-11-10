@@ -24,6 +24,8 @@ canonical/skills/commit-review/
 /openclaw/workspaces/*/.openclaw/
 /shared-skills/
 /.cursor/
+/.gemini/
+/.zcode/
 
 # ========== Local State (Never commit) ==========
 /.planning/
@@ -121,8 +123,12 @@ docs/**
 !docs/live-sdk.md
 !docs/native-cli-observation.md
 !docs/graphify-managed-lifecycle.md
+!docs/harness-architecture.md
 !docs/images/
 !docs/images/**
+!docs/verification/
+!docs/verification/intent-to-delivery-20261110.md
+!docs/verification/intent-to-delivery-20261110.json
 
 # ========== Generated reports ==========
 docs/agent-design-quality-eval-report.zh-CN.md

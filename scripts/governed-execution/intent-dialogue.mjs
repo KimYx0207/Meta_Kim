@@ -277,13 +277,22 @@ export function prepareIntentDialogue({ task, confirmedIntent = null, sharedUnde
  * owned by the existing route. A missing match stays an explicit gap.
  */
 export function bindIntentToWorkerTasks({ workerTaskPackets, routeResult, dialogue }) {
-  const direction = routeResult?.recommendedRoute?.intentDirectionSelection;
+  const route = routeResult?.recommendedRoute;
+  const direction = route?.intentDirectionSelection;
   // Selection stays in the existing route selector, including its eligibility
   // and reference-only policy. Never pick from an unfiltered inventory here.
-  const selectedArchitecture = routeResult?.recommendedRoute?.selectedCapabilityProviders?.intentArchitecture;
-  const architecture = direction?.selectionPolicy === "capability_need_runtime_match" &&
+  const selectedArchitecture = route?.selectedCapabilityProviders?.intentArchitecture;
+  const selectorDecision = direction?.selectionPolicy === "capability_need_runtime_match" &&
     direction.status === "selected_not_invoked" &&
-    direction.selectedProvider?.id === selectedArchitecture?.id &&
+    direction.selectedProvider?.id === selectedArchitecture?.id;
+  // Current host Thinking already selected and revalidated this exact inventory
+  // object. Preserve it without making a second lexical architecture selection.
+  const hostDecision = route?.selectionPolicy === "host_selected_current_bindings" &&
+    route.selectionStatus === "bindings_verified_not_invoked" && !route.blockedReasons?.length &&
+    route.executionCapabilityGate?.routeCompatible === true &&
+    /^sha256:[a-f0-9]{64}$/u.test(selectedArchitecture?.inventoryRef ?? "") &&
+    /^[a-f0-9]{64}$/iu.test(String(selectedArchitecture?.contentDigest ?? "").replace(/^sha256:/u, ""));
+  const architecture = (selectorDecision || hostDecision) && selectedArchitecture &&
     selectedArchitecture?.routeEligible !== false && selectedArchitecture?.executionEligible !== false &&
     selectedArchitecture?.cacheEvidenceOnly !== true
       ? selectedArchitecture : null;

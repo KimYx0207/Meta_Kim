@@ -5,7 +5,10 @@
   "projectResearchPolicy": {
     "id": "project-research-prd-v2",
     "projectAnalysisPosition": "before_critical_without_new_stage",
-    "requiredWhen": ["decision_changing_unknown", "explicit_research_request"],
+    "requiredWhen": [
+      "decision_changing_unknown",
+      "explicit_research_request"
+    ],
     "sufficiencyRule": "Resolve the declared decision question with source-backed conclusions or retain an explicit unknown/conflict; source count, popularity and mandatory query channels are not default acceptance criteria.",
     "explicitConstraintRule": "Apply source counts, star floors and query channels only when current task-specific requirements carry user evidence references.",
     "recordSchemaVersion": 2,
@@ -19,8 +22,15 @@
     "sourcePolicyRef": "config/contracts/core-loop-contract.json#/productExperienceCoreGoals/supportGateRequirements/P-107",
     "sameBasisIneffectiveThreshold": 2,
     "units": "terminal_execution_attempt_per_logical_task",
-    "ignoredClassifications": ["waiting", "question", "running", "paused"],
-    "nonCountingTerminalClassifications": ["unresolved"],
+    "ignoredClassifications": [
+      "waiting",
+      "question",
+      "running",
+      "paused"
+    ],
+    "nonCountingTerminalClassifications": [
+      "unresolved"
+    ],
     "mutationAuthority": "none",
     "scope": "current goal, criterion, logical task and dependency context; only recorded attempts are supervised and historical records remain preserved",
     "identityRule": "Deduplicate stable attempt/result identities; timestamps, summaries and evidence-reference renames do not create attempts or change the evidence basis.",
@@ -92,7 +102,10 @@
     "prdTaskId": "P-117",
     "defaultMode": "planned_only",
     "explicitExecutionMode": "read_only_shadow",
-    "primaryRuntimes": ["codex", "claude"],
+    "primaryRuntimes": [
+      "codex",
+      "claude"
+    ],
     "singleAuthorityPacket": "coreLoop.stageDagPacket",
     "noRuntimeSpecificGraph": true,
     "realExecutionEvidencePacket": "coreLoop.stageRunnerBridgePacket",
@@ -101,7 +114,11 @@
   "stages": [
     {
       "stage": "Critical",
-      "requiredInputs": ["userRequest", "repoContext", "permissionBoundary"],
+      "requiredInputs": [
+        "userRequest",
+        "repoContext",
+        "permissionBoundary"
+      ],
       "requiredOutputs": [
         "intentPacket.realIntent",
         "intentPacket.successCriteria",
@@ -117,8 +134,13 @@
         "missing intent that changes route, scope, risk, acceptance, permission, or non-goal",
         "unclear architecture type"
       ],
-      "blockingGates": ["unclear_user_intent", "unsafe_or_unbounded_permission"],
-      "warningGates": ["minor wording ambiguity with no route impact"],
+      "blockingGates": [
+        "unclear_user_intent",
+        "unsafe_or_unbounded_permission"
+      ],
+      "warningGates": [
+        "minor wording ambiguity with no route impact"
+      ],
       "defaultOwner": "meta-warden",
       "parallelPolicy": {
         "laneFamilies": [
@@ -129,7 +151,11 @@
         ],
         "effectClass": "read_only_support",
         "mergeAuthority": "meta-warden",
-        "singleAuthorityOutputs": ["intentPacket", "intentGatePacket", "native user-choice request"],
+        "singleAuthorityOutputs": [
+          "intentPacket",
+          "intentGatePacket",
+          "native user-choice request"
+        ],
         "previousStageMergeRequired": false,
         "nextStageRequiresMerge": true,
         "notes": "Support analyses may run in parallel, but only the merge authority locks intent or asks the consolidated route-changing questions."
@@ -155,7 +181,11 @@
     },
     {
       "stage": "Fetch",
-      "requiredInputs": ["intentPacket", "taskClassification", "readBeforeEditEvidence"],
+      "requiredInputs": [
+        "intentPacket",
+        "taskClassification",
+        "readBeforeEditEvidence"
+      ],
       "requiredOutputs": [
         "fetchPacket.evidence",
         "fetchPacket.decisionImpactMap",
@@ -165,14 +195,22 @@
         "contextEngineeringBudget",
         "fileChangeFactCard"
       ],
-      "skipConditions": ["fast_path read-only answer with explicit evidence boundary"],
+      "skipConditions": [
+        "fast_path read-only answer with explicit evidence boundary"
+      ],
       "gateConditions": [
         "capability discovery missing",
         "route-changing source unread",
         "known unsupported runtime or OS"
       ],
-      "blockingGates": ["missing_fetch_evidence", "missing_capability_discovery", "known_unsupported_runtime_or_os"],
-      "warningGates": ["stale global cache that does not affect selected route"],
+      "blockingGates": [
+        "missing_fetch_evidence",
+        "missing_capability_discovery",
+        "known_unsupported_runtime_or_os"
+      ],
+      "warningGates": [
+        "stale global cache that does not affect selected route"
+      ],
       "defaultOwner": "meta-conductor",
       "parallelPolicy": {
         "laneFamilies": [
@@ -184,7 +222,12 @@
         ],
         "effectClass": "read_only_discovery",
         "mergeAuthority": "meta-conductor",
-        "singleAuthorityOutputs": ["fetchPacket", "capabilityDiscovery", "contradictionLog", "fileChangeFactCard"],
+        "singleAuthorityOutputs": [
+          "fetchPacket",
+          "capabilityDiscovery",
+          "contradictionLog",
+          "fileChangeFactCard"
+        ],
         "previousStageMergeRequired": true,
         "nextStageRequiresMerge": true,
         "notes": "Use cached global inventory plus a project-light scan by default, stop on a qualified match, cancel no-impact searches, and reserve full scans for capabilityDiscovery.fullScanTriggers."
@@ -210,7 +253,11 @@
     },
     {
       "stage": "Thinking",
-      "requiredInputs": ["intentPacket", "fetchPacket", "capabilityInventory"],
+      "requiredInputs": [
+        "intentPacket",
+        "fetchPacket",
+        "capabilityInventory"
+      ],
       "requiredOutputs": [
         "thinkingPacket.designFrame",
         "thinkingPacket.owner",
@@ -235,14 +282,23 @@
         "governanceAgentResultPackets",
         "conductorConsumptionEvidence"
       ],
-      "skipConditions": ["fast_path read-only answer with no execution route"],
+      "skipConditions": [
+        "fast_path read-only answer with no execution route"
+      ],
       "gateConditions": [
         "owner or weapon not selected from Fetch evidence",
         "main thread would become all-purpose executor",
         "dependency policy missing"
       ],
-      "blockingGates": ["missing_owner", "missing_weapon", "missing_verification_owner", "blind_execute"],
-      "warningGates": ["single obvious path recorded as no_branching_choice"],
+      "blockingGates": [
+        "missing_owner",
+        "missing_weapon",
+        "missing_verification_owner",
+        "blind_execute"
+      ],
+      "warningGates": [
+        "single obvious path recorded as no_branching_choice"
+      ],
       "defaultOwner": "meta-conductor",
       "parallelPolicy": {
         "laneFamilies": [
@@ -253,7 +309,12 @@
         ],
         "effectClass": "read_only_design",
         "mergeAuthority": "meta-conductor",
-        "singleAuthorityOutputs": ["thinkingPacket", "preDecisionOptionFrame", "stageDagPacket", "dispatchEnvelopePacket"],
+        "singleAuthorityOutputs": [
+          "thinkingPacket",
+          "preDecisionOptionFrame",
+          "stageDagPacket",
+          "dispatchEnvelopePacket"
+        ],
         "previousStageMergeRequired": true,
         "nextStageRequiresMerge": true,
         "notes": "Candidate analyses may run in parallel. The merge authority selects one route, derives the stage DAG, and consolidates any material user choice before Execution."
@@ -280,7 +341,12 @@
     },
     {
       "stage": "Execution",
-      "requiredInputs": ["thinkingPacket", "workerTaskPackets", "sideEffectLedgerPacket", "preDecisionOptionFrame.planChallengeState"],
+      "requiredInputs": [
+        "thinkingPacket",
+        "workerTaskPackets",
+        "sideEffectLedgerPacket",
+        "preDecisionOptionFrame.planChallengeState"
+      ],
       "requiredOutputs": [
         "conductorConsumptionEvidence",
         "agUiStageEvents",
@@ -300,15 +366,26 @@
         "executionResult.workerExecutionEvidence",
         "executionResult.mergeResult"
       ],
-      "skipConditions": ["read-only analysis", "blocked approval gate", "capability gap requires creation before execution"],
+      "skipConditions": [
+        "read-only analysis",
+        "blocked approval gate",
+        "capability gap requires creation before execution"
+      ],
       "gateConditions": [
         "selected worker cannot execute",
         "unsafe mutation",
-        "missing approval for external write or global install"
-        ,"pre-host plan challenge may be satisfied, but host execution has not occurred and executionAllowed remains false"
+        "missing approval for external write or global install",
+        "pre-host plan challenge may be satisfied, but host execution has not occurred and executionAllowed remains false"
       ],
-      "blockingGates": ["unsafe_mutation", "external_write_without_approval", "global_write_without_approval", "plan_challenge_not_ready"],
-      "warningGates": ["low-risk local wording edit"],
+      "blockingGates": [
+        "unsafe_mutation",
+        "external_write_without_approval",
+        "global_write_without_approval",
+        "plan_challenge_not_ready"
+      ],
+      "warningGates": [
+        "low-risk local wording edit"
+      ],
       "defaultOwner": "selected worker or selected capability provider",
       "parallelPolicy": {
         "laneFamilies": [
@@ -318,7 +395,10 @@
         ],
         "effectClass": "bounded_execution",
         "mergeAuthority": "thinkingPacket.mergeOwner with meta-conductor fallback",
-        "singleAuthorityOutputs": ["executionResult.mergeResult", "sideEffectLedgerPacket"],
+        "singleAuthorityOutputs": [
+          "executionResult.mergeResult",
+          "sideEffectLedgerPacket"
+        ],
         "previousStageMergeRequired": true,
         "nextStageRequiresMerge": true,
         "notes": "Schedule the maximal safe ready set rather than accepting or rejecting the whole stage. Serialize dependencies and resource conflicts; do not require an optional agent-teams provider when the native host surface and stage DAG are sufficient."
@@ -344,7 +424,12 @@
     },
     {
       "stage": "Review",
-      "requiredInputs": ["intentPacket", "fetchPacket", "thinkingPacket", "executionResult"],
+      "requiredInputs": [
+        "intentPacket",
+        "fetchPacket",
+        "thinkingPacket",
+        "executionResult"
+      ],
       "requiredOutputs": [
         "reviewPacket.upstreamQuality",
         "reviewPacket.ownerCoverage",
@@ -366,8 +451,12 @@
         "Thinking route unsupported",
         "execution evidence missing"
       ],
-      "blockingGates": ["review_finds_unresolved_critical_or_high_issue"],
-      "warningGates": ["minor polish issue that does not affect acceptance"],
+      "blockingGates": [
+        "review_finds_unresolved_critical_or_high_issue"
+      ],
+      "warningGates": [
+        "minor polish issue that does not affect acceptance"
+      ],
       "defaultOwner": "meta-prism",
       "parallelPolicy": {
         "laneFamilies": [
@@ -378,7 +467,10 @@
         ],
         "effectClass": "read_only_review",
         "mergeAuthority": "meta-prism",
-        "singleAuthorityOutputs": ["reviewPacket", "productExperiencePacket"],
+        "singleAuthorityOutputs": [
+          "reviewPacket",
+          "productExperiencePacket"
+        ],
         "previousStageMergeRequired": true,
         "nextStageRequiresMerge": true,
         "notes": "Independent lenses may run concurrently; meta-prism deduplicates, prioritizes, and closes one review verdict."
@@ -405,20 +497,31 @@
     },
     {
       "stage": "Meta-Review",
-      "requiredInputs": ["reviewPacket", "verificationPlan", "publicReadyIntent"],
+      "requiredInputs": [
+        "reviewPacket",
+        "verificationPlan",
+        "publicReadyIntent"
+      ],
       "requiredOutputs": [
         "metaReviewPacket.reviewStandard",
         "metaReviewPacket.biasCheck",
         "metaReviewPacket.publicReadyGateCheck"
       ],
-      "skipConditions": ["low-risk non-public local edit with recorded skip reason"],
+      "skipConditions": [
+        "low-risk non-public local edit with recorded skip reason"
+      ],
       "gateConditions": [
         "review standard too low",
         "missing public-ready evidence",
         "runtime claim overstates evidence"
       ],
-      "blockingGates": ["public_ready_overclaim", "review_standard_too_low"],
-      "warningGates": ["non-public smoke evidence only"],
+      "blockingGates": [
+        "public_ready_overclaim",
+        "review_standard_too_low"
+      ],
+      "warningGates": [
+        "non-public smoke evidence only"
+      ],
       "defaultOwner": "meta-warden",
       "parallelPolicy": {
         "laneFamilies": [
@@ -428,7 +531,10 @@
         ],
         "effectClass": "read_only_meta_review",
         "mergeAuthority": "meta-warden",
-        "singleAuthorityOutputs": ["metaReviewPacket verdict", "public-ready gate decision"],
+        "singleAuthorityOutputs": [
+          "metaReviewPacket verdict",
+          "public-ready gate decision"
+        ],
         "previousStageMergeRequired": true,
         "nextStageRequiresMerge": true,
         "notes": "Evidence preparation may fan out, but only meta-warden issues the Meta-Review verdict or returns the run to Review or Verification."
@@ -454,7 +560,11 @@
     },
     {
       "stage": "Verification",
-      "requiredInputs": ["reviewPacket", "workerResultPackets", "verificationPlan"],
+      "requiredInputs": [
+        "reviewPacket",
+        "workerResultPackets",
+        "verificationPlan"
+      ],
       "requiredOutputs": [
         "verificationResult.status",
         "verificationResult.evidence",
@@ -470,7 +580,10 @@
         "verificationResult.fixEvidence",
         "verificationResult.remainingRisk"
       ],
-      "skipConditions": ["no mutation and no completion claim", "explicit partial result"],
+      "skipConditions": [
+        "no mutation and no completion claim",
+        "explicit partial result"
+      ],
       "gateConditions": [
         "public-ready claim",
         "release-grade claim",
@@ -482,7 +595,9 @@
         "release_grade_without_live_or_declared_evidence",
         "unsafe_operation_unverified"
       ],
-      "warningGates": ["ordinary low-risk step that does not make a completion claim"],
+      "warningGates": [
+        "ordinary low-risk step that does not make a completion claim"
+      ],
       "defaultOwner": "verify",
       "parallelPolicy": {
         "laneFamilies": [
@@ -493,7 +608,10 @@
         ],
         "effectClass": "fresh_verification",
         "mergeAuthority": "verify",
-        "singleAuthorityOutputs": ["verificationResult", "completion and evidence-tier claim"],
+        "singleAuthorityOutputs": [
+          "verificationResult",
+          "completion and evidence-tier claim"
+        ],
         "previousStageMergeRequired": true,
         "nextStageRequiresMerge": true,
         "notes": "Run independent checks concurrently only when caches, services, ports, package targets, and temporary directories are isolated. The verification authority merges fresh results and sets the claim boundary."
@@ -520,7 +638,11 @@
     },
     {
       "stage": "Evolution",
-      "requiredInputs": ["reviewPacket", "verificationResult", "capabilityGapPacket"],
+      "requiredInputs": [
+        "reviewPacket",
+        "verificationResult",
+        "capabilityGapPacket"
+      ],
       "requiredOutputs": [
         "evolutionWritebackDecision",
         "evolutionWritebackPacket.writebacks",
@@ -535,8 +657,13 @@
         "agent boundary change needed",
         "skill, tool, MCP, hook, workflow, runtime, or OS lesson should survive the run"
       ],
-      "blockingGates": ["writeback_without_warden_approval", "missing_writeback_or_none_reason"],
-      "warningGates": ["candidate writeback requires later approval"],
+      "blockingGates": [
+        "writeback_without_warden_approval",
+        "missing_writeback_or_none_reason"
+      ],
+      "warningGates": [
+        "candidate writeback requires later approval"
+      ],
       "defaultOwner": "meta-chrysalis",
       "parallelPolicy": {
         "laneFamilies": [
@@ -546,7 +673,11 @@
         ],
         "effectClass": "read_only_candidate_analysis_then_governed_write",
         "mergeAuthority": "meta-chrysalis",
-        "singleAuthorityOutputs": ["evolutionWritebackDecision", "evolutionWritebackPacket", "scarPacket"],
+        "singleAuthorityOutputs": [
+          "evolutionWritebackDecision",
+          "evolutionWritebackPacket",
+          "scarPacket"
+        ],
         "previousStageMergeRequired": true,
         "nextStageRequiresMerge": true,
         "notes": "Candidate analysis may fan out. meta-chrysalis merges candidates; durable writes remain single-writer actions and require the existing Warden approval gate."
@@ -670,8 +801,19 @@
       "userPerceptionPacket",
       "productExperiencePacket"
     ],
-    "requiredGoalIds": ["P-102", "P-103", "P-104"],
-    "supportGateIds": ["P-105", "P-106", "P-107", "P-108", "P-109", "P-110"],
+    "requiredGoalIds": [
+      "P-102",
+      "P-103",
+      "P-104"
+    ],
+    "supportGateIds": [
+      "P-105",
+      "P-106",
+      "P-107",
+      "P-108",
+      "P-109",
+      "P-110"
+    ],
     "langGraphStyleRequirements": [
       "nodes",
       "edges",
@@ -755,8 +897,7 @@
       "selected_command_as_executed",
       "selected_runtime_tool_as_called",
       "hook_file_or_match_as_triggered_hook",
-      "run_scoped_worker_as_live_subagent"
-      ,
+      "run_scoped_worker_as_live_subagent",
       "app_visible_subagent_as_runner_agent_spawn"
     ],
     "supportGateRequirements": {
@@ -825,7 +966,11 @@
     ]
   },
   "evolutionWritebackPolicy": {
-    "requiredDecision": ["writeback", "candidate-writeback", "none-with-reason"],
+    "requiredDecision": [
+      "writeback",
+      "candidate-writeback",
+      "none-with-reason"
+    ],
     "writeReusableGapsTo": [
       "canonical/agents",
       "canonical/skills",
@@ -834,7 +979,11 @@
       "config/governance",
       "project state"
     ],
-    "forbiddenWithoutApproval": ["automatic canonical write", "global write", "external write"],
+    "forbiddenWithoutApproval": [
+      "automatic canonical write",
+      "global write",
+      "external write"
+    ],
     "noneRequiresReason": true
   },
   "publicReadyClaim": {
@@ -851,7 +1000,14 @@
     ]
   },
   "crossRuntimeBoundary": {
-    "targets": ["claude", "codex", "openclaw", "cursor"],
+    "targets": [
+      "claude",
+      "codex",
+      "openclaw",
+      "cursor",
+      "gemini",
+      "zcode"
+    ],
     "doNotMixFormats": true,
     "canonicalSourceFirst": true,
     "runtimeMirrorsAreGeneratedUnlessExplicitlyDocumented": true

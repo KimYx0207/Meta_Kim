@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
+import { buildIsolatedTestEnvironment } from "../../scripts/run-local-verification.mjs";
 
 import {
   loadRuntimeProfiles,
@@ -118,4 +121,49 @@ test("migration catalog check uses bounded batch Git reads and completes inside 
   });
   assert.equal(result.error?.code, undefined, result.error?.message);
   assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+});
+
+test("shallow history cannot replace or validate a historical catalog, and unshallow restores generation", (t) => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "meta-kim-shallow-catalog-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const home = path.join(root, "home");
+  for (const name of ["", "tmp", "appdata", "localappdata", "config", "cache", "data", "state", "npm-cache"]) {
+    mkdirSync(path.join(home, name), { recursive: true });
+  }
+  const env = buildIsolatedTestEnvironment(home);
+  const cloneRoot = path.join(root, "repo");
+  const runGit = (args, cwd = root) => execFileSync("git", args, {
+    cwd, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+  });
+  // file:// makes --depth create an actual shallow clone instead of Git's
+  // local-clone optimization. Both clone and fetch read only this local repo.
+  runGit(["clone", "--depth", "1", "--no-tags", pathToFileURL(path.resolve(REPO_ROOT)).href, cloneRoot]);
+  assert.equal(runGit(["rev-parse", "--is-shallow-repository"], cloneRoot).trim(), "true");
+  const generator = path.join(cloneRoot, "scripts/generate-global-agent-migration-catalog.mjs");
+  copyFileSync(GENERATOR_PATH, generator);
+  const catalog = path.join(cloneRoot, "config/migrations/global-agent-projection-fingerprints.json");
+  const original = readFileSync(catalog);
+  for (const flag of ["--write", "--check"]) {
+    const rejected = spawnSync(process.execPath, [generator, flag], {
+      cwd: cloneRoot, env, encoding: "utf8", timeout: 30_000,
+    });
+    assert.equal(rejected.status, 1, rejected.stderr || rejected.stdout);
+    assert.match(rejected.stderr, /complete Git history.*git fetch --unshallow/u);
+    assert.deepEqual(readFileSync(catalog), original, `${flag} must preserve the existing historical catalog`);
+  }
+  runGit(["fetch", "--unshallow", "--no-tags", "origin"], cloneRoot);
+  assert.equal(runGit(["rev-parse", "--is-shallow-repository"], cloneRoot).trim(), "false");
+  for (const flag of ["--write", "--check"]) {
+    const result = spawnSync(process.execPath, [generator, flag], {
+      cwd: cloneRoot, env, encoding: "utf8", timeout: 30_000,
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+  }
+  const regenerated = JSON.parse(readFileSync(catalog, "utf8"));
+  for (const prior of JSON.parse(original).projections) {
+    const entry = regenerated.projections.find((item) => item.agentId === prior.agentId && item.targetId === prior.targetId);
+    assert.ok(entry, `historical projection ${prior.agentId}:${prior.targetId} remains present`);
+    assert.ok(prior.fingerprints.every((fingerprint) => entry.fingerprints.includes(fingerprint)),
+      `unshallow generation preserves historical fingerprints for ${prior.agentId}:${prior.targetId}`);
+  }
 });

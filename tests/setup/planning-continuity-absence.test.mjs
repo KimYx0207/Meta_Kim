@@ -5,9 +5,10 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { resolveNpmCliJsPath } from "../../scripts/runtime-cli-invocation.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const npmCli = process.env.npm_execpath;
+const npmCli = resolveNpmCliJsPath();
 
 function run(command, args, options) {
   const result = spawnSync(command, args, {
@@ -64,7 +65,6 @@ test("real packed install works offline with the external planning project compl
     mkdir(isolatedHome, { recursive: true }),
   ]);
 
-  assert.ok(npmCli, "npm_execpath is required for the real packed-product test");
   const npmCache = run(process.execPath, [npmCli, "config", "get", "cache"], { cwd: repoRoot }).stdout.trim();
   const packed = run(process.execPath, [npmCli, "pack", "--json", "--ignore-scripts", "--pack-destination", packDir], {
     cwd: repoRoot,
@@ -73,6 +73,13 @@ test("real packed install works offline with the external planning project compl
   const packResult = JSON.parse(packed.stdout);
   const tarball = path.join(packDir, packResult[0].filename);
   await writeFile(path.join(installRoot, "package.json"), '{"private":true}\n', "utf8");
+  // An isolated test starts with an empty npm cache. Prepare real registry
+  // artifacts, remove that installation, then exercise a clean offline install.
+  // Neither phase installs or reads the retired external planning project.
+  run(process.execPath, [npmCli,
+    "install", tarball, "--ignore-scripts", "--no-audit", "--no-fund", "--cache", npmCache,
+  ], { cwd: installRoot, env: { ...process.env, npm_config_cache: npmCache } });
+  await rm(path.join(installRoot, "node_modules"), { recursive: true, force: true });
   run(process.execPath, [npmCli,
     "install", tarball, "--ignore-scripts", "--offline", "--no-audit", "--no-fund", "--cache", npmCache,
   ], { cwd: installRoot, env: { ...process.env, npm_config_cache: npmCache } });

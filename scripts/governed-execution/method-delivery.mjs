@@ -3,13 +3,14 @@ import { createHash } from "node:crypto";
 const hash = (text) => createHash("sha256").update(text).digest("hex");
 const object = (value) => Boolean(value && typeof value === "object" && !Array.isArray(value));
 const supplied = (value) => value !== undefined && value !== null && (typeof value !== "string" || Boolean(value.trim()));
+const allowsNull = (schema) => schema?.type === "null" || Array.isArray(schema?.type) && schema.type.includes("null");
 const clone = (value) => structuredClone(value);
 
 /** Check the JSON contract's structural requirements, never semantic truth. */
 function inspectInput(value, schema, at, problems) {
-  if (!supplied(value)) { problems.push({ field: at, reason: "missing" }); return; }
+  if (!supplied(value) && !(value === null && allowsNull(schema))) { problems.push({ field: at, reason: "missing" }); return; }
   const types = Array.isArray(schema.type) ? schema.type : [schema.type].filter(Boolean);
-  const actual = Array.isArray(value) ? "array" : typeof value;
+  const actual = value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
   if (types.length && !types.includes(actual) && !(actual === "number" && Number.isInteger(value) && types.includes("integer"))) {
     problems.push({ field: at, reason: "type_mismatch" }); return;
   }
@@ -19,7 +20,9 @@ function inspectInput(value, schema, at, problems) {
     if (schema.items) value.forEach((item, index) => inspectInput(item, schema.items, `${at}[${index}]`, problems));
   } else if (object(value)) {
     for (const field of schema.required ?? []) {
-      if (!supplied(value[field])) problems.push({ field: at ? `${at}.${field}` : field, reason: "missing" });
+      if (!supplied(value[field]) && !(value[field] === null && allowsNull(schema.properties?.[field]))) {
+        problems.push({ field: at ? `${at}.${field}` : field, reason: "missing" });
+      }
     }
     for (const [field, item] of Object.entries(value)) {
       const child = schema.properties?.[field];
@@ -39,7 +42,15 @@ export function buildMethodInvocationContext({ method, packet, upstreamResults =
   const inputs = { ...provided };
   const properties = method.inputContract?.properties ?? {};
   const accepts = (key) => Object.hasOwn(properties, key) || (method.inputContract?.required ?? []).includes(key);
-  const setDefault = (key, value) => { if (accepts(key) && !supplied(inputs[key]) && supplied(value)) inputs[key] = clone(value); };
+  const setDefault = (key, value) => {
+    if (!accepts(key) || supplied(inputs[key]) || !supplied(value)) return;
+    // Shared task facts cannot be injected into an unrelated shape merely
+    // because two roles use the same field name. Preserve incompatible facts
+    // in the packet context; required method fields still need valid input.
+    const problems = [];
+    inspectInput(value, properties[key] ?? {}, key, problems);
+    if (problems.length === 0) inputs[key] = clone(value);
+  };
   setDefault("goal", packet.intentBinding?.confirmedOutcome ?? packet.coreProblem ?? packet.description ?? packet.task);
   setDefault("constraints", packet.intentBinding?.constraints ?? (packet.nonGoals?.length ? { nonGoals: packet.nonGoals } : undefined));
   const assignedIds = packet.acceptanceCriterionIds ?? [];
@@ -49,6 +60,11 @@ export function buildMethodInvocationContext({ method, packet, upstreamResults =
   }));
   if (criteria.length) setDefault("acceptanceCriteria", criteria);
   else if ((packet.acceptanceCriteria ?? []).every(object) && packet.acceptanceCriteria?.length) setDefault("acceptanceCriteria", packet.acceptanceCriteria);
+  // The current task projection wins over a caller-authored method-input copy.
+  // The invocation path verifies this context before delivering it.
+  if (accepts("designBinding") && packet.designBinding) inputs.designBinding = clone(packet.designBinding);
+  if (accepts("designContext") && packet.designContext) inputs.designContext = clone(packet.designContext);
+  setDefault("projectFacts", packet.projectContextBinding);
   // These are adapter facts, not caller-supplied declarations of authority.
   if (accepts("runtimeBindings")) inputs.runtimeBindings = [];
   if (accepts("handoffContext")) inputs.handoffContext = {
@@ -73,6 +89,7 @@ export function buildMethodInvocationContext({ method, packet, upstreamResults =
     inputContract: method.inputContract,
     outputContract: method.outputContract,
     method: method.method,
+    knowledgeAssets: clone(method.knowledgeAssets ?? []),
     authority: "Input facts and source method only; tools, leases and final acceptance remain with the host",
   };
 }

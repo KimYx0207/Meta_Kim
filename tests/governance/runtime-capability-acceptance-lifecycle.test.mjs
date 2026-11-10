@@ -18,10 +18,11 @@ const PORTABLE_RUNTIME_GLOBAL_UPDATE_TIMEOUT_MS = JSON.parse(
 
 test("unknown runtime acceptance keys fail closed before source-report interpretation", () => {
   assert.throws(
-    () => normalizeRuntimeCapabilityRuntimeId("gemini"),
+    () => normalizeRuntimeCapabilityRuntimeId("unknown-test-runtime"),
     /unsupported runtime acceptance target/u,
   );
   assert.equal(normalizeRuntimeCapabilityRuntimeId("claude"), "claude_code");
+  for (const runtime of ["gemini", "zcode"]) assert.equal(normalizeRuntimeCapabilityRuntimeId(runtime), runtime);
 });
 
 test("Claude runtime aliases remain canonical across acceptance write, read, list, query, and source validation", () => {
@@ -370,6 +371,7 @@ function writeReleaseEvidence(project, { wrongAuditPackage = false } = {}) {
 }
 
 test("external packed observation reader recomputes complete target truth without granting authority", () => {
+  for (const runtime of ["codex", "gemini", "zcode"]) {
   const acceptedProject = projectFixture();
   const accepted = writeRuntimeCapabilityAcceptanceAttempt({
     projectRoot: acceptedProject.root,
@@ -378,7 +380,7 @@ test("external packed observation reader recomputes complete target truth withou
       suffix: "false-summary-complete-proof",
     }),
     sourceKind: "packed_update_global_readback",
-    runtime: "codex",
+    runtime,
     capability: "global install",
     mode: "global_install",
     attemptId: "external-packed-complete",
@@ -386,6 +388,7 @@ test("external packed observation reader recomputes complete target truth withou
   });
   assert.equal(accepted.record.attestationAuthority, "external_reference");
   assert.equal(accepted.record.releaseGrade, false);
+  }
 
   for (const [label, mutateProof] of [
     ["missing-targets", (proof) => { delete proof.currentPackage.targets; }],

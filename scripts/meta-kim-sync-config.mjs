@@ -47,6 +47,7 @@ export const supportedTargetIds = [
   "qwen",
   "zed",
   "gemini",
+  "zcode",
   "codebuddy",
   "antigravity",
   "joycode",
@@ -64,6 +65,37 @@ export const GLOBAL_PROJECTION_OWNERS = Object.freeze([
 ]);
 
 const runtimeProfileCatalog = {
+  ...Object.fromEntries(["gemini", "zcode"].map((id) => {
+    const prefix = `.${id}`;
+    const sharedSkills = id === "gemini" ? ".agents/skills" : `${prefix}/skills`;
+    return [id, {
+      schemaVersion: 1, id, label: id === "gemini" ? "Gemini CLI" : "ZCode",
+      projection: {
+        supportsRepoProjection: true, supportsLocalActivation: true,
+        assetTypes: ["agents", "skills", "hooks", "config", "mcp", "capabilityIndex"],
+        outputPaths: {
+          agentsDir: `${prefix}/agents`, skillsDir: sharedSkills,
+          skillRoot: `${sharedSkills}/meta-theory`, hooksDir: `${prefix}/hooks/meta-kim`,
+          settingsFile: `${prefix}/${id === "gemini" ? "settings" : "config"}.json`,
+          capabilityIndexDir: `${prefix}/capability-index`,
+        },
+        globalAgentProjection: {
+          supported: true, format: "markdown_frontmatter", renderer: `${id}_markdown`,
+          agentsDir: "agents", fileExtension: ".md", migrationSupport: GLOBAL_AGENT_MIGRATION_NONE,
+        },
+        globalAssetOwners: {
+          agents: GLOBAL_PROJECTION_OWNER_SYNC_GLOBAL, skills: GLOBAL_PROJECTION_OWNER_SYNC_GLOBAL,
+          hooks: GLOBAL_PROJECTION_OWNER_SYNC_GLOBAL, config: GLOBAL_PROJECTION_OWNER_SYNC_GLOBAL,
+          mcp: GLOBAL_PROJECTION_OWNER_SYNC_GLOBAL, capabilityIndex: GLOBAL_PROJECTION_OWNER_SYNC_RUNTIMES,
+        },
+      },
+      activation: {
+        supportsGlobalSkillSync: true, supportsGlobalDependencyInstall: id === "gemini",
+        supportsGlobalHooks: true, envKeys: id === "gemini"
+          ? ["META_KIM_GEMINI_HOME", "GEMINI_CLI_HOME", "GEMINI_HOME"] : ["META_KIM_ZCODE_HOME"], defaultHomeDir: prefix,
+      },
+    }];
+  })),
   claude: {
     schemaVersion: 1,
     id: "claude",
@@ -562,8 +594,12 @@ const runtimeHomeSpecs = {
     defaultDir: ".zed",
   },
   gemini: {
-    envKeys: ["META_KIM_GEMINI_HOME", "GEMINI_HOME"],
+    envKeys: ["META_KIM_GEMINI_HOME", "GEMINI_CLI_HOME", "GEMINI_HOME"],
     defaultDir: ".gemini",
+  },
+  zcode: {
+    envKeys: ["META_KIM_ZCODE_HOME"],
+    defaultDir: ".zcode",
   },
   codebuddy: {
     envKeys: ["META_KIM_CODEBUDDY_HOME", "CODEBUDDY_HOME"],
@@ -584,6 +620,22 @@ const runtimeHomeSpecs = {
 };
 
 const runtimeProjectionLayouts = {
+  ...Object.fromEntries(["gemini", "zcode"].map((id) => [id, {
+    project: {
+      agentsDir: [`.${id}`, "agents"],
+      skillsDir: [id === "gemini" ? ".agents" : ".zcode", "skills"],
+      skillRoot: [id === "gemini" ? ".agents" : ".zcode", "skills", "meta-theory"],
+      hooksDir: [`.${id}`, "hooks", "meta-kim"],
+      settingsFile: [`.${id}`, id === "gemini" ? "settings.json" : "config.json"],
+      capabilityIndexDir: [`.${id}`, "capability-index"],
+    },
+    global: {
+      agentsDir: ["agents"], skillsDir: ["skills"], skillRoot: ["skills", "meta-theory"],
+      hooksDir: ["hooks", "meta-kim"],
+      settingsFile: id === "gemini" ? ["settings.json"] : ["cli", "config.json"],
+      capabilityIndexDir: ["capability-index"],
+    },
+  }])),
   claude: {
     project: {
       agentsDir: [".claude", "agents"],
@@ -714,7 +766,7 @@ export function resolveRuntimeHomeInfo(runtimeId) {
     const value = process.env[key];
     if (typeof value === "string" && value.trim()) {
       return {
-        dir: path.resolve(value.trim()),
+        dir: key === "GEMINI_CLI_HOME" ? path.resolve(value.trim(), ".gemini") : path.resolve(value.trim()),
         source: `env:${key}`,
       };
     }

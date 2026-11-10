@@ -4,14 +4,32 @@
   "owner": "meta-conductor",
   "reviewOwner": "meta-prism",
   "verificationOwner": "verify",
-  "prdTaskIds": ["P-085", "P-092"],
+  "prdTaskIds": [
+    "P-085",
+    "P-092"
+  ],
   "status": "productized",
   "currentAsOf": "2026-08-21",
   "purpose": "Make Claude Code and Codex the primary prompt-first full-flow runtimes, keep ZCode, DeepSeek Harness, Qoder CLI, and Trae as opt-in beta compatibility adapters, and preserve OpenClaw and Cursor as compatibility runtimes without allowing lower tiers to overclaim or block a higher tier.",
-  "primaryRuntimeTier": ["claude_code", "codex"],
-  "betaCompatibilityRuntimeTier": ["zcode", "deepseek-harness", "qoder", "trae"],
-  "compatibilityRuntimeTier": ["openclaw", "cursor"],
-  "priorityOrder": ["primary", "beta_compatibility", "compatibility"],
+  "primaryRuntimeTier": [
+    "claude_code",
+    "codex"
+  ],
+  "betaCompatibilityRuntimeTier": [
+    "zcode",
+    "deepseek-harness",
+    "qoder",
+    "trae"
+  ],
+  "compatibilityRuntimeTier": [
+    "openclaw",
+    "cursor"
+  ],
+  "priorityOrder": [
+    "primary",
+    "beta_compatibility",
+    "compatibility"
+  ],
   "primaryRequiredEvidenceKind": "runtime_live_pass",
   "compatibilityAllowedEvidenceKinds": [
     "compatibility_smoke_pass",
@@ -22,10 +40,18 @@
     "packed_structural_adapter",
     "degraded"
   ],
-  "betaCompatibilityAllowedEvidenceKinds": ["packed_structural_adapter"],
+  "betaCompatibilityAllowedEvidenceKinds": [
+    "packed_structural_adapter"
+  ],
   "priorityRules": {
     "sameFrameworkPromptRequiredForPrimary": true,
-    "primaryClosureTasks": ["P-087", "P-088", "P-089", "P-090", "P-091"],
+    "primaryClosureTasks": [
+      "P-087",
+      "P-088",
+      "P-089",
+      "P-090",
+      "P-091"
+    ],
     "primaryBlockers": [
       "missing claude_code runtime_live_pass",
       "missing codex runtime_live_pass",
@@ -45,37 +71,104 @@
   "compatibilityDemotion": {
     "zcode": {
       "tier": "beta_compatibility",
-      "keptEvidence": ["packed_structural_adapter", "plan_only", "blocked_with_reason"],
-      "notAllowedToBlock": ["Claude Code primary release gate", "Codex primary release gate"],
-      "notAllowedClaims": ["formal projection", "native runtime", "live certification", "default sync target"]
+      "keptEvidence": [
+        "packed_structural_adapter",
+        "plan_only",
+        "blocked_with_reason"
+      ],
+      "notAllowedToBlock": [
+        "Claude Code primary release gate",
+        "Codex primary release gate"
+      ],
+      "notAllowedClaims": [
+        "formal projection",
+        "native runtime",
+        "live certification",
+        "default sync target"
+      ]
     },
     "deepseek-harness": {
       "tier": "beta_compatibility",
-      "keptEvidence": ["packed_structural_adapter", "developer_preview", "ACP automation seam", "blocked_with_reason"],
-      "notAllowedToBlock": ["Claude Code primary release gate", "Codex primary release gate"],
-      "notAllowedClaims": ["formal projection", "native runtime", "complete UI", "live certification", "default sync target"]
+      "keptEvidence": [
+        "packed_structural_adapter",
+        "developer_preview",
+        "ACP automation seam",
+        "blocked_with_reason"
+      ],
+      "notAllowedToBlock": [
+        "Claude Code primary release gate",
+        "Codex primary release gate"
+      ],
+      "notAllowedClaims": [
+        "formal projection",
+        "native runtime",
+        "complete UI",
+        "live certification",
+        "default sync target"
+      ]
     },
     "qoder": {
       "tier": "beta_compatibility",
-      "keptEvidence": ["packed_structural_adapter", "official_rules_skills_agents_commands_hooks_mcp", "blocked_with_reason"],
-      "notAllowedToBlock": ["Claude Code primary release gate", "Codex primary release gate"],
-      "notAllowedClaims": ["formal projection", "native runtime", "live certification", "default sync target"]
+      "keptEvidence": [
+        "packed_structural_adapter",
+        "official_rules_skills_agents_commands_hooks_mcp",
+        "blocked_with_reason"
+      ],
+      "notAllowedToBlock": [
+        "Claude Code primary release gate",
+        "Codex primary release gate"
+      ],
+      "notAllowedClaims": [
+        "formal projection",
+        "native runtime",
+        "live certification",
+        "default sync target"
+      ]
     },
     "trae": {
       "tier": "beta_compatibility",
-      "keptEvidence": ["packed_structural_adapter", "official_rules_skills_agents_mcp", "blocked_with_reason"],
-      "notAllowedToBlock": ["Claude Code primary release gate", "Codex primary release gate"],
-      "notAllowedClaims": ["formal projection", "native runtime", "live certification", "default sync target"]
+      "keptEvidence": [
+        "packed_structural_adapter",
+        "official_rules_skills_agents_mcp",
+        "blocked_with_reason"
+      ],
+      "notAllowedToBlock": [
+        "Claude Code primary release gate",
+        "Codex primary release gate"
+      ],
+      "notAllowedClaims": [
+        "formal projection",
+        "native runtime",
+        "live certification",
+        "default sync target"
+      ]
     },
     "openclaw": {
       "tier": "compatibility",
-      "keptEvidence": ["projection", "shard", "smoke", "batch_stability", "blocked_with_reason"],
-      "notAllowedToBlock": ["Claude Code primary release gate", "Codex primary release gate"]
+      "keptEvidence": [
+        "projection",
+        "shard",
+        "smoke",
+        "batch_stability",
+        "blocked_with_reason"
+      ],
+      "notAllowedToBlock": [
+        "Claude Code primary release gate",
+        "Codex primary release gate"
+      ]
     },
     "cursor": {
       "tier": "compatibility",
-      "keptEvidence": ["smoke", "native_harness_blocked", "WSL candidate probe", "remainingAction"],
-      "notAllowedToBlock": ["Claude Code primary release gate", "Codex primary release gate"],
+      "keptEvidence": [
+        "smoke",
+        "native_harness_blocked",
+        "WSL candidate probe",
+        "remainingAction"
+      ],
+      "notAllowedToBlock": [
+        "Claude Code primary release gate",
+        "Codex primary release gate"
+      ],
       "remainingAction": "Install or expose a parseable Cursor Agent CLI before upgrading P-024 to native live pass."
     }
   },
@@ -92,5 +185,9 @@
     "config/contracts/prompt-first-full-flow-stage-contract.json",
     "config/contracts/prompt-first-live-acceptance-contract.json"
   ],
-  "verificationCommand": "npm run meta:prd:runtime-priority:validate"
+  "verificationCommand": "npm run meta:prd:runtime-priority:validate",
+  "projectionSeparation": {
+    "zcode": "The legacy candidate-adapter plan API keeps every no-effect invariant. Separately, config/sync.json and native-runtime-projection.mjs now provide optional native file projection; this is not a promotion of candidate plans or live certification.",
+    "gemini": "Optional formal projection; live acceptance remains independent."
+  }
 }

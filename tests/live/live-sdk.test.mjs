@@ -323,7 +323,12 @@ test("packed publication has an explicit L02/L03/L04 closure and a stable SDK su
   for (const required of PACKAGE_REQUIRED_FILES) assert.ok(packedFiles.has(required), `dry-run package is missing ${required}`);
   assert.equal([...packedFiles].some((filePath) => /(?:^|\/)(?:task_plan|progress|findings)\.md$/u.test(filePath)), false);
   assert.equal([...packedFiles].some((filePath) => /(?:^|\/)\.meta-kim(?:\/|$)/u.test(filePath)), false);
-  assert.equal([...packedFiles].some((filePath) => /ai-native-capability-gap-mvp-prd|prd.*\.md$/iu.test(filePath)), false);
+  for (const filePath of packedFiles) {
+    if (/ai-native-capability-gap-mvp-prd|prd.*\.md$/iu.test(filePath)) {
+      assert.match(filePath, /^canonical\/skills\/[^/]+\/references\//u,
+        "Only published method references may discuss a PRD; private project plans must stay outside the package");
+    }
+  }
 
   const temp = await mkdtemp(path.join(os.tmpdir(), "meta-kim-live-sdk-packed-"));
   try {

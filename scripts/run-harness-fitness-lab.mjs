@@ -93,33 +93,13 @@ This benchmark arm intentionally does not use Meta_Kim governance. Do not invoke
 Complete the requested task directly in this benchmark workspace. Keep changes scoped and run the public tests before finishing.
 `;
 
-const SLIM_GOVERNANCE_TEMPLATE = `# Fitness Lab slim governance scaffold
-
-This is an isolated benchmark workspace. Solve only the requested task and do not invent external requirements.
-
-## Critical
-State the concrete outcome, acceptance, non-goals, and material ambiguity before editing. Ask no quota questions.
-
-## Fetch
-Inspect the starter files and public tests. Identify the minimum relevant local capability and evidence. Do not assume a feature exists because a schema or comment names it.
-
-## Thinking
-Compare at least two viable routes when the task is materially ambiguous or risky. Select the smallest route that meets acceptance and name the rejected weak path.
-
-## Execution
-Make bounded edits, preserve unrelated behavior, and run the public test command.
-
-## Verification
-Run fresh tests after the final edit. Do not claim success from plans, schemas, or intended commands.
-`;
-
-const REVIEWED_GOVERNANCE_TEMPLATE = `${SLIM_GOVERNANCE_TEMPLATE}
-
-${REVIEW_BLOCK}
-
-## Meta-Review
-Check that the standard used for review matches the user outcome and did not reward packet completeness over task quality.
-`;
+// One source scaffold keeps the ablation arms identical except for the
+// nominated bundles. In particular Review always precedes fresh Verification.
+const REVIEWED_GOVERNANCE_TEMPLATE = FULL_GOVERNANCE_TEMPLATE
+  .replace("{{REVIEW_BLOCK}}", REVIEW_BLOCK)
+  .replace(/\n## Evolution\n[\s\S]*$/u, "\n");
+const SLIM_GOVERNANCE_TEMPLATE = REVIEWED_GOVERNANCE_TEMPLATE
+  .replace(/\n## Review\n[\s\S]*?(?=\n## Verification)/u, "\n");
 
 function nowIso() {
   return new Date().toISOString();
@@ -848,10 +828,11 @@ function failureTypeFor(providerResult, hiddenResult, telemetry) {
   return null;
 }
 
-async function executeTrial({ runRoot, workspaceRoot, planItem, task, provider, options, contractDigest, scenarioDigest }) {
+async function readExistingTrial({ runRoot, planItem, provider, contractDigest, scenarioDigest }) {
   const trialsRoot = resolveChildPath(runRoot, "trials", "trial state directory");
   const trialDir = resolveChildPath(trialsRoot, planItem.trialId, "trial state id");
   const resultPath = path.join(trialDir, "result.json");
+  const instructionDigest = sha256(governanceInstructionsForGroup(planItem.groupId));
   if (existsSync(resultPath)) {
     const existing = await readJson(resultPath);
     const existingProviderId =
@@ -866,6 +847,7 @@ async function executeTrial({ runRoot, workspaceRoot, planItem, task, provider, 
     if (
       existing.contractDigest !== contractDigest ||
       existing.scenarioDigest !== scenarioDigest ||
+      existing.instructionDigest !== instructionDigest ||
       existing.trialId !== planItem.trialId ||
       existing.seed !== planItem.seed ||
       existingProviderId !== provider
@@ -874,6 +856,16 @@ async function executeTrial({ runRoot, workspaceRoot, planItem, task, provider, 
     }
     return existing;
   }
+  return null;
+}
+
+async function executeTrial({ runRoot, workspaceRoot, planItem, task, provider, options, contractDigest, scenarioDigest }) {
+  const trialsRoot = resolveChildPath(runRoot, "trials", "trial state directory");
+  const trialDir = resolveChildPath(trialsRoot, planItem.trialId, "trial state id");
+  const resultPath = path.join(trialDir, "result.json");
+  const instructionDigest = sha256(governanceInstructionsForGroup(planItem.groupId));
+  const existing = await readExistingTrial({ runRoot, planItem, provider, contractDigest, scenarioDigest });
+  if (existing) return existing;
   const workspace = resolveChildPath(workspaceRoot, planItem.trialId, "trial workspace id");
   await initializeWorkspace(workspace, task, planItem.groupId);
   const startedAt = nowIso();
@@ -904,6 +896,7 @@ async function executeTrial({ runRoot, workspaceRoot, planItem, task, provider, 
     countsTowardProductEvidence: provider === "codex" && telemetry.eventCount > 0,
     contractDigest,
     scenarioDigest,
+    instructionDigest,
     startedAt,
     completedAt: nowIso(),
     environmentOutcomeSuccess: providerResult.ok && hiddenResult.ok,
@@ -1438,8 +1431,7 @@ export async function runFitnessLab(options) {
   }
   const contractDigest = sha256(contractDefinitionSource(contractRaw, contract));
   const scenarioDigest = sha256(scenarioRaw);
-  await fs.mkdir(runRoot, { recursive: true });
-  await writeJsonAtomic(path.join(runRoot, "plan.json"), {
+  const planned = {
     schemaVersion: "harness-fitness-plan-v0.1",
     runId,
     prdTaskId: contract.prdTaskId,
@@ -1447,7 +1439,10 @@ export async function runFitnessLab(options) {
     provider: options.provider,
     contractDigest,
     scenarioDigest,
+    instructionDigests: Object.fromEntries([...new Set(plan.map(item => item.groupId))]
+      .map(group => [group, sha256(governanceInstructionsForGroup(group))])),
     seed: options.seed,
+    executionConfiguration: { model: options.model ?? null, timeoutMs: options.timeoutMs ?? null },
     host: { platform: process.platform, arch: process.arch, node: process.version, cpus: os.cpus().length },
     workspaceIsolation: {
       rootOutsideRepository: !path.resolve(workspaceRoot).startsWith(`${REPO_ROOT}${path.sep}`),
@@ -1455,7 +1450,21 @@ export async function runFitnessLab(options) {
     },
     expectedFullTrialCount: contract.experiment.expectedLiveTrialCount,
     plan,
-  });
+  };
+  const planPath = path.join(runRoot, "plan.json");
+  if (existsSync(planPath)) {
+    const priorPlan = await readJson(planPath);
+    for (const key of ["runId", "prdTaskId", "experimentId", "provider", "contractDigest", "scenarioDigest", "instructionDigests", "seed", "executionConfiguration", "plan"]) {
+      if (JSON.stringify(priorPlan[key]) !== JSON.stringify(planned[key])) throw new Error("Cannot resume " + runId + ": trial identity or definition changed (" + key + ")");
+    }
+  }
+  // Reject every incompatible prior result before modifying the plan or starting
+  // an earlier missing trial. Failed resume must preserve its original evidence.
+  for (const planItem of plan) await readExistingTrial({ runRoot, planItem, provider: options.provider, contractDigest, scenarioDigest });
+  if (!existsSync(planPath)) {
+    await fs.mkdir(runRoot, { recursive: true });
+    await writeJsonAtomic(planPath, planned);
+  }
   const taskById = new Map(scenarioPack.tasks.map((task) => [task.id, task]));
   const results = [];
   for (let index = 0; index < plan.length; index += 1) {

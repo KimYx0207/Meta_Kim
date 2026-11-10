@@ -4,7 +4,7 @@ Claude Code is one runtime projection of Meta_Kim. It is important, but it is no
 
 ## Fast Read
 
-If you only keep six rules in mind:
+Keep these rules in mind:
 
 - `meta-warden` is the public front door; the other meta agents are backstage specialists.
 - `canonical/agents/`, `canonical/skills/meta-theory/`, `canonical/runtime-assets/`, `config/contracts/`, and `config/capability-index/` are the durable sources of truth.
@@ -12,6 +12,7 @@ If you only keep six rules in mind:
 - When `meta-theory` is active, the main Claude thread dispatches; it does not execute complex work directly.
 - Critical, Fetch, Thinking, and Review must make the run executable before mutation; hooks are final safeguards, not the primary design path.
 - Capability-first dispatch is **mechanically enforced** in Claude Code via the `enforce-agent-dispatch.mjs` PreToolUse hook (deny payload). Codex and Cursor v1.7+ use the same projected hook; OpenClaw remains declarative. The current matrix lives in `AGENTS.md` under Mechanical Enforcement.
+- Gemini CLI and ZCode have optional native projections of the same canonical sources. Their installation, update and structural checks are implemented; live host acceptance remains separately unverified.
 - User-visible run-scoped worker labels may be coarse English role-family names such as `frontend`, `backend`, or `test`, but Meta_Kim does not project those execution labels as durable agents. Durable governance files stay with the nine `meta-*` owners.
 
 ## What This Repository Is
@@ -20,7 +21,7 @@ Meta_Kim is not Claude-only logic.
 
 It is:
 
-**a cross-runtime intent-amplification system projected into Claude Code, Codex, OpenClaw, and Cursor, with `canonical/` as the neutral source layer.**
+**a cross-runtime intent-amplification system projected into Claude Code, Codex, OpenClaw, Cursor, Gemini CLI, and ZCode, with `canonical/` as the neutral source layer.**
 
 In Meta_Kim, `meta` means the smallest governable unit that supports intent amplification. A valid meta unit:
 
@@ -67,10 +68,17 @@ Treat these as generated or runtime-local unless the task explicitly targets Cla
 Other runtime mirrors are also projections of the same canonical layer:
 
 - `.codex/`
+- `.agents/skills/` shared by Codex and Gemini CLI
 - `.cursor/`
+- `.gemini/` native agents, settings and adapter; project skills use `.agents/skills/`
+- `.zcode/` native agents, skills and project MCP; current ZCode ignores project hooks
 - `openclaw/`
 
 When trees disagree, update the canonical source and run sync. Do not maintain parallel prompt forks.
+
+Open-source boundary: `.claude/`, `.codex/`, `.agents/`, `.cursor/`, `.gemini/`, `.zcode/`, `openclaw/`, `.mcp.json`, and `codex/` are generated/local outputs, excluded from GitHub source and package files. Canonical agents, skills and runtime assets remain the distributable source.
+
+Gemini settings use `.gemini/settings.json` / `~/.gemini/settings.json` with native hooks and `mcpServers`. ZCode project MCP uses `.zcode/config.json`; global MCP and opt-in hooks use `~/.zcode/cli/config.json` with `mcp.servers` and `hooks.events`. Native hooks are translated by `native-runtime-adapter.mjs`; never copy Claude hook registrations as ZCode-native configuration. Preserve user settings and account/provider data. `AGENTS.md` and the `runtime-gemini.md` / `runtime-zcode.md` references contain the exact paths, ownership and host acceptance boundaries.
 
 ## Install Scope And Runtime Sedimentation
 
@@ -81,6 +89,8 @@ Install scope and governed runtime sedimentation are separate contracts:
 - Under `project_bootstrap_merge_delta`, bootstrap-manifest-owned generated projections are backed up inside the transaction and replaced with the current package version; shared JSON and managed text blocks merge instead. Unknown user files and `runtime_sedimented_project_copy` capabilities are outside that replacement boundary and remain preserved.
 - If a governed run proves a current-project Agent, Skill, or Command must be created or iterated, write or copy it into the runtime-native project directory. Record that asset as `runtime_sedimented_project_copy`; later global dependency or install projection updates must preserve it.
 - A global search hit that already fits and needs no iteration stays global: use `use_global_directly` and do not copy it into the project. Only project-specific iteration uses `copy_to_project_for_modification`; a real project gap uses `create_project_local_capability`.
+
+For Gemini CLI, `global_only` retains at most an inert project adapter, removing owned project configuration and durable projections. ZCode adds no project hook registration. Both reuse the existing ownership journal, immutable execution package and transactional bootstrap lifecycle; they do not create a second installer or stage runner. An enrolled native project keeps its shared execution package alive during global uninstall.
 
 The install manifest records install-generated files as `install_projection`, retains records for runtimes not selected during the current update, and stores exact hash plus size. The separate `.meta-kim/state/default/project-capabilities.json` manifest owns `runtime_sedimented_project_copy` / `preserve_project_copy` Agent, Skill, and Command paths. Project bootstrap plan, write, stale cleanup, and explicit cleanup all read that ownership before mutation. Unknown and runtime-sedimented files are preserved; drift in bootstrap-manifest-owned generated projections follows the configured merge/delta replacement-and-backup policy. Manifest recording or flush failure cannot be presented as successful install/update.
 
@@ -163,7 +173,7 @@ Behavior:
 - **Override env var**: `META_KIM_CAPABILITY_GATE`. Values: `progressive`, `block`, `warn` (stderr warning only), `off` (gate disabled). Default: `progressive` (warn for the grace window, then block); `block` restores immediate deny. Use `warn` or `off` only for debugging — production runs should keep `progressive` (or `block` for strict environments).
 - **Other env vars**: `META_KIM_HOOK_RUNTIME` (one of `claude` / `codex` / `cursor`) selects the deny payload schema when the same hook is projected to a different runtime.
 
-The same hook script is now projected to Codex (`.codex/hooks/`) and Cursor v1.7+ (`.cursor/hooks/`) via `sync-runtimes.mjs`. `AGENTS.md` is the current source for the four-runtime mechanical-deny matrix and OpenClaw's declarative-only gap.
+The same hook script is now projected to Codex (`.codex/hooks/`) and Cursor v1.7+ (`.cursor/hooks/`) via `sync-runtimes.mjs`. `AGENTS.md` is the current source for the cross-runtime mechanical-deny matrix, OpenClaw's declarative-only gap, and Gemini CLI/ZCode adapter boundaries. Native projection tests do not prove real host invocation or promote `projection_implemented` to `live_verified`.
 
 Hook enforcement is a final safety boundary after Critical, Fetch, Thinking, and Review have done their work. Repeated hook blocks mean the upstream design or packet state is incomplete; return to the earliest broken stage instead of retrying the same action.
 

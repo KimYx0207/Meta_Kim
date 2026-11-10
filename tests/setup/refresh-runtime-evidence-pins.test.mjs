@@ -349,7 +349,7 @@ test("reverse source maintenance prepares pins only after exact approved canonic
   const canonical = path.join(runtime.repoRoot, "canonical/agents/meta-warden.md");
   const canonicalBefore = readFileSync(canonical, "utf8");
   const projected = path.join(runtime.repoRoot, ".claude/agents/meta-warden.md");
-  appendFileSync(projected, "\nReverse lifecycle fixture note.\n");
+  appendFileSync(projected, "\n## Boundary\n\nReverse lifecycle fixture note. No execution or approval authority is added.\n");
   appendFileSync(path.join(runtime.repoRoot, "AGENTS.md"), "\nPending reverse preparation fixture.\n");
   const candidatePath = path.join(runtime.root, "reverse-candidate.json");
   const args = ["scripts/sync-runtimes.mjs", "--refresh-source-pins", "--targets", "claude", "--reverse", "--candidate-output", candidatePath];
@@ -367,7 +367,15 @@ test("reverse source maintenance prepares pins only after exact approved canonic
     approvedAt: new Date().toISOString(),
     diffSummary: "Apply one exact disposable lifecycle fixture note.",
     rollbackPlan: "Restore the exact prior fixture bytes.",
-    riskReview: { status: "accepted", owner: "meta-sentinel" },
+    riskReview: {
+      status: "accepted", owner: "meta-sentinel",
+      qualityChecks: Object.fromEntries(Object.entries(candidate.approvalPacketTemplate.riskReview.qualityChecks)
+        .map(([section, checks]) => [section, Object.fromEntries(Object.keys(checks).map((key) => [key, {
+          verdict: "pass",
+          reason: `Disposable ${section}.${key} assessment: one bounded documentation note, unchanged execution authority, exact prior bytes available for rollback.`,
+          evidenceRefs: [`fixture-candidate:${candidate.mutationCandidates[0].candidateDigest}`],
+        }]))])),
+    },
   };
   const approvalPath = path.join(runtime.root, "reverse-approval.json");
   const wrong = structuredClone(approval);

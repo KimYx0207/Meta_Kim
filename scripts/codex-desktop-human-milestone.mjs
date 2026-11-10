@@ -9,6 +9,8 @@ import { openDurableRunRepository } from "../src/application/run/open-durable-ru
 import { createNativeHostAnswerRepository } from "../src/data/repositories/native-host-answer-repository.mjs";
 import { createCodexDesktopDecisionHostAdapter } from "../src/adapters/codex/desktop-decision-host-adapter.mjs";
 import { createDesktopHumanMilestoneConsumer, createPlanChallengeQuestion, consumePlanChallengeChoice, collectPlanChallengeMaterials } from "./governed-execution/plan-challenge-host-continuation.mjs";
+import { validateStageDagPacket } from "./governed-execution/stage-dag.mjs";
+import { dependentNodeClosure } from "../src/domain/scheduling/human-gate-progress.mjs";
 
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === "object"
   ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
@@ -105,18 +107,36 @@ export async function openCodexDesktopPlanChallengeHost({ projectRoot, artifactP
  * result. The host must retain its original tool call and return privately.
  */
 export async function openCodexDesktopHumanMilestoneHost({ projectRoot, exchangeRoot, profileRoot, kernel,
-  readThread, authorize, hostConnectionRef }) {
+  readThread, authorize, hostConnectionRef, stageDagPacket = null }) {
   const root = await fs.realpath(projectRoot);
   const exchangeRelative = path.relative(root, path.resolve(exchangeRoot));
   if (!exchangeRelative.startsWith(`.meta-kim${path.sep}work${path.sep}`)) throw new Error("Desktop exchanges must remain in the project's owned .meta-kim/work directory");
   inspectTrustedPath(root, exchangeRelative, { allowMissing: true });
   if (typeof authorize !== "function") throw new TypeError("Current host scope and pause authority port is required");
+  const graph = stageDagPacket ? structuredClone(validateStageDagPacket(stageDagPacket)) : null;
   const assertCurrent = async ({ binding, decision }) => {
     if (binding.runtime !== "codex" || path.resolve(binding.projectRoot) !== root) throw new Error("Desktop milestone project/runtime mismatch");
     const admission = await authorize({ runId: binding.runId, nodeId: binding.nodeId, decisionId: decision.decisionId, bindingDigest: binding.bindingDigest });
     if (admission.status !== "ready") throw new Error(`Current host holds this milestone: ${admission.reason}`);
-    const resume = kernel.resumeRun({ runId: binding.runId, taskFingerprint: binding.taskFingerprint, graphDigest: binding.graphDigest });
-    if (resume.status !== "active" || resume.blockingEffects.length || resume.activeClaims.length) throw new Error("Current run has a terminal state, active claim or unresolved effect");
+    const resume = kernel.resumeRun({ runId: binding.runId, taskFingerprint: binding.taskFingerprint, graphDigest: binding.graphDigest,
+      includeClaimDefinitions: true });
+    if (resume.status !== "active" || resume.blockingEffects.length) throw new Error("Current run has a terminal state or unresolved effect");
+    if (resume.activeClaims.length) {
+      if (!graph || graph.graphDigest !== binding.graphDigest || !graph.nodes.some(node => node.nodeId === binding.nodeId)) {
+        throw new Error("Active peer claims require the exact current graph for independent human review");
+      }
+      const byId = new Map(graph.nodes.map(node => [node.nodeId, node]));
+      const related = new Set([binding.nodeId, ...dependentNodeClosure(graph.nodes, binding.nodeId)]);
+      const ancestors = [binding.nodeId];
+      for (let index = 0; index < ancestors.length; index++) for (const dependency of byId.get(ancestors[index]).dependsOn) {
+        if (!related.has(dependency)) { related.add(dependency); ancestors.push(dependency); }
+      }
+      if (resume.activeClaims.some(claim => !byId.has(claim.nodeId) || related.has(claim.nodeId) ||
+          !["read_only", "read_only_worker", "read_only_support"].includes(byId.get(claim.nodeId).effectClass) ||
+          claim.nodeDefinitionHash !== bytesDigest(`${graph.graphDigest}:${claim.nodeId}`))) {
+        throw new Error("Related, unknown or mutating active claims hold this human milestone");
+      }
+    }
     const events = kernel.getEvents(binding.runId);
     const current = events.filter((event) => event.eventType === "HumanMilestoneRequested" &&
       event.payload.binding.nodeId === binding.nodeId && event.payload.binding.milestoneId === binding.milestoneId).at(-1);
@@ -238,7 +258,7 @@ export async function runCodexDesktopHumanMilestoneCli(args) {
   try {
     const request = kernel.getEvents(input.runId).find((event) => event.eventType === "HumanMilestoneRequested" && event.payload.binding.bindingDigest === input.bindingDigest);
     if (!request) throw new Error("Use the existing run's current issued milestone, never a local approved flag");
-    const host = await openCodexDesktopHumanMilestoneHost({ projectRoot: root, kernel,
+    const host = await openCodexDesktopHumanMilestoneHost({ projectRoot: root, kernel, stageDagPacket: input.stageDagPacket ?? null,
       exchangeRoot: owned(values["exchange-root"], true), profileRoot: path.resolve(root, values["profile-root"]), hostConnectionRef: values["host-connection-ref"],
       authorize: async ({ bindingDigest }) => values.paused ? { status: "waiting", reason: "explicit_user_pause" }
         : values["host-binding-digest"] === bindingDigest ? { status: "ready" } : { status: "blocked", reason: "current_host_scope_binding_required" },

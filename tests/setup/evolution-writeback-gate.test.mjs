@@ -9,6 +9,7 @@ import {
   processEvolutionPacket,
   validateFiveCriteria,
   validatePrinStPrinciples,
+  checkRecursiveRisk,
 } from "../../scripts/evolution-writeback-gate.mjs";
 import {
   assertReverseSyncSourcePrestate,
@@ -37,7 +38,13 @@ describe("evolution writeback gate", () => {
       mutationBindings: [{ ...binding }],
       diffSummary: "Review one exact canonical reverse-sync mutation.",
       rollbackPlan: "Restore the exact prior bytes bound by expectedSourceDigest.",
-      riskReview: { status: "accepted", owner: "meta-sentinel" },
+      riskReview: { status: "accepted", owner: "meta-sentinel", qualityChecks: Object.fromEntries(Object.entries({
+        fiveCriteria: ["independent", "smallEnough", "clearBoundaries", "replaceable", "reusable"],
+        prinSt: ["prinSt01", "prinSt02", "prinSt03", "prinSt04", "prinSt05"],
+        recursiveRisk: ["circularDependency", "transitiveOverflow", "thresholdGaming", "identityDrift"],
+      }).map(([section, names]) => [section, Object.fromEntries(names.map((name) => [name, {
+        verdict: "pass", reason: "Synthetic reviewer assessment for this exact test candidate", evidenceRefs: ["fixture:review-evidence"],
+      }]))])) },
     };
   }
 
@@ -54,10 +61,14 @@ describe("evolution writeback gate", () => {
     const prin = await validatePrinStPrinciples(packet);
     const decision = await gateDecision(packet);
 
-    assert.equal(five.all, true);
-    assert.equal(prin.all, true);
+    assert.equal(five.all, false);
+    assert.equal(prin.all, false);
+    assert.equal(five.replaceable.status, "not_evaluated");
+    assert.equal(five.replaceable.pass, null);
+    assert.equal(prin.prinSt03.status, "not_evaluated");
     assert.equal(decision.decision, "candidate_only");
-    assert.equal(decision.riskLevel, "low");
+    assert.equal(decision.riskLevel, "medium");
+    assert.equal(decision.qualityStatus, "not_evaluated");
     assert.equal(decision.approvalValidation.status, "approval_required");
   });
 
@@ -76,6 +87,9 @@ describe("evolution writeback gate", () => {
 
     assert.equal(decision.decision, "approve");
     assert.equal(decision.approvalValidation.ok, true);
+    assert.equal(decision.fiveCriteria.replaceable.evidenceLevel, "reviewer_reported");
+    assert.equal(decision.fiveCriteria.replaceable.evidenceContentVerified, false);
+    assert.equal(decision.qualityStatus, "reviewed");
   });
 
   test("binds approvals to the calling writeback scope", async () => {
@@ -114,6 +128,7 @@ describe("evolution writeback gate", () => {
     assert.deepEqual(artifact.mutationCandidates, [mutation]);
     assert.equal(artifact.approvalPacketTemplate.scope, "canonical_reverse_sync");
     assert.deepEqual(artifact.approvalPacketTemplate.mutationBindings, [mutation]);
+    assert.equal(artifact.approvalPacketTemplate.riskReview.qualityChecks.fiveCriteria.replaceable.verdict, "not_evaluated");
     assert.equal(await assertReverseSyncSourcePrestate(signal, mutation), "before\n");
     await fs.writeFile(canonicalPath, "concurrent user edit\n", "utf8");
     await assert.rejects(
@@ -239,5 +254,73 @@ describe("evolution writeback gate", () => {
 
     assert.equal(decision.decision, "escalate");
     assert.equal(decision.prinSt.prinSt02.pass, false);
+  });
+
+  test("zero signals and absent semantic review never report quality or risk checks passed", async () => {
+    const packet = { writebackDecision: "writeback", decisionReason: "audit", writebacks: ["meta-warden"],
+      mutationCandidates: [candidate], signalSummary: { totalSignals: 0 } };
+    const decision = await gateDecision(packet, { approvalPacket: approvalFor() });
+    assert.equal(decision.fiveCriteria.reusable.pass, false);
+    assert.equal(decision.decision, "escalate");
+    const unassessed = await checkRecursiveRisk(packet);
+    for (const name of ["circularDependency", "transitiveOverflow", "identityDrift", "thresholdGaming"]) {
+      assert.equal(unassessed[name].detected, null);
+      assert.equal(unassessed[name].status, "not_evaluated");
+    }
+    assert.equal(unassessed.fullyEvaluated, false);
+  });
+
+  test("approval without quality evidence remains a preservable candidate and stale approval cannot import review", async () => {
+    const packet = { writebackDecision: "writeback", decisionReason: "audit", writebacks: ["meta-warden"],
+      mutationCandidates: [candidate], signalSummary: { totalSignals: 1 } };
+    const missing = approvalFor();
+    delete missing.riskReview.qualityChecks;
+    const absent = await processEvolutionPacket(packet, { approvalPacket: missing });
+    assert.equal(absent.approvalValidation.ok, true);
+    assert.equal(absent.decision, "candidate_only");
+    assert.equal(absent.canonicalWrites, 0);
+    assert.equal(absent.approved, false);
+    const incomplete = approvalFor();
+    incomplete.riskReview.qualityChecks.fiveCriteria.replaceable.evidenceRefs = [];
+    assert.equal((await gateDecision(packet, { approvalPacket: incomplete })).decision, "candidate_only");
+    const stale = approvalFor({ ...candidate, candidateDigest: `sha256:${"e".repeat(64)}` });
+    const rejected = await gateDecision(packet, { approvalPacket: stale });
+    assert.equal(rejected.approvalValidation.ok, false);
+    assert.equal(rejected.fiveCriteria.replaceable.status, "not_evaluated");
+  });
+
+  test("no-writeback cannot hide mutation candidates and canonical-path self evolution is blocked", async () => {
+    const hidden = await gateDecision({ writebackDecision: "none-with-reason", decisionReason: "none", writebacks: [],
+      mutationCandidates: [candidate] });
+    assert.equal(hidden.decision, "reject");
+    const emptyOverride = await gateDecision({ writebackDecision: "none-with-reason", decisionReason: "none", writebacks: [],
+      mutationCandidates: [candidate] }, { mutationCandidates: [] });
+    assert.equal(emptyOverride.decision, "reject", "An empty option cannot erase a declared candidate");
+    const malformed = await gateDecision({ writebackDecision: "none-with-reason", decisionReason: "none", writebacks: [],
+      mutationCandidates: { ...candidate } });
+    assert.equal(malformed.decision, "reject");
+    const self = await gateDecision({ writebackDecision: "writeback", decisionReason: "self", writebacks: ["canonical/agents/meta-chrysalis.md"] });
+    assert.equal(self.decision, "reject");
+    assert.equal(self.recursiveRisk.selfEvolution.detected, true);
+    const actualSelf = { ...candidate, targetRef: "canonical/agents/META-CHRYSALIS.MD" };
+    const mislabeled = await gateDecision({ writebackDecision: "writeback", decisionReason: "mislabeled candidate", writebacks: ["meta-warden"],
+      mutationCandidates: [actualSelf], signalSummary: { totalSignals: 1 } }, { approvalPacket: approvalFor(actualSelf) });
+    assert.equal(mislabeled.decision, "reject", "The hard recursive protection reads actual mutation targets, not just display labels");
+  });
+
+  test("reviewed recursive risks block or merge without authorizing canonical writes", async () => {
+    const packet = { writebackDecision: "writeback", decisionReason: "audit", writebacks: ["meta-warden"],
+      mutationCandidates: [candidate], signalSummary: { totalSignals: 1 } };
+    for (const name of ["circularDependency", "transitiveOverflow", "identityDrift"]) {
+      const approval = approvalFor();
+      approval.riskReview.qualityChecks.recursiveRisk[name].verdict = "fail";
+      assert.equal((await gateDecision(packet, { approvalPacket: approval })).decision, "reject");
+    }
+    const merge = approvalFor();
+    merge.riskReview.qualityChecks.recursiveRisk.thresholdGaming.verdict = "fail";
+    const result = await processEvolutionPacket(packet, { approvalPacket: merge });
+    assert.equal(result.decision, "merge");
+    assert.equal(result.approved, false);
+    assert.equal(result.canonicalWrites, 0);
   });
 });

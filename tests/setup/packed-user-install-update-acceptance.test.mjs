@@ -654,11 +654,11 @@ test("portable runtime global update receives its own policy-scoped extended tim
 
   assert.deepEqual(
     [...PACKED_USER_TARGETS].sort(),
-    ["claude", "codex", "cursor", "openclaw"].sort(),
+    ["claude", "codex", "cursor", "gemini", "openclaw", "zcode"].sort(),
   );
   assert.ok(
     portablePreparation.includes("const runtimeTargetIds = [...PACKED_USER_TARGETS]"),
-    "portable preparation must continue covering all four declared runtimes",
+    "portable preparation must continue covering all six declared runtimes",
   );
   assert.ok(portablePreparation.includes('META_KIM_WITH_GLOBAL_HOOKS: "1"'));
   assert.ok(portablePreparation.includes('"--with-global-hooks"'));

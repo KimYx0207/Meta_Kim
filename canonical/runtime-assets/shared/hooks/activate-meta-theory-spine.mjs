@@ -65,7 +65,7 @@ function sourceRuntimeFromPayload() {
     argumentValue("--runtime") || process.env.META_KIM_HOOK_RUNTIME || payload?.runtime || "",
   ).trim().toLowerCase();
   const runtime = candidate === "claude-code" ? "claude" : candidate;
-  return ["claude", "codex", "cursor", "openclaw"].includes(runtime) ? runtime : null;
+  return ["claude", "codex", "cursor", "openclaw", "gemini", "zcode"].includes(runtime) ? runtime : null;
 }
 
 function hookEventName() {

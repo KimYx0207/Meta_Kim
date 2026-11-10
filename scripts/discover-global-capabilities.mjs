@@ -32,6 +32,7 @@ import {
   readManifest,
 } from "./install-manifest.mjs";
 import { sanitizeCapabilityPublicationText } from "./capability-publication-sanitizer.mjs";
+import { discoverOptionalEngines, optionalEngineCommand } from "../src/infrastructure/capabilities/optional-engine-discovery.mjs";
 import {
   isProtectedProjectCapabilityPath,
   loadProtectedProjectCapabilityPaths,
@@ -186,6 +187,26 @@ export async function checkCanonicalCapabilityIndex(
 // ========== 平台定义 ==========
 
 const PLATFORMS = {
+  ...Object.fromEntries(["gemini", "zcode"].map((id) => [id, {
+    name: id === "gemini" ? "Gemini CLI" : "ZCode",
+    baseDir: () => resolveRuntimeHomeDir(id),
+    scanners: {
+      agents: async (baseDir) => scanMarkdownFiles(path.join(baseDir, "agents")),
+      skills: async (baseDir) => {
+        const native = await scanSkillFiles(path.join(baseDir, "skills"));
+        if (id !== "gemini") return native;
+        const shared = await scanSkillFiles(path.join(path.dirname(baseDir), ".agents", "skills"));
+        const names = new Set(shared.map((entry) => entry.id));
+        return mergeCapabilityLists(shared, native.filter((entry) => !names.has(entry.id)));
+      },
+      hooks: async (baseDir) => mergeCapabilityLists(
+        await scanHookFiles(path.join(baseDir, "hooks")),
+        await scanConfigFile(path.join(baseDir, id === "gemini" ? "settings.json" : "cli/config.json"), { id: `${id}-native-config`, providerKind: "runtime-settings" }),
+      ),
+      mcpServers: async (baseDir) => scanMcpConfig(path.join(baseDir, id === "gemini" ? "settings.json" : "cli/config.json")).then((result) => result.servers),
+      mcpTools: async (baseDir) => scanMcpConfig(path.join(baseDir, id === "gemini" ? "settings.json" : "cli/config.json")).then((result) => result.tools),
+    },
+  }])),
   claudeCode: {
     name: "Claude Code",
     baseDir: () => resolveRuntimeHomeDir("claude"),
@@ -289,6 +310,8 @@ const TARGET_ALIASES = {
   codex: "codex",
   openclaw: "openclaw",
   cursor: "cursor",
+  gemini: "gemini",
+  zcode: "zcode",
 };
 
 const SOURCE_PRIORITY = Object.freeze({
@@ -623,6 +646,11 @@ const PUBLISHED_METADATA_FIELDS = new Set([
   "args",
   "envKeys",
   "permissionStatus",
+  "capabilityType",
+  "interfaces",
+  "observationKind",
+  "invocationState",
+  "liveVerified",
   "toolCount",
   "serverId",
   "validCustomAgentDefinition",
@@ -770,6 +798,7 @@ function publishedCapabilityRecord(capability, sourceFields) {
     hookEvent: capability.hookEvent,
     layer: capability.layer,
     executionBlock: capability.executionBlock,
+    routeEligible: capability.routeEligible,
     inventoryId: capability.inventoryId,
     nativeAgentName: capability.nativeAgentName,
     validCustomAgentDefinition: capability.validCustomAgentDefinition,
@@ -1273,7 +1302,7 @@ async function scanMcpConfig(configPath) {
     return { servers, tools };
   }
 
-  for (const [serverId, serverConfig] of Object.entries(config.mcpServers || {})) {
+  for (const [serverId, serverConfig] of Object.entries(config.mcpServers || config.mcp?.servers || {})) {
     const command = serverConfig?.command || "";
     const args = Array.isArray(serverConfig?.args) ? serverConfig.args : [];
     const env = serverConfig?.env && typeof serverConfig.env === "object"
@@ -1724,6 +1753,10 @@ export async function scanPlatform(platformId, platform = PLATFORMS[platformId])
     }
   }
 
+  const dependencies = await readJsonIfExists(path.join(repoRoot, "config/capability-index/dependency-project-registry.json"));
+  const engines = await discoverOptionalEngines({ projects: dependencies?.projects ?? [] });
+  result.capabilities.commands.push(...engines.filter((entry) => entry.available)
+    .map((entry) => optionalEngineCommand(entry, platformId, platform.name)));
   return result;
 }
 
@@ -2207,7 +2240,7 @@ export async function buildGlobalCapabilityInventory(
         "source_class_project_personal_shared_legacy_then_validity_then_source_ref",
       exactDuplicate,
       ambiguous,
-      routeEligible: !ambiguous && winner.sourceValid !== false,
+      routeEligible: !ambiguous && winner.sourceValid !== false && winner.routeEligible !== false,
     };
 
     for (const candidate of candidates) {

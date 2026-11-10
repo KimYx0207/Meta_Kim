@@ -520,29 +520,29 @@ function validateGraphContract(graphContract, results = []) {
   };
 }
 
-async function buildGovernedExecutionEvidence() {
+async function buildGovernedExecutionEvidence({ task, stateDir }) {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-governed-product-"));
   try {
     const smokeRun = await runMetaTheoryGovernedExecution({
-      task: [
+      task: task ?? [
         "同一套 PRD review standard 需要 skill。",
         "长期 test coverage owner 需要 agent。",
         "release summary JSON 需要脚本。",
         "内部知识库需要 MCP provider 边界。",
       ].join("\n"),
-      runId: "complete-product-governed-smoke",
-      stateDir: path.join(tempDir, "smoke"),
+      stateDir: path.join(stateDir, "smoke"),
       dbPath: path.join(tempDir, "smoke.sqlite"),
     });
+    if (smokeRun.artifactKind === "host_preparation") return smokeRun;
     // Keep the original underspecified request as a planning-boundary case.
     // A separate explicit task proves decomposition without inventing a design
     // or treating a larger worker count as user-goal completion.
     const boundedRun = await runMetaTheoryGovernedExecution({
       task: "Run meta-theory. In parallel inspect package.json; review AGENTS.md; read README.md; audit config/contracts/workflow-contract.json.",
-      runId: "complete-product-bounded-planning",
-      stateDir: path.join(tempDir, "bounded"),
+      stateDir: path.join(stateDir, "bounded"),
       dbPath: path.join(tempDir, "bounded.sqlite"),
     });
+    if (boundedRun.artifactKind === "host_preparation") return boundedRun;
     const inventory = smokeRun.sourceArtifacts.orchestrationReport.fetchEvidence.capabilityInventory;
     const requirementsExploration = {
       discoveredSlots: [...new Set(inventory.map((item) => item.slot))],
@@ -561,15 +561,14 @@ async function buildGovernedExecutionEvidence() {
     };
     const approvedCandidate = await runMetaTheoryGovernedExecution({
       task: "同一套 PRD review standard 需要 skill。",
-      runId: "complete-product-warden-candidate-proof",
-      stateDir: path.join(tempDir, "approval-candidate"),
+      stateDir: path.join(stateDir, "approval-candidate"),
       dbPath: path.join(tempDir, "approval-candidate.sqlite"),
       canonicalRoot: path.join(tempDir, "canonical"),
     });
+    if (approvedCandidate.artifactKind === "host_preparation") return approvedCandidate;
     const approvedRun = await runMetaTheoryGovernedExecution({
       task: "同一套 PRD review standard 需要 skill。",
-      runId: "complete-product-warden-approved-proof",
-      stateDir: path.join(tempDir, "approved"),
+      stateDir: path.join(stateDir, "approved"),
       dbPath: path.join(tempDir, "approved.sqlite"),
       canonicalRoot: path.join(tempDir, "canonical"),
       approvalPacket: {
@@ -585,6 +584,7 @@ async function buildGovernedExecutionEvidence() {
       },
       applyWriteback: true,
     });
+    if (approvedRun.artifactKind === "host_preparation") return approvedRun;
     const structuralPass =
       ["pass", "partial"].includes(smokeRun.defaultRuntimePath.status) &&
       smokeRun.runtimeProjectionEvidence.status === "pass" &&
@@ -605,6 +605,28 @@ async function buildGovernedExecutionEvidence() {
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
   }
+}
+
+/** Keep the runner's pending identity and current host action as the authority. */
+export async function writeGovernedPreparationReport(preparation, { jsonPath, markdownPath, consumer }) {
+  if (preparation?.artifactKind !== "host_preparation") {
+    throw new Error("A host preparation result is required for a pending report");
+  }
+  const report = {
+    ...preparation,
+    nextAction: preparation.hostInvocationRequestPacket.nextAction,
+    summary: { mode: "host_preparation", consumer, preparationStatus: preparation.preparation.status },
+    evidence: { files: { json: relative(jsonPath), markdown: relative(markdownPath),
+      preparationJson: relative(preparation.paths.json), preparationMarkdown: relative(preparation.paths.markdown) } },
+  };
+  // Reuse the actual paired Markdown rather than inventing completed report
+  // sections. Its source pair remains available for the ordinary continuation.
+  const markdown = await fs.readFile(preparation.paths.markdown, "utf8");
+  await fs.mkdir(path.dirname(jsonPath), { recursive: true });
+  await fs.mkdir(path.dirname(markdownPath), { recursive: true });
+  await fs.writeFile(jsonPath, `${JSON.stringify(report, null, 2)}\n`);
+  await fs.writeFile(markdownPath, markdown);
+  return report;
 }
 
 function buildAiReadableStandardsEvidence({
@@ -1204,7 +1226,14 @@ export async function runCapabilityGapCompleteProduct({
   markdownPath = DEFAULT_MARKDOWN_PATH,
   dbPath = DEFAULT_DB_PATH,
   task = null,
+  preparationStateDir = path.join(path.dirname(jsonPath), "governed-preparation"),
 } = {}) {
+  const governedExecutionEvidence = await buildGovernedExecutionEvidence({ task, stateDir: preparationStateDir });
+  if (governedExecutionEvidence.artifactKind === "host_preparation") {
+    return writeGovernedPreparationReport(governedExecutionEvidence, {
+      jsonPath, markdownPath, consumer: "capability_gap_complete_product",
+    });
+  }
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-complete-gap-"));
   const fixturePath = path.join(tempDir, "complete-product-inputs.json");
   const requireFullFixtureSet = !task;
@@ -1239,7 +1268,6 @@ export async function runCapabilityGapCompleteProduct({
   const productArtifacts = results.map((result, index) =>
     makeProductArtifact(result, scorecards[index])
   );
-  const governedExecutionEvidence = await buildGovernedExecutionEvidence();
   const evidenceFiles = {
     json: relative(jsonPath),
     markdown: relative(markdownPath),
@@ -1365,6 +1393,7 @@ async function main() {
         status: report.status,
         summary: report.summary,
         report: report.evidence.files.markdown,
+        ...(report.artifactKind === "host_preparation" ? { nextAction: report.nextAction, preparation: report.preparation.status } : {}),
       },
       null,
       2

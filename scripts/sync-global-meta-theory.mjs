@@ -29,6 +29,7 @@ import {
   resolveGlobalAgentProjectionTargets,
   resolveTargetContext,
   resolveRuntimeHomeInfo,
+  resolveRuntimeProjection,
   localStateRoot,
   GLOBAL_PROJECTION_OWNER_SYNC_GLOBAL,
 } from "./meta-kim-sync-config.mjs";
@@ -79,6 +80,7 @@ import {
   verifyExecutingGlobalProjectionPackage,
 } from "./global-projection-package-store.mjs";
 import { assertSourceRuntimeEvidencePins } from "../src/infrastructure/installer/projection-package-boundary.mjs";
+import { NATIVE_PROJECTION_RUNTIME_IDS, planNativeRuntimeSettings } from "./native-runtime-projection.mjs";
 
 // Recorder is lazily opened in runSync(); helpers record through this holder
 // so we do not have to thread recorder arg through every sync function.
@@ -88,7 +90,8 @@ let executingProjectionPackage = null;
 let checkMissingProjectionPackageAuthority = false;
 const projectionAuthorityDiagnostics = [];
 const manifestRecordFailures = [];
-const PRIMARY_PROJECTION_TARGET_IDS = new Set(["claude", "codex"]);
+const nativeConfigurationTransactions = [];
+const PRIMARY_PROJECTION_TARGET_IDS = new Set(["claude", "codex", "gemini", "zcode"]);
 function primaryProjectionTargetSelected() {
   return selectedTargetIds.some((targetId) =>
     PRIMARY_PROJECTION_TARGET_IDS.has(targetId)
@@ -1596,7 +1599,8 @@ async function resolveTargets() {
       }
     }
   }
-  if (selectedTargetIds.includes("codex")) {
+  if (selectedTargetIds.includes("codex") && !selectedTargetIds.includes("gemini") &&
+      !(await pathExists(path.join(runtimeHomes.gemini.dir, "skills", "meta-theory")))) {
     staleSkillCleanupTargets.push({
       name: "meta-theory",
       label: "legacy shared Codex global meta-theory duplicate",
@@ -1653,10 +1657,10 @@ async function fingerprintDir(rootDir) {
 }
 
 function renderGlobalSkillContent(content, targetId, relativePath) {
-  if (targetId !== "codex") {
+  if (!["codex", "gemini", "zcode"].includes(targetId)) {
     return content;
   }
-  const projected = applyRuntimePaths(content, "codex");
+  const projected = applyRuntimePaths(content, targetId);
   return relativePath === "SKILL.md"
     ? buildCodexSkillContent(projected)
     : projected;
@@ -1802,9 +1806,35 @@ async function auditInstalledGlobalHookPackage(runtimeId, label, hooksPath) {
   return false;
 }
 
+async function assertGeminiSharedSkillPrecedence(targetId) {
+  if (targetId !== "gemini") return;
+  // Gemini gives the standard .agents alias priority in user scope too. A
+  // different active bundle must not silently shadow a successful install.
+  const shared = path.join(path.dirname(runtimeHomes.gemini.dir), ".agents/skills/meta-theory");
+  if (!(await pathExists(shared))) return;
+  const current = await fingerprintDir(shared);
+  const expected = await fingerprintSourceForTarget("gemini");
+  if (current?.hash !== expected?.hash) {
+    throw new Error(`Gemini's active shared skill differs at ${shared}; preserve the existing owner and reconcile that skill before installing or updating its native projection.`);
+  }
+}
+
 async function copyCanonicalSkill(targetDir, targetId) {
+  await assertGeminiSharedSkillPrecedence(targetId);
   assertHomeBound(targetDir);
   await assertRealHomeBound(targetDir);
+  if (NATIVE_PROJECTION_RUNTIME_IDS.includes(targetId) && await pathExists(targetDir)) {
+    const recorded = globalManifestSnapshot?.entries?.find((entry) =>
+      entry.path === targetDir && entry.kind === "dir" && entry.source === "sync-global-meta-theory" && entry.purpose === `${targetId}-global-skill`);
+    const currentClosure = directoryClosureSync(targetDir);
+    const owned = recorded && currentClosure?.sha256 === recorded.directoryClosureSha256 &&
+      currentClosure?.entryCount === recorded.directoryClosureEntryCount;
+    const currentFingerprint = await fingerprintDir(targetDir);
+    const desiredFingerprint = await fingerprintSourceForTarget(targetId);
+    if (!owned && currentFingerprint?.hash !== desiredFingerprint?.hash) {
+      throw new Error(`Refusing to overwrite an unowned or edited native skill: ${targetDir}`);
+    }
+  }
   await fs.mkdir(path.dirname(targetDir), { recursive: true });
   await fs.mkdir(targetDir, { recursive: true });
 
@@ -2857,6 +2887,66 @@ function checkSelectedRuntimeLaunchInventories() {
   return allReady;
 }
 
+async function syncNativeGlobalConfiguration(runtimeId, inspectOnly) {
+  await assertGeminiSharedSkillPrecedence(runtimeId);
+  const projection = resolveRuntimeProjection(runtimeId, "global");
+  const purpose = `${runtimeId}-global-settings-merge`;
+  const previousJournal = globalManifestSnapshot?.entries?.find((entry) =>
+    entry.path === projection.settingsFile && entry.purpose === purpose && entry.kind === "json-fragment-merge")?.jsonMutationJournal ?? [];
+  const original = await captureExactFileSnapshot(projection.settingsFile);
+  const base = original.exists ? JSON.parse(original.bytes.toString("utf8")) : {};
+  const adapterPath = path.join(projection.hooksDir, "native-runtime-adapter.mjs");
+  const source = await fs.readFile(path.join(canonicalRuntimeAssetsDir, "shared", "hooks", "native-runtime-adapter.mjs"), "utf8");
+  const hooksInstalled = previousJournal.some((entry) => entry.path?.[0] === "hooks");
+  const mcpInstalled = previousJournal.some((entry) => ["mcp", "mcpServers"].includes(entry.path?.[0]));
+  let compatibleMcpServers = {};
+  if (runtimeId === "zcode") {
+    const compatiblePath = path.join(path.dirname(runtimeHomes.zcode.dir), ".agents", "mcp.json");
+    const compatibleRaw = await fs.readFile(compatiblePath, "utf8").catch((error) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
+    if (compatibleRaw) compatibleMcpServers = JSON.parse(compatibleRaw).mcpServers ?? {};
+  }
+  const usesHooks = withGlobalHooks || hooksInstalled;
+  const plan = planNativeRuntimeSettings(base, {
+    runtimeId, scope: "global", packageRoot: repoRoot, adapterPath, previousJournal,
+    compatibleMcpServers, withHooks: usesHooks, withMcp: !skipDurableMcp || mcpInstalled,
+  });
+  const currentAdapter = await fs.readFile(adapterPath, "utf8").catch((error) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (inspectOnly) {
+    const inSync = !plan.changed && (!usesHooks || currentAdapter === source);
+    console.log(`${inSync ? "✓" : "⊘"} ${runtimeId} native settings${usesHooks ? " and hooks" : ""}: ${projection.settingsFile}`);
+    return inSync;
+  }
+  if (usesHooks) {
+    assertHomeBound(adapterPath);
+    await assertRealHomeBound(adapterPath);
+    if (currentAdapter !== null && currentAdapter !== source) {
+      const entry = globalManifestSnapshot?.entries?.find((item) =>
+        item.path === adapterPath && item.purpose === `${runtimeId}-global-hook` && item.kind === "file");
+      if (!entry || entry.sha256 !== sha256Text(currentAdapter) || entry.size !== Buffer.byteLength(currentAdapter)) {
+        throw new Error(`Refusing to overwrite an unowned native hook: ${adapterPath}`);
+      }
+    }
+    await writeUtf8FileIfChanged(adapterPath, source);
+    recordSafe((rec) => rec.recordFile(adapterPath, { source: "sync-global-meta-theory", purpose: `${runtimeId}-global-hook`, category: CATEGORIES.B, runtimeTarget: runtimeId }));
+    recordSafe((rec) => rec.recordDir(projection.hooksDir, { source: "sync-global-meta-theory", purpose: `${runtimeId}-global-hooks-dir`, category: CATEGORIES.B }));
+  }
+  if (plan.changed) {
+    if (original.exists) await backupExistingPath(projection.settingsFile, { family: "settings", label: `${runtimeId} native settings`, backupRoot: path.join(runtimeHomes[runtimeId].dir, ".meta-kim", "backups") });
+    nativeConfigurationTransactions.push(await promoteExactFileFromSnapshot(projection.settingsFile, original, `${JSON.stringify(plan.config, null, 2)}\n`));
+  }
+  recordSafe((rec) => rec.recordJsonFragmentMerge(projection.settingsFile, plan.mutations, {
+    source: "sync-global-meta-theory", purpose, category: CATEGORIES.C, runtimeTarget: runtimeId,
+  }));
+  console.log(`✓ ${runtimeId} native projection configured; live verification remains unverified.`);
+  return true;
+}
+
 async function runCheck() {
   await assertCanonicalSkillFrontmatter();
   let failed = false;
@@ -2866,6 +2956,9 @@ async function runCheck() {
 
   if (agentPlan.collisions.length > 0) failed = true;
   if (!(await checkGlobalAgents(agentPlan))) failed = true;
+  for (const runtimeId of selectedTargetIds.filter((id) => NATIVE_PROJECTION_RUNTIME_IDS.includes(id))) {
+    if (!(await syncNativeGlobalConfiguration(runtimeId, true))) failed = true;
+  }
   if (mcpPlan) {
     let durableReady = false;
     try {
@@ -3250,6 +3343,9 @@ async function runSync() {
   }
 
   await syncGlobalAgents(agentPlan);
+  for (const runtimeId of selectedTargetIds.filter((id) => NATIVE_PROJECTION_RUNTIME_IDS.includes(id))) {
+    await syncNativeGlobalConfiguration(runtimeId, false);
+  }
   await syncClaudeUserMcp(mcpPlan);
   if (skipClaudeDurableMcp) {
     console.log(
@@ -3351,6 +3447,9 @@ async function runSync() {
   }
   } catch (error) {
     try {
+      for (const transaction of [...nativeConfigurationTransactions].reverse()) {
+        await restoreCodexConfigTransaction(transaction);
+      }
       if (
         codexConfigTransaction?.changed &&
         process.env.META_KIM_TEST_CONCURRENT_CODEX_CONFIG_EDIT === "rollback"

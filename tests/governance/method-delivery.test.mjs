@@ -55,6 +55,24 @@ test("required nested inputs are diagnosed and legacy prose components remain ex
   assert.doesNotThrow(() => assertMethodInputsReady(legacy));
 });
 
+test("explicit unknown values remain null only where the source contract permits null", () => {
+  const custom = { ...method, inputContract: { type: "object", required: ["versions"], properties: {
+    versions: { type: "array", items: { type: "object", required: ["name", "version"], properties: {
+      name: { type: "string" }, version: { type: ["string", "null"] },
+    } } },
+  } } };
+  const worker = { ...packet(), methodInputs: { versions: [{ name: "Unexamined runtime", version: null }] } };
+  const current = buildMethodInvocationContext({ method: custom, packet: worker });
+  assert.doesNotThrow(() => assertMethodInputsReady(current));
+  assert.equal(current.inputs.versions[0].version, null, "Structural readiness cannot invent an observed runtime version");
+  for (const version of [undefined, 123]) {
+    const invalid = buildMethodInvocationContext({ method: custom, packet: { ...worker, methodInputs: { versions: [{ name: "Runtime", version }] } } });
+    assert.throws(() => assertMethodInputsReady(invalid), /versions\[0\]\.version/);
+  }
+  const requiredName = buildMethodInvocationContext({ method: custom, packet: { ...worker, methodInputs: { versions: [{ name: null, version: null }] } } });
+  assert.throws(() => assertMethodInputsReady(requiredName), /versions\[0\]\.name/);
+});
+
 test("prose and structured role output preserve actual bytes, while self-report cannot accept the task", () => {
   const worker = packet();
   const prose = buildMethodDeliveryEnvelope({ runId: "run", packet: worker, outputText: "The revised article is ready for review." });

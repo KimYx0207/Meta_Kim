@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   rmSync,
   statSync,
@@ -21,6 +23,8 @@ import {
   resolvePortableMetaKimPackageIdentity,
 } from "../../scripts/global-runtime-mcp.mjs";
 import { tarExtractCommand } from "../../scripts/tar-extract-command.mjs";
+import { resolveCliInvocation } from "../../scripts/runtime-cli-invocation.mjs";
+import { readSetupRuntimeLaunchInventory } from "../../scripts/runtime-executable-binding.mjs";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..", "..");
 const DISTRIBUTION = JSON.parse(
@@ -38,13 +42,6 @@ const SERIAL_TEST_OPTIONS = { concurrency: false };
 const GLOBAL_SYNC_SOURCE = readFileSync(
   path.join(REPO_ROOT, "scripts", "sync-global-meta-theory.mjs"),
   "utf8",
-);
-const NPM_CLI_PATH = process.env.npm_execpath ?? path.join(
-  path.dirname(process.execPath),
-  "node_modules",
-  "npm",
-  "bin",
-  "npm-cli.js",
 );
 
 function run(command, args, options = {}) {
@@ -82,12 +79,16 @@ function preparePackedCandidate(testRoot) {
   const extractDir = path.join(installDir, "extract");
   mkdirSync(packDir, { recursive: true });
   mkdirSync(extractDir, { recursive: true });
+  const npm = resolveCliInvocation("npm", ["pack", "--json", "--pack-destination", packDir]);
   const packed = requireSuccess("candidate npm pack", run(
-    process.execPath,
-    [NPM_CLI_PATH, "pack", "--json", "--pack-destination", packDir],
+    npm.command,
+    npm.args,
     { cwd: REPO_ROOT },
   ));
-  const packResult = JSON.parse(packed.stdout);
+  // Successful prepack diagnostics can precede npm's final JSON array. The
+  // lifecycle gate remains enabled and its nonzero exit is checked above.
+  const jsonBoundary = packed.stdout.lastIndexOf("\n[");
+  const packResult = JSON.parse(jsonBoundary < 0 ? packed.stdout : packed.stdout.slice(jsonBoundary));
   assert.ok(Array.isArray(packResult) && packResult[0]?.filename);
   const extraction = tarExtractCommand(path.join(packDir, packResult[0].filename), extractDir);
   requireSuccess("candidate tgz extraction", run(
@@ -174,6 +175,22 @@ function runRuntimeLaunchRebind(workspace, runtime) {
       env: runtime.env,
     },
   );
+}
+
+function prepareVersionOnlyRuntimeFixture(binDir) {
+  // This executable proves only inventory discovery and fingerprinting. It
+  // refuses every operation except --version and cannot invoke a model.
+  const version = "Meta_Kim version-only binding fixture 0.0.0";
+  const body = `if (process.argv.length !== 3 || process.argv[2] !== "--version") { process.stderr.write("Version-only fixture refuses execution.\\n"); process.exitCode = 64; } else { console.log(${JSON.stringify(version)}); }\n`;
+  const commandPath = path.join(binDir, process.platform === "win32" ? "claude.cmd" : "claude");
+  if (process.platform === "win32") {
+    writeFileSync(path.join(binDir, "claude-fixture.cjs"), body);
+    writeFileSync(commandPath, '@ECHO off\r\n"node" "%~dp0\\claude-fixture.cjs" %*\r\n');
+  } else {
+    writeFileSync(commandPath, `#!/usr/bin/env node\n${body}`);
+    chmodSync(commandPath, 0o755);
+  }
+  return { commandPath, version };
 }
 
 function sha256(content) {
@@ -350,10 +367,28 @@ function verifySuccessfulDurableBundleLifecycle() {
     const backupRoot = path.join(runtime.userHome, ".meta-kim", "backups", "mcp-runtime");
     const firstBackups = listFilesIfPresent(backupRoot);
     requireSuccess("second packed global sync", runGlobalSync(candidate.workspace, runtime));
+    const fixtureBin = path.join(runtime.userHome, "version-only-cli-fixture");
+    mkdirSync(fixtureBin);
+    const callerPath = runtime.env.PATH ?? runtime.env.Path ?? "";
+    const envWithoutPath = Object.fromEntries(Object.entries(runtime.env).filter(([key]) => !/^path$/iu.test(key)));
+    runtime.env = { ...envWithoutPath, PATH: fixtureBin };
+    const inventoryPath = path.join(runtime.userHome, ".meta-kim/state/default/runtime-capability-producers/host-executable-bindings.json");
+    const inventoryBefore = existsSync(inventoryPath) ? readFileSync(inventoryPath, "utf8") : null;
+    const unavailable = runRuntimeLaunchRebind(candidate.workspace, runtime);
+    assert.notEqual(unavailable.status, 0, "missing host executable must not create a successful binding");
+    assert.match(`${unavailable.stdout}\n${unavailable.stderr}`, /selected runtime executable is unavailable: claude/u);
+    assert.equal(existsSync(inventoryPath) ? readFileSync(inventoryPath, "utf8") : null, inventoryBefore);
+    const versionFixture = prepareVersionOnlyRuntimeFixture(fixtureBin);
+    runtime.env = { ...envWithoutPath, PATH: [fixtureBin, path.dirname(process.execPath), callerPath].join(path.delimiter) };
     requireSuccess(
       "packed setup runtime launch inventory rebind",
       runRuntimeLaunchRebind(candidate.workspace, runtime),
     );
+    const inventory = readSetupRuntimeLaunchInventory({ root: runtime.userHome, runtimes: ["claude_code"] });
+    assert.equal(inventory.executionAuthority, false);
+    assert.equal(inventory.bindings.claude_code.executionAuthority, false);
+    assert.equal(inventory.bindings.claude_code.version, versionFixture.version);
+    assert.equal(inventory.bindings.claude_code.launchDescriptor.discoveredEntry.realpath, realpathSync.native(versionFixture.commandPath));
     assert.equal(
       treeFingerprint(layout.bundleDir),
       firstBundleFingerprint,

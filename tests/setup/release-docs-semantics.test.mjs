@@ -1,4 +1,5 @@
 import { describe, test } from "node:test";
+import { resolveNpmCliJsPath } from "../../scripts/runtime-cli-invocation.mjs";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -37,6 +38,8 @@ describe("release documentation semantics", () => {
       ".codex/",
       ".agents/",
       ".cursor/",
+      ".gemini/",
+      ".zcode/",
       "openclaw/",
       "codex/",
       ".mcp.json",
@@ -54,13 +57,7 @@ describe("release documentation semantics", () => {
   });
 
   test("npm dry-run package manifest preserves the design PoC boundary", () => {
-    const npmCli = process.env.npm_execpath || path.join(
-      path.dirname(process.execPath),
-      "node_modules",
-      "npm",
-      "bin",
-      "npm-cli.js",
-    );
+    const npmCli = resolveNpmCliJsPath();
     assert.equal(existsSync(npmCli), true, `npm CLI not found: ${npmCli}`);
 
     const cacheDir = mkdtempSync(path.join(tmpdir(), "meta-kim-npm-pack-cache-"));
@@ -178,7 +175,7 @@ describe("release documentation semantics", () => {
     );
   });
 
-  test("public current docs expose the three runtime tiers without overpromoting beta adapters", () => {
+  test("public current docs distinguish native projections, compatibility and unverified execution", () => {
     const betaNames = ["ZCode", "DeepSeek Harness", "Qoder", "Trae"];
     const removedPublicCandidatePatterns = [
       /\bKiro\b/u,
@@ -206,13 +203,9 @@ describe("release documentation semantics", () => {
     for (const file of readmeFiles) {
       const raw = readFileSync(path.join(root, file), "utf8");
 
-      assert.match(raw, /alt="Projection tiers"/, file);
-      assert.match(raw, /alt="Beta compatibility adapters"/, file);
-      assert.match(
-        raw,
-        /default-Claude%20Code%20%7C%20Codex%20%2B%20compat--?OpenClaw%20%7C%20Cursor/,
-        file,
-      );
+      for (const client of ["Codex", "Claude Code", "Cursor", "Gemini CLI", "ZCode"]) assert.match(raw, new RegExp(client), `${file} missing requested client ${client}`);
+      assert.match(raw, /config\/runtime-compatibility-catalog\.json/, file);
+      assert.match(raw, /Unreleased/, file);
       for (const betaName of betaNames) {
         assert.match(raw, new RegExp(betaName), `${file} missing ${betaName}`);
       }

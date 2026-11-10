@@ -238,9 +238,20 @@
       "sourceUrl": "https://github.com/mattpocock/skills/blob/5beb35b040e3de97e54fa9e386d7e42d15c295c2/skills/productivity/grilling/SKILL.md",
       "adoption": "first_party_dialogue_method",
       "installedDependency": false,
-      "internalizedAs": ["dependency-ready decision frontier", "recommendations with reasons", "answers reshape later questions", "discoverable facts investigated before questions"],
-      "limitations": ["routine reversible implementation choices stay autonomous", "no duplicate interview state or permission authority"],
-      "implementationRefs": ["scripts/governed-execution/plan-challenge-policy.mjs", "canonical/skills/meta-theory/references/intent-amplification.md"]
+      "internalizedAs": [
+        "dependency-ready decision frontier",
+        "recommendations with reasons",
+        "answers reshape later questions",
+        "discoverable facts investigated before questions"
+      ],
+      "limitations": [
+        "routine reversible implementation choices stay autonomous",
+        "no duplicate interview state or permission authority"
+      ],
+      "implementationRefs": [
+        "scripts/governed-execution/plan-challenge-policy.mjs",
+        "canonical/skills/meta-theory/references/intent-amplification.md"
+      ]
     },
     {
       "id": "domain-modeling-evidence-dialogue",
@@ -251,9 +262,20 @@
       "sourceUrl": "https://github.com/mattpocock/skills/blob/5beb35b040e3de97e54fa9e386d7e42d15c295c2/skills/engineering/domain-modeling/SKILL.md",
       "adoption": "first_party_dialogue_method",
       "installedDependency": false,
-      "internalizedAs": ["check ambiguous terms against actual code and documents", "concrete edge cases and counterexamples", "reuse existing domain glossary", "record only consequential surprising trade-offs"],
-      "limitations": ["no glossary or ADR ceremony for every task", "source material cannot authorize actions"],
-      "implementationRefs": ["canonical/skills/meta-theory/references/intent-amplification.md", "scripts/governed-execution/product-design.mjs"]
+      "internalizedAs": [
+        "check ambiguous terms against actual code and documents",
+        "concrete edge cases and counterexamples",
+        "reuse existing domain glossary",
+        "record only consequential surprising trade-offs"
+      ],
+      "limitations": [
+        "no glossary or ADR ceremony for every task",
+        "source material cannot authorize actions"
+      ],
+      "implementationRefs": [
+        "canonical/skills/meta-theory/references/intent-amplification.md",
+        "scripts/governed-execution/product-design.mjs"
+      ]
     },
     {
       "id": "to-tickets-deliverable-slices",
@@ -264,9 +286,20 @@
       "sourceUrl": "https://github.com/mattpocock/skills/blob/5beb35b040e3de97e54fa9e386d7e42d15c295c2/skills/engineering/to-tickets/SKILL.md",
       "adoption": "first_party_design_method",
       "installedDependency": false,
-      "internalizedAs": ["derive tasks after settled design", "independently demonstrable vertical slices", "real dependencies and acceptance ownership", "expand-migrate-contract exception for broad mechanical changes"],
-      "limitations": ["no automatic GitHub publication or labels", "reuse existing task and DAG authority"],
-      "implementationRefs": ["scripts/governed-execution/product-design.mjs", "scripts/run-meta-theory-governed-execution.mjs"]
+      "internalizedAs": [
+        "derive tasks after settled design",
+        "independently demonstrable vertical slices",
+        "real dependencies and acceptance ownership",
+        "expand-migrate-contract exception for broad mechanical changes"
+      ],
+      "limitations": [
+        "no automatic GitHub publication or labels",
+        "reuse existing task and DAG authority"
+      ],
+      "implementationRefs": [
+        "scripts/governed-execution/product-design.mjs",
+        "scripts/run-meta-theory-governed-execution.mjs"
+      ]
     },
     {
       "id": "game-design-experience-loop",
@@ -275,9 +308,129 @@
       "inspectedAt": "2026-10-23",
       "adoption": "first_party_design_method",
       "installedDependency": false,
-      "internalizedAs": ["user motivation to feature mapping", "action feedback rules and outcomes", "entry active result continue-or-exit paths", "exploration alternatives before delivery design"],
-      "limitations": ["no copied private templates or machine paths", "no fixed gaming personas or monetization rules", "retain unresolved hypotheses and engineering work-order details"],
-      "implementationRefs": ["canonical/skills/meta-theory/references/intent-amplification.md", "scripts/governed-execution/product-design.mjs"]
+      "internalizedAs": [
+        "user motivation to feature mapping",
+        "action feedback rules and outcomes",
+        "entry active result continue-or-exit paths",
+        "exploration alternatives before delivery design"
+      ],
+      "limitations": [
+        "no copied private templates or machine paths",
+        "no fixed gaming personas or monetization rules",
+        "retain unresolved hypotheses and engineering work-order details"
+      ],
+      "implementationRefs": [
+        "canonical/skills/meta-theory/references/intent-amplification.md",
+        "scripts/governed-execution/product-design.mjs"
+      ]
+    },
+    {
+      "id": "kim-decision-core-problem",
+      "project": "KimYx0207/Kim_Service",
+      "sourceUrl": "https://github.com/KimYx0207/Kim_Service/blob/main/skills/kim-decision/SKILL.md",
+      "inspectedAt": "2026-11-10",
+      "sourceContentSha256": "b4b195880ad7f3008f2da5d19bc0bdee47dd3c151935850531de9b686114714c",
+      "license": "MIT OR Apache-2.0",
+      "attribution": "KimYx0207 / Kim_Service; standalone source package and its LICENSE/NOTICE are preserved.",
+      "adoption": "first_party_stage_method",
+      "installedDependency": false,
+      "internalizedAs": [
+        "current problem and acceptance before route",
+        "smallest falsification test with pass/kill evidence"
+      ],
+      "limitations": [
+        "No copied standalone prompt, second orchestrator, action authorization or live proof."
+      ],
+      "implementationRefs": [
+        "config/governance/decision-pattern-catalog.json",
+        "scripts/select-execution-route.mjs"
+      ]
+    },
+    {
+      "id": "goalpro-intent-and-evidence",
+      "project": "KimYx0207/Kim_Service",
+      "sourceUrl": "https://github.com/KimYx0207/Kim_Service/blob/main/skills/goalpro/SKILL.md",
+      "inspectedAt": "2026-11-10",
+      "sourceContentSha256": "2bd3acdab634daef1aeb4481ba9fa464c97d6359bacf82fa1cfb301b9984202b",
+      "license": "MIT",
+      "attribution": "KimYx0207 / Kim_Service; standalone source package and its LICENSE/NOTICE are preserved.",
+      "adoption": "first_party_stage_method",
+      "installedDependency": false,
+      "internalizedAs": [
+        "stated intent and inferred assumptions kept distinct",
+        "direct/proxy evidence with coverage and counterevidence"
+      ],
+      "limitations": [
+        "No copied standalone prompt, second orchestrator, action authorization or live proof."
+      ],
+      "implementationRefs": [
+        "config/governance/decision-pattern-catalog.json",
+        "scripts/select-execution-route.mjs"
+      ]
+    },
+    {
+      "id": "findskill-local-capability-search",
+      "project": "KimYx0207/Kim_Service",
+      "sourceUrl": "https://github.com/KimYx0207/Kim_Service/blob/main/skills/find-skill/SKILL.md",
+      "inspectedAt": "2026-11-10",
+      "sourceContentSha256": "f2e050d329261de9e1f6f0ae0409487bdfb7fe0299a28b5a7e232da7de1d19a1",
+      "license": "MIT",
+      "attribution": "KimYx0207 / Kim_Service; standalone source package and its LICENSE/NOTICE are preserved.",
+      "adoption": "first_party_stage_method",
+      "installedDependency": false,
+      "internalizedAs": [
+        "check sufficient local capabilities before external search",
+        "search failure remains unknown, not absence"
+      ],
+      "limitations": [
+        "No copied standalone prompt, second orchestrator, action authorization or live proof."
+      ],
+      "implementationRefs": [
+        "config/governance/decision-pattern-catalog.json",
+        "scripts/select-execution-route.mjs"
+      ]
+    },
+    {
+      "id": "agent-teams-bounded-work-orders",
+      "project": "KimYx0207/Kim_Service",
+      "sourceUrl": "https://github.com/KimYx0207/Kim_Service/blob/main/skills/agent-teams-playbook/SKILL.md",
+      "inspectedAt": "2026-11-10",
+      "sourceContentSha256": "47c49afde04066a0f87a490178d80eea5c57cc2b80e812dd74aae6fe1536875a",
+      "license": "MIT",
+      "attribution": "KimYx0207 / Kim_Service; standalone source package and its LICENSE/NOTICE are preserved.",
+      "adoption": "first_party_stage_method",
+      "installedDependency": false,
+      "internalizedAs": [
+        "scoped parallel workers with an explicit merger",
+        "actual host schema and success result before invocation claims"
+      ],
+      "limitations": [
+        "No copied standalone prompt, second orchestrator, action authorization or live proof."
+      ],
+      "implementationRefs": [
+        "config/governance/decision-pattern-catalog.json",
+        "scripts/select-execution-route.mjs"
+      ]
+    },
+    {
+      "id": "superpowers-spec-and-quality-review",
+      "project": "obra/superpowers",
+      "sourceUrl": "https://github.com/obra/superpowers/blob/main/README.md",
+      "inspectedAt": "2026-11-10",
+      "license": "MIT",
+      "adoption": "first_party_stage_method",
+      "installedDependency": false,
+      "internalizedAs": [
+        "specification fit before implementation quality",
+        "fresh evidence before a completion claim"
+      ],
+      "limitations": [
+        "No imported mandatory workflow, model choice, upstream hook or always-on TDD policy."
+      ],
+      "implementationRefs": [
+        "config/contracts/core-loop-contract.json",
+        "config/governance/decision-pattern-catalog.json"
+      ]
     }
   ],
   "stagePatterns": [
@@ -286,10 +439,30 @@
       "stage": "critical",
       "owner": "meta-conductor",
       "pattern": "Explore needs interactively with concrete suggestions and trade-offs before producing a delivery design; derive deliverable slices only from settled design.",
-      "useWhen": ["uncertain product requests", "multi-deliverable experience design", "material requirement changes"],
-      "outputs": ["requirementsDiscoveryInput", "planChallengeState", "designInput", "workerTaskPackets"],
-      "rejects": ["finished design required before requirements conversation", "missing-field questionnaire instead of recommendations", "suggestion treated as user choice", "task titles treated as a design", "new interview or scheduler authority"],
-      "sourceRefs": ["grilling-decision-frontier", "domain-modeling-evidence-dialogue", "to-tickets-deliverable-slices", "game-design-experience-loop"],
+      "useWhen": [
+        "uncertain product requests",
+        "multi-deliverable experience design",
+        "material requirement changes"
+      ],
+      "outputs": [
+        "requirementsDiscoveryInput",
+        "planChallengeState",
+        "designInput",
+        "workerTaskPackets"
+      ],
+      "rejects": [
+        "finished design required before requirements conversation",
+        "missing-field questionnaire instead of recommendations",
+        "suggestion treated as user choice",
+        "task titles treated as a design",
+        "new interview or scheduler authority"
+      ],
+      "sourceRefs": [
+        "grilling-decision-frontier",
+        "domain-modeling-evidence-dialogue",
+        "to-tickets-deliverable-slices",
+        "game-design-experience-loop"
+      ],
       "verification": "Run a multi-round scenario with no design on the first round, actual decision evidence on later rounds, complete experience design after relevant decisions, and independently verifiable downstream tasks."
     },
     {
@@ -315,7 +488,8 @@
       ],
       "sourceRefs": [
         "promptfoo-declarative-evaluation",
-        "skillevaluator-evidence-tiers"
+        "skillevaluator-evidence-tiers",
+        "goalpro-intent-and-evidence"
       ],
       "verification": "The requested task, Critical intent and run-scoped goal stay bound; changing the request or acceptance criteria invalidates prior outcome observations."
     },
@@ -398,7 +572,10 @@
         "guessing hidden intent",
         "asking questions that do not change execution"
       ],
-      "verification": "intentPacket explains what changes, for whom, how success is tested, and which unknowns block execution."
+      "verification": "intentPacket explains what changes, for whom, how success is tested, and which unknowns block execution.",
+      "sourceRefs": [
+        "kim-decision-core-problem"
+      ]
     },
     {
       "id": "fetch-evidence-labeling",
@@ -424,7 +601,10 @@
         "unlabeled inference",
         "external project claim without inspection status"
       ],
-      "verification": "Every material claim has source, confidence, and route/risk/acceptance impact."
+      "verification": "Every material claim has source, confidence, and route/risk/acceptance impact.",
+      "sourceRefs": [
+        "goalpro-intent-and-evidence"
+      ]
     },
     {
       "id": "thinking-subject-path-map",
@@ -471,7 +651,10 @@
         "test without kill condition",
         "large build before proof"
       ],
-      "verification": "The first action has input, action, output, pass signal, kill signal, and timebox."
+      "verification": "The first action has input, action, output, pass signal, kill signal, and timebox.",
+      "sourceRefs": [
+        "kim-decision-core-problem"
+      ]
     },
     {
       "id": "review-pass-kill-gate",
@@ -494,7 +677,10 @@
         "file-exists-only review",
         "command-pass equals user-goal-done"
       ],
-      "verification": "Review can reproduce evidence and closes or blocks every critical/high finding."
+      "verification": "Review can reproduce evidence and closes or blocks every critical/high finding.",
+      "sourceRefs": [
+        "kim-decision-core-problem"
+      ]
     },
     {
       "id": "thinking-risk-skill-binding",
@@ -596,6 +782,74 @@
         "loopx-read-only-goal-projection"
       ],
       "verification": "Behavior regressions and independent actual local task review; offline selection alone does not prove live tool invocation or model quality."
+    },
+    {
+      "id": "fetch-sufficient-local-provider",
+      "stage": "fetch",
+      "owner": "meta-scout",
+      "pattern": "Search the existing indexed local capability sources first. Use external generic-query research only for a remaining task-specific gap; distinguish search failure from absence and installation from discovery.",
+      "useWhen": [
+        "an execution capability is needed"
+      ],
+      "outputs": [
+        "fetchPacket.capabilityDiscovery",
+        "capabilityGapPacket"
+      ],
+      "rejects": [
+        "optional marketplace package required for local discovery",
+        "unavailable search reported as no provider",
+        "private task copied into a public search",
+        "installed package treated as invocation"
+      ],
+      "sourceRefs": [
+        "findskill-local-capability-search"
+      ],
+      "verification": "Run the default discovery smoke with optional packages absent; the first-party search command remains available and can return an explicit gap."
+    },
+    {
+      "id": "thinking-bounded-native-fanout",
+      "stage": "thinking",
+      "owner": "meta-conductor",
+      "pattern": "Use the existing stage DAG and actual native host delegation for independent work orders with bounded inputs, effects, verification and a merge owner; no external playbook is required.",
+      "useWhen": [
+        "multiple independent work orders"
+      ],
+      "outputs": [
+        "workerTaskPackets",
+        "coreLoop.stageDagPacket"
+      ],
+      "rejects": [
+        "a second scheduler",
+        "blind tool-name translation",
+        "worker labels treated as professional knowledge",
+        "planned work reported as completed"
+      ],
+      "sourceRefs": [
+        "agent-teams-bounded-work-orders"
+      ],
+      "verification": "With optional playbooks absent, independent native lanes can still be prepared; unavailable host capacity or tool evidence remains a concrete execution gap."
+    },
+    {
+      "id": "review-spec-then-quality",
+      "stage": "review",
+      "owner": "meta-prism",
+      "pattern": "Review the result against the settled user outcome and constraints before examining implementation quality, and require fresh task evidence before completion.",
+      "useWhen": [
+        "a bounded deliverable is ready for review"
+      ],
+      "outputs": [
+        "reviewPacket.findings",
+        "verificationResults"
+      ],
+      "rejects": [
+        "polished implementation of the wrong goal",
+        "structural validation presented as user acceptance",
+        "unconditional copy of another framework review process"
+      ],
+      "sourceRefs": [
+        "superpowers-spec-and-quality-review"
+      ],
+      "verification": "An outcome mismatch fails even if implementation checks pass; missing evidence stays incomplete."
     }
   ]
 }

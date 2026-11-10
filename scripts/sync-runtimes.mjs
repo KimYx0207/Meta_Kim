@@ -53,9 +53,13 @@ import {
   loadProjectCapabilityOwnershipPolicy,
   loadProtectedProjectCapabilityPaths,
 } from "./project-capability-ownership.mjs";
-import { inspectTrustedPath } from "./safe-managed-file-operations.mjs";
+import { inspectTrustedPath, executeSafeManagedFileTransaction } from "./safe-managed-file-operations.mjs";
 import { metaKimMcpRuntimeEnvironment } from "./global-runtime-mcp.mjs";
 import { main as refreshRuntimeEvidencePinsCli } from "./refresh-runtime-evidence-pins.mjs";
+import {
+  applyNativeSkillPaths, buildPortableSkillContent, buildNativeRuntimeAgent, NATIVE_PROJECTION_RUNTIME_IDS,
+  invertNativeJsonMutations, planNativeRuntimeSettings,
+} from "./native-runtime-projection.mjs";
 
 const cliArgs = process.argv.slice(2);
 const checkOnly = process.argv.includes("--check");
@@ -125,7 +129,19 @@ export function buildReverseSyncCandidateArtifact(mutationCandidates) {
       mutationBindings: mutationCandidates.map((candidate) => ({ ...candidate })),
       diffSummary: "replace-with-reviewed-diff-summary",
       rollbackPlan: { strategy: "restore_exact_prior_bytes" },
-      riskReview: { status: "replace-with-review-result", owner: "meta-sentinel" },
+      riskReview: {
+        status: "not_evaluated",
+        owner: "meta-sentinel",
+        // These are reviewer-reported assessments bound by the same approval;
+        // an evidence reference alone is never a claim that its contents were verified.
+        qualityChecks: Object.fromEntries(Object.entries({
+          fiveCriteria: ["independent", "smallEnough", "clearBoundaries", "replaceable", "reusable"],
+          prinSt: ["prinSt01", "prinSt02", "prinSt03", "prinSt04", "prinSt05"],
+          recursiveRisk: ["circularDependency", "transitiveOverflow", "thresholdGaming", "identityDrift"],
+        }).map(([section, names]) => [section, Object.fromEntries(names.map((name) => [name, {
+          verdict: "not_evaluated", reason: "", evidenceRefs: [],
+        }]))])),
+      },
     },
   };
 }
@@ -258,6 +274,17 @@ const SOURCE_REPO_PROJECT_PROJECTION_MARKERS = [
   ".codex/skills",
   ".cursor/agents",
   ".cursor/capability-index",
+  ".gemini/agents",
+  ".gemini/skills",
+  ".gemini/commands",
+  ".gemini/hooks",
+  ".gemini/settings.json",
+  ".gemini/capability-index",
+  ".zcode/agents",
+  ".zcode/skills",
+  ".zcode/commands",
+  ".zcode/config.json",
+  ".zcode/capability-index",
   ".cursor/hooks",
   ".cursor/hooks.json",
   ".cursor/mcp.json",
@@ -487,14 +514,14 @@ export function inferProjectCategory(filePath, rootDir = repoRoot) {
     rel.startsWith(".claude/hooks/") ||
     rel.startsWith(".codex/hooks/") ||
     rel.startsWith(".cursor/hooks/") ||
-    rel.startsWith("openclaw/hooks/")
+    rel.startsWith("openclaw/hooks/") || rel.startsWith(".gemini/hooks/") || rel.startsWith(".zcode/hooks/")
   ) {
     return CATEGORIES.E;
   }
   if (
     rel.startsWith(".claude/agents/") ||
     rel.startsWith(".codex/agents/") ||
-    rel.startsWith(".cursor/agents/")
+    rel.startsWith(".cursor/agents/") || rel.startsWith(".gemini/agents/") || rel.startsWith(".zcode/agents/")
   ) {
     return CATEGORIES.F;
   }
@@ -503,7 +530,7 @@ export function inferProjectCategory(filePath, rootDir = repoRoot) {
     rel.startsWith(".agents/skills/") ||
     rel.startsWith(".cursor/skills/") ||
     rel.startsWith("openclaw/skills/") ||
-    rel.startsWith("openclaw/workspaces/")
+    rel.startsWith("openclaw/workspaces/") || rel.startsWith(".zcode/skills/")
   ) {
     return CATEGORIES.D;
   }
@@ -516,6 +543,7 @@ export function inferProjectCategory(filePath, rootDir = repoRoot) {
   ) {
     return CATEGORIES.G;
   }
+  if (rel.startsWith(".gemini/") || rel.startsWith(".zcode/")) return CATEGORIES.G;
   if (
     rel === "openclaw/openclaw.template.json" ||
     (rel.startsWith(".codex/") && !rel.startsWith(".codex/skills/"))
@@ -546,6 +574,8 @@ export function inferProjectRuntimeTarget(filePath, rootDir = repoRoot) {
   if (rel.startsWith(".claude/") || rel === ".mcp.json") return "claude";
   if (rel.startsWith(".codex/") || rel.startsWith(".agents/") || rel.startsWith("codex/")) return "codex";
   if (rel.startsWith(".cursor/")) return "cursor";
+  if (rel.startsWith(".gemini/")) return "gemini";
+  if (rel.startsWith(".zcode/")) return "zcode";
   if (rel.startsWith("openclaw/")) return "openclaw";
   return null;
 }
@@ -2061,6 +2091,8 @@ const GLOBAL_AGENT_RENDERERS = Object.freeze({
   canonical_markdown: (agent) => agent.raw,
   codex_toml: buildCodexAgent,
   cursor_markdown: buildCursorAgent,
+  gemini_markdown: (agent) => buildNativeRuntimeAgent(agent, "gemini"),
+  zcode_markdown: (agent) => buildNativeRuntimeAgent(agent, "zcode"),
 });
 
 export function renderGlobalAgentProjection(agent, projection) {
@@ -2272,6 +2304,14 @@ export const GLOBAL_ONLY_DURABLE_PROJECTION_ROOTS = [
   ".cursor/skills",
   ".cursor/rules",
   ".cursor/capability-index",
+  ".gemini/agents",
+  ".gemini/skills",
+  ".gemini/commands",
+  ".gemini/capability-index",
+  ".zcode/agents",
+  ".zcode/skills",
+  ".zcode/commands",
+  ".zcode/capability-index",
   "codex",
   "openclaw",
 ];
@@ -2474,7 +2514,13 @@ async function rewriteGlobalOnlyConfig(filePath, transform, changedFiles) {
   if (checkOnly) {
     staleFiles.push({ path: filePath, category: inferProjectCategory(filePath), action: "update" });
   } else {
-    await fs.writeFile(filePath, next, "utf8");
+    const transaction = executeSafeManagedFileTransaction({
+      trustedRoot: repoRoot, backupRoot: path.join(repoRoot, ".meta-kim/backups"),
+      operations: [{ kind: "write", relPath: rel, content: next,
+        expectedOldHash: createHash("sha256").update(current).digest("hex") }],
+      transactionLabel: "global-only-project-config-retirement",
+    });
+    if (!transaction.ok) throw new Error(`Project config retirement failed: ${transaction.reason}`);
     forgetRecordedPath(filePath);
   }
   changedFiles.push(rel);
@@ -2488,6 +2534,14 @@ async function enforceGlobalOnlyProjectShape(changedFiles) {
     const filePath = path.join(repoRoot, relativePath);
     const result = await removeExactlyOwnedProjectionFile(filePath, canonicalAgentsForGlobalOnly);
     if (result.changed) changedFiles.push(relativePath);
+  }
+  for (const runtimeId of NATIVE_PROJECTION_RUNTIME_IDS) {
+    const { settingsFile } = resolveRuntimeProjection(runtimeId, "project");
+    const journal = projectManifestAtStart?.entries?.find((entry) => entry.path === settingsFile &&
+      entry.kind === "json-fragment-merge" && entry.runtimeTarget === runtimeId)?.jsonMutationJournal;
+    if (!journal) continue;
+    await rewriteGlobalOnlyConfig(settingsFile, (raw) =>
+      `${JSON.stringify(invertNativeJsonMutations(JSON.parse(raw), journal), null, 2)}\n`, changedFiles);
   }
 
   await rewriteGlobalOnlyConfig(
@@ -2589,7 +2643,11 @@ async function syncCapabilityIndexMirrors(dirs, selectedTargets, changedFiles) {
   };
 
   for (const targetId of selectedTargets) {
-    const target = targets[targetId];
+    const nativeProjection = NATIVE_PROJECTION_RUNTIME_IDS.includes(targetId)
+      ? resolveRuntimeProjection(targetId, dirs.scope) : null;
+    const target = targets[targetId] ?? (nativeProjection ? {
+      dir: nativeProjection.capabilityIndexDir, display: nativeProjection.display.capabilityIndexDir,
+    } : null);
     if (!target?.dir) continue;
 
     const mirrorPath = path.join(target.dir, "meta-kim-capabilities.json");
@@ -2732,6 +2790,9 @@ function buildRuntimeSkillMap(targetId) {
  * @returns {string}
  */
 export function applyRuntimePaths(content, targetId) {
+  // Both hosts discover this alias, with .agents taking precedence in Gemini.
+  // Keep its content identical no matter which target synchronized it last.
+  if (["codex", "gemini", "zcode"].includes(targetId)) return applyNativeSkillPaths(content, targetId);
   const rules = buildRuntimeSkillMap(targetId);
   const protectedBlocks = [];
   let result = content;
@@ -2754,53 +2815,8 @@ export function applyRuntimePaths(content, targetId) {
   return result;
 }
 
-function readFrontmatterField(frontmatter, key) {
-  const lines = frontmatter.split(/\r?\n/);
-  for (let index = 0; index < lines.length; index += 1) {
-    const match = lines[index].match(new RegExp(`^${key}:\\s*(.*)$`));
-    if (!match) continue;
-    const rawValue = match[1].trim();
-    if (rawValue === "|" || rawValue === ">") {
-      const blockLines = [];
-      for (let next = index + 1; next < lines.length; next += 1) {
-        if (/^[A-Za-z0-9_-]+:\s*/.test(lines[next])) {
-          break;
-        }
-        blockLines.push(lines[next].replace(/^\s{2}/, ""));
-      }
-      return blockLines.join("\n").trim();
-    }
-    return rawValue.replace(/^['"]|['"]$/g, "").trim();
-  }
-  return "";
-}
-
-function formatYamlScalar(value) {
-  const normalized = String(value ?? "").trim();
-  if (normalized.includes("\n")) {
-    return `|\n${normalized
-      .split(/\r?\n/)
-      .map((line) => `  ${line}`)
-      .join("\n")}`;
-  }
-  if (/^[A-Za-z0-9 _.,;()'"—-]+$/.test(normalized)) {
-    return normalized;
-  }
-  return JSON.stringify(normalized);
-}
-
 export function buildCodexSkillContent(content) {
-  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
-  if (!match) {
-    return content;
-  }
-  const frontmatter = match[1];
-  const name = readFrontmatterField(frontmatter, "name");
-  const description = readFrontmatterField(frontmatter, "description");
-  if (!name || !description) {
-    return content;
-  }
-  return `---\nname: ${formatYamlScalar(name)}\ndescription: ${formatYamlScalar(description)}\n---\n\n${content.slice(match[0].length)}`;
+  return buildPortableSkillContent(content);
 }
 
 export function buildCodexGraphifyContextHook() {
@@ -2982,9 +2998,12 @@ async function syncRuntimeSkills(
         ...file.relativePath.split("/"),
       );
       const runtimeContent =
-        runtimeId === "codex" && file.relativePath === "SKILL.md"
+        ["codex", "gemini", "zcode"].includes(runtimeId) && file.relativePath === "SKILL.md"
           ? buildCodexSkillContent(applyRuntimePaths(file.content, runtimeId))
           : applyRuntimePaths(file.content, runtimeId);
+      // Codex and Gemini share this exact skill directory. Both writers must
+      // honor the same existing ownership before updating a user's copy.
+      if (["codex", ...NATIVE_PROJECTION_RUNTIME_IDS].includes(runtimeId)) await assertNativeProjectFileOwnership(targetPath, runtimeContent);
       if (
         (
           await writeGeneratedFile(
@@ -2999,6 +3018,75 @@ async function syncRuntimeSkills(
       }
     }
   }
+}
+
+async function assertNativeProjectFileOwnership(filePath, expectedContent) {
+  assertSafeRepoProjectionPath(filePath);
+  if (isRuntimeSedimentedProjectPath(filePath)) return;
+  const current = await fs.readFile(filePath, "utf8").catch((error) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (current === null || current === expectedContent) return;
+  const entry = exactSyncOwnershipEntry(filePath);
+  if (!entry || !manifestFileEntryMatches(entry, filePath)) {
+    throw new Error(`Refusing to overwrite an unowned or edited native projection: ${filePath}`);
+  }
+}
+
+async function syncNativeProjectProjection(runtimeId, agents, canonicalSkills, changedFiles) {
+  const projection = resolveRuntimeProjection(runtimeId, "project");
+  const label = (filePath) => path.relative(repoRoot, filePath).replaceAll("\\", "/");
+  for (const agent of agents) {
+    const filePath = path.join(projection.agentsDir, `${agent.id}.md`);
+    const content = buildNativeRuntimeAgent(agent, runtimeId);
+    await assertNativeProjectFileOwnership(filePath, content);
+    if ((await writeGeneratedFile(filePath, content)).changed) changedFiles.push(label(filePath));
+  }
+  await syncRuntimeSkills(runtimeId, projection.skillsDir, projection.display.skillsDir, canonicalSkills, changedFiles);
+  const adapterPath = path.join(projection.hooksDir, "native-runtime-adapter.mjs");
+  if (runtimeId === "gemini") {
+    const adapter = await fs.readFile(path.join(canonicalRuntimeAssetsDir, "shared", "hooks", "native-runtime-adapter.mjs"), "utf8");
+    await assertNativeProjectFileOwnership(adapterPath, adapter);
+    if ((await writeGeneratedFile(adapterPath, adapter)).changed) changedFiles.push(label(adapterPath));
+  }
+  const settingsPath = projection.settingsFile;
+  assertSafeRepoProjectionPath(settingsPath);
+  const original = await fs.readFile(settingsPath, "utf8").catch((error) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  const purpose = `${runtimeId}-project-settings-merge`;
+  const previousJournal = projectManifestAtStart?.entries?.find((entry) =>
+    entry.path === settingsPath && entry.purpose === purpose && entry.kind === "json-fragment-merge")?.jsonMutationJournal ?? [];
+  let compatibleMcpServers = {};
+  if (runtimeId === "zcode") {
+    const compatibleRaw = await fs.readFile(path.join(repoRoot, ".agents", "mcp.json"), "utf8").catch((error) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
+    if (compatibleRaw) compatibleMcpServers = JSON.parse(compatibleRaw).mcpServers ?? {};
+  }
+  const plan = planNativeRuntimeSettings(original === null ? {} : JSON.parse(original), {
+    runtimeId, scope: "project", packageRoot: repoRoot, adapterPath, previousJournal, compatibleMcpServers,
+  });
+  if (plan.changed) {
+    changedFiles.push(label(settingsPath));
+    if (checkOnly) staleFiles.push({ path: settingsPath, category: CATEGORIES.G, action: original === null ? "create" : "update" });
+    else {
+      const transaction = executeSafeManagedFileTransaction({
+        trustedRoot: repoRoot, backupRoot: path.join(repoRoot, ".meta-kim/backups"),
+        operations: [{ kind: "write", relPath: label(settingsPath),
+          content: `${JSON.stringify(plan.config, null, 2)}\n`,
+          expectedOldHash: original === null ? null : createHash("sha256").update(original).digest("hex") }],
+        transactionLabel: `${runtimeId}-project-settings`,
+      });
+      if (!transaction.ok) throw new Error(`Native project config transaction failed: ${transaction.reason}`);
+    }
+  }
+  if (!checkOnly) recordSafe((rec) => rec.recordJsonFragmentMerge(settingsPath, plan.mutations, {
+    source: "sync-runtimes", purpose, category: CATEGORIES.G, runtimeTarget: runtimeId,
+  }));
 }
 
 function isRepoLocalPath(filePath) {
@@ -3019,10 +3107,9 @@ async function pruneNonProjectedRuntimeSkills(
     try {
       const stat = await fs.stat(targetPath);
       if (!stat.isDirectory()) continue;
-      if (!checkOnly) {
-        await fs.rm(targetPath, { recursive: true, force: true });
-      }
-      changedFiles.push(`${displaySkillsDir}/${skill.id}`);
+      await removeExactlyOwnedProjectionTree(
+        path.relative(repoRoot, targetPath), changedFiles, canonicalAgentsForGlobalOnly,
+      );
     } catch (error) {
       if (error.code !== "ENOENT") {
         throw error;
@@ -3044,6 +3131,7 @@ const CLAUDE_PROJECT_HOOK_FILES = new Set([
   "spine-state-gates.mjs",
   "spine-state.mjs",
   "governed-task-reference.mjs",
+  "task-progress.mjs",
   "governed-host-checkpoint.mjs",
   "activate-meta-theory-spine.mjs",
   "planning-continuity.mjs",
@@ -3077,6 +3165,7 @@ const CODEX_PROJECT_HOOK_FILES = new Set([
   "spine-state-gates.mjs",
   "spine-state.mjs",
   "governed-task-reference.mjs",
+  "task-progress.mjs",
   "governed-host-checkpoint.mjs",
   "activate-meta-theory-spine.mjs",
   "bash-readonly-whitelist.mjs",
@@ -3112,6 +3201,7 @@ const CODEX_ACTIVE_PROJECT_HOOK_FILES = new Set([
   "spine-state-gates.mjs",
   "spine-state.mjs",
   "governed-task-reference.mjs",
+  "task-progress.mjs",
   "governed-host-checkpoint.mjs",
   "activate-meta-theory-spine.mjs",
   "planning-continuity.mjs",
@@ -3139,6 +3229,7 @@ const CURSOR_PROJECT_HOOK_FILES = new Set([
   "spine-state-gates.mjs",
   "spine-state.mjs",
   "governed-task-reference.mjs",
+  "task-progress.mjs",
   "governed-host-checkpoint.mjs",
   "activate-meta-theory-spine.mjs",
   "bash-readonly-whitelist.mjs",
@@ -3167,6 +3258,7 @@ const CURSOR_ACTIVE_PROJECT_HOOK_FILES = new Set([
   "spine-state-gates.mjs",
   "spine-state.mjs",
   "governed-task-reference.mjs",
+  "task-progress.mjs",
   "governed-host-checkpoint.mjs",
   "activate-meta-theory-spine.mjs",
   "bash-readonly-whitelist.mjs",
@@ -3724,6 +3816,12 @@ Examples:
       }
     }
 
+    if (targetContext.activeTargets.includes("gemini")) {
+      const projection = resolveRuntimeProjection("gemini", "project");
+      const adapterPath = path.join(projection.hooksDir, "native-runtime-adapter.mjs");
+      const source = await fs.readFile(path.join(canonicalRuntimeAssetsDir, "shared/hooks/native-runtime-adapter.mjs"), "utf8");
+      if ((await writeGeneratedFile(adapterPath, source)).changed) changedFiles.push(path.relative(repoRoot, adapterPath));
+    }
     await enforceGlobalOnlyProjectShape(changedFiles);
   }
 
@@ -4027,6 +4125,7 @@ Examples:
         "spine-state-gates.mjs",
         "spine-state.mjs",
         "governed-task-reference.mjs",
+        "task-progress.mjs",
         "governed-host-checkpoint.mjs",
       ]) {
         const sourcePath = await canonicalGlobalHookSource(hookName, "codex");
@@ -4323,6 +4422,7 @@ Examples:
         "spine-state-gates.mjs",
         "spine-state.mjs",
         "governed-task-reference.mjs",
+        "task-progress.mjs",
         "governed-host-checkpoint.mjs",
       ]) {
         const sourcePath = await canonicalGlobalHookSource(hookName, "cursor");
@@ -4476,6 +4576,12 @@ Examples:
       ) {
         changedFiles.push(dp.cursorMcp);
       }
+    }
+  }
+
+  if (scope === "project") {
+    for (const runtimeId of selectedTargets.filter((id) => NATIVE_PROJECTION_RUNTIME_IDS.includes(id))) {
+      await syncNativeProjectProjection(runtimeId, agents, canonicalSkills, changedFiles);
     }
   }
 

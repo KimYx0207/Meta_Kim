@@ -78,6 +78,27 @@
         "quarantine exact ECC baseline if it appears in global AGENTS.md",
         "never copy project AGENTS.md into Codex global home"
       ]
+    },
+    "nativeProjectionBoundary": {
+      "gemini": {
+        "projectSkills": ".agents/skills/",
+        "sharedWith": "codex",
+        "projectSettings": ".gemini/settings.json",
+        "userSettings": "~/.gemini/settings.json",
+        "nativeProjectHooks": true,
+        "liveAcceptance": "unverified"
+      },
+      "zcode": {
+        "projectSettings": ".zcode/config.json",
+        "userSettings": "~/.zcode/cli/config.json",
+        "nativeProjectHooks": false,
+        "globalHooks": "opt_in_native_process_events",
+        "protectedAccountState": "~/.zcode/v2/",
+        "liveAcceptance": "unverified"
+      },
+      "journal": "existing_install_manifest_exact_json_fragments",
+      "unknownUserState": "preserve",
+      "projectionDoesNotGrantExecution": true
     }
   },
   "installExperienceModel": {
@@ -112,7 +133,15 @@
           "~/.openclaw/agents/",
           "~/.openclaw/hooks/",
           "~/.openclaw/skills/",
-          "~/.meta-kim/install-manifest.json"
+          "~/.meta-kim/install-manifest.json",
+          "~/.gemini/agents/",
+          "~/.gemini/skills/",
+          "~/.gemini/hooks/meta-kim/",
+          "~/.gemini/settings.json",
+          "~/.zcode/agents/",
+          "~/.zcode/skills/",
+          "~/.zcode/hooks/meta-kim/",
+          "~/.zcode/cli/config.json"
         ],
         "mustNotDo": [
           "enable Meta_Kim governance for every project automatically",
@@ -161,12 +190,30 @@
             "openclaw/",
             ".meta-kim/state",
             ".meta-kim/backups"
+          ],
+          "gemini": [
+            "AGENTS.md",
+            ".gemini/",
+            ".agents/skills/",
+            ".meta-kim/state",
+            ".meta-kim/backups"
+          ],
+          "zcode": [
+            "AGENTS.md",
+            ".zcode/agents/",
+            ".zcode/skills/",
+            ".zcode/config.json",
+            ".zcode/capability-index/",
+            ".meta-kim/state",
+            ".meta-kim/backups"
           ]
         },
-        "selectionInvariant": "Project bootstrap and install/update project sync must deploy only effective activeTargets. Repo default Enter for target selection resolves to claude,codex, but all four supported targets are formal Meta_Kim projections. Explicit --targets or saved .meta-kim/local.overrides.json activeTargets may override effective activeTargets. Cursor and OpenClaw project files appear when selected.",
+        "selectionInvariant": "Project bootstrap and install/update project sync must deploy only effective activeTargets. Repo default Enter for target selection resolves to claude,codex, but all declared supported targets are formal Meta_Kim projections. Explicit --targets or saved .meta-kim/local.overrides.json activeTargets may override effective activeTargets. Cursor, OpenClaw, Gemini CLI, and ZCode project files appear when selected.",
         "nonDefaultFormalTargetsAvailableWhenSelected": [
           "openclaw",
-          "cursor"
+          "cursor",
+          "gemini",
+          "zcode"
         ],
         "mergePolicy": "managed-block/add-only/preserve-user-state; never blind overwrite existing user files"
       },
@@ -188,7 +235,9 @@
         "claude",
         "codex",
         "openclaw",
-        "cursor"
+        "cursor",
+        "gemini",
+        "zcode"
       ],
       "defaultSelectedTargets": [
         "claude",
@@ -196,19 +245,19 @@
       ],
       "nonDefaultFormalProjectionTargets": [
         "openclaw",
-        "cursor"
+        "cursor",
+        "gemini",
+        "zcode"
       ],
       "dependencyInstallTargets": [
         "opencode",
         "qwen",
         "zed",
-        "gemini",
         "codebuddy",
         "antigravity",
         "joycode"
       ],
       "betaCompatibilityTargets": [
-        "zcode",
         "deepseek-harness",
         "qoder",
         "trae"
@@ -220,7 +269,7 @@
         "roo-code",
         "continue"
       ],
-      "boundary": "Claude Code, Codex, OpenClaw, and Cursor are the formal Meta_Kim projection targets; beta_compatibility, dependency_install_target, and candidate_probe products are not project projections.",
+      "boundary": "Claude Code, Codex, OpenClaw, Cursor, Gemini CLI, and ZCode are the formal Meta_Kim projection targets; beta_compatibility, dependency_install_target, and candidate_probe products are not project projections. A projection_implemented claim does not establish live_verified acceptance.",
       "promotionInvariant": "beta_compatibility, dependency_install_target, and candidate_probe products must not be treated as project projections until runtime profile, projection layout, generated target paths, sync tests, install policy, and live or official probe evidence exist."
     },
     "installOptions": [
@@ -318,7 +367,9 @@
         ".codex/hooks.json",
         ".cursor/hooks.json",
         ".cursor/mcp.json",
-        "openclaw/openclaw.template.json"
+        "openclaw/openclaw.template.json",
+        ".gemini/settings.json",
+        ".zcode/config.json"
       ],
       "managedTextBlock": [
         "AGENTS.md",
@@ -498,7 +549,9 @@
       "codex",
       "cursor",
       "openclaw",
-      "claude"
+      "claude",
+      "gemini",
+      "zcode"
     ],
     "completionRule": "Do not call host-side runtime changes complete without local assertion, host-side or installed-user self-test evidence, and review pass or explicit blocked reason."
   },

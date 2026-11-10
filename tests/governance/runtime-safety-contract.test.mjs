@@ -238,10 +238,10 @@ test("install experience contract keeps full platform compatibility tiers explic
   assert.equal(tiers.sourceOfTruth, "config/runtime-compatibility-catalog.json");
   assert.deepEqual(tiers.formalProjectionTargets.toSorted(), productIdsByTier("runtime_projection"));
   assert.deepEqual(tiers.defaultSelectedTargets.toSorted(), ["claude", "codex"]);
-  assert.deepEqual(tiers.nonDefaultFormalProjectionTargets.toSorted(), [
-    "cursor",
-    "openclaw",
-  ]);
+  assert.deepEqual(tiers.nonDefaultFormalProjectionTargets.toSorted(),
+    productIdsByTier("runtime_projection").filter((id) => !tiers.defaultSelectedTargets.includes(id)));
+  assert.equal(CONTRACT.hostConfigMerge.nativeProjectionBoundary.zcode.nativeProjectHooks, false);
+  assert.equal(CONTRACT.hostConfigMerge.nativeProjectionBoundary.projectionDoesNotGrantExecution, true);
   assert.deepEqual(
     tiers.dependencyInstallTargets.toSorted(),
     productIdsByTier("dependency_install_target"),

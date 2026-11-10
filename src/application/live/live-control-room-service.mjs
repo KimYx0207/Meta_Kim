@@ -31,6 +31,7 @@ import {
   buildLiveSchedulingProjection,
   sanitizeLiveSchedulingProjection,
 } from "./live-scheduling-projection.mjs";
+import { buildLiveHumanGateProjection, sanitizeLiveHumanGateProjection } from "./live-human-gate-projection.mjs";
 import { RUN_SUBSTANCE_CLASSES, runSubstance } from "./live-run-substance.mjs";
 import { LIVE_RECORD_ORIGINS, liveRecordOrigin } from "./live-record-origin.mjs";
 import {
@@ -2426,6 +2427,8 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
     contextTransfers,
     deliverables: collectLiveDeliverables(artifact).map((item) => publicLiveDeliverable(item, publicTaskBinding, { contentObserved: true })).filter(Boolean),
     revisionReview: buildRevisionReview(artifact, runId),
+    humanGates: buildLiveHumanGateProjection({ progress: artifact?.machineExecution?.humanGateProgress, runId,
+      stageNodes: artifact?.coreLoop?.stageDagPacket?.nodes, resolveNodeId: taskId => nodeByTaskId.get(taskId), limit: LIVE_MAX_NODES }),
     scheduling,
     declaredPlan: declaredStagePlan(artifact),
     nonGoalConstraints,
@@ -3160,6 +3163,7 @@ function sanitizeCompactProjection(value) {
       .filter((item) => item?.runId === runId)
       .map((item) => publicLiveDeliverable(item, publicTaskBinding)).filter(Boolean),
     revisionReview: sanitizeRevisionReview(value.revisionReview, runId),
+    humanGates: sanitizeLiveHumanGateProjection(value.humanGates, { runId, knownNodeIds: new Set(sanitizedNodes.map(node => node.id)), limit: LIVE_MAX_NODES }),
     scheduling,
     nonGoalConstraints,
     declaredPlan: sanitizeDeclaredPlan(value.declaredPlan),
@@ -3426,6 +3430,7 @@ export function buildLiveSnapshot({
       .map((item) => publicLiveDeliverable(item, publicTaskBinding, { contentObserved: Boolean(compatibleArtifact && compatibleArtifact.schemaVersion !== LIVE_COMPACT_PROJECTION_SCHEMA_VERSION) })).filter(Boolean),
     revisionReview: compatibleArtifact && compatibleArtifact.schemaVersion !== LIVE_COMPACT_PROJECTION_SCHEMA_VERSION
       ? buildRevisionReview(compatibleArtifact, run.runId) : sanitizeRevisionReview(projection.revisionReview, run.runId),
+    humanGates: sanitizeLiveHumanGateProjection(projection.humanGates, { runId: run.runId, knownNodeIds: new Set(nodes.map(node => node.id)), limit: LIVE_MAX_NODES }),
     scheduling,
     nonGoalConstraints: sanitizeNonGoalConstraints(projection.nonGoalConstraints),
     declaredPlan: sanitizeDeclaredPlan(projection.declaredPlan),

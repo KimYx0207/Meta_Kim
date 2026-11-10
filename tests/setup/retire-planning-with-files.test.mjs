@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
+  cpSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -20,6 +21,7 @@ import {
   writeManifest,
 } from "../../scripts/install-manifest.mjs";
 import { stripRetiredPlanningHooks } from "../../scripts/retire-planning-with-files.mjs";
+import { componentHash, sha256, stableJson } from "../../src/infrastructure/capabilities/source-integrity.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..", "..");
 const retirementScript = path.join(repoRoot, "scripts", "retire-planning-with-files.mjs");
@@ -140,7 +142,7 @@ test("retirement CLI follows native runtime home aliases and Meta_Kim overrides"
   }
 });
 
-test("preserved legacy planning does not block independent skill install, update, or repeat update", () => {
+test("preserved legacy planning does not block independent skill install, update, or repeat update", async () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "meta-kim-retire-independent-update-"));
   const packageRoot = process.env.META_KIM_TEST_PACKED_ROOT || repoRoot;
   try {
@@ -148,6 +150,23 @@ test("preserved legacy planning does not block independent skill install, update
     const source = path.join(root, "fixture-skill");
     mkdirSync(source, { recursive: true });
     writeFileSync(path.join(source, "SKILL.md"), "---\nname: meta-skill-creator\ndescription: Isolated installer fixture.\n---\n\nLocal test fixture.\n");
+    const serviceRoot = path.join(root, "service-source");
+    const refreshIndexedSource = async () => {
+      const component = path.join(serviceRoot, "skills/meta-skill-creator");
+      rmSync(component, { recursive: true, force: true });
+      mkdirSync(component, { recursive: true });
+      mkdirSync(path.join(serviceRoot, ".git"), { recursive: true });
+      cpSync(source, component, { recursive: true });
+      const contract = { schemaVersion: 1, id: "meta-skill-creator", componentVersion: "1.0.0", componentType: "skill", entrypoint: "SKILL.md", capabilities: [] };
+      writeFileSync(path.join(component, "capability.json"), JSON.stringify(contract));
+      mkdirSync(path.join(serviceRoot, "generated"), { recursive: true });
+      writeFileSync(path.join(serviceRoot, "generated/capabilities.json"), JSON.stringify({
+        schemaVersion: 1, componentCount: 1, capabilityCount: 0, capabilities: [],
+        components: [{ ...contract, capabilities: undefined, capabilityIds: [], path: "skills/meta-skill-creator",
+          contentSha256: await componentHash(component), contractSha256: sha256(stableJson(contract)) }],
+      }));
+    };
+    await refreshIndexedSource();
     const retained = new Map();
     for (const runtime of ["claude", "codex"]) {
       const legacy = path.join(homes[runtime], "skills", "planning-with-files");
@@ -172,11 +191,13 @@ test("preserved legacy planning does not block independent skill install, update
       META_KIM_LANG: "en",
       META_KIM_ALLOW_TEST_FIXTURES: "1",
       META_KIM_TEST_META_SKILL_SOURCE_DIR: source,
+      META_KIM_LOCAL_DEPENDENCY_ROOT: serviceRoot,
       META_KIM_SKIP_OPTIONAL_TOOLS: "1",
     };
     const installerArgs = [
       path.join(packageRoot, "scripts", "install-global-skills-all-runtimes.mjs"),
       "--targets", "claude,codex", "--skills", "meta-skill-creator",
+      "--prefer-local-dependencies",
       "--skip-plugins", "--skip-inventory-refresh",
     ];
     const beforeDryRun = directoryClosureSync(root);
@@ -187,6 +208,7 @@ test("preserved legacy planning does not block independent skill install, update
     assert.deepEqual(directoryClosureSync(root), beforeDryRun, "dry-run must not write into the isolated home");
     for (const [version, extraArgs] of [["v1", []], ["v2", ["--update"]], ["v2", ["--update"]]]) {
       writeFileSync(path.join(source, "payload.txt"), `${version}\n`);
+      await refreshIndexedSource();
       const result = spawnSync(process.execPath, [...installerArgs, ...extraArgs], {
         cwd: packageRoot, encoding: "utf8", windowsHide: true, env, timeout: 30_000,
       });

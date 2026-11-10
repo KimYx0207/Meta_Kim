@@ -19,7 +19,7 @@ const catalog = readJson("config/runtime-compatibility-catalog.json");
 const syncManifest = readJson("config/sync.json");
 const packageJson = readJson("package.json");
 
-test("candidate adapter contract keeps all four beta runtimes outside formal sync and all side effects denied", () => {
+test("legacy candidate APIs remain plan-only and cannot grant formal support or side effects", () => {
   assert.equal(contract.schemaVersion, "meta-kim-candidate-runtime-adapter-v1");
   assert.equal(contract.scope, "beta_compatibility");
   assert.equal(contract.decisionBoundary.candidateAdaptersDoNotCreateFormalSupport, true);
@@ -55,9 +55,9 @@ test("three-level priority keeps beta adapters between primary and compatibility
   assert.equal(priorityContract.priorityRules.betaCompatibilityPriorityLeakTarget, 0);
 });
 
-test("catalog admits the four packaged adapters only as beta compatibility", () => {
+test("catalog separates ZCode native projection from unchanged plan-only candidate adapters", () => {
   const byId = new Map(catalog.products.map((product) => [product.id, product]));
-  for (const id of ["zcode", "deepseek-harness", "qoder", "trae"]) {
+  for (const id of ["deepseek-harness", "qoder", "trae"]) {
     const product = byId.get(id);
     assert.ok(product, id);
     assert.equal(product.tier, "beta_compatibility", id);
@@ -73,12 +73,12 @@ test("catalog admits the four packaged adapters only as beta compatibility", () 
     assert.match(product.decision, /beta_compatibility only/i, id);
   }
   const zcode = byId.get("zcode");
+  assert.equal(zcode.tier, "runtime_projection");
+  assert.equal(zcode.formalProjection.hasRuntimeProfile, true);
+  assert.equal(zcode.formalProjection.isDefaultTarget, false);
   assert.equal(zcode.genericCompatibility.status, "partial");
-  assert.match(zcode.genericCompatibility.hookConfig, /~\/\.zcode\/cli\/config\.json -> hooks/u);
-  assert.match(zcode.genericCompatibility.hookConfig, /requires hooks\.enabled=true/u);
-  assert.match(zcode.genericCompatibility.hookConfig, /<repo>\/\.zcode\/config\.json/u);
-  assert.match(zcode.genericCompatibility.hookConfig, /documented in zcode-guide 0\.3\.0/u);
-  assert.match(zcode.genericCompatibility.hookConfig, /merge-safe update behavior still needs probe/u);
+  assert.match(zcode.genericCompatibility.hookConfig, /~\/\.zcode\/cli\/config\.json/u);
+  assert.match(zcode.genericCompatibility.hookConfig, /project hooks.*ignored/iu);
   assert.ok(zcode.evidence.some((entry) => entry.type === "official_docs"
     && entry.ref.includes("zcode-guide 0.3.0")
     && entry.ref.includes("zcode.docs.configuration.2026-10-17")));
@@ -160,8 +160,10 @@ test("DeepSeek Harness beta preset is opt-in, disabled, and non-authorizing", ()
   assert.ok(Object.values(preset.policy).every((value) => value === false));
 });
 
-test("candidate adapters stay absent from formal runtime profile and layout sources", () => {
-  for (const id of ["zcode", "deepseek-harness", "qoder", "trae"]) {
+test("remaining candidate-only products stay absent from formal profiles; ZCode native layout is separate", () => {
+  assert.equal(resolveRuntimeProfilesFromManifest(syncManifest).zcode.id, "zcode");
+  assert.match(resolveRuntimeProjection("zcode", "project", { projectRoot: REPO_ROOT }).settingsFile, /\.zcode[/\\]config\.json$/u);
+  for (const id of ["deepseek-harness", "qoder", "trae"]) {
     assert.throws(
       () =>
         resolveRuntimeProfilesFromManifest({

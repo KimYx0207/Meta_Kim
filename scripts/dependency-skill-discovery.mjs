@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { dependencyRootBinding } from "./managed-dependency-source.mjs";
+import { inspectPlainAbsolutePath } from "./safe-managed-file-operations.mjs";
 import {
   checkedPath, componentHash, stableJson, uniqueIds, stringArray, sha256,
   matchDependencyAgentContracts,
@@ -38,11 +39,7 @@ async function readIndex(project, binding, projectRoot) {
   assert.equal(project.interface.capabilityIndex.format, "component-capabilities-v1", "unsupported dependency capability index format");
   assert(typeof binding.value === "string" && binding.value.trim(), "dependency root binding must be a non-empty path");
   const root = path.resolve(projectRoot, binding.value);
-  const stat = await fs.lstat(root);
-  assert(stat.isDirectory() && !stat.isSymbolicLink(), "dependency root must be a directory, not a symlink or junction");
-  const real = await fs.realpath(root);
-  assert.equal(process.platform === "win32" ? real.toLowerCase() : real,
-    process.platform === "win32" ? root.toLowerCase() : root, "dependency root cannot traverse a symlink or junction");
+  assert(inspectPlainAbsolutePath(root, { kind: "directory" }), "dependency root must be a plain directory without a symlink or junction");
   const file = await checkedPath(root, project.interface.capabilityIndex.path);
   const indexBytes = await fs.readFile(file);
   const index = JSON.parse(indexBytes.toString("utf8"));
@@ -164,7 +161,9 @@ export async function discoverDependencySkillContracts({
       if (status === "selected") selected.set(entry.id, entry);
     }
   } else {
-    const match = matchDependencyAgentContracts(request, candidates);
+    // This selects which bounded source package to read, not an execution
+    // owner. Current host Thinking still chooses the capability it will use.
+    const match = matchDependencyAgentContracts(request, candidates, { discoveryOnly: true });
     const entry = match.selected;
     const status = !entry ? match.reason === "ambiguous_contract_matches" ? "ambiguous" : "no_match" : entry.capability.componentType !== "skill" ? "unsupported_type" : "selected";
     result.matches.push({ request, status, selected: status === "selected" ? entry.id : null, candidates: match.candidates, reason: match.reason });

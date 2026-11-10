@@ -90,3 +90,18 @@ test("the resolved command extracts a real archive under whichever tar is on PAT
     rmSync(root, { recursive: true, force: true, maxRetries: 4 });
   }
 });
+
+test("a real local archive whose filename contains a colon is never opened remotely", { skip: process.platform === "win32" }, () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "meta-kim-tar-colon-"));
+  try {
+    const target = path.join(root, "out");
+    mkdirSync(target);
+    writeFileSync(path.join(root, "payload.txt"), "local archive\n");
+    execFileSync("tar", ["-cf", "./odd:name.tar", "payload.txt"], { cwd: root });
+    const extraction = tarExtractCommand(path.join(root, "odd:name.tar"), target);
+    execFileSync(extraction.command, extraction.args, { cwd: extraction.cwd });
+    assert.equal(readFileSync(path.join(target, "payload.txt"), "utf8"), "local archive\n");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

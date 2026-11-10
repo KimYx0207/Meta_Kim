@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { inspectProjectRelations } from "../../src/infrastructure/project/project-relations.mjs";
 
 const execute = promisify(execFile);
 const ignored = new Set([".git", ".meta-kim", "node_modules", "vendor", "target", "dist", "build", ".venv", "venv"]);
@@ -18,7 +19,7 @@ const posix = value => value.split(path.sep).join("/");
 
 /** Read bounded project facts before Critical. This is no ninth governance stage
  * and never chooses a language, executes project scripts or alters a worktree. */
-export async function inspectProjectContext({ projectRoot, maxDirectories = 32, maxFiles = 96, maxFileBytes = 128 * 1024 } = {}) {
+export async function inspectProjectContext({ projectRoot, maxDirectories = 32, maxFiles = 96, maxFileBytes = 128 * 1024, focusPaths = [] } = {}) {
   if (typeof projectRoot !== "string" || !path.isAbsolute(projectRoot)) throw new TypeError("Project analysis needs an absolute project root");
   const root = path.resolve(projectRoot);
   const sources = [];
@@ -82,10 +83,16 @@ export async function inspectProjectContext({ projectRoot, maxDirectories = 32, 
   if (directories.length || sources.length >= maxFiles) limitations.push("bounded_scan_partial");
   let worktree = { status: "not_a_git_worktree", changedPaths: [], truncated: false };
   try {
-    const result = await execute("git", ["-c", "core.quotepath=false", "status", "--porcelain=v1", "--untracked-files=normal"],
+    const result = await execute("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
       { cwd: root, windowsHide: true, timeout: 3000, maxBuffer: 64 * 1024 });
-    const rows = result.stdout.trimEnd().split(/\r?\n/).filter(Boolean);
-    worktree = { status: "observed", changedPaths: rows.slice(0, 200).map(row => row.slice(3)), truncated: rows.length > 200 };
+    const tokens = result.stdout.split("\0").filter(Boolean), changes = [];
+    for (let index = 0; index < tokens.length; index++) {
+      const token = tokens[index], status = token.slice(0, 2), changedPath = token.slice(3);
+      const from = /[RC]/u.test(status) ? tokens[++index] : null;
+      changes.push({ path: changedPath, status, ...(from ? { from } : {}) });
+    }
+    worktree = { status: "observed", changedPaths: [...new Set(changes.flatMap(change => [change.path, ...(change.from ? [change.from] : [])]))].slice(0, 200),
+      changes: changes.slice(0, 200), truncated: changes.length > 200 };
     const head = await execute("git", ["rev-parse", "--verify", "HEAD"], { cwd: root, windowsHide: true, timeout: 3000, maxBuffer: 4096 });
     worktree.headCommit = head.stdout.trim();
   } catch (error) {
@@ -95,7 +102,9 @@ export async function inspectProjectContext({ projectRoot, maxDirectories = 32, 
     }
   }
   const lifecycle = sources.length || modules.length ? "existing_project" : entriesSeen ? "unclassified_existing_material" : "new_project";
-  const content = { schemaVersion: 1, lifecycle, modules, sources, worktree, limitations };
+  const relatedCode = await inspectProjectRelations({ projectRoot: root,
+    focusPaths: focusPaths.length ? focusPaths : worktree.changedPaths.slice(0, 24) });
+  const content = { schemaVersion: 1, lifecycle, modules, sources, worktree, relatedCode, limitations };
   return { ...content, digest: hash(JSON.stringify(content)), stagePosition: "before_critical",
     nextStage: "Critical", authority: "observed_project_facts_not_user_intent_or_execution_permission" };
 }

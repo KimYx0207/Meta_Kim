@@ -8,10 +8,13 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { tarExtractCommand } from "../../scripts/tar-extract-command.mjs";
+import { resolveNpmCliJsPath } from "../../scripts/runtime-cli-invocation.mjs";
 
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
 function npmCliPath() {
+  const configured = resolveNpmCliJsPath();
+  if (configured) return configured;
   const candidates = [
     process.env.npm_execpath,
     path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js"),
@@ -69,11 +72,17 @@ test("the real packed CLI serves the read-only control room without a source che
   try {
     await mkdir(extractRoot);
     await mkdir(path.join(projectRoot, ".git"), { recursive: true });
-    const pack = JSON.parse(execFileSync(process.execPath, [npmCliPath(), "pack", "--json", "--pack-destination", temp], {
+    const packOutput = execFileSync(process.execPath, [npmCliPath(), "pack", "--json", "--pack-destination", temp], {
       cwd: repoRoot,
       encoding: "utf8",
       maxBuffer: 16 * 1024 * 1024,
-    }));
+    });
+    // Keep the real prepack gate enabled. npm can print successful lifecycle
+    // output before its JSON array; that output is not part of the JSON result.
+    const boundary = packOutput.lastIndexOf("\n[");
+    const pack = JSON.parse(boundary < 0 ? packOutput : packOutput.slice(boundary));
+    assert.equal(pack.length, 1);
+    assert.equal(typeof pack[0].filename, "string");
     const packageFile = path.join(temp, pack[0].filename);
     const extraction = tarExtractCommand(packageFile, extractRoot);
     execFileSync(extraction.command, extraction.args, { cwd: extraction.cwd, stdio: "pipe" });

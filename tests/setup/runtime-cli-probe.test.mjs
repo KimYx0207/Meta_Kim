@@ -8,6 +8,7 @@ import { probeRuntimeCli, runtimeCliProbeEligibility } from "../../scripts/runti
 import { resolveTargetContext } from "../../scripts/meta-kim-sync-config.mjs";
 import { resolveWindowsCliLaunchDescriptor } from "../../scripts/runtime-cli-invocation.mjs";
 import { runRuntimeCliVersion } from "../../scripts/runtime-cli-version.mjs";
+import { NATIVE_PROJECTION_RUNTIME_IDS } from "../../scripts/native-runtime-projection.mjs";
 
 function fixture(t) {
   const root=mkdtempSync(path.join(os.tmpdir(),"meta-cli-probe-"));
@@ -134,11 +135,12 @@ test("setup keeps all detected flags false but provisions explicit supported tar
   for(const args of [["--targets","codex"],[],["--targets","unsupported-runtime"]]) {
     let asked=0;
     const context={args,resolveTargetContext,heading(){},detectCli:()=>null,skip(){},warn(){},
+      NATIVE_PROJECTION_RUNTIME_IDS,setupRuntimeProfiles:{gemini:{label:"Gemini CLI"},zcode:{label:"ZCode"}},
       t:{},C:{yellow:"",reset:"",dim:""},console:{log(){}},fmt:()=>"",DISTRIBUTION:{documentation:{claudeCode:"fixture"}},
       askYesNo:async()=>{asked++;return false;},process:{exit:()=>{throw new Error("setup cancelled");}}};
     const run=vm.runInNewContext(`(${body})()`,context);
     if(args[1]==="codex") {
-      assert.deepEqual(JSON.parse(JSON.stringify(await run)),{claude:false,codex:false,openclaw:false,cursor:false});
+      assert.deepEqual(JSON.parse(JSON.stringify(await run)),{claude:false,codex:false,openclaw:false,cursor:false,gemini:false,zcode:false});
       assert.equal(asked,0);
     } else if(args.length===0) {
       await assert.rejects(run,/setup cancelled/);assert.equal(asked,1);

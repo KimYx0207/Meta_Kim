@@ -73,6 +73,7 @@ import {
 import {
   pruneExactHistoricalHookSourceEntries,
 } from "./historical-install-manifest-cleanup.mjs";
+import { invertNativeJsonMutations, normalizeNativeJsonMutations } from "./native-runtime-projection.mjs";
 
 export const SCHEMA_VERSION = 1;
 
@@ -625,6 +626,10 @@ export function validate(manifest) {
       if (!Object.prototype.hasOwnProperty.call(CATEGORIES, entry.category)) {
         errors.push(`entries[${i}].category invalid: ${entry.category}`);
       }
+      if (entry.kind === "json-fragment-merge") {
+        try { normalizeNativeJsonMutations(entry.jsonMutationJournal); }
+        catch (error) { errors.push(`entries[${i}].jsonMutationJournal: ${error.message}`); }
+      }
       if (entry.kind === "toml-fragment-merge") {
         const label = `entries[${i}]`;
         for (const field of Object.keys(entry)) {
@@ -993,6 +998,21 @@ export function openRecorder({
         mergedHookFragments: managedHookFragments ?? [],
         mergedSettingsKeys: mergedSettingsKeys ?? [],
       });
+    },
+    recordJsonFragmentMerge(settingsPath, mutationJournal, { source, purpose, category, runtimeTarget } = {}) {
+      if (!settingsPath || !category) return;
+      try {
+        const normalizedJournal = normalizeNativeJsonMutations(mutationJournal);
+        const resolvedPurpose = purpose ?? "json-fragment-merge";
+        if (!normalizedJournal.length) {
+          manifest = removeByPath(manifest, settingsPath, resolvedPurpose);
+          forgetOperations.push({ targetPath: settingsPath, purpose: resolvedPurpose });
+          return;
+        }
+        invertNativeJsonMutations(JSON.parse(readFileSync(settingsPath, "utf8")), normalizedJournal);
+        safeRecord({ path: settingsPath, category, source: source ?? "unknown", purpose: resolvedPurpose,
+          kind: "json-fragment-merge", runtimeTarget: runtimeTarget ?? null, jsonMutationJournal: normalizedJournal });
+      } catch (error) { recordErrors.push(`invalid JSON mutation journal for ${settingsPath}: ${error.message}`); }
     },
     recordTomlFragmentMerge(
       settingsPath,

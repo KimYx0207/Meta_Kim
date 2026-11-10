@@ -459,12 +459,12 @@ describe("setup update default flow", () => {
     );
     assert.match(
       readmeEn,
-      /default Enter path is \*\*global reusable capabilities\*\*/,
+      /default install reuses capabilities globally/,
       "README must describe the default install as global capabilities",
     );
     assert.match(
       readmeZh,
-      /默认直接回车的路径是：\*\*全局通用能力\*\*/,
+      /默认在全局复用能力/,
       "Chinese README must describe the default install as global capabilities",
     );
     assert.deepEqual(syncManifest.projectMaterializationPolicy.globalByDefault, [
@@ -736,8 +736,14 @@ describe("setup update default flow", () => {
         targets: ["cursor", "openclaw"],
         withGlobalHooks: true,
       }),
-      ["--targets", "cursor,openclaw"],
+      ["--targets", "cursor,openclaw", "--with-global-hooks"],
     );
+    for (const target of ["gemini", "zcode"]) {
+      assert.deepEqual(buildGlobalMetaTheorySyncArgs({ targets: [target], withGlobalHooks: true }),
+        ["--targets", target, "--with-global-hooks"]);
+      assert.deepEqual(buildGlobalMetaTheorySyncArgs({ targets: [target], withGlobalHooks: false }),
+        ["--targets", target]);
+    }
     assert.match(
       source,
       /function syncOwnedGlobalRuntimeAssets\([\s\S]*?assetType === "hooks" && !withGlobalHooks[\s\S]*?globalProjectionIsOwnedBy/,

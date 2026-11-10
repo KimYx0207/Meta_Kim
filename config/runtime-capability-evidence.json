@@ -251,9 +251,9 @@
         "setup.mjs"
       ],
       "sourceArtifacts": [
-        { "path": "canonical/runtime-assets/claude", "digestKind": "sha256", "sha256": "71c10b5496d9babac1304fc4c8ee090967b3361a454f8dcf9b3afdea1bf9ccd7" },
-        { "path": "scripts/runtime-hook-mapping.mjs", "digestKind": "sha256", "sha256": "4cf43375a9e9720212bc0c47e68adabcd56b00a78f0b932280b605eba889f959" },
-        { "path": "setup.mjs", "digestKind": "sha256", "sha256": "397e5cea5a0066583c668de529684f084065305487114ce175d43f5903021032" }
+        { "path": "canonical/runtime-assets/claude", "digestKind": "sha256", "sha256": "46beed1b6c6ac6bc693d44fbaf23443a64358f919c132cc4eae22366562bf08b" },
+        { "path": "scripts/runtime-hook-mapping.mjs", "digestKind": "sha256", "sha256": "e7de7774341afe7206ad90d0f291284cae9f344e7b2a0757ecd06ebe0df7046b" },
+        { "path": "setup.mjs", "digestKind": "sha256", "sha256": "41ea8e78891a0723893ce191012985e78e51922652d9d3cf6a9778ed5c9215a4" }
       ],
       "summary": "Canonical runtime projection sources and install wiring are present in the repository.",
       "limitations": [
@@ -563,9 +563,9 @@
       ],
       "sourceArtifacts": [
         { "path": "canonical/runtime-assets/codex", "digestKind": "sha256", "sha256": "5cb91cf2adf020ae3e13c21bc419e08ce6527f29072561177a189464680a39ed" },
-        { "path": "scripts/runtime-hook-mapping.mjs", "digestKind": "sha256", "sha256": "4cf43375a9e9720212bc0c47e68adabcd56b00a78f0b932280b605eba889f959" },
-        { "path": "setup.mjs", "digestKind": "sha256", "sha256": "397e5cea5a0066583c668de529684f084065305487114ce175d43f5903021032" },
-        { "path": "AGENTS.md", "digestKind": "sha256", "sha256": "ac55103a5e340d0d30379399f282d259f03a4d5e2d81d573275bc07aea19a819" }
+        { "path": "scripts/runtime-hook-mapping.mjs", "digestKind": "sha256", "sha256": "e7de7774341afe7206ad90d0f291284cae9f344e7b2a0757ecd06ebe0df7046b" },
+        { "path": "setup.mjs", "digestKind": "sha256", "sha256": "41ea8e78891a0723893ce191012985e78e51922652d9d3cf6a9778ed5c9215a4" },
+        { "path": "AGENTS.md", "digestKind": "sha256", "sha256": "b274f788233c18086ef53d9655a2294ebe222eb574580f354956bc193001b005" }
       ],
       "summary": "Canonical runtime projection sources and install wiring are present in the repository.",
       "limitations": [
@@ -938,8 +938,8 @@
       ],
       "sourceArtifacts": [
         { "path": "canonical/runtime-assets/openclaw", "digestKind": "sha256", "sha256": "ebb521fbba8c4a8ac08dc3005630f8a00924108c4fbaae066303f37c98e68a6a" },
-        { "path": "scripts/sync-runtimes.mjs", "digestKind": "sha256", "sha256": "5774485c42864c33188dcc1b3f3afa31d75a4db384d3f85397f07b1cff576c24" },
-        { "path": "setup.mjs", "digestKind": "sha256", "sha256": "397e5cea5a0066583c668de529684f084065305487114ce175d43f5903021032" }
+        { "path": "scripts/sync-runtimes.mjs", "digestKind": "sha256", "sha256": "498d8ca369721bdd631afd356faec7064242697fae1fd2220d19a8890a12189b" },
+        { "path": "setup.mjs", "digestKind": "sha256", "sha256": "41ea8e78891a0723893ce191012985e78e51922652d9d3cf6a9778ed5c9215a4" }
       ],
       "summary": "Canonical runtime projection sources and install wiring are present in the repository.",
       "limitations": [
@@ -1292,8 +1292,8 @@
       ],
       "sourceArtifacts": [
         { "path": "canonical/runtime-assets/cursor", "digestKind": "sha256", "sha256": "786f610efc8d8f2c3e61e8260c4ce9b4f00da6af82701958fb46097b8c8c3780" },
-        { "path": "scripts/runtime-hook-mapping.mjs", "digestKind": "sha256", "sha256": "4cf43375a9e9720212bc0c47e68adabcd56b00a78f0b932280b605eba889f959" },
-        { "path": "setup.mjs", "digestKind": "sha256", "sha256": "397e5cea5a0066583c668de529684f084065305487114ce175d43f5903021032" }
+        { "path": "scripts/runtime-hook-mapping.mjs", "digestKind": "sha256", "sha256": "e7de7774341afe7206ad90d0f291284cae9f344e7b2a0757ecd06ebe0df7046b" },
+        { "path": "setup.mjs", "digestKind": "sha256", "sha256": "41ea8e78891a0723893ce191012985e78e51922652d9d3cf6a9778ed5c9215a4" }
       ],
       "summary": "Canonical runtime projection sources and install wiring are present in the repository.",
       "limitations": [
@@ -1384,6 +1384,280 @@
       "limitations": [
         "Observed via the local bundled copy of marketplace plugin zcode-guide 0.3.0 (skill zcode-configuration-guide); a bundled copy may lag the shipping ZCode product.",
         "Documents host configuration behavior only; proves no Meta_Kim projection freshness, live acceptance, or model behavior under ZCode."
+      ]
+    },
+    {
+      "id": "gemini.docs.native-surfaces.2026-11-10",
+      "runtime": "gemini",
+      "capabilities": [
+        "MCP",
+        "agent",
+        "automation trigger",
+        "custom agent",
+        "global rule file",
+        "hook",
+        "hook discovery",
+        "project rule file",
+        "skill",
+        "skill discovery",
+        "subagent"
+      ],
+      "observationClass": "official_docs",
+      "runtimeModes": [
+        "project_projection",
+        "global_install",
+        "interactive_host",
+        "headless_live",
+        "compatibility_smoke"
+      ],
+      "observedAt": "2026-11-10",
+      "sourceRefs": [
+        "https://geminicli.com/docs/cli/skills/",
+        "https://geminicli.com/docs/core/subagents/",
+        "https://geminicli.com/docs/cli/gemini-md/",
+        "https://geminicli.com/docs/hooks/reference/",
+        "https://geminicli.com/docs/tools/mcp-server/"
+      ],
+      "summary": "Official native skills, agent definitions, rules, hook dialects and MCP configuration were reviewed.",
+      "limitations": [
+        "Documentation is not current-host or live model acceptance.",
+        ".agents/skills takes precedence over .gemini/skills; workspace trust and skill consent remain host-owned."
+      ]
+    },
+    {
+      "id": "gemini.repo.native-projection.2026-11-10",
+      "runtime": "gemini",
+      "capabilities": [
+        "MCP",
+        "agent",
+        "automation trigger",
+        "custom agent",
+        "global install",
+        "global rule file",
+        "hook",
+        "hook discovery",
+        "project install",
+        "project rule file",
+        "skill",
+        "skill discovery",
+        "subagent"
+      ],
+      "observationClass": "repo_projection",
+      "runtimeModes": [
+        "project_projection",
+        "global_install",
+        "interactive_host",
+        "headless_live",
+        "compatibility_smoke"
+      ],
+      "observedAt": "2026-11-10",
+      "sourceRefs": [
+        "scripts/meta-kim-sync-config.mjs",
+        "scripts/native-runtime-projection.mjs",
+        "scripts/sync-runtimes.mjs",
+        "scripts/sync-global-meta-theory.mjs",
+        "canonical/runtime-assets/shared/hooks/native-runtime-adapter.mjs"
+      ],
+      "sourceArtifacts": [
+        { "path": "scripts/meta-kim-sync-config.mjs", "digestKind": "sha256", "sha256": "e765e3b2f385a20ad6ea185aee4faca939f5510e86b611af8cb2d6234fed796b" },
+        { "path": "scripts/native-runtime-projection.mjs", "digestKind": "sha256", "sha256": "4ca0499a542ef447eaf536ba44949f46093984d7dd6ba0e0bcba90c6353176dd" },
+        { "path": "scripts/sync-runtimes.mjs", "digestKind": "sha256", "sha256": "498d8ca369721bdd631afd356faec7064242697fae1fd2220d19a8890a12189b" },
+        { "path": "scripts/sync-global-meta-theory.mjs", "digestKind": "sha256", "sha256": "6ac6234bf37e4423dd81f585746aa521cd642318d897c6f53d764ea268005f1a" },
+        { "path": "canonical/runtime-assets/shared/hooks/native-runtime-adapter.mjs", "digestKind": "sha256", "sha256": "d2ba0b6af1f872cf8a0baaa4a4e0cee10d5ca3fffe359705dc25a926a0f28750" }
+      ],
+      "summary": "Canonical projections and existing install/update/check/uninstall wiring include native schema adapters and exact JSON mutation ownership.",
+      "limitations": [
+        "Source implementation and structural tests do not establish live_verified.",
+        "No new stage-runner or model invocation authority is introduced."
+      ]
+    },
+    {
+      "id": "gemini.review.native-projection.2026-11-10",
+      "runtime": "gemini",
+      "capabilities": [
+        "agent",
+        "subagent",
+        "custom agent",
+        "skill",
+        "command",
+        "slash command",
+        "hook",
+        "MCP",
+        "browser / web",
+        "shell",
+        "filesystem",
+        "apply_patch / edit",
+        "sandbox",
+        "approval",
+        "permission mode",
+        "native choice surface",
+        "chat decision card fallback",
+        "popup / overlay / approval UI",
+        "background task",
+        "memory",
+        "graph",
+        "project rule file",
+        "global rule file",
+        "project install",
+        "global install",
+        "dependency discovery",
+        "skill discovery",
+        "hook discovery",
+        "automation trigger",
+        "human confirmation trigger"
+      ],
+      "observationClass": "conservative_review",
+      "runtimeModes": [
+        "project_projection",
+        "global_install",
+        "interactive_host",
+        "headless_live",
+        "compatibility_smoke"
+      ],
+      "observedAt": "2026-11-10",
+      "sourceRefs": [
+        "scripts/native-runtime-projection.mjs"
+      ],
+      "summary": "Projection implementation is tracked separately from native execution evidence; unobserved surfaces remain unknown.",
+      "limitations": [
+        "Native live acceptance not run."
+      ]
+    },
+    {
+      "id": "zcode.docs.native-surfaces.2026-11-10",
+      "runtime": "zcode",
+      "capabilities": [
+        "MCP",
+        "agent",
+        "automation trigger",
+        "custom agent",
+        "global rule file",
+        "hook",
+        "hook discovery",
+        "project rule file",
+        "skill",
+        "skill discovery",
+        "subagent"
+      ],
+      "observationClass": "official_docs",
+      "runtimeModes": [
+        "project_projection",
+        "global_install",
+        "interactive_host",
+        "headless_live",
+        "compatibility_smoke"
+      ],
+      "observedAt": "2026-11-10",
+      "sourceRefs": [
+        "https://zcode.z.ai/en/docs/skill",
+        "https://zcode.z.ai/en/docs/subagents",
+        "https://zcode.z.ai/en/docs/hooks",
+        "https://zcode.z.ai/en/docs/mcp-services",
+        "https://zcode.z.ai/en/docs/qa"
+      ],
+      "summary": "Official native skills, agent definitions, rules, hook dialects and MCP configuration were reviewed.",
+      "limitations": [
+        "Documentation is not current-host or live model acceptance.",
+        "Project hooks are ignored by current ZCode. Older bundled-guide scope descriptions remain historical."
+      ]
+    },
+    {
+      "id": "zcode.repo.native-projection.2026-11-10",
+      "runtime": "zcode",
+      "capabilities": [
+        "MCP",
+        "agent",
+        "automation trigger",
+        "custom agent",
+        "global install",
+        "global rule file",
+        "hook",
+        "hook discovery",
+        "project install",
+        "project rule file",
+        "skill",
+        "skill discovery",
+        "subagent"
+      ],
+      "observationClass": "repo_projection",
+      "runtimeModes": [
+        "project_projection",
+        "global_install",
+        "interactive_host",
+        "headless_live",
+        "compatibility_smoke"
+      ],
+      "observedAt": "2026-11-10",
+      "sourceRefs": [
+        "scripts/meta-kim-sync-config.mjs",
+        "scripts/native-runtime-projection.mjs",
+        "scripts/sync-runtimes.mjs",
+        "scripts/sync-global-meta-theory.mjs",
+        "canonical/runtime-assets/shared/hooks/native-runtime-adapter.mjs"
+      ],
+      "sourceArtifacts": [
+        { "path": "scripts/meta-kim-sync-config.mjs", "digestKind": "sha256", "sha256": "e765e3b2f385a20ad6ea185aee4faca939f5510e86b611af8cb2d6234fed796b" },
+        { "path": "scripts/native-runtime-projection.mjs", "digestKind": "sha256", "sha256": "4ca0499a542ef447eaf536ba44949f46093984d7dd6ba0e0bcba90c6353176dd" },
+        { "path": "scripts/sync-runtimes.mjs", "digestKind": "sha256", "sha256": "498d8ca369721bdd631afd356faec7064242697fae1fd2220d19a8890a12189b" },
+        { "path": "scripts/sync-global-meta-theory.mjs", "digestKind": "sha256", "sha256": "6ac6234bf37e4423dd81f585746aa521cd642318d897c6f53d764ea268005f1a" },
+        { "path": "canonical/runtime-assets/shared/hooks/native-runtime-adapter.mjs", "digestKind": "sha256", "sha256": "d2ba0b6af1f872cf8a0baaa4a4e0cee10d5ca3fffe359705dc25a926a0f28750" }
+      ],
+      "summary": "Canonical projections and existing install/update/check/uninstall wiring include native schema adapters and exact JSON mutation ownership.",
+      "limitations": [
+        "Source implementation and structural tests do not establish live_verified.",
+        "No new stage-runner or model invocation authority is introduced."
+      ]
+    },
+    {
+      "id": "zcode.review.native-projection.2026-11-10",
+      "runtime": "zcode",
+      "capabilities": [
+        "agent",
+        "subagent",
+        "custom agent",
+        "skill",
+        "command",
+        "slash command",
+        "hook",
+        "MCP",
+        "browser / web",
+        "shell",
+        "filesystem",
+        "apply_patch / edit",
+        "sandbox",
+        "approval",
+        "permission mode",
+        "native choice surface",
+        "chat decision card fallback",
+        "popup / overlay / approval UI",
+        "background task",
+        "memory",
+        "graph",
+        "project rule file",
+        "global rule file",
+        "project install",
+        "global install",
+        "dependency discovery",
+        "skill discovery",
+        "hook discovery",
+        "automation trigger",
+        "human confirmation trigger"
+      ],
+      "observationClass": "conservative_review",
+      "runtimeModes": [
+        "project_projection",
+        "global_install",
+        "interactive_host",
+        "headless_live",
+        "compatibility_smoke"
+      ],
+      "observedAt": "2026-11-10",
+      "sourceRefs": [
+        "scripts/native-runtime-projection.mjs"
+      ],
+      "summary": "Projection implementation is tracked separately from native execution evidence; unobserved surfaces remain unknown.",
+      "limitations": [
+        "Native live acceptance not run."
       ]
     }
   ],

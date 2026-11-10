@@ -7,8 +7,10 @@ import path from "node:path";
 import { intentDialogueDigest, prepareIntentDialogue, bindIntentToWorkerTasks, routeCandidateOptions } from "../../scripts/governed-execution/intent-dialogue.mjs";
 import { taskOutcomeDigest } from "../../src/domain/governance/task-outcome.mjs";
 import { evaluateGovernedArtifact } from "../../scripts/evaluate-governance-outcomes.mjs";
-import { createGovernanceRuntimeFixture } from "../helpers/governance-runtime-fixture.mjs";
-import { buildPlanChallengeState, runMetaTheoryGovernedExecution } from "../../scripts/run-meta-theory-governed-execution.mjs";
+import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
+import { fixtureCritical, fixtureReadWorkOrder, fixtureInventoryProvider, refreshFixtureSourcePins, runWithFixtureHostThinking, observeFixturePlanChoice } from "../helpers/host-reasoning-fixture.mjs";
+import { readOnlyFixtureTaskFacts } from "../helpers/task-design-facts.mjs";
+import { buildPlanChallengeState } from "../../scripts/run-meta-theory-governed-execution.mjs";
 import { buildReadOnlyWorkerPrompt } from "../../scripts/governed-execution/stage-runner-bridge.mjs";
 
 const task = "Implement a local CSV report with a deterministic check; preserve the current project.";
@@ -146,18 +148,25 @@ test("provider routes remain internal choices rather than fabricated product alt
 });
 
 test("real runner consumes one bound intent across goal, worker and blueprint without granting execution", async (t) => {
-  const temp = await mkdtemp(path.join(os.tmpdir(), "meta-kim-intent-dialogue-"));
-  t.after(async () => { assert.equal(path.dirname(temp), path.resolve(os.tmpdir())); await rm(temp, { recursive: true, force: true }); });
+  const fixture = createGovernanceRuntimeFixtureScope(t);
+  refreshFixtureSourcePins(fixture);
+  const { runMetaTheoryGovernedExecution } = await fixture.import("scripts/run-meta-theory-governed-execution.mjs");
   const { intent, understanding } = confirmed();
-  const result = await runMetaTheoryGovernedExecution({ task, confirmedIntent: intent, sharedUnderstandingConfirmed: understanding,
-    runId: "intent-dialogue-confirmed", stateDir: temp, dbPath: path.join(temp, "runs.sqlite"), projectCapabilityMutationMode: "read_only" });
-  const artifact = JSON.parse(await readFile(path.join(temp, "intent-dialogue-confirmed.json"), "utf8"));
+  const criticalInput = fixtureCritical({ task, outcome: intent.outcome, intentDigest: understanding.intentDigest,
+    successCriteria: intent.acceptanceCriteria.map(criterion => criterion.description), nonGoals: ["No external effects"] });
+  const result = await runWithFixtureHostThinking(runMetaTheoryGovernedExecution, { task, confirmedIntent: intent, sharedUnderstandingConfirmed: understanding,
+    runId: "intent-dialogue-confirmed", stateDir: path.resolve("tmp/intent"), dbPath: path.resolve("tmp/intent.sqlite"), projectCapabilityMutationMode: "read_only" }, {
+    criticalInput, governanceTaskFacts: readOnlyFixtureTaskFacts(task), workOrders: preparation => [fixtureReadWorkOrder(preparation, {
+      id: "csv-source-review", todayTask: "Inspect package.json to establish the current CSV implementation context", output: "Source-bound implementation context",
+      criterionIds: ["csv-report"], taskFacts: readOnlyFixtureTaskFacts("Inspect package.json to establish the current CSV implementation context") })],
+  });
+  const artifact = JSON.parse(await readFile(result.paths.json, "utf8"));
   assert.equal(artifact.intentPacket.realIntent, intent.outcome);
   assert.equal(artifact.coreLoop.intentPacket.realIntent, intent.outcome);
   assert.equal(artifact.coreLoop.goalContractPacket.taskHash, intent.taskHash);
   assert.equal(artifact.coreLoop.goalContractPacket.contractFields.outcome, task, "Outcome assessment stays bound to the original request");
   assert.equal(artifact.coreLoop.goalContractPacket.confirmedOutcome, intent.outcome);
-  assert.equal(artifact.intentPacket.successCriteria, intent.acceptanceCriteria[0].description);
+  assert.deepEqual(artifact.intentPacket.successCriteria, [intent.acceptanceCriteria[0].description]);
   assert.equal(artifact.businessFlowBlueprintPacket.intentBinding.intentDigest, understanding.intentDigest);
   for (const packet of artifact.workerTaskPackets) {
     assert.equal(packet.intentBinding.intentDigest, understanding.intentDigest);
@@ -169,23 +178,46 @@ test("real runner consumes one bound intent across goal, worker and blueprint wi
 });
 
 test("real runner retains bound dialogue history and rejects a prior task's settled answer", async (t) => {
-  const temp = await mkdtemp(path.join(os.tmpdir(), "meta-kim-intent-history-"));
-  t.after(async () => { assert.equal(path.dirname(temp), path.resolve(os.tmpdir())); await rm(temp, { recursive: true, force: true }); });
+  const fixture = createGovernanceRuntimeFixtureScope(t);
+  refreshFixtureSourcePins(fixture);
+  const { runMetaTheoryGovernedExecution } = await fixture.import("scripts/run-meta-theory-governed-execution.mjs");
   const request = "Should we use option A or option B? Read-only comparison without file changes.";
-  const first = await runMetaTheoryGovernedExecution({ task: request, runId: "intent-history-first", stateDir: temp, dbPath: path.join(temp, "runs.sqlite"), projectCapabilityMutationMode: "read_only" });
-  const prior = { ...first.preDecisionOptionFrame, trusted: true };
-  const question = prior.unresolvedQuestions.find((item) => item.questionId === "plan-challenge-route-selection");
-  assert.ok(question);
   const taskHash = taskOutcomeDigest(request);
-  const response = { questionId: question.questionId, sequence: 1, status: "answered", userAnswer: "Use option A", trusted: true, taskHash,
-    binding: `plan-challenge-response:${question.questionId}`, selectionBinding: `plan-challenge-selection:${question.questionId}`, evidenceRefs: ["fixture:route-answer"] };
-  const second = await runMetaTheoryGovernedExecution({ task: request, runId: "intent-history-second", stateDir: temp, dbPath: path.join(temp, "runs.sqlite"), projectCapabilityMutationMode: "read_only",
-    priorChallengeState: prior, planChallengeResponses: [response], sharedUnderstandingConfirmed: { taskHash, trusted: true, binding: "plan-challenge-understanding-confirmation", evidenceRefs: ["fixture:shared-understanding"] } });
-  assert.equal(second.preDecisionOptionFrame.unresolvedQuestions.find((item) => item.questionId === question.questionId).status, "answered");
+  const questionId = "delivery-approach";
+  const initialIntent = { taskHash, outcome: request, evidenceRefs: ["package.json"] };
+  const initialDigest = intentDialogueDigest(initialIntent);
+  const initialUnderstanding = { taskHash, intentDigest: initialDigest, trusted: true, binding: "plan-challenge-understanding-confirmation", evidenceRefs: initialIntent.evidenceRefs };
+  const discovery = currentTask => ({ schemaVersion: 1, taskHash: taskOutcomeDigest(currentTask), intentDigest: currentTask === request ? initialDigest : null, evidenceRefs: ["package.json"],
+    decisionItems: [{ questionId, question: "Which report should the comparison produce?", questionTarget: "wrong_goal_risk",
+      decisionImpact: "Changes the audience and final comparison", impactPriority: 80, dependsOn: [], evidenceRefs: ["package.json"],
+      resolutionClass: "material_user_decision", recommendedAnswer: "Use option A", recommendationRationale: "The fixture host recommends the smaller comparison",
+      options: [{ label: "Use option A", tradeoff: "Narrow comparison" }, { label: "Use option B", tradeoff: "Broader audience and scope" }] }] });
+  const base = { task: request, confirmedIntent: initialIntent, sharedUnderstandingConfirmed: initialUnderstanding, stateDir: path.resolve("tmp/history"), dbPath: path.resolve("tmp/history.sqlite"), projectCapabilityMutationMode: "read_only",
+    requirementsDiscoveryInput: discovery(request), governanceTaskFacts: readOnlyFixtureTaskFacts(request) };
+  const first = await runMetaTheoryGovernedExecution({ ...base, runId: "intent-history-first",
+    criticalInput: fixtureCritical({ task: request, intentDigest: initialDigest, successCriteria: [request], blockingUnknowns: [questionId] }) });
+  assert.equal(first.artifactKind, "host_preparation");
+  assert.deepEqual(first.workerTaskPackets, []);
+  const prior = { ...first.preDecisionOptionFrame, taskHash, intentDigest: initialDigest, trusted: true };
+  const question = prior.unresolvedQuestions.find(item => item.questionId === questionId);
+  assert.ok(question, "The current host declares the real choice instead of relying on lexical options");
+  const response = { questionId, sequence: 1, status: "answered", userAnswer: "Use option A", trusted: true, taskHash, intentDigest: initialDigest,
+    binding: `plan-challenge-response:${questionId}`, selectionBinding: `plan-challenge-selection:${questionId}`, evidenceRefs: ["package.json"] };
+  const advisory = await runMetaTheoryGovernedExecution({ ...base, runId: "intent-history-advisory", previousPlanChallengeRunId: first.runId,
+    criticalInput: fixtureCritical({ task: request, intentDigest: initialDigest, successCriteria: [request], blockingUnknowns: [questionId] }), planChallengeResponses: [response] });
+  assert.equal(advisory.preDecisionOptionFrame.unresolvedQuestions.find(item => item.questionId === questionId).status, "open", "Public trusted flags cannot answer a question");
+  const choice = await observeFixturePlanChoice(fixture, first, questionId);
+  const second = await runMetaTheoryGovernedExecution({ ...base, runId: "intent-history-second", previousPlanChallengeRunId: first.runId,
+    ...choice, criticalInput: fixtureCritical({ task: request, intentDigest: choice.intentDigest, successCriteria: [request] }) });
+  assert.equal(second.preDecisionOptionFrame.unresolvedQuestions.find(item => item.questionId === questionId).status, "answered");
   assert.equal(second.preDecisionOptionFrame.planChallengeState.pendingUserChoice.status, "not_required");
-  const stale = await runMetaTheoryGovernedExecution({ task: `${request} A changed audience.`, runId: "intent-history-stale", stateDir: temp, dbPath: path.join(temp, "runs.sqlite"), projectCapabilityMutationMode: "read_only", priorChallengeState: { ...second.preDecisionOptionFrame, trusted: true }, planChallengeResponses: [response] });
+  const changedTask = `${request} A changed audience.`;
+  const stale = await runMetaTheoryGovernedExecution({ ...base, task: changedTask, confirmedIntent: null, sharedUnderstandingConfirmed: null, runId: "intent-history-stale", requirementsDiscoveryInput: discovery(changedTask),
+    criticalInput: fixtureCritical({ task: changedTask, successCriteria: [changedTask], blockingUnknowns: [questionId] }), governanceTaskFacts: readOnlyFixtureTaskFacts(changedTask),
+    priorChallengeState: { ...second.preDecisionOptionFrame, taskHash, intentDigest: choice.intentDigest, trusted: true }, planChallengeResponses: [response] });
   assert.equal(stale.preDecisionOptionFrame.planChallengeState.pendingUserChoice.status, "required_not_invoked");
-  assert.equal(stale.preDecisionOptionFrame.unresolvedQuestions.find((item) => item.questionId === question.questionId).status, "open");
+  assert.equal(stale.preDecisionOptionFrame.unresolvedQuestions.find(item => item.questionId === questionId).status, "open");
+
 });
 
 test("public CLI cannot self-attest a confirmed direction", async (t) => {
@@ -204,7 +236,8 @@ test("public CLI cannot self-attest a confirmed direction", async (t) => {
 });
 
 test("real selector discovery fixture changes selected providers for engineering direction and rejects a wrong runtime", async (t) => {
-  const fixture = createGovernanceRuntimeFixture(t);
+  const fixture = createGovernanceRuntimeFixtureScope(t);
+  refreshFixtureSourcePins(fixture);
   const { mkdir } = await import("node:fs/promises");
   const skillDir = path.join(fixture.home, ".codex", "skills", "csv-architecture");
   await mkdir(skillDir, { recursive: true });
@@ -228,27 +261,45 @@ test("real selector discovery fixture changes selected providers for engineering
   assert.equal(extensible.recommendedRoute.selectedCapabilityProviders.intentArchitecture.id, "csv-architecture");
   assert.equal(extensible.recommendedRoute.intentDirectionSelection.status, "selected_not_invoked");
   assert.ok(extensible.recommendedRoute.intentDirectionSelection.candidates.some((candidate) => candidate.id === "csv-architecture" && candidate.matchedTerms.includes("architecture")));
-  // Exercise the copied real runner against the same discovery fixture. The
-  // understanding input is fixture state, not a native answer receipt.
-  const script = `
-    import { runMetaTheoryGovernedExecution } from "./scripts/run-meta-theory-governed-execution.mjs";
-    import { intentDialogueDigest } from "./scripts/governed-execution/intent-dialogue.mjs";
-    import { taskOutcomeDigest } from "./src/domain/governance/task-outcome.mjs";
-    import path from "node:path";
-    const task = ${JSON.stringify(engineeringTask)};
-    const intent = { taskHash: taskOutcomeDigest(task), outcome: "A local CSV report", constraints: { deliveryStrategy: "long_term_extensible" }, evidenceRefs: ["fixture:confirmed-goal"] };
-    await runMetaTheoryGovernedExecution({ task, confirmedIntent: intent, sharedUnderstandingConfirmed: { trusted: true, binding: "plan-challenge-understanding-confirmation", taskHash: intent.taskHash, intentDigest: intentDialogueDigest(intent), evidenceRefs: intent.evidenceRefs }, runId: "intent-fixture-extensible", stateDir: path.resolve("tmp/intent-run"), dbPath: path.resolve("tmp/intent-run.sqlite"), projectCapabilityMutationMode: "read_only" });
-  `;
-  const runner = fixture.run(["--input-type=module", "--eval", script]);
-  assert.equal(runner.status, 0, runner.stderr);
-  const artifact = JSON.parse(await readFile(path.join(fixture.repoRoot, "tmp", "intent-run", "intent-fixture-extensible.json"), "utf8"));
-  const implementation = artifact.workerTaskPackets.find((packet) => packet.intentCapabilitySelection.selectedProviders.length);
-  assert.ok(implementation, "Actual discovered design capability reaches a real worker task packet");
-  assert.ok(implementation.capabilityBindings.skills.some((skill) => skill.id === "csv-architecture"));
-  assert.ok(artifact.businessFlowBlueprintPacket.requiredLanes.some((lane) => lane.capabilityBindings.some((binding) => binding.bindingRef === "csv-architecture")));
+  // The current test host makes the choice after reading the real Fetch inventory.
+  const { runMetaTheoryGovernedExecution } = await fixture.import("scripts/run-meta-theory-governed-execution.mjs");
+  const intent = { taskHash: taskOutcomeDigest(engineeringTask), outcome: "A local CSV report", constraints: { deliveryStrategy: "long_term_extensible" }, evidenceRefs: ["package.json"] };
+  const intentDigest = intentDialogueDigest(intent);
+  const criticalInput = fixtureCritical({ task: engineeringTask, outcome: intent.outcome, intentDigest, successCriteria: [engineeringTask] });
+  let hostWorkOrder;
+  const artifact = await runWithFixtureHostThinking(runMetaTheoryGovernedExecution, { task: engineeringTask, confirmedIntent: intent,
+    sharedUnderstandingConfirmed: { trusted: true, binding: "plan-challenge-understanding-confirmation", taskHash: intent.taskHash, intentDigest, evidenceRefs: intent.evidenceRefs },
+    runId: "intent-fixture-extensible", stateDir: path.resolve("tmp/intent-run"), dbPath: path.resolve("tmp/intent-run.sqlite"), projectCapabilityMutationMode: "read_only" }, {
+    criticalInput, governanceTaskFacts: readOnlyFixtureTaskFacts(engineeringTask), workOrders: preparation => {
+      const workOrder = fixtureReadWorkOrder(preparation, {
+        id: "csv-architecture-review", todayTask: "Inspect package.json for bounded CSV extension design", output: "Current package evidence and extension constraints", criterionIds: ["user-outcome"],
+        taskFacts: readOnlyFixtureTaskFacts("Inspect package.json for bounded CSV extension design"),
+        selectedProviders: { intentArchitecture: fixtureInventoryProvider(preparation, "csv-architecture", "providers") } });
+      hostWorkOrder = { ...workOrder, inventoryDigest: preparation.fetchPacket.capabilityDiscovery.inventoryDigest };
+      return [workOrder];
+    },
+  });
+  const implementation = artifact.workerTaskPackets.find(packet => packet.intentCapabilitySelection.selectedProviders.length);
+  assert.ok(implementation, "Actual discovered design capability reaches a real worker task packet: " + JSON.stringify({
+    route: artifact.selectedExecutionRoute?.recommendedRoute, packets: artifact.workerTaskPackets.map(packet => ({ mode: packet.executionMode, role: packet.roleDisplayName, selection: packet.intentCapabilitySelection })) }));
+  assert.ok(implementation.capabilityBindings.skills.some(skill => skill.id === "csv-architecture"));
+  assert.ok(artifact.businessFlowBlueprintPacket.requiredLanes.some(lane => lane.capabilityBindings.some(binding => binding.bindingRef === "csv-architecture")));
   assert.equal(artifact.coreLoop.traceEvalControlPlane.outcomeEvaluation.status, "incomplete");
-  const validated = fixture.run(["scripts/validate-run-artifact.mjs", path.join("tmp", "intent-run", "intent-fixture-extensible.json")]);
+  const validated = fixture.run(["scripts/validate-run-artifact.mjs", artifact.paths.json]);
   assert.equal(validated.status, 0, validated.stderr);
+  const revalidateHostSelection = () => {
+    const selected = fixture.run(["scripts/select-execution-route.mjs", "--task", engineeringTask, "--runtime", "codex", "--os", "windows", "--json", "--runner-compact", "--thinking-work-order-json", JSON.stringify(hostWorkOrder)]);
+    assert.equal(selected.status, 0, selected.stderr);
+    return JSON.parse(selected.stdout);
+  };
+  const current = revalidateHostSelection();
+  assert.equal(current.recommendedRoute.selectionStatus, "bindings_verified_not_invoked");
+  assert.match(hostWorkOrder.selectedCapabilityProviders.intentArchitecture.contentDigest, /^[a-f0-9]{64}$/u);
+  await writeFile(path.join(skillDir, "SKILL.md"), (await readFile(path.join(skillDir, "SKILL.md"), "utf8")) + "\nChanged fixture method content after Fetch.\n");
+  const staleSelection = revalidateHostSelection();
+  assert.equal(staleSelection.recommendedRoute, null, "Same skill ID/path with changed bytes cannot preserve the old host binding");
+  assert.ok(staleSelection.capabilityGapPacket.missing.includes("selected_inventory_binding_unavailable:intentArchitecture"));
+  assert.deepEqual(staleSelection.workerTaskPacketDrafts, []);
   const wrongRuntimeDir = path.join(fixture.home, ".claude", "skills", "csv-architecture");
   await mkdir(wrongRuntimeDir, { recursive: true });
   // Remove only the exact fixture file, preserving the fixture-owned directory.
@@ -259,4 +310,8 @@ test("real selector discovery fixture changes selected providers for engineering
   const wrongRuntime = run("long_term_extensible");
   assert.equal(wrongRuntime.recommendedRoute, null, "A wrong-runtime architecture candidate cannot satisfy the confirmed direction");
   assert.equal(wrongRuntime.capabilityGapDetected, true);
+  const wrongRuntimeHost = revalidateHostSelection();
+  assert.equal(wrongRuntimeHost.recommendedRoute, null);
+  assert.ok(wrongRuntimeHost.capabilityGapPacket.missing.includes("selected_inventory_binding_unavailable:intentArchitecture"), "Host-selected providers are revalidated against the current runtime inventory too");
+  assert.deepEqual(wrongRuntimeHost.workerTaskPacketDrafts, []);
 });

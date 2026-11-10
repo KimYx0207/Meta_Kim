@@ -8,7 +8,7 @@
     "purpose": "claude-global-mcp-runtime-bundle"
   },
   "projectionPackageStore": {
-    "scope": "claude_codex",
+    "scope": "selected_runtime_projections",
     "category": "C",
     "sourceOwner": "sync-global-meta-theory",
     "bundlePurpose": "primary-runtime-global-projection-package-runtime-bundle",
@@ -36,7 +36,13 @@
         "same_user_malicious_concurrency_resistance",
         "supply_chain_compromise_resistance"
       ]
-    }
+    },
+    "runtimeTargets": [
+      "claude",
+      "codex",
+      "gemini",
+      "zcode"
+    ]
   },
   "externalEntries": [
     {
@@ -45,7 +51,9 @@
       "category": "B",
       "sourceOwner": "sync-global-meta-theory",
       "purpose": "codex-global-hookprompt-adapter",
-      "kinds": ["file"],
+      "kinds": [
+        "file"
+      ],
       "base": "runtimeHomeParent",
       "path": ".codex/hooks/hookprompt-adapter.mjs",
       "match": "exact"
@@ -56,7 +64,9 @@
       "category": "C",
       "sourceOwner": "sync-global-meta-theory",
       "purpose": "claude-global-mcp",
-      "kinds": ["mcp-server"],
+      "kinds": [
+        "mcp-server"
+      ],
       "base": "runtimeHomeParent",
       "path": ".claude.json",
       "match": "exact"

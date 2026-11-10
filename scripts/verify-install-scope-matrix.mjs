@@ -56,6 +56,18 @@ const projectCases = [
     absent: ["CLAUDE.md", ".claude", ".codex", ".agents", ".cursor"],
   },
   {
+    id: "project-gemini",
+    targets: ["gemini"],
+    present: ["AGENTS.md", ".gemini/settings.json", ".gemini/agents/meta-warden.md", ".gemini/hooks/meta-kim/native-runtime-adapter.mjs", ".agents/skills/meta-theory/SKILL.md"],
+    absent: ["CLAUDE.md", ".claude", ".codex", ".cursor", "openclaw", ".zcode"],
+  },
+  {
+    id: "project-zcode",
+    targets: ["zcode"],
+    present: ["AGENTS.md", ".zcode/config.json", ".zcode/agents/meta-warden.md", ".zcode/skills/meta-theory/SKILL.md"],
+    absent: ["CLAUDE.md", ".claude", ".codex", ".cursor", "openclaw", ".gemini", ".agents", ".zcode/hooks"],
+  },
+  {
     id: "project-default-claude-codex",
     targets: ["claude", "codex"],
     present: [
@@ -66,11 +78,11 @@ const projectCases = [
       ".agents/skills/meta-theory/SKILL.md",
       ".mcp.json",
     ],
-    absent: [".cursor", "openclaw"],
+    absent: [".cursor", "openclaw", ".gemini", ".zcode"],
   },
   {
     id: "project-all-explicit",
-    targets: ["claude", "codex", "openclaw", "cursor"],
+    targets: ["claude", "codex", "openclaw", "cursor", "gemini", "zcode"],
     present: [
       "CLAUDE.md",
       "AGENTS.md",
@@ -82,6 +94,11 @@ const projectCases = [
       "openclaw/openclaw.template.json",
       "openclaw/skills/meta-theory/SKILL.md",
       ".agents/skills/meta-theory/SKILL.md",
+      ".gemini/settings.json",
+      ".gemini/agents/meta-warden.md",
+      ".zcode/config.json",
+      ".zcode/agents/meta-warden.md",
+      ".zcode/skills/meta-theory/SKILL.md",
     ],
     absent: [],
   },
@@ -269,6 +286,8 @@ function inspectGlobalSync(baseDir, { id, targets, withGlobalHooks = false }) {
     codex: path.join(userHome, ".codex"),
     cursor: path.join(userHome, ".cursor"),
     openclaw: path.join(userHome, ".openclaw"),
+    gemini: path.join(userHome, ".gemini"),
+    zcode: path.join(userHome, ".zcode"),
   };
   const env = {
     USERPROFILE: userHome,
@@ -277,6 +296,8 @@ function inspectGlobalSync(baseDir, { id, targets, withGlobalHooks = false }) {
     META_KIM_CODEX_HOME: homes.codex,
     META_KIM_CURSOR_HOME: homes.cursor,
     META_KIM_OPENCLAW_HOME: homes.openclaw,
+    META_KIM_GEMINI_HOME: homes.gemini,
+    META_KIM_ZCODE_HOME: homes.zcode,
   };
   const args = [
     "scripts/sync-global-meta-theory.mjs",
@@ -333,7 +354,22 @@ function inspectGlobalSync(baseDir, { id, targets, withGlobalHooks = false }) {
   if (targets.includes("openclaw")) {
     requiredChecks.openclawSkill = existsRel(homes.openclaw, "skills/meta-theory/SKILL.md");
   }
+  for (const runtime of ["gemini", "zcode"]) {
+    if (!targets.includes(runtime)) continue;
+    requiredChecks[`${runtime}Skill`] = existsRel(homes[runtime], "skills/meta-theory/SKILL.md");
+    requiredChecks[`${runtime}Agent`] = existsRel(homes[runtime], "agents/meta-warden.md");
+    const settingsPath = path.join(homes[runtime], runtime === "gemini" ? "settings.json" : "cli/config.json");
+    const settings = existsSync(settingsPath) ? readJson(settingsPath) : null;
+    requiredChecks[`${runtime}Mcp`] = Boolean((runtime === "gemini" ? settings?.mcpServers : settings?.mcp?.servers)?.["meta-kim-runtime"]);
+    if (withGlobalHooks) {
+      requiredChecks[`${runtime}GlobalHooks`] = existsRel(homes[runtime], "hooks/meta-kim/native-runtime-adapter.mjs") &&
+        (runtime === "gemini" ? Array.isArray(settings?.hooks?.BeforeAgent) : settings?.hooks?.enabled === true && Boolean(settings?.hooks?.events?.UserPromptSubmit));
+    }
+  }
   const untouchedChecks = {};
+  for (const runtime of ["gemini", "zcode"]) {
+    if (!targets.includes(runtime)) untouchedChecks[`${runtime}HomeUntouched`] = listTopLevel(homes[runtime]).length === 0;
+  }
   if (!targets.includes("cursor")) {
     untouchedChecks.cursorHomeUntouched = listTopLevel(homes.cursor).length === 0;
   }
@@ -358,6 +394,8 @@ function inspectGlobalSync(baseDir, { id, targets, withGlobalHooks = false }) {
       codex: countFiles(homes.codex),
       cursor: countFiles(homes.cursor),
       openclaw: countFiles(homes.openclaw),
+      gemini: countFiles(homes.gemini),
+      zcode: countFiles(homes.zcode),
     },
     errors: result.status === 0 ? [] : [failPacket(result)],
   };
@@ -372,11 +410,11 @@ function classification() {
         sourceOfTruth: "config/runtime-compatibility-catalog.json",
         formalProjectionTargets: productIdsByTier("runtime_projection"),
         defaultSelectedTargets: ["claude", "codex"],
-        nonDefaultFormalProjectionTargets: ["openclaw", "cursor"],
+        nonDefaultFormalProjectionTargets: productIdsByTier("runtime_projection").filter((id) => !["claude", "codex"].includes(id)),
         dependencyInstallTargets: productIdsByTier("dependency_install_target"),
         candidateProbeTargets: productIdsByTier("candidate_probe"),
         boundary:
-          "Claude Code, Codex, OpenClaw, and Cursor are formal Meta_Kim projection targets; dependency_install_target and candidate_probe products are not project projections.",
+          "Claude Code, Codex, OpenClaw, Cursor, Gemini CLI, and ZCode are formal Meta_Kim projection targets; projection installation does not establish live host execution. dependency_install_target and candidate_probe products are not project projections.",
       },
       selectedByDefault: [
         {
@@ -396,6 +434,8 @@ function classification() {
       nonDefaultFormalTargets: [
         "~/.cursor/skills/meta-theory/",
         "~/.openclaw/skills/meta-theory/",
+        "~/.gemini/skills/meta-theory/",
+        "~/.zcode/skills/meta-theory/",
       ],
     },
     projectLayer: {
@@ -406,6 +446,8 @@ function classification() {
         codex: ["AGENTS.md", ".codex/"],
         cursor: ["AGENTS.md context", ".cursor/agents/", ".cursor/rules/", ".cursor/skills/", ".cursor/hooks.json", ".cursor/mcp.json"],
         openclaw: ["AGENTS.md team/context material", "openclaw/workspaces/", "openclaw/skills/", "openclaw/hooks/", "openclaw/openclaw.template.json"],
+        gemini: ["AGENTS.md", ".agents/skills/", ".gemini/agents/", ".gemini/settings.json", ".gemini/hooks/meta-kim/"],
+        zcode: ["AGENTS.md", ".zcode/skills/", ".zcode/agents/", ".zcode/config.json (MCP only; project hooks are not supported)"],
       },
       alwaysRecordsOnApply: [".meta-kim/state/default/project-bootstrap.json", ".meta-kim/backups/project-bootstrap/<timestamp> when existing files are backed up"],
     },
@@ -424,7 +466,7 @@ try {
     }),
     inspectGlobalSync(tempRoot, {
       id: "global-all-formal-targets",
-      targets: ["claude", "codex", "cursor", "openclaw"],
+      targets: ["claude", "codex", "cursor", "gemini", "openclaw", "zcode"],
       withGlobalHooks: true,
     }),
   ];

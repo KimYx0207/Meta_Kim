@@ -12,7 +12,8 @@
  *   --dry-run         print actions only
  *   --plugins-only    only run `claude plugin install` (no git clones)
  *   --skip-plugins    skip `claude plugin install` even if defaults apply
- *   --all             install/update every manifest skill (explicit)
+ *   --defaults        install/update default-selected manifest skills
+ *   --all             install/update every non-reference manifest skill (explicit)
  *   --skills=id,...   install/update only these manifest skill ids
  *   --lang <code>     localize installer output (en, zh-CN, ja-JP, ko-KR)
  *   --prefer-local-dependencies
@@ -72,8 +73,10 @@ import {
   resolveRuntimeHomeDir,
 } from "./meta-kim-sync-config.mjs";
 import { retirePlanningWithFiles } from "./retire-planning-with-files.mjs";
+import { retireAbsorbedDependencyCopies } from "../src/infrastructure/installer/retired-dependency-copies.mjs";
 import { installerAckLine } from "./installer-ack.mjs";
 import { createInstallerWriteBoundary, assertInstallerWritePath } from "./installer-write-boundary.mjs";
+import { inspectPlainAbsolutePath } from "./safe-managed-file-operations.mjs";
 import { LANG, t } from "./meta-kim-i18n.mjs";
 import { hookCommandNode, isNodeHookScriptCommand } from "./claude-settings-merge.mjs";
 import {
@@ -227,6 +230,7 @@ const directInvocation = (() => {
   return entryPath === realpathSync(fileURLToPath(import.meta.url));
 })();
 const INSTALLER_BOOLEAN_FLAGS = new Set([
+  "--defaults",
   "--all",
   "--update",
   "--dry-run",
@@ -235,6 +239,7 @@ const INSTALLER_BOOLEAN_FLAGS = new Set([
   "--no-plugins",
   "--skip-inventory-refresh",
   "--prefer-local-dependencies",
+  "--retire-absorbed",
 ]);
 const INSTALLER_VALUE_FLAGS = new Set([
   "--targets",
@@ -268,7 +273,8 @@ function installerHelpText() {
     "",
     "Options:",
     "  --update                    update installed skills",
-    "  --all                       explicitly select all manifest skills",
+    "  --defaults                  select the manifest's default dependencies",
+    "  --all                       explicitly select all non-reference manifest skills",
     "  --targets <ids>             comma-separated runtime ids",
     "  --skills <ids>              comma-separated skill ids",
     "  --lang <code>               localize output (en, zh, zh-CN, ja, ja-JP, ko, ko-KR)",
@@ -277,6 +283,7 @@ function installerHelpText() {
     "  --skip-plugins, --no-plugins",
     "  --skip-inventory-refresh",
     "  --prefer-local-dependencies  use local sibling dependency checkouts when present",
+    "  --retire-absorbed            retire only unchanged manifest-owned absorbed skill copies",
     "  --proxy <url>",
     "  --log-file <path>",
     "  -h, --help                  show this help without writing",
@@ -285,6 +292,7 @@ function installerHelpText() {
 
 function validateInstallerArgs(argv) {
   const hasAll = argv.includes("--all");
+  const hasDefaults = argv.includes("--defaults");
   const hasSkills = argv.some(
     (arg) => arg === "--skills" || arg.startsWith("--skills="),
   );
@@ -319,12 +327,12 @@ function validateInstallerArgs(argv) {
     }
     throw new Error(`Unknown installer argument: ${arg}`);
   }
-  if (!help && hasAll && hasSkills) {
-    throw new Error("--all and --skills are mutually exclusive");
+  if (!help && [hasAll, hasDefaults, hasSkills].filter(Boolean).length > 1) {
+    throw new Error("--all, --defaults and --skills are mutually exclusive");
   }
-  if (!help && !pluginsOnly && !hasAll && !hasSkills) {
+  if (!help && !pluginsOnly && !hasAll && !hasDefaults && !hasSkills) {
     throw new Error(
-      "dependency install requires an explicit selection: use --all or --skills <ids>",
+      "dependency install requires an explicit selection: use --defaults, --all or --skills <ids>",
     );
   }
 }
@@ -715,7 +723,7 @@ function loadInstallerConfig() {
   }
 
   const dependencyRegistry = JSON.parse(readFileSync(path.join(repoRoot, "config", "capability-index", "dependency-project-registry.json"), "utf8"));
-  const selectedIds = parseSkillsArg(cliArgs);
+  const selectedIds = installerSkillsFilter(config.skills.skills, cliArgs);
   const skillRepos = config.skills.skills.map((skill) => {
     const subdir = resolveManifestSkillSubdir(skill, os.platform());
     const selected = selectedIds === null ? skill.installPolicy !== "explicit_reference_opt_in"
@@ -760,7 +768,17 @@ function normalizeInstallerSkillsFilter(parsedSkills) {
   return parsedSkills;
 }
 
-const skillsArg = normalizeInstallerSkillsFilter(parseSkillsArg(cliArgs));
+function installerSkillsFilter(skillRepos, argv) {
+  // An explicit default install cannot be broadened by a stale environment
+  // selection from another setup run. --all / --skills retain their prior rules.
+  if (argv.includes("--defaults")) {
+    return skillRepos.filter((skill) => skill.defaultSelected !== false && skill.installPolicy !== "explicit_reference_opt_in")
+      .map((skill) => skill.id);
+  }
+  return normalizeInstallerSkillsFilter(parseSkillsArg(argv));
+}
+
+const skillsArg = installerSkillsFilter(SKILL_REPOS, cliArgs);
 const skillsFilterActive = skillsArg !== null;
 if (skillsArg === null) {
   SKILL_REPOS = SKILL_REPOS.filter(
@@ -4175,9 +4193,7 @@ async function assertPlainComponentRoot(root, { installed = false } = {}) {
     await assertRealPathContained(os.homedir(), root, activeInstallerWriteBoundary);
     return;
   }
-  const canonical = await fs.realpath(root);
-  const normalize = (value) => process.platform === "win32" ? value.toLowerCase() : value;
-  if (normalize(canonical) !== normalize(path.resolve(root))) throw new Error("Component root cannot traverse a symlink or junction");
+  if (!inspectPlainAbsolutePath(root, { kind: "directory" })) throw new Error("Component root cannot traverse a symlink or junction");
 }
 
 async function isReusableSkillRoot(spec, root, { installed = true } = {}) {
@@ -4623,6 +4639,15 @@ async function main() {
   // Whole-runtime maintenance is not part of a selected dependency update.
   // Even owned retirement and old staging cleanup can touch another task.
   let retiredPlanning = { preserved: [] };
+  if (!skillsFilterActive || cliArgs.includes("--defaults") || cliArgs.includes("--retire-absorbed")) {
+    const retired = await retireAbsorbedDependencyCopies({
+      repoRoot, homes, targets: activeTargets, dryRun,
+      writeBoundary: activeInstallerWriteBoundary,
+    });
+    for (const entry of retired.removed) console.log(`Retired absorbed dependency: ${entry.id} (${entry.runtime})`);
+    for (const entry of retired.planned) console.log(`[dry-run] Retire absorbed dependency: ${entry.id} (${entry.runtime})`);
+    for (const entry of retired.preserved) console.warn(`Preserved ${entry.id} (${entry.runtime}): ${entry.reason}`);
+  }
   if (!skillsFilterActive) {
     const selectedHomes = Object.fromEntries(
       activeTargets.filter((id) => homes[id]).map((id) => [id, homes[id]]),

@@ -26,6 +26,7 @@ import {
 } from "../../scripts/global-projection-package-store.mjs";
 import { recordSetupRuntimeExecutableBindings } from "../../scripts/runtime-executable-binding.mjs";
 import { tarExtractCommand } from "../../scripts/tar-extract-command.mjs";
+import { SHARED_RUNTIME_HOOK_FILES } from "../../scripts/runtime-hook-mapping.mjs";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const PACKAGE_MANIFEST = JSON.parse(
@@ -37,12 +38,12 @@ const COMMAND_NAMES = [
   "meta-theory.md",
 ];
 const HOOK_NAMES = [...new Set(
-  ["shared", "claude"].flatMap((runtime) => readdirSync(
-    path.join(REPO_ROOT, "canonical", "runtime-assets", runtime, "hooks"),
+  [...SHARED_RUNTIME_HOOK_FILES, ...readdirSync(
+    path.join(REPO_ROOT, "canonical", "runtime-assets", "claude", "hooks"),
     { withFileTypes: true },
   )
     .filter((entry) => entry.isFile() && entry.name.endsWith(".mjs"))
-    .map((entry) => entry.name)),
+    .map((entry) => entry.name)],
 )].sort();
 const STORE_PURPOSE = "primary-runtime-global-projection-package-runtime-bundle";
 const RECEIPT_SCHEMA = "meta-kim-global-projection-package-v1";

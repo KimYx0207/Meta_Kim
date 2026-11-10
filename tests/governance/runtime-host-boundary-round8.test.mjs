@@ -6,6 +6,8 @@ import test from "node:test";
 import { bindVerifiedHostPlanChallengeDecision } from "../../scripts/governed-execution/plan-challenge-host-continuation.mjs";
 import { runMetaTheoryGovernedExecution } from "../../scripts/run-meta-theory-governed-execution.mjs";
 import { evaluateRouteExecutionGate } from "../../scripts/runtime-execution-gate.mjs";
+import { fixtureCritical } from "../helpers/host-reasoning-fixture.mjs";
+import { readOnlyFixtureTaskFacts } from "../helpers/task-design-facts.mjs";
 
 function projectFixture(prefix) {
   const root = mkdtempSync(path.join(tmpdir(), prefix));
@@ -63,11 +65,12 @@ test("reviewer PoC: caller callback cannot mint a trusted plan-challenge decisio
 
 test("reviewer PoC: public verifier callback is ignored and plan challenge stays awaiting host action", async () => {
   const fixture = projectFixture("meta-kim-round8-callback-");
+  const task = "请先压力测试这个生产发布方案。";
   let callbackCalls = 0;
   try {
-    const report = await runMetaTheoryGovernedExecution({
-      task: "请先压力测试这个生产发布方案。",
-      runId: "round8-callback-cannot-authorize",
+    writeFileSync(path.join(fixture.projectRoot, "release-plan.md"), "Fixture plan: roll out the API gradually; rollback after a sustained error-rate increase. Capacity validation is not included.\n");
+    const options = {
+      task,
       projectRoot: fixture.projectRoot,
       stateDir: fixture.stateDir,
       dbPath: fixture.dbPath,
@@ -82,10 +85,37 @@ test("reviewer PoC: public verifier callback is ignored and plan challenge stays
           decision: { type: "control", action: "skip" },
         };
       },
+    };
+    const withoutCritical = await runMetaTheoryGovernedExecution({ ...options, runId: "round8-callback-needs-critical" });
+    assert.equal(callbackCalls, 0);
+    assert.equal(withoutCritical.artifactKind, "host_preparation");
+    assert.equal(withoutCritical.preDecisionOptionFrame.planChallengeState.phase, "inactive");
+    assert.equal(withoutCritical.preDecisionOptionFrame.planChallengeState.executionAllowed, false);
+
+    // The test host now supplies an actual, current material scope question.
+    // Missing Critical must not be replaced by a keyword-generated challenge.
+    const questionId = "release-review-scope";
+    const criticalInput = fixtureCritical({ task,
+      successCriteria: ["Review the supplied release plan against the selected scope and cite its actual evidence gaps."],
+      nonGoals: ["Do not deploy, modify the service or accept the review on the user's behalf."], blockingUnknowns: [questionId] });
+    criticalInput.evidenceRefs = ["release-plan.md"];
+    const report = await runMetaTheoryGovernedExecution({ ...options, runId: "round8-callback-cannot-authorize",
+      previousPlanChallengeRunId: withoutCritical.runId, criticalInput, governanceTaskFacts: readOnlyFixtureTaskFacts(task),
+      requirementsDiscoveryInput: { schemaVersion: 1, taskHash: criticalInput.taskHash, intentDigest: null, evidenceRefs: ["release-plan.md"],
+        decisionItems: [{ questionId, question: "本次审查只核对回滚方案，还是同时准备容量验证方案？", questionTarget: "wrong_goal_risk",
+          decisionImpact: "The supplied plan lacks capacity validation; adding it changes the review deliverable and required evidence.",
+          impactPriority: 80, dependsOn: [], evidenceRefs: ["release-plan.md"], resolutionClass: "material_user_decision",
+          recommendedAnswer: "先审回滚方案", recommendationRationale: "This keeps the review bounded to the supplied plan while exposing the capacity gap.",
+          options: [{ label: "先审回滚方案", tradeoff: "Produce the bounded rollback review; capacity remains an explicit gap." },
+            { label: "同时准备容量验证", tradeoff: "Expand the review deliverable and request traffic assumptions and a safe validation environment." }] }] },
     });
     assert.equal(callbackCalls, 0);
+    assert.equal(report.artifactKind, "host_preparation");
     assert.match(report.preDecisionOptionFrame.planChallengeState.phase, /^awaiting_/u);
+    assert.equal(report.preDecisionOptionFrame.unresolvedQuestions.find(question => question.questionId === questionId)?.status, "open");
+    assert.equal(report.preDecisionOptionFrame.planChallengeState.pendingUserChoice.status, "required_not_invoked");
     assert.equal(report.preDecisionOptionFrame.planChallengeState.executionAllowed, false);
+    assert.deepEqual(report.workerTaskPackets, []);
   } finally {
     rmSync(fixture.root, { recursive: true, force: true });
   }

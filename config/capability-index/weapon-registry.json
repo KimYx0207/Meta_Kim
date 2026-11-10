@@ -35,7 +35,9 @@
         "claude_code": "native",
         "codex": "native",
         "openclaw": "partial",
-        "cursor": "partial"
+        "cursor": "partial",
+        "gemini": "unknown",
+        "zcode": "unknown"
       },
       "osSupport": {
         "macos": "supported",
@@ -96,7 +98,9 @@
         "claude_code": "native",
         "codex": "native",
         "openclaw": "partial",
-        "cursor": "partial"
+        "cursor": "partial",
+        "gemini": "unknown",
+        "zcode": "unknown"
       },
       "osSupport": {
         "macos": "supported",
@@ -164,7 +168,9 @@
         "claude_code": "native",
         "codex": "native",
         "openclaw": "partial",
-        "cursor": "partial"
+        "cursor": "partial",
+        "gemini": "unknown",
+        "zcode": "unknown"
       },
       "osSupport": {
         "macos": "supported",
@@ -242,7 +248,9 @@
         "claude_code": "native",
         "codex": "native",
         "openclaw": "native",
-        "cursor": "native"
+        "cursor": "native",
+        "gemini": "unknown",
+        "zcode": "unknown"
       },
       "osSupport": {
         "macos": "supported",
@@ -312,7 +320,9 @@
         "claude_code": "native",
         "codex": "native",
         "openclaw": "partial",
-        "cursor": "partial"
+        "cursor": "partial",
+        "gemini": "unknown",
+        "zcode": "unknown"
       },
       "osSupport": {
         "macos": "supported",
@@ -371,7 +381,9 @@
         "claude_code": "native",
         "codex": "native",
         "openclaw": "partial",
-        "cursor": "partial"
+        "cursor": "partial",
+        "gemini": "unknown",
+        "zcode": "unknown"
       },
       "osSupport": {
         "macos": "supported",

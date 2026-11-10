@@ -40,13 +40,27 @@ export async function readDependencyCalculationInputFile(filename) {
   }
 }
 
+/** The optional CLI mapping shares the material reader's regular-file, UTF-8
+ * and byte limits. Its contents stay private and remain unverified host data. */
+export async function readDependencyCalculationMethodInputsFile(filename) {
+  const input = await readDependencyCalculationInputFile(filename);
+  if (input.error) return input;
+  try {
+    const methodInputs = JSON.parse(input.inputJson);
+    if (!methodInputs || typeof methodInputs !== "object" || Array.isArray(methodInputs)) throw new TypeError();
+    return { methodInputs };
+  } catch { return { error: summary("invalid_input", { code: "invalid_calculation_method_inputs" }) }; }
+}
+
 // These are host-supplied materials, never a grant or caller-supplied tool receipt.
-// Bind before asynchronous route discovery; keep raw materials out of run artifacts.
+// Optional methodInputs are the host's unverified mapping of inputJson to the
+// selected professional input contract, not independently established facts.
+// Bind before asynchronous route discovery; keep both raw inputs out of artifacts.
 export function prepareDependencyCalculationInput({ input, task, intentDigest = null, environment = process.env }) {
   if (input == null) return null;
   const invalid = (code) => ({ summary: summary("invalid_input", { code }) });
   if (!input || typeof input !== "object" || Array.isArray(input) ||
-      Object.keys(input).some((key) => !["inputJson", "dependencyRoot"].includes(key)) ||
+      Object.keys(input).some((key) => !["inputJson", "dependencyRoot", "methodInputs"].includes(key)) ||
       typeof input.inputJson !== "string" || typeof task !== "string" || task.length > 6000) {
     return invalid("invalid_calculation_input_envelope");
   }
@@ -56,11 +70,21 @@ export function prepareDependencyCalculationInput({ input, task, intentDigest = 
   let parsed;
   try { parsed = JSON.parse(input.inputJson); } catch { return invalid("invalid_materials_json"); }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return invalid("materials_must_be_object");
+  let methodInputs;
+  if (input.methodInputs != null) {
+    try {
+      if (typeof input.methodInputs !== "object" || Array.isArray(input.methodInputs)) return invalid("invalid_calculation_method_inputs");
+      const serialized = stableJson(input.methodInputs);
+      if (Buffer.byteLength(serialized, "utf8") > MAX_CALCULATION_INPUT_BYTES) return invalid("calculation_method_inputs_size_limit");
+      methodInputs = JSON.parse(serialized);
+    } catch { return invalid("invalid_calculation_method_inputs"); }
+  }
   const dependencyRoot = input.dependencyRoot ?? environment.META_KIM_KIM_SERVICE_ROOT;
   if (typeof dependencyRoot !== "string" || !path.isAbsolute(dependencyRoot)) return invalid("explicit_dependency_root_required");
   const binding = { requestSha256: digest(task), inputSha256: digest(input.inputJson), intentDigest,
-    dependencyRootSha256: digest(path.resolve(dependencyRoot)) };
-  return { task, inputJson: input.inputJson, dependencyRoot: path.resolve(dependencyRoot), binding,
+    dependencyRootSha256: digest(path.resolve(dependencyRoot)),
+    ...(methodInputs ? { methodInputsSha256: digest(stableJson(methodInputs)) } : {}) };
+  return { task, inputJson: input.inputJson, ...(methodInputs ? { methodInputs } : {}), dependencyRoot: path.resolve(dependencyRoot), binding,
     summary: summary("prepared", { binding, inputBytes: Buffer.byteLength(input.inputJson, "utf8") }) };
 }
 
@@ -69,7 +93,7 @@ export function prepareDependencyCalculationInput({ input, task, intentDigest = 
  * establish native invocation; the existing handoff verifies those separately. */
 export async function bindDependencyCalculationWorkOrder({ request, runId, route, workerTaskPackets, environment = process.env, projectRoot }) {
   if (request?.summary?.status !== "prepared") return workerTaskPackets;
-  const rebound = prepareDependencyCalculationInput({ input: { inputJson: request.inputJson, dependencyRoot: request.dependencyRoot },
+  const rebound = prepareDependencyCalculationInput({ input: { inputJson: request.inputJson, dependencyRoot: request.dependencyRoot, methodInputs: request.methodInputs },
     task: request.task, intentDigest: request.binding?.intentDigest, environment });
   if (rebound.summary.status !== "prepared" || JSON.stringify(rebound.binding) !== JSON.stringify(request.binding)) return workerTaskPackets;
   const owner = route?.recommendedRoute?.owner;
@@ -113,8 +137,49 @@ export async function prepareDependencyCalculationHandoff({ request, runId, runt
   let method;
   try { method = await loadDependencyAgentMethod({ packet, environment, projectRoot }); }
   catch { return fail("calculation_owner_source_rejected"); }
+  // Project an existing, checked Thinking decision. Never create reasoning or
+  // rebind another task's work order merely by copying this request's hash.
+  const rebound = prepareDependencyCalculationInput({ input: { inputJson: request.inputJson, dependencyRoot: request.dependencyRoot, methodInputs: request.methodInputs },
+    task: request.task, intentDigest: request.binding?.intentDigest, environment });
+  if (rebound?.summary.status !== "prepared" || stableJson(rebound.binding) !== stableJson(request.binding)) {
+    return fail("calculation_request_binding_rejected");
+  }
+  if (request.methodInputs && packet.methodInputs != null && stableJson(request.methodInputs) !== stableJson(packet.methodInputs)) {
+    return fail("calculation_method_inputs_conflict");
+  }
+  const taskHash = digest(request.task.trim());
+  const intentMatches = (value) => value?.taskHash === taskHash && (value.intentDigest ?? null) === (request.binding.intentDigest ?? null);
+  const selectedRoute = route.recommendedRoute;
+  const provider = selectedRoute?.selectedCapabilityProviders?.agent;
+  if (!intentMatches(route.intentBinding) || !intentMatches(packet.intentBinding) ||
+      route.task !== route.intentBinding.routeTask || runtimeId(route.runtime) !== runtimeId(runtime) ||
+      runtimeId(selectedRoute?.runtime) !== runtimeId(runtime) ||
+      selectedRoute?.selectionPolicy !== "host_selected_current_bindings" ||
+      selectedRoute.selectionStatus !== "bindings_verified_not_invoked" || selectedRoute.blockedReasons?.length ||
+      provider?.id !== owner || provider.source !== "dependency_agent_contract" ||
+      provider.contentDigest !== packet.ownerContract?.contentDigest || provider.contentDigest !== method.contentDigest ||
+      provider.ownerContract?.componentContentSha256 !== packet.ownerContract?.componentContentSha256 ||
+      provider.ownerContract?.componentContentSha256 !== method.componentContentSha256) {
+    return fail("calculation_thinking_binding_rejected");
+  }
+  const scope = packet.workOrderScope;
+  if (scope?.kind !== "dependency_materials" || scope.runId !== runId ||
+      !["requestSha256", "inputSha256", "intentDigest", "dependencyRootSha256", "methodInputsSha256"]
+        .every(key => (scope[key] ?? null) === (request.binding[key] ?? null)) ||
+      scope.inputBytes !== request.summary.inputBytes || scope.inputBytes !== Buffer.byteLength(request.inputJson, "utf8") ||
+      scope.ownerContractSha256 !== method.ownerContractSha256 || scope.componentContentSha256 !== method.componentContentSha256 ||
+      scope.ownerContractProjectionSha256 !== digest(stableJson(packet.ownerContract)) ||
+      packet.scopeFiles?.length !== 0 || packet.shardScope?.length !== 1 ||
+      packet.shardScope[0] !== `input-sha256:${request.binding.inputSha256}`) {
+    return fail("calculation_work_order_binding_rejected");
+  }
+  const methodAssessment = { schemaVersion: 1, runtime, taskHash: request.binding.requestSha256,
+    agentId: owner, contentDigest: packet.ownerContract.contentDigest,
+    componentContentSha256: packet.ownerContract.componentContentSha256,
+    operation: packet.todayTask, deliverable: packet.output, fitRationale: selectedRoute.selectionReason,
+    nonGoals: packet.nonGoals, evidenceRefs: packet.evidenceRefs };
   const calculation = await runDependencyCalculation({ task: request.task, inputJson: request.inputJson,
-    dependencyRoot: request.dependencyRoot, runtime, osTarget });
+    methodAssessment, dependencyRoot: request.dependencyRoot, runtime, osTarget, environment, projectRoot });
   const publicSummary = summary(calculation.status, {
     code: calculation.code ?? null, binding: request.binding, ownerAgent: owner,
     ownerSourceBinding: ownerSourceBinding(method, runId, packet.taskPacketId),
@@ -122,7 +187,13 @@ export async function prepareDependencyCalculationHandoff({ request, runId, runt
     toolInvoked: calculation.toolInvoked, questions: calculation.questions ?? [], missing: calculation.missing ?? [],
     receiptStatus: calculation.receipt?.status ?? null,
     receiptSha256: calculation.receipt ? digest(JSON.stringify(calculation.receipt)) : null,
-    issues: calculation.issues ?? [],
+    // Domain issues may contain user row identifiers or free-text materials.
+    // Public artifacts retain a machine code and binding, never those details.
+    issues: (calculation.issues ?? []).map(issue => ({
+      code: typeof issue.code === "string" && /^[a-z][a-z0-9_]{0,95}$/u.test(issue.code)
+        ? issue.code : "unclassified_calculation_issue",
+      detailSha256: digest(stableJson(issue)),
+    })),
     ...(calculation.maxBytes ? { maxBytes: calculation.maxBytes } : {}),
     execution: calculation.execution ?? null,
     observationScope: "current_invocation",
@@ -144,9 +215,11 @@ export async function prepareDependencyCalculationHandoff({ request, runId, runt
       contentDigest: method.contentDigest, componentContentSha256: method.componentContentSha256,
       ownerContractSha256: method.ownerContractSha256,
     }, binding: request.binding,
-    materials: { trust: "unverified_host_supplied_materials", inputJson: request.inputJson },
+    materials: { trust: "unverified_host_supplied_materials", inputJson: request.inputJson,
+      ...(request.methodInputs ? { methodInputs: structuredClone(request.methodInputs),
+        methodInputsTrust: "unverified_host_mapping_of_original_input_json" } : {}) },
     calculation: { status: calculation.status, code: calculation.code ?? null, toolInvoked: calculation.toolInvoked,
-      receipt: calculation.receipt ?? null, execution: calculation.execution ?? null,
+      receipt: calculation.receipt ?? null, execution: calculation.execution ?? null, issues: calculation.issues ?? [],
       evidence: calculation.receipt ? "current_source_verified_helper_result" : "no_usable_calculation_receipt" },
   };
   const serialized = JSON.stringify(handoff);

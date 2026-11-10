@@ -1,5 +1,45 @@
 {
   "appliedTransitions": {
+    "intent-to-delivery-20261110:reviewed-absorbed-decision-methods": {
+      "appliedAt": "2026-11-10T13:15:56.623Z",
+      "approvalDigest": "sha256:9d4340f6da9129dbed55d26528dc4cb81889dfcc3244bd187f45c6ec887b588e",
+      "candidateDigest": "sha256:ac87312e199668147eb38b7f0c60aea64467b975e6204eebcae3deae391e7d4a",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "rollbackPlanDigest": "sha256:1aae9b74ea11d20ba0470b7ceec90a67dac2087c3240582b8fdf9431b7f20e5a",
+      "targetRef": "config/governance/decision-pattern-catalog.json",
+      "toStatus": "active"
+    },
+    "intent-to-delivery-20261110:reviewed-core-loop": {
+      "appliedAt": "2026-11-10T12:05:13.346Z",
+      "approvalDigest": "sha256:dd0e8a00d3cda173be2ba25a01fc095c97545271a0b052d0d4747b2f8eb472c1",
+      "candidateDigest": "sha256:c1298b22e14a70d0853394a04a6d45d57a1b198a15aaf46bb73a4695016a49db",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "rollbackPlanDigest": "sha256:e46c832f587f6de95045bd297e78b62ed8d9a5c217cc143a2d36195a4372fd40",
+      "targetRef": "config/contracts/core-loop-contract.json",
+      "toStatus": "active"
+    },
+    "intent-to-delivery-20261110:reviewed-meta-theory": {
+      "appliedAt": "2026-11-10T12:05:13.215Z",
+      "approvalDigest": "sha256:71b1c24cd42e7f52d776372aa1d3d373bf198c5b1ebc1679941780a49d7d67ec",
+      "candidateDigest": "sha256:09b95c402cd3f47cfe5408ce21ed9fdbb022dd6b74a3b108b2cf4f6f194ce927",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "rollbackPlanDigest": "sha256:2ab6f8f1525233716115b43b608a0582a8cc2ce7ef429f04c9f697fdb63c3e02",
+      "targetRef": "canonical/skills/meta-theory/SKILL.md",
+      "toStatus": "active"
+    },
+    "intent-to-delivery-20261110:reviewed-scoped-human-gates": {
+      "appliedAt": "2026-11-10T13:09:02.004Z",
+      "approvalDigest": "sha256:40759286370bc63ff1ff8a1a2b750ad766ea8430303069c68c30725a4a49c431",
+      "candidateDigest": "sha256:f4958c766051fb5bb02af6ec08def01a713fb7cd4fcb0944cb8d25151b7b5148",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "rollbackPlanDigest": "sha256:3d255e2ba63b7e4aad6d35ccedd3ecb6dc71badafe5ca1a97a4440dc14d5fd45",
+      "targetRef": "canonical/skills/meta-theory/SKILL.md",
+      "toStatus": "active"
+    },
     "intent-tools-20261002:method-catalog": {
       "appliedAt": "2026-10-02T20:01:28.004Z",
       "approvalDigest": "sha256:f43f8c4430b8b96f5af6df0ccfdef464c9b937e90d933edb1b71ad9716864b13",
@@ -67,9 +107,9 @@
       "foundational": true,
       "kind": "knowledge",
       "lifecycle": {
-        "changedAt": "2026-10-23T14:52:05.604Z",
-        "lastTransitionId": "live-task-progress-20261023:skill",
-        "reason": "Bind independently reviewed current-run host panel and truthful task-progress guidance; no new execution authority."
+        "changedAt": "2026-11-10T13:09:02.004Z",
+        "lastTransitionId": "intent-to-delivery-20261110:reviewed-scoped-human-gates",
+        "reason": "Reviewed all five changed source lines against the exact revision-8 registered body and current implementation. Desktop overlap requires the existing current graph, exact graph and attempt-definition binding, unrelated ancestry and supported read-only effects; CLI forwards that same optional graph. Missing evidence keeps the human gate pending and no graph input grants execution permission. Capability discovery starts with bounded first-party cached-index search; findskill is used only when installed and appropriate, with no default full scan or external request. All other source bytes match the previously reviewed source."
       },
       "provenance": {
         "evidenceRefs": [
@@ -81,7 +121,7 @@
         ]
       },
       "replacementRefs": [],
-      "sourceDigest": "sha256:8bfffdf668f1787624931b543256b4d33dc7238af777758b8a26def566d35ac5",
+      "sourceDigest": "sha256:a1ff5063973ebda3ff01ed5d6fecc56b063a415c1980639ef38a4b8cbf732576",
       "status": "active",
       "targetRef": "canonical/skills/meta-theory/SKILL.md"
     },
@@ -90,9 +130,9 @@
       "foundational": true,
       "kind": "rule",
       "lifecycle": {
-        "changedAt": "2026-08-12T00:00:00.000Z",
-        "lastTransitionId": "genesis:core-loop-contract",
-        "reason": "Foundational eight-stage execution contract retained as active."
+        "changedAt": "2026-11-10T12:05:13.346Z",
+        "lastTransitionId": "intent-to-delivery-20261110:reviewed-core-loop",
+        "reason": "Reviewed current full contract and parsed semantic diff from registered bytes. Only projectResearchPolicy, taskProgressPolicy and crossRuntimeBoundary.targets differ. Research retains existing intent/PRD authority; task progress has mutationAuthority none, preserves unrelated work and unknown outcome states; Gemini/ZCode join the format boundary without broadening the codex/claude P-117 execution evidence or claiming live verification. Eight-stage order, merge barriers, permission and writeback rules remain unchanged."
       },
       "provenance": {
         "evidenceRefs": [
@@ -104,7 +144,7 @@
         ]
       },
       "replacementRefs": [],
-      "sourceDigest": "sha256:2ec5d1012785a9e2fe38b871ab48cbcbbe318d46bda500c920d521d7b89d6397",
+      "sourceDigest": "sha256:aa9ddfd6bca2a27c977c6a51547030ef4ab4e6d9b5dd66d3566cd7c5f59fa180",
       "status": "active",
       "targetRef": "config/contracts/core-loop-contract.json"
     },
@@ -113,9 +153,9 @@
       "foundational": false,
       "kind": "capability_index",
       "lifecycle": {
-        "changedAt": "2026-10-23T12:09:48.878Z",
-        "lastTransitionId": "requirements-design-20261023:methods",
-        "reason": "Bind independently reviewed requirements-before-design and source-backed method changes. Preserve existing status and execution eligibility."
+        "changedAt": "2026-11-10T13:15:56.623Z",
+        "lastTransitionId": "intent-to-delivery-20261110:reviewed-absorbed-decision-methods",
+        "reason": "Independently reviewed the complete parsed delta against the exact registered Git source. Five attributed reference entries and three bounded stage methods absorb core-problem framing, evidence labeling, sufficient local discovery, native work-order boundaries and specification-before-quality review. Five existing patterns gain source references only. Prior pattern behavior, prior sources and the reference-only/not-invokable source boundary are unchanged. Four Kim_Service source-byte hashes and their local LICENSE/NOTICE files were checked; official Superpowers README and MIT license confirm the limited review concepts. Local absence smoke and packet preparation pass without optional workflow packages. This binds reference knowledge only, not provider execution, a second scheduler, action approval or live-host certification."
       },
       "provenance": {
         "evidenceRefs": [
@@ -127,7 +167,7 @@
         ]
       },
       "replacementRefs": [],
-      "sourceDigest": "sha256:0da258405e424e3606a0fa1563b99f4ccfe06042ea17350463b16efee1ad3afd",
+      "sourceDigest": "sha256:737bd8c02f24288743a0e2986a0a2358def709c447ffbb8b0af3cc4bf86f6a43",
       "status": "active",
       "targetRef": "config/governance/decision-pattern-catalog.json"
     }
@@ -330,6 +370,138 @@
       "targetRef": "canonical/skills/meta-theory/SKILL.md",
       "toStatus": "active",
       "transitionId": "live-task-progress-20261023:skill"
+    },
+    {
+      "appliedAt": "2026-11-10T12:05:13.215Z",
+      "approvalDigest": "sha256:71b1c24cd42e7f52d776372aa1d3d373bf198c5b1ebc1679941780a49d7d67ec",
+      "candidateDigest": "sha256:09b95c402cd3f47cfe5408ce21ed9fdbb022dd6b74a3b108b2cf4f6f194ce927",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "previousEntry": {
+        "executionClass": "execution_eligible",
+        "foundational": true,
+        "kind": "knowledge",
+        "lifecycle": {
+          "changedAt": "2026-10-23T14:52:05.604Z",
+          "lastTransitionId": "live-task-progress-20261023:skill",
+          "reason": "Bind independently reviewed current-run host panel and truthful task-progress guidance; no new execution authority."
+        },
+        "provenance": {
+          "evidenceRefs": [
+            "AGENTS.md#Meta-Theory-Activation"
+          ],
+          "recordedAt": "2026-08-12T00:00:00.000Z",
+          "sourceRefs": [
+            "canonical/skills/meta-theory/SKILL.md"
+          ]
+        },
+        "replacementRefs": [],
+        "sourceDigest": "sha256:8bfffdf668f1787624931b543256b4d33dc7238af777758b8a26def566d35ac5",
+        "status": "active",
+        "targetRef": "canonical/skills/meta-theory/SKILL.md"
+      },
+      "targetRef": "canonical/skills/meta-theory/SKILL.md",
+      "toStatus": "active",
+      "transitionId": "intent-to-delivery-20261110:reviewed-meta-theory"
+    },
+    {
+      "appliedAt": "2026-11-10T12:05:13.346Z",
+      "approvalDigest": "sha256:dd0e8a00d3cda173be2ba25a01fc095c97545271a0b052d0d4747b2f8eb472c1",
+      "candidateDigest": "sha256:c1298b22e14a70d0853394a04a6d45d57a1b198a15aaf46bb73a4695016a49db",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "previousEntry": {
+        "executionClass": "execution_eligible",
+        "foundational": true,
+        "kind": "rule",
+        "lifecycle": {
+          "changedAt": "2026-08-12T00:00:00.000Z",
+          "lastTransitionId": "genesis:core-loop-contract",
+          "reason": "Foundational eight-stage execution contract retained as active."
+        },
+        "provenance": {
+          "evidenceRefs": [
+            "AGENTS.md#Eight-Stage-Spine"
+          ],
+          "recordedAt": "2026-08-12T00:00:00.000Z",
+          "sourceRefs": [
+            "config/contracts/core-loop-contract.json"
+          ]
+        },
+        "replacementRefs": [],
+        "sourceDigest": "sha256:2ec5d1012785a9e2fe38b871ab48cbcbbe318d46bda500c920d521d7b89d6397",
+        "status": "active",
+        "targetRef": "config/contracts/core-loop-contract.json"
+      },
+      "targetRef": "config/contracts/core-loop-contract.json",
+      "toStatus": "active",
+      "transitionId": "intent-to-delivery-20261110:reviewed-core-loop"
+    },
+    {
+      "appliedAt": "2026-11-10T13:09:02.004Z",
+      "approvalDigest": "sha256:40759286370bc63ff1ff8a1a2b750ad766ea8430303069c68c30725a4a49c431",
+      "candidateDigest": "sha256:f4958c766051fb5bb02af6ec08def01a713fb7cd4fcb0944cb8d25151b7b5148",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "previousEntry": {
+        "executionClass": "execution_eligible",
+        "foundational": true,
+        "kind": "knowledge",
+        "lifecycle": {
+          "changedAt": "2026-11-10T12:05:13.215Z",
+          "lastTransitionId": "intent-to-delivery-20261110:reviewed-meta-theory",
+          "reason": "Reviewed current full source and exact registered-source diff: host-owned Critical/Fetch/Thinking, one PRD with architecture before modules, source-bound professional methods, existing question/permission separation, actual host schema instead of fabricated UI, and source-navigation cleanup limits. Existing host continuation and milestone guidance explicitly retain pending/unknown source-authentication boundaries. Findings on fixed research quotas and internal-owner choice prompts were corrected before this binding."
+        },
+        "provenance": {
+          "evidenceRefs": [
+            "AGENTS.md#Meta-Theory-Activation"
+          ],
+          "recordedAt": "2026-08-12T00:00:00.000Z",
+          "sourceRefs": [
+            "canonical/skills/meta-theory/SKILL.md"
+          ]
+        },
+        "replacementRefs": [],
+        "sourceDigest": "sha256:c48cbcbd8752b6a333d0a2ddc0ab3aa25f8d2b9d1cf1e14e6ee28bf7e8236ae7",
+        "status": "active",
+        "targetRef": "canonical/skills/meta-theory/SKILL.md"
+      },
+      "targetRef": "canonical/skills/meta-theory/SKILL.md",
+      "toStatus": "active",
+      "transitionId": "intent-to-delivery-20261110:reviewed-scoped-human-gates"
+    },
+    {
+      "appliedAt": "2026-11-10T13:15:56.623Z",
+      "approvalDigest": "sha256:9d4340f6da9129dbed55d26528dc4cb81889dfcc3244bd187f45c6ec887b588e",
+      "candidateDigest": "sha256:ac87312e199668147eb38b7f0c60aea64467b975e6204eebcae3deae391e7d4a",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "previousEntry": {
+        "executionClass": "reference_only",
+        "foundational": false,
+        "kind": "capability_index",
+        "lifecycle": {
+          "changedAt": "2026-10-23T12:09:48.878Z",
+          "lastTransitionId": "requirements-design-20261023:methods",
+          "reason": "Bind independently reviewed requirements-before-design and source-backed method changes. Preserve existing status and execution eligibility."
+        },
+        "provenance": {
+          "evidenceRefs": [
+            "config/capability-index/dependency-project-registry.json"
+          ],
+          "recordedAt": "2026-08-12T00:00:00.000Z",
+          "sourceRefs": [
+            "config/governance/decision-pattern-catalog.json"
+          ]
+        },
+        "replacementRefs": [],
+        "sourceDigest": "sha256:0da258405e424e3606a0fa1563b99f4ccfe06042ea17350463b16efee1ad3afd",
+        "status": "active",
+        "targetRef": "config/governance/decision-pattern-catalog.json"
+      },
+      "targetRef": "config/governance/decision-pattern-catalog.json",
+      "toStatus": "active",
+      "transitionId": "intent-to-delivery-20261110:reviewed-absorbed-decision-methods"
     }
   ],
   "policy": {
@@ -339,7 +511,7 @@
     "referenceOnlyPromotion": false,
     "retiredRecordsRemainTombstones": true
   },
-  "revision": 6,
+  "revision": 10,
   "schemaVersion": "knowledge-lifecycle-registry-v1",
-  "updatedAt": "2026-10-23T14:52:05.604Z"
+  "updatedAt": "2026-11-10T13:15:56.623Z"
 }

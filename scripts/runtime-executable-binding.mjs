@@ -122,8 +122,14 @@ function identityLaunchDescriptor(candidate) {
     jsEntry: raw.jsEntry ? executableIdentity(raw.jsEntry) : null,
     argsPrefix: [...raw.argsPrefix],
   };
-  if (identified.jsEntry && identified.argsPrefix[0] !== identified.jsEntry.realpath) {
-    throw new Error("runtime launch descriptor JS entry and argsPrefix disagree");
+  if (identified.jsEntry) {
+    const argument = identified.argsPrefix[0];
+    if (typeof argument !== "string" || !path.isAbsolute(argument) || realpathSync.native(argument) !== identified.jsEntry.realpath) {
+      throw new Error("runtime launch descriptor JS entry and argsPrefix disagree");
+    }
+    // Persist the exact physical entry whose bytes were fingerprinted, even
+    // when PATH discovered a Windows case or 8.3 alias for that same entry.
+    identified.argsPrefix[0] = identified.jsEntry.realpath;
   }
   return identified;
 }

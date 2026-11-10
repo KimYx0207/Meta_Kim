@@ -12,7 +12,7 @@ const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const MAX_BYTES = 32 * 1024 * 1024;
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const TYPES = ["agents", "skills", "commands", "mcpTools", "runtimeTools", "mcpServers", "hooks", "plugins", "rules", "prompts"];
-const RUNTIMES = ["all", "claude", "codex", "codexapp", "cursor", "openclaw"];
+const RUNTIMES = ["all", "claude", "codex", "codexapp", "cursor", "openclaw", "gemini", "zcode"];
 const STOP_WORDS = new Set("a an the and or for to in on with of this that please help me find need use using from by".split(" "));
 const object = (value) => value && typeof value === "object" && !Array.isArray(value);
 const string = (value) => typeof value === "string" ? value : "";
@@ -102,6 +102,9 @@ function candidatesFrom(index, options, publish) {
           sourceClass: publish(record.sourceClass || (canonical ? "canonical" : "unknown"), 64),
           providerId: publish(record.providerId || metadata.providerId || "", 160) || null,
           providerKind: publish(record.providerKind || metadata.providerKind || "", 96) || null,
+          capabilityType: publish(record.capabilityType || metadata.capabilityType || "", 96) || null,
+          interfaces: (Array.isArray(record.interfaces || metadata.interfaces) ? record.interfaces || metadata.interfaces : [])
+            .slice(0, 8).filter(object).map((entry) => ({ type: publish(entry.type || "", 64), transport: publish(entry.transport || "", 64) })),
           namespace: publish(record.namespace || "", 128) || null,
           sourceValid: typeof record.sourceValid === "boolean" ? record.sourceValid : null,
           routeEligible: typeof record.routeEligible === "boolean" ? record.routeEligible : null,

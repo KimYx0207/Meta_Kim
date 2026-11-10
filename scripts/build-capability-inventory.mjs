@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { OS_TARGETS, RUNTIMES, exists, listFiles, readJson, repoPath, stateDir, toPosix, writeJson } from "./governance-lib.mjs";
 import { getProfilePaths, toRepoRelative } from "./meta-kim-local-state.mjs";
 import { discoverDependencyAgentContracts, readDependencyProjectOverrides } from "./dependency-agent-discovery.mjs";
+import { discoverOptionalEngines } from "../src/infrastructure/capabilities/optional-engine-discovery.mjs";
 import {
   claimIsExecutable,
   runtimeCapabilityNameForTool,
@@ -620,6 +621,27 @@ export async function buildCapabilityInventory({ environment = process.env, proj
       invocationPath: project.interface?.invocationPath ?? null,
       writebackKey: `dependency:${project.id}`,
       reason: "External or dependency project capability candidate from the dependency registry.",
+    });
+  }
+  for (const engine of await discoverOptionalEngines({ projects: dependencies.projects, environment })) {
+    records.push({
+      id: `${engine.id}-cli`, type: "command", providerType: "tool",
+      sourcePath: "config/capability-index/dependency-project-registry.json",
+      triggerWords: [engine.id, engine.capabilityType, engine.description],
+      ownerCandidates: ["meta-artisan", "meta-sentinel"], weaponCandidates: [],
+      dependencyCandidates: [engine.id], ...defaultSupport("unknown", "unknown"),
+      capabilityType: engine.capabilityType, interfaces: engine.interfaces,
+      availability: engine.availability, permissionStatus: engine.permissionStatus,
+      invocationState: "not_invoked", liveVerified: false,
+      verificationMethod: "Inspect installed version, current host/OS permissions and task scope before native invocation; then verify the actual outcome.",
+      risk: { externalActions: true, privateObservationContent: true },
+      mustPreserve: true, routeEligibility: "requires_provider_validation", routeEligible: false,
+      missingFields: engine.available ? ["host_permission_and_session_evidence"] : ["installed_executable"],
+      evidence: { source: "local_path_observation", sourceRef: engine.sourceRef,
+        observationKind: engine.observationKind, observationDigest: engine.observationDigest,
+        confidence: "verified_local" },
+      confidence: "verified_local", invocationPath: engine.command,
+      writebackKey: `dependency:${engine.id}`,
     });
   }
   const normalizedRecords = records

@@ -6,6 +6,10 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { planChallengeAuthorizationBinding } from "./governed-execution/plan-challenge-policy.mjs";
+import { productDesignDigest } from "./governed-execution/product-design.mjs";
+import { normalizeHostCritical } from "./governed-execution/intent-dialogue.mjs";
+import { readCurrentTaskFacts, selectTaskDesignRoute } from "./governed-execution/task-design-dispatch.mjs";
+import { taskOutcomeDigest } from "../src/domain/governance/task-outcome.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
@@ -1491,14 +1495,22 @@ function validateIntentPacketWhenRequired(contract, artifact) {
   for (const field of [
     "realIntent",
     "trueUserIntent",
-    "successCriteria",
-    "nonGoals",
-    "noQuotaClarification",
   ]) {
     ensure(
       typeof intent[field] === "string" && intent[field].trim().length >= 1,
       `intentPacket.${field} must be a non-empty string.`,
     );
+  }
+  if (typeof intent.noQuotaClarification === "boolean") ensure(intent.noQuotaClarification === true, "intentPacket.noQuotaClarification must preserve the no-quota policy.");
+  else ensureString(intent.noQuotaClarification, "intentPacket.noQuotaClarification");
+  if (Array.isArray(intent.successCriteria) || Array.isArray(intent.nonGoals)) {
+    ensureObject(intent.intentBinding, "intentPacket.intentBinding");
+    normalizeHostCritical({ input: intent, task: artifact.task, dialogue: intent.intentBinding });
+  } else {
+    // Existing durable v1 artifacts used text at these two fields. New current
+    // host packets keep the validated Critical arrays instead of flattening
+    // structured acceptance conditions into a lossy display string.
+    for (const field of ["successCriteria", "nonGoals"]) ensureString(intent[field], `intentPacket.${field}`);
   }
   ensureStringArray(intent.blockingUnknowns, "intentPacket.blockingUnknowns");
   ensure(
@@ -1565,38 +1577,10 @@ function validateIntentGatePacketWhenRequired(contract, artifact) {
   }
 }
 
-function validatePreDecisionOptionFrame(contract, artifact) {
-  const when =
-    contract.runDiscipline.protocolFirst
-      .preDecisionOptionFrameRequiredBeforeUserChoiceWhenGovernanceFlows ?? [];
-  const flow = artifact.taskClassification?.governanceFlow;
-  if (!when.includes(flow)) {
-    return;
-  }
-
+/** Shared question, answer and frontier checks for preparations and formal runs. */
+function validateChallengeQuestions(contract, artifact) {
   const packet = artifact.preDecisionOptionFrame;
-  ensure(
-    packet && typeof packet === "object",
-    `preDecisionOptionFrame is required when governanceFlow is ${flow}.`,
-  );
   const policy = contract.protocols.preDecisionOptionFrame;
-  ensureFields(packet, policy.requiredFields, "preDecisionOptionFrame");
-  ensure(
-    packet.presentedBeforeDecision === true,
-    "preDecisionOptionFrame.presentedBeforeDecision must be true.",
-  );
-  ensure(
-    packet.builtFromContentEvidence === true,
-    "preDecisionOptionFrame.builtFromContentEvidence must be true.",
-  );
-  ensureArray(
-    packet.contentEvidenceRefs,
-    "preDecisionOptionFrame.contentEvidenceRefs",
-  );
-  ensure(
-    packet.contentEvidenceRefs.length >= 1,
-    "preDecisionOptionFrame.contentEvidenceRefs must include at least one evidence reference.",
-  );
   ensureArray(
     packet.unresolvedQuestions,
     "preDecisionOptionFrame.unresolvedQuestions",
@@ -1736,6 +1720,157 @@ function validatePreDecisionOptionFrame(contract, artifact) {
       );
     }
   }
+  ensureAcyclicDependencyGraph(new Map(packet.unresolvedQuestions.map(question => [question.questionId, question.dependsOn])), "preDecisionOptionFrame question dependencies");
+}
+
+function validateChallengeAnswers(artifact) {
+  const packet = artifact.preDecisionOptionFrame;
+  for (const [index, question] of packet.unresolvedQuestions.entries()) {
+    if (!["answered", "skipped"].includes(question.status)) continue;
+    ensureArray(
+      question.answerEvidenceRefs,
+      `preDecisionOptionFrame.unresolvedQuestions[${index}].answerEvidenceRefs`,
+    );
+    ensure(
+      question.answerEvidenceRefs.length > 0,
+      `preDecisionOptionFrame.unresolvedQuestions[${index}] closed by user decision must retain evidence.`,
+    );
+    validateEvidenceRefArray(
+      artifact,
+      question.answerEvidenceRefs,
+      `preDecisionOptionFrame.unresolvedQuestions[${index}].answerEvidenceRefs`,
+    );
+    if (question.resolutionSource != null) {
+      const discovery = artifact.requirementsDiscoveryPacket;
+      let source;
+      let expectedRefs;
+      let expectedValue;
+      if (question.resolutionSource === "supplied_fact_evidence") {
+        ensure(question.resolutionClass === "discoverable_fact", "fact evidence cannot settle a material user decision.");
+        const position = discovery?.resolvedFacts?.findIndex((item) => item.questionId === question.questionId) ?? -1;
+        source = discovery?.resolvedFacts?.[position];
+        expectedRefs = source?.evidenceRefs?.map((_, i) => `requirementsDiscoveryPacket.resolvedFacts[${position}].evidenceRefs[${i}]`);
+        expectedValue = source?.value;
+      } else if (question.resolutionSource === "routine_recommendation_no_permission_granted") {
+        ensure(question.resolutionClass === "routine_design_decision", "routine recommendation cannot settle a material user decision.");
+        const position = discovery?.decisionItems?.findIndex((item) => item.questionId === question.questionId) ?? -1;
+        source = discovery?.decisionItems?.[position];
+        ensure(source?.resolutionClass === "routine_design_decision", "routine decision must match the original discovery class.");
+        expectedRefs = source?.evidenceRefs?.map((_, i) => `requirementsDiscoveryPacket.decisionItems[${position}].evidenceRefs[${i}]`);
+        expectedValue = source?.recommendedAnswer;
+      } else if (question.resolutionSource === "existing_settled_decision") {
+        const intent = packet.intentBinding;
+        ensure(intent?.status === "host_provided_understanding" &&
+          intent.taskHash === artifact.goalContractPacket?.taskHash &&
+          intent.intentDigest === artifact.goalContractPacket?.intentBinding?.intentDigest,
+        "settled decision must come from the current host-provided understanding.");
+        const position = intent?.settledDecisionRefs?.findIndex((item) => item.decisionId === question.questionId) ?? -1;
+        source = intent?.settledDecisionRefs?.[position];
+        expectedRefs = source?.evidenceRefs?.map((_, i) => `preDecisionOptionFrame.intentBinding.settledDecisionRefs[${position}].evidenceRefs[${i}]`);
+        expectedValue = source?.value;
+      } else {
+        ensure(false, "unknown dynamic question resolution source.");
+      }
+      ensure(source != null && question.status === "answered" && question.userAnswer === expectedValue &&
+        JSON.stringify(question.answerEvidenceRefs) === JSON.stringify(expectedRefs),
+      "dynamic answer must match its current source identity, value and exact evidence references.");
+      continue;
+    }
+    const expectedResponseBinding = `plan-challenge-response:${question.questionId}`;
+    ensure(
+      question.answerEvidenceRefs.some((ref) => {
+        const evidence = getPathValue(artifact, ref);
+        return (
+          (evidence?.kind === "question_response" &&
+            evidence.binding === expectedResponseBinding) ||
+          (ref === "preDecisionOptionFrame.planChallengeState.controlEvidence" &&
+            evidence?.trusted === true &&
+            ["accept_recommendation", "skip"].includes(evidence.action))
+        );
+      }),
+      `preDecisionOptionFrame.unresolvedQuestions[${index}] answer evidence must bind to its question or trusted question control.`,
+    );
+  }
+}
+
+function validateChallengeFrontier(artifact) {
+  const packet = artifact.preDecisionOptionFrame;
+  const challenge = packet.planChallengeState;
+  const eligibleOpen = packet.unresolvedQuestions
+    .filter(
+      (question) =>
+        question.status === "open" &&
+        (!question.resolutionClass || question.resolutionClass === "material_user_decision") &&
+        question.dependsOn.every(
+          (dependencyId) =>
+            packet.unresolvedQuestions.find((candidate) => candidate.questionId === dependencyId)?.status === "answered",
+        ),
+    )
+    .sort(
+      (left, right) =>
+        right.impactPriority - left.impactPriority ||
+        left.questionId.localeCompare(right.questionId),
+    );
+  ensure(
+    challenge.selectedQuestionId === (eligibleOpen[0]?.questionId ?? null),
+    "preDecisionOptionFrame.planChallengeState.selectedQuestionId must be the single highest-impact eligible open question.",
+  );
+  if (artifact.requirementsDiscoveryPacket != null) {
+    ensureArray(packet.readyDecisionFrontier, "preDecisionOptionFrame.readyDecisionFrontier");
+    ensureArray(packet.pendingFactRequests, "preDecisionOptionFrame.pendingFactRequests");
+  }
+  if (packet.readyDecisionFrontier != null) {
+    ensureArray(packet.readyDecisionFrontier, "preDecisionOptionFrame.readyDecisionFrontier");
+    ensure(
+      JSON.stringify(packet.readyDecisionFrontier.map((question) => question?.questionId)) ===
+        JSON.stringify(eligibleOpen.map((question) => question.questionId)),
+      "preDecisionOptionFrame.readyDecisionFrontier must match the dependency-ready material questions in impact order.",
+    );
+  }
+  if (packet.pendingFactRequests != null) {
+    ensureArray(packet.pendingFactRequests, "preDecisionOptionFrame.pendingFactRequests");
+    const factIds = packet.unresolvedQuestions.filter((question) => question.status === "open" && question.resolutionClass === "discoverable_fact").map((question) => question.questionId);
+    ensure(
+      JSON.stringify(packet.pendingFactRequests.map((question) => question?.questionId)) === JSON.stringify(factIds),
+      "preDecisionOptionFrame.pendingFactRequests must match the unanswered discoverable facts.",
+    );
+  }
+  return eligibleOpen;
+}
+
+function validatePreDecisionOptionFrame(contract, artifact) {
+  const when =
+    contract.runDiscipline.protocolFirst
+      .preDecisionOptionFrameRequiredBeforeUserChoiceWhenGovernanceFlows ?? [];
+  const flow = artifact.taskClassification?.governanceFlow;
+  if (!when.includes(flow)) {
+    return;
+  }
+
+  const packet = artifact.preDecisionOptionFrame;
+  ensure(
+    packet && typeof packet === "object",
+    `preDecisionOptionFrame is required when governanceFlow is ${flow}.`,
+  );
+  const policy = contract.protocols.preDecisionOptionFrame;
+  ensureFields(packet, policy.requiredFields, "preDecisionOptionFrame");
+  ensure(
+    packet.presentedBeforeDecision === true,
+    "preDecisionOptionFrame.presentedBeforeDecision must be true.",
+  );
+  ensure(
+    packet.builtFromContentEvidence === true,
+    "preDecisionOptionFrame.builtFromContentEvidence must be true.",
+  );
+  ensureArray(
+    packet.contentEvidenceRefs,
+    "preDecisionOptionFrame.contentEvidenceRefs",
+  );
+  ensure(
+    packet.contentEvidenceRefs.length >= 1,
+    "preDecisionOptionFrame.contentEvidenceRefs must include at least one evidence reference.",
+  );
+  validateChallengeQuestions(contract, artifact);
   if (packet.planChallengeState != null) {
     const challenge = packet.planChallengeState;
     const challengePolicy = policy.planChallengeState ?? {};
@@ -1875,72 +2010,7 @@ function validatePreDecisionOptionFrame(contract, artifact) {
       ensure(question?.dependsOn.every((id) => !currentResponseQuestionIds.has(id)),
         "current-run question responses cannot consume a dependency answered in the same round.");
     }
-    for (const [index, question] of packet.unresolvedQuestions.entries()) {
-      if (!["answered", "skipped"].includes(question.status)) continue;
-      ensureArray(
-        question.answerEvidenceRefs,
-        `preDecisionOptionFrame.unresolvedQuestions[${index}].answerEvidenceRefs`,
-      );
-      ensure(
-        question.answerEvidenceRefs.length > 0,
-        `preDecisionOptionFrame.unresolvedQuestions[${index}] closed by user decision must retain evidence.`,
-      );
-      validateEvidenceRefArray(
-        artifact,
-        question.answerEvidenceRefs,
-        `preDecisionOptionFrame.unresolvedQuestions[${index}].answerEvidenceRefs`,
-      );
-      if (question.resolutionSource != null) {
-        const discovery = artifact.requirementsDiscoveryPacket;
-        let source;
-        let expectedRefs;
-        let expectedValue;
-        if (question.resolutionSource === "supplied_fact_evidence") {
-          ensure(question.resolutionClass === "discoverable_fact", "fact evidence cannot settle a material user decision.");
-          const position = discovery?.resolvedFacts?.findIndex((item) => item.questionId === question.questionId) ?? -1;
-          source = discovery?.resolvedFacts?.[position];
-          expectedRefs = source?.evidenceRefs?.map((_, i) => `requirementsDiscoveryPacket.resolvedFacts[${position}].evidenceRefs[${i}]`);
-          expectedValue = source?.value;
-        } else if (question.resolutionSource === "routine_recommendation_no_permission_granted") {
-          ensure(question.resolutionClass === "routine_design_decision", "routine recommendation cannot settle a material user decision.");
-          const position = discovery?.decisionItems?.findIndex((item) => item.questionId === question.questionId) ?? -1;
-          source = discovery?.decisionItems?.[position];
-          ensure(source?.resolutionClass === "routine_design_decision", "routine decision must match the original discovery class.");
-          expectedRefs = source?.evidenceRefs?.map((_, i) => `requirementsDiscoveryPacket.decisionItems[${position}].evidenceRefs[${i}]`);
-          expectedValue = source?.recommendedAnswer;
-        } else if (question.resolutionSource === "existing_settled_decision") {
-          const intent = packet.intentBinding;
-          ensure(intent?.status === "host_provided_understanding" &&
-            intent.taskHash === artifact.goalContractPacket?.taskHash &&
-            intent.intentDigest === artifact.goalContractPacket?.intentBinding?.intentDigest,
-          "settled decision must come from the current host-provided understanding.");
-          const position = intent?.settledDecisionRefs?.findIndex((item) => item.decisionId === question.questionId) ?? -1;
-          source = intent?.settledDecisionRefs?.[position];
-          expectedRefs = source?.evidenceRefs?.map((_, i) => `preDecisionOptionFrame.intentBinding.settledDecisionRefs[${position}].evidenceRefs[${i}]`);
-          expectedValue = source?.value;
-        } else {
-          ensure(false, "unknown dynamic question resolution source.");
-        }
-        ensure(source != null && question.status === "answered" && question.userAnswer === expectedValue &&
-          JSON.stringify(question.answerEvidenceRefs) === JSON.stringify(expectedRefs),
-        "dynamic answer must match its current source identity, value and exact evidence references.");
-        continue;
-      }
-      const expectedResponseBinding = `plan-challenge-response:${question.questionId}`;
-      ensure(
-        question.answerEvidenceRefs.some((ref) => {
-          const evidence = getPathValue(artifact, ref);
-          return (
-            (evidence?.kind === "question_response" &&
-              evidence.binding === expectedResponseBinding) ||
-            (ref === "preDecisionOptionFrame.planChallengeState.controlEvidence" &&
-              evidence?.trusted === true &&
-              ["accept_recommendation", "skip"].includes(evidence.action))
-          );
-        }),
-        `preDecisionOptionFrame.unresolvedQuestions[${index}] answer evidence must bind to its question or trusted question control.`,
-      );
-    }
+    validateChallengeAnswers(artifact);
     ensure(
       typeof challenge.sharedUnderstandingConfirmed === "boolean",
       "preDecisionOptionFrame.planChallengeState.sharedUnderstandingConfirmed must be a boolean.",
@@ -2075,45 +2145,7 @@ function validatePreDecisionOptionFrame(contract, artifact) {
         (challenge.active && challenge.sideEffectActions.length > 0),
       "preDecisionOptionFrame.planChallengeState.authorizationRequired must match active concrete side effects.",
     );
-    const eligibleOpen = packet.unresolvedQuestions
-      .filter(
-        (question) =>
-          question.status === "open" &&
-          (!question.resolutionClass || question.resolutionClass === "material_user_decision") &&
-          question.dependsOn.every(
-            (dependencyId) =>
-              packet.unresolvedQuestions.find((candidate) => candidate.questionId === dependencyId)?.status === "answered",
-          ),
-      )
-      .sort(
-        (left, right) =>
-          right.impactPriority - left.impactPriority ||
-          left.questionId.localeCompare(right.questionId),
-      );
-    ensure(
-      challenge.selectedQuestionId === (eligibleOpen[0]?.questionId ?? null),
-      "preDecisionOptionFrame.planChallengeState.selectedQuestionId must be the single highest-impact eligible open question.",
-    );
-    if (artifact.requirementsDiscoveryPacket != null) {
-      ensureArray(packet.readyDecisionFrontier, "preDecisionOptionFrame.readyDecisionFrontier");
-      ensureArray(packet.pendingFactRequests, "preDecisionOptionFrame.pendingFactRequests");
-    }
-    if (packet.readyDecisionFrontier != null) {
-      ensureArray(packet.readyDecisionFrontier, "preDecisionOptionFrame.readyDecisionFrontier");
-      ensure(
-        JSON.stringify(packet.readyDecisionFrontier.map((question) => question?.questionId)) ===
-          JSON.stringify(eligibleOpen.map((question) => question.questionId)),
-        "preDecisionOptionFrame.readyDecisionFrontier must match the dependency-ready material questions in impact order.",
-      );
-    }
-    if (packet.pendingFactRequests != null) {
-      ensureArray(packet.pendingFactRequests, "preDecisionOptionFrame.pendingFactRequests");
-      const factIds = packet.unresolvedQuestions.filter((question) => question.status === "open" && question.resolutionClass === "discoverable_fact").map((question) => question.questionId);
-      ensure(
-        JSON.stringify(packet.pendingFactRequests.map((question) => question?.questionId)) === JSON.stringify(factIds),
-        "preDecisionOptionFrame.pendingFactRequests must match the unanswered discoverable facts.",
-      );
-    }
+    const eligibleOpen = validateChallengeFrontier(artifact);
     const awaitingUserInput = [
       "awaiting_user_answer",
       "awaiting_understanding_confirmation",
@@ -2245,8 +2277,14 @@ function validatePreDecisionOptionFrame(contract, artifact) {
     artifact.coreLoop?.executionResult?.executionAllowed === false &&
     artifact.coreLoop?.executionResult?.executionGate === "blocked_by_plan_challenge" &&
     !routeChoiceRequired;
+  const currentHostRoute = artifact.selectedExecutionRoute?.recommendedRoute;
+  const explicitHostWorkWithoutProductChoice = !routeChoiceRequired && packet.requiresUserChoice === false &&
+    packet.choiceGateSkip === "no_branching_choice" && currentHostRoute?.selectionPolicy === "host_selected_current_bindings" &&
+    currentHostRoute.selectionStatus === "bindings_verified_not_invoked" && !currentHostRoute.blockedReasons?.length &&
+    /^[a-f0-9]{64}$/u.test(artifact.thinkingPacket?.inventoryDigest ?? "") &&
+    artifact.thinkingPacket?.hostProducerEvidenceRefs?.length > 0 && artifact.workerTaskPackets?.length > 0;
   ensure(
-    packet.candidateOptions.length >= (routeChoiceRequired ? 2 : blockedNonRouteChallenge ? 0 : 1),
+    packet.candidateOptions.length >= (routeChoiceRequired ? 2 : blockedNonRouteChallenge || explicitHostWorkWithoutProductChoice ? 0 : 1),
     "preDecisionOptionFrame.candidateOptions must include a viable path and at least two paths for a required route choice.",
   );
   for (const [index, option] of packet.candidateOptions.entries()) {
@@ -3758,6 +3796,8 @@ function hasBoundDependencyMaterialsScope(artifact, packet) {
     typeof artifact.task === "string" && scope.requestSha256 === hash(artifact.task.trim()) &&
     scope.requestSha256 === artifact.goalContractPacket?.taskHash &&
     binding && ["requestSha256", "inputSha256", "intentDigest", "dependencyRootSha256"].every((key) => scope[key] === binding[key]) &&
+    (scope.methodInputsSha256 ?? null) === (binding.methodInputsSha256 ?? null) &&
+    (scope.methodInputsSha256 == null || /^[a-f0-9]{64}$/u.test(scope.methodInputsSha256)) &&
     [scope.inputSha256, scope.dependencyRootSha256, scope.componentContentSha256, scope.ownerContractSha256, scope.ownerContractProjectionSha256].every((value) => /^[a-f0-9]{64}$/u.test(value ?? "")) &&
     scope.intentDigest === (packet.intentBinding?.intentDigest ?? null) &&
     scope.intentDigest === (artifact.preDecisionOptionFrame?.intentBinding?.intentDigest ?? null) &&
@@ -5116,7 +5156,75 @@ function validateRequiredPackets(contract, artifact) {
   }
 }
 
+/** Preparations are durable Critical/Fetch handoffs, never a partial formal run.
+ * Reuse the same question/answer/frontier rules without fabricating runHeader,
+ * worker packets or execution evidence to satisfy the formal-run contract. */
+export function validatePreparationArtifact(contract, artifact) {
+  ensureObject(artifact, "host preparation");
+  ensure(artifact.schemaVersion === 1 && artifact.artifactKind === "host_preparation", "Preparation must identify its actual artifact kind.");
+  ensureFields(artifact, ["runId", "task", "taskFingerprint", "resolvedOutputLanguage", "preparation", "goalContractPacket", "intentPacket", "preDecisionOptionFrame", "fetchPacket", "thinkingPacket", "coreLoop"], "host preparation");
+  ensure(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(artifact.runId) && !artifact.runId.includes(".."), "Preparation run id must be a safe file identity.");
+  ensure(/^[A-Za-z][A-Za-z0-9-]{0,15}$/u.test(artifact.resolvedOutputLanguage), "Preparation language must be a safe file suffix.");
+  ensureString(artifact.task, "host preparation task");
+  ensureString(artifact.taskFingerprint, "host preparation taskFingerprint");
+  const taskHash = taskOutcomeDigest(artifact.task);
+  const intent = artifact.intentPacket;
+  ensure(artifact.goalContractPacket.taskHash === taskHash && intent.intentBinding?.taskHash === taskHash, "Preparation task binding mismatch.");
+  ensure((artifact.goalContractPacket.intentBinding?.intentDigest ?? null) === (intent.intentBinding.intentDigest ?? null), "Preparation intent binding mismatch.");
+  ensure(productDesignDigest(artifact.preDecisionOptionFrame.intentBinding) === productDesignDigest(intent.intentBinding), "Preparation decision frame must retain the current intent binding.");
+  ensureArray(artifact.workerTaskPackets, "preparation workerTaskPackets");
+  ensureArray(artifact.coreLoop.workerTaskPackets, "preparation coreLoop.workerTaskPackets");
+  ensure(!artifact.workerTaskPackets.length && !artifact.coreLoop.workerTaskPackets.length && !artifact.coreLoop.stageDagPacket && !artifact.runHeader,
+    "Preparation must not contain formal workers, a DAG or a runHeader.");
+  ensure(artifact.dispatchBoard === null && artifact.selectedExecutionRoute === null && artifact.thinkingPacket.status === "host_reasoning_required" &&
+    Array.isArray(artifact.thinkingPacket.workerTaskPackets) && !artifact.thinkingPacket.workerTaskPackets.length, "Preparation must not claim a selected execution route or completed Thinking.");
+  ensure(artifact.coreLoop.executionResult?.executionAllowed === false && artifact.coreLoop.executionResult?.actualWorkerExecution === false &&
+    artifact.hostInvocationRequestPacket?.executionAllowed === false && artifact.machineExecution?.status === "blocked" &&
+    Array.isArray(artifact.machineExecution.calls) && !artifact.machineExecution.calls.length && artifact.machineExecution.publicReady === false &&
+    artifact.publicReadyDecision?.publicReady === false && artifact.publicReadyDecision?.userOutcomeAccepted === false,
+  "Preparation cannot assert execution, invocation or user acceptance.");
+  const preparation = artifact.preparation;
+  ensureObject(preparation, "preparation");
+  ensureEnum(preparation.status, ["needs_input", "needs_thinking", "needs_research", "stopped_by_user"], "preparation.status");
+  ensure(artifact.status === (preparation.status === "stopped_by_user" ? "stopped_by_user" : "partial"), "Preparation must remain partial or stopped.");
+  ensure(/^[a-f0-9]{64}$/u.test(preparation.bindingDigest ?? "") && /^[a-f0-9]{64}$/u.test(preparation.markdownSha256 ?? ""), "Preparation needs bound content and paired markdown digests.");
+  ensureArray(preparation.materialBindings, "preparation.materialBindings");
+  for (const binding of preparation.materialBindings) ensure(typeof binding.sourceRef === "string" && /^[a-f0-9]{64}$/u.test(binding.sha256 ?? ""), "Preparation material binding needs a source and digest.");
+  const discovery = artifact.requirementsDiscoveryPacket;
+  if (discovery != null) {
+    ensure(discovery.taskHash === taskHash && (discovery.intentDigest ?? null) === (intent.intentBinding.intentDigest ?? null), "Preparation requirements binding mismatch.");
+    const { discoveryDigest, claimBoundary: _claim, ...content } = discovery;
+    if (content.research) {
+      const { recordRef: _ref, recordSha256: _sha, ...researchContent } = content.research;
+      content.research = researchContent;
+    }
+    ensure(productDesignDigest(content) === discoveryDigest, "Preparation requirements discovery digest mismatch.");
+  }
+  validateChallengeQuestions(contract, artifact);
+  validateChallengeAnswers(artifact);
+  ensureArray(artifact.preDecisionOptionFrame.readyDecisionFrontier, "preDecisionOptionFrame.readyDecisionFrontier");
+  ensureArray(artifact.preDecisionOptionFrame.pendingFactRequests, "preDecisionOptionFrame.pendingFactRequests");
+  validateChallengeFrontier(artifact);
+  ensure(artifact.preDecisionOptionFrame.planChallengeState?.executionAllowed === false, "Preparation questions cannot grant execution.");
+  if (artifact.governanceTaskFacts != null) {
+    const facts = readCurrentTaskFacts(artifact.governanceTaskFacts, artifact.task);
+    ensure(facts !== null && productDesignDigest(selectTaskDesignRoute(facts)) === productDesignDigest(artifact.taskDesignRoutePacket), "Preparation task design facts or route mismatch.");
+  }
+  const { stage: _stage, status: _status, intentBinding: _binding, ...plainCritical } = intent;
+  const criticalCandidates = intent.status === "host_reasoning_required" ? [null] : [plainCritical, intent];
+  if (intent.status !== "host_reasoning_required") normalizeHostCritical({ input: plainCritical, task: artifact.task, dialogue: intent.intentBinding });
+  ensure(criticalCandidates.some(critical => preparation.bindingDigest === productDesignDigest({ taskHash,
+    intentDigest: intent.intentBinding.intentDigest ?? null, requirementsDigest: discovery?.discoveryDigest ?? null,
+    projectContextDigest: artifact.projectContextPacket?.digest ?? null, critical,
+    questions: artifact.preDecisionOptionFrame.unresolvedQuestions, materialBindings: preparation.materialBindings })), "Preparation frame or Critical binding digest mismatch.");
+  for (const name of ["intentPacket", "fetchPacket", "thinkingPacket", "goalContractPacket", "preDecisionOptionFrame", "publicReadyDecision"]) validateNestedPacketConsistency(artifact, name);
+}
+
 export function validateArtifact(contract, artifact) {
+  if (artifact?.artifactKind === "host_preparation" || artifact?.preparation != null) {
+    validatePreparationArtifact(contract, artifact);
+    return;
+  }
   validateRequiredPackets(contract, artifact);
   ensureFields(
     artifact.runHeader,
@@ -5153,6 +5261,13 @@ export async function validateArtifactFile(artifactFilePath) {
   const artifact = await readJson(artifactPath);
   const contract = await readJson(contractPath);
   validateArtifact(contract, artifact);
+  if (artifact.artifactKind === "host_preparation") {
+    const markdownPath = path.join(path.dirname(artifactPath), artifact.runId + "." + artifact.resolvedOutputLanguage + ".md");
+    const info = await fs.lstat(markdownPath);
+    ensure(info.isFile() && !info.isSymbolicLink() && info.size <= 1024 * 1024, "Preparation paired markdown must be a bounded regular file.");
+    ensure(createHash("sha256").update(await fs.readFile(markdownPath)).digest("hex") === artifact.preparation.markdownSha256,
+      "Preparation paired markdown digest mismatch.");
+  }
   return artifact;
 }
 
@@ -5170,7 +5285,10 @@ async function main() {
       {
         ok: true,
         artifact: path.relative(repoRoot, artifactPath).replace(/\\/g, "/"),
-        validatedPackets: contract.runDiscipline.protocolFirst.requiredPackets,
+        artifactKind: artifact.artifactKind ?? "governed_execution",
+        validatedPackets: artifact.artifactKind === "host_preparation"
+          ? ["preparation", "intentPacket", "requirementsDiscoveryPacket", "preDecisionOptionFrame", "fetchPacket"]
+          : contract.runDiscipline.protocolFirst.requiredPackets,
       },
       null,
       2,

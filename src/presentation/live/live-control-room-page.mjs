@@ -1585,6 +1585,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
         };
       }),
       scheduling: normalizeScheduling(input.scheduling),
+      humanGates: normalizeLiveHumanGates(input.humanGates, snapshotRunId),
       graphAvailability: {
         state: display(firstValue(availabilityInput, ["state"], "unavailable"), "unavailable"),
         reason: display(firstValue(availabilityInput, ["reason"], ""), ""),

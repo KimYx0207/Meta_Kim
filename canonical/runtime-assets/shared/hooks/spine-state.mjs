@@ -67,7 +67,7 @@ const TASK_FINGERPRINT_RE = /^hmac-sha256:[a-f0-9]{64}$/u;
 const TASK_IDENTITY_KEY_SCHEMA = "task-identity-key-v1";
 const HISTORICAL_MIGRATION_ENVELOPE = Symbol("historical-migration-envelope");
 const taskIdentityKeyInflight = new Map();
-const SOURCE_RUNTIMES = new Set(["claude", "codex", "cursor", "openclaw"]);
+const SOURCE_RUNTIMES = new Set(["claude", "codex", "cursor", "openclaw", "gemini", "zcode"]);
 // How a run learned its conversation. Whitelisted so a caller cannot write free
 // text into a field that later reads as evidence of verification: the consumer in
 // `scripts/governed-execution/host-runtime-provenance.mjs` refuses a run whose

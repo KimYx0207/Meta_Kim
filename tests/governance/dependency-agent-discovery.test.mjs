@@ -46,6 +46,19 @@ function stable(value) {
 }
 const serialize = (value) => JSON.stringify(stable(value), null, 2) + "\n";
 
+// Fixture host reasoning for diagnostic route previews; no native execution or
+// user approval is asserted. The contract and original request remain bound.
+function assessmentArgs(task, owner) {
+  return ["--method-assessment-json", JSON.stringify({ schemaVersion: 1,
+    taskHash: sha(task), agentId: owner.id, contentDigest: owner.contentDigest,
+    componentContentSha256: owner.ownerContract.componentContentSha256,
+    operation: "read supplied facts and draft the requested text",
+    deliverable: "factual text for the requested audience",
+    fitRationale: "Fixture host inspected this source's input, output and read-only exclusions.",
+    nonGoals: ["publishing", "inventing facts"], evidenceRefs: [owner.sourceRef],
+  })];
+}
+
 test("dependency project profile consumes its declared source root and cannot bypass a Type B fit decision", async (t) => {
   const service = fixture(t);
   const projectRoot = fs.mkdtempSync(path.join(runtimeFixture.root, "profile-business-B-"));
@@ -86,7 +99,8 @@ test("dependency project profile consumes its declared source root and cannot by
   const route = (context, businessRoot = projectRoot) => {
     const result = runtimeFixture.run(["scripts/select-execution-route.mjs", "--task", "请把我的客服经历改成运营助理岗位简历", "--runtime", "codex", "--os", "windows", "--json",
       ...(businessRoot ? ["--project-root", businessRoot] : []),
-      "--agent-profile-context-json", JSON.stringify(context)], { env: { ...runtimeFixture.env, META_KIM_KIM_SERVICE_ROOT: service.root } });
+      "--agent-profile-context-json", JSON.stringify(context),
+      ...assessmentArgs("请把我的客服经历改成运营助理岗位简历", owner)], { env: { ...runtimeFixture.env, META_KIM_KIM_SERVICE_ROOT: service.root } });
     assert.equal(result.status, 0, result.stderr || result.stdout);
     return JSON.parse(result.stdout);
   };
@@ -210,7 +224,7 @@ test("discovery reads verified external contracts without executing their valida
   assert.equal(fs.existsSync(path.join(root, "must-not-execute.txt")), false);
 });
 
-test("plain Chinese requests match contract evidence while vague or unrelated requests do not select an owner", async (t) => {
+test("plain Chinese requests recall contracts while owner selection requires a current host assessment", async (t) => {
   const { options } = fixture(t);
   const { agents } = await discoverDependencyAgentContracts(options);
   for (const [request, expected] of [
@@ -221,7 +235,18 @@ test("plain Chinese requests match contract evidence while vague or unrelated re
     ["这篇正文写好了，请给小红书标题和封面文字", "kim-service:headline-cover-optimizer"],
     ["把本周报价进度写成发给主管的周报", "kim-service:workplace-writer"],
     ["我不明白分数除法为什么要乘倒数，请一步步讲解", "kim-service:concept-tutor"],
-  ]) assert.equal(matchDependencyAgentContracts(request, agents).selected?.id, expected, request);
+  ]) {
+    const recall = matchDependencyAgentContracts(request, agents);
+    assert.equal(recall.candidates[0]?.id, expected, request);
+    assert.equal(recall.selected, null, "Lexical ranking never chooses the execution owner");
+    const owner = agents.find(agent => agent.id === expected);
+    const hostSelection = { schemaVersion: 1, taskHash: recall.taskHash, agentId: owner.id, contentDigest: owner.contentDigest,
+      componentContentSha256: owner.ownerContract.componentContentSha256, operation: "Prepare the requested professional result", deliverable: request,
+      fitRationale: "Fixture host checked the candidate contract against this request", nonGoals: [], evidenceRefs: ["fixture:host-method-assessment"] };
+    assert.equal(matchDependencyAgentContracts(request, agents, { hostSelection }).selected?.id, expected);
+    assert.equal(matchDependencyAgentContracts(request + " changed", agents, { hostSelection }).selected, null);
+    assert.equal(matchDependencyAgentContracts(request, agents, { hostSelection: { ...hostSelection, componentContentSha256: "0".repeat(64) } }).selected, null);
+  }
   assert.equal(matchDependencyAgentContracts("帮我处理一些事情", agents).selected, null);
   assert.equal(matchDependencyAgentContracts("修复 Node Hook timeout 的回归测试", agents).selected, null);
   assert.equal(matchDependencyAgentContracts("Critical Thinking Fetch Deep Thinking Review 为什么 Codex 一直创建 agent 而不是找全局 agent", agents).selected, null);
@@ -230,6 +255,19 @@ test("plain Chinese requests match contract evidence while vague or unrelated re
   assert.equal(matchDependencyAgentContracts("帮我修改这个项目的清单", agents).selected, null);
   const sameBoundary = agents.filter((agent) => agent.componentId === "resume-editor");
   assert.equal(matchDependencyAgentContracts("按真实经历写简历", [...sameBoundary, { ...sameBoundary[0], id: "other:resume-editor" }]).selected, null);
+});
+
+test("short intent, quoted context and negative role mentions cannot silently become professional recommendations", () => {
+  const agents = [
+    { id: "kim-service:customer-service-writer", componentId: "customer-service-writer", displayName: "客户客服写作者", trigger: ["客户服务"] },
+    { id: "kim-service:workplace-writer", componentId: "workplace-writer", displayName: "工作职场写作者", trigger: ["工作框架"] },
+    { id: "kim-service:frontend-engineer", componentId: "frontend-engineer", displayName: "前端工程师", trigger: ["前端实现"] },
+  ];
+  for (const request of ["我想做个客户管理工具，先帮我想清楚怎么做", "请调查一下 GitHub 上可参考的工作流框架", "这次不要前端实现，只讨论采购方案", "文档里写了 frontend-engineer，这次只要研究方案"]) {
+    const result = matchDependencyAgentContracts(request, agents);
+    assert.equal(result.selected, null, request);
+    assert.equal(result.semanticFitVerified, false);
+  }
 });
 
 test("a reindexed prompt cannot grant tools absent from its read-only capability contract", async (t) => {
@@ -301,9 +339,11 @@ test("paths cannot escape the declared package or traverse a directory link", as
   });
 });
 
-test("the existing route selector binds the discovered role as a contract, without claiming invocation", (t) => {
-  const { root } = fixture(t);
-  const result = runtimeFixture.run(["scripts/select-execution-route.mjs", "--task", "请把我的客服经历改成运营助理岗位简历", "--runtime", "codex", "--os", "windows", "--json"], {
+test("the existing route selector binds a host-assessed contract without claiming invocation", async (t) => {
+  const { root, options } = fixture(t);
+  const owner = (await discoverDependencyAgentContracts(options)).agents.find(agent => agent.id === "kim-service:resume-editor");
+  const result = runtimeFixture.run(["scripts/select-execution-route.mjs", "--task", "请把我的客服经历改成运营助理岗位简历", "--runtime", "codex", "--os", "windows", "--json",
+    ...assessmentArgs("请把我的客服经历改成运营助理岗位简历", owner)], {
     encoding: "utf8", timeout: 90_000,
     env: { ...runtimeFixture.env, META_KIM_KIM_SERVICE_ROOT: root },
   });
@@ -475,10 +515,11 @@ test("qualified specialists outside the preference lists remain discoverable wit
   }
 });
 
-test("strategy questions retain professional discovery without handing off unless a concrete text deliverable is requested", (t) => {
-  const { root } = fixture(t);
-  const run = (task) => {
-    const result = runtimeFixture.run(["scripts/select-execution-route.mjs", "--task", task, "--runtime", "codex", "--os", "windows", "--json"], {
+test("strategy questions and text requests recall candidates; a current host assessment selects the method", async (t) => {
+  const { root, options } = fixture(t);
+  const owner = (await discoverDependencyAgentContracts(options)).agents.find(agent => agent.id === "kim-service:headline-cover-optimizer");
+  const run = (task, assessed = false) => {
+    const result = runtimeFixture.run(["scripts/select-execution-route.mjs", "--task", task, "--runtime", "codex", "--os", "windows", "--json", ...(assessed ? assessmentArgs(task, owner) : [])], {
       encoding: "utf8", timeout: 90_000, env: { ...runtimeFixture.env, META_KIM_KIM_SERVICE_ROOT: root },
     });
     assert.equal(result.status, 0, result.stderr || result.stdout);
@@ -508,7 +549,10 @@ test("strategy questions retain professional discovery without handing off unles
     "Please write three headlines and cover copy to improve content marketing conversion.",
     "Please write three headlines to improve conversion.",
   ]) {
-    const route = run(task);
+    const recall = run(task);
+    assert.equal(recall.ownerDiscoveryPacket.dependencyAgentDiscovery.match.selected, null);
+    assert.ok(recall.ownerDiscoveryPacket.dependencyAgentDiscovery.match.candidates.some(candidate => candidate.id === owner.id));
+    const route = run(task, true);
     assert.equal(route.taskShape, "strategy_product_decision", task);
     const match = route.ownerDiscoveryPacket.dependencyAgentDiscovery.match;
     assert.equal(route.recommendedRoute?.owner, "kim-service:headline-cover-optimizer", JSON.stringify({
@@ -525,13 +569,14 @@ test("strategy questions retain professional discovery without handing off unles
   assert.ok(/product|build|web|website|implementation|engineering|产品|网站|工程|构建/iu.test(JSON.stringify(mixedBuild.recommendedRoute)));
 });
 
-test("real Chinese read-only resume requests keep the professional owner and a bounded read-only work order", async (t) => {
-  const { root } = fixture(t);
+test("host-assessed Chinese resume requests keep the source owner and read-only boundary", async (t) => {
+  const { root, options } = fixture(t);
+  const owner = (await discoverDependencyAgentContracts(options)).agents.find(agent => agent.id === "kim-service:resume-editor");
   for (const task of [
     "Run meta-theory. 只读审阅 ResumeFacts.md，帮我把简历改得更清楚，匹配客户支持岗位。只返回文字建议，不修改文件、不伪造经历，不代投简历。",
     "Run meta-theory. 只读审阅 ResumeFacts.md 中的简历真实经历，列出与客户支持岗位要求相符的已证实事实及证据缺口；只返回文字，不写文件、不代投简历。",
   ]) await t.test(task, () => {
-    const result = runtimeFixture.run(["scripts/select-execution-route.mjs", "--task", task, "--runtime", "codex", "--os", "windows", "--json"], {
+    const result = runtimeFixture.run(["scripts/select-execution-route.mjs", "--task", task, "--runtime", "codex", "--os", "windows", "--json", ...assessmentArgs(task, owner)], {
       encoding: "utf8", timeout: 90_000, env: { ...runtimeFixture.env, META_KIM_KIM_SERVICE_ROOT: root },
     });
     assert.equal(result.status, 0, result.stderr || result.stdout);
@@ -598,13 +643,15 @@ test("a professional review demand preserves the current action and subjective p
       canHandoffToHost: route.routeExecutionGate.canHandoffToHost,
       choicePolicy: route.routeExecutionGate.entryChoiceDecision.choicePolicy };
   });
-  assert.deepEqual(mixedResults, mixedActions.map((additionalAction) => ({ additionalAction,
-    routeId: "subjective-ui-design-orchestration:codex:windows", canHandoffToHost: false, choicePolicy: "must_ask" })));
+  assert.ok(mixedResults.every(result => result.canHandoffToHost === false));
+  assert.ok(mixedResults.every(result => result.routeId !== reviewed.recommendedRoute.id),
+    "An explicit source method cannot swallow additional implementation, generation or deployment actions");
   const task = "帮我把简历改得更清楚，这个页面不好看，帮我弄高级一点";
   const route = routeFor(task, task);
-  assert.equal(route.recommendedRoute?.id, "subjective-ui-design-orchestration:codex:windows");
+  // The explicit --method-capability-id may retain a source-bound candidate.
+  // Candidate selection must not replace the actual request or grant handoff.
+  assert.equal(route.dependencyMethodHandoff.taskHash, createHash("sha256").update(task).digest("hex"));
   assert.equal(route.routeExecutionGate.canHandoffToHost, false);
-  assert.equal(route.routeExecutionGate.entryChoiceDecision.choicePolicy, "must_ask");
 });
 
 test("capability discovery complaints are not claimed by a tutor through generic question words", (t) => {

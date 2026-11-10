@@ -8,6 +8,7 @@ import { assertValidNativeHostAnswerSubstrate, consumeNativeHostReturnObservedCl
 import { assertValidNativeDecisionChallenge } from "../../src/domain/decision/native-decision-authority.mjs";
 import { inspectTrustedPath, normalizeManagedRelPath } from "../safe-managed-file-operations.mjs";
 import { isCodexDesktopDecisionHostAdapter } from "../../src/adapters/codex/desktop-decision-host-adapter.mjs";
+import { dependentNodeClosure } from "../../src/domain/scheduling/human-gate-progress.mjs";
 
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === "object"
   ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
@@ -278,6 +279,12 @@ export function createDesktopHumanMilestoneConsumer({ adapter }) {
   return consumer;
 }
 
+/** Only a consumer built around the current native transport may start a
+ * blocking host exchange. A plain callback or a claimed flag is insufficient. */
+export function hasNativeHumanMilestoneTransport(consumer) {
+  return nativeConsumers.has(consumer);
+}
+
 /** Consume one declared node's current human decision without changing its completed output. */
 export async function resolveHumanMilestoneReviews({ declarations, records, consumer, kernel, context, allowHostInvocation = false }) {
   const reviews = [];
@@ -318,18 +325,15 @@ export async function resolveHumanMilestoneReviews({ declarations, records, cons
       if (!events.some((item) => item.eventId === invalidationId)) kernel.appendEvent({ runId: context.runId,
         eventId: invalidationId, eventType: "HumanMilestoneInvalidated", nodeId: binding.nodeId,
         payload: { decision: invalidateDecision(event.payload.decision, { at: new Date().toISOString(),
-          reasonRef: "reason:related-evidence-changed", evidence: decision.evidence }), supersededBy: binding.bindingDigest } });
+          reasonRef: "reason:related-evidence-changed", evidence: decision.evidence,
+          options: decision.options }), supersededBy: binding.bindingDigest } });
     }
     if (!requested) kernel.appendEvent({ runId: context.runId, eventId: `human-milestone:${binding.bindingDigest}:requested`,
       eventType: "HumanMilestoneRequested", nodeId: binding.nodeId, payload: { binding, decision } });
     const consumed = events.find((event) => event.eventType === "HumanMilestoneConsumed" && event.payload.bindingDigest === binding.bindingDigest);
     const started = events.some((event) => event.eventType === "HumanMilestoneHostStarted" && event.payload.bindingDigest === binding.bindingDigest);
-    const descendants = new Set([binding.nodeId]);
-    let added = true;
-    while (added) { added = false; for (const node of context.stageDagPacket.nodes) {
-      if (!descendants.has(node.nodeId) && node.dependsOn.some((id) => descendants.has(id))) { descendants.add(node.nodeId); added = true; }
-    } }
-    const staleCompletedDependency = older.length > 0 && [...records.keys()].some((id) => id !== binding.nodeId && descendants.has(id));
+    const descendants = dependentNodeClosure(context.stageDagPacket.nodes, binding.nodeId);
+    const staleCompletedDependency = older.length > 0 && descendants.some(id => records.has(id));
     const inheritanceMissing = request.trigger === "within_accepted_scope" && !consumed;
     let result = { accepted: false, reason: invalidated ? "human_milestone_decision_invalidated"
       : staleCompletedDependency ? "human_milestone_changed_evidence_requires_revision"
@@ -361,6 +365,11 @@ export async function resolveHumanMilestoneReviews({ declarations, records, cons
           eventType: "HumanMilestoneConsumed", nodeId: binding.nodeId, payload: { bindingDigest: binding.bindingDigest, receipt } });
       } catch (error) { result = { accepted: false, reason: "human_milestone_host_return_unresolved", failureReason: error.message }; }
     }
+    if (["human_milestone_revision_required", "human_milestone_returned", "human_milestone_changed_evidence_requires_revision"].includes(result.reason)) {
+      result.nextAction = { stage: "Thinking", action: result.reason === "human_milestone_returned" ? "reconsider_human_reviewed_scope" : "revise_human_reviewed_scope",
+        nodeId: binding.nodeId, affectedNodeIds: [binding.nodeId, ...descendants],
+        bindingDigest: binding.bindingDigest, executionAllowed: false };
+    }
     reviews.push({ nodeId: binding.nodeId, milestoneId: binding.milestoneId, label: policy.milestones.find((rule) => rule.id === binding.milestoneId).label,
       flowId: binding.flowId, artifactRef: request.artifactRef, artifactVersion: request.artifactVersion,
       artifactSha256, bindingDigest: binding.bindingDigest,
@@ -383,10 +392,10 @@ export async function loadPlanChallengeContinuationCandidate({
   taskHash,
   intentDigest,
 }) {
-  const raw = JSON.parse(readFileSync(artifactPath, "utf8"));
+  const raw = await validateArtifactFile(artifactPath);
   if (raw.preparation) {
     const markdownPath = path.join(path.dirname(artifactPath), raw.runId + "." + raw.resolvedOutputLanguage + ".md");
-    if (raw.runId !== previousRunId || raw.goalContractPacket?.taskHash !== taskHash ||
+    if (raw.runId !== previousRunId || raw.taskFingerprint !== taskFingerprint || raw.goalContractPacket?.taskHash !== taskHash ||
         (raw.intentPacket.intentBinding?.intentDigest ?? null) !== (intentDigest ?? null) ||
         raw.workerTaskPackets.length || raw.coreLoop?.stageDagPacket ||
         createHash("sha256").update(readFileSync(markdownPath)).digest("hex") !== raw.preparation.markdownSha256) {
@@ -395,7 +404,7 @@ export async function loadPlanChallengeContinuationCandidate({
     return { previousRunId, taskHash, intentDigest, planChallengeState: raw.preDecisionOptionFrame.planChallengeState,
       unresolvedQuestions: raw.preDecisionOptionFrame.unresolvedQuestions, preparationArtifact: raw };
   }
-  const artifact = await validateArtifactFile(artifactPath);
+  const artifact = raw;
   if (artifact.runId !== previousRunId) {
     throw new Error("Plan challenge continuation run id does not match the prior artifact.");
   }

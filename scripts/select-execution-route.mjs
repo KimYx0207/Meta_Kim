@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { buildDependencyMethodHandoff } from "./dependency-method-handoff.mjs";
-import { promises as fs } from "node:fs";
+import { promises as fs, constants as fsConstants } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { GOVERNANCE_OWNERS, OS_TARGETS, RUNTIMES, annotateCrossScopeAgentCollisions, classifyTaskShape, exists, readJson, repoPath, scoreRoute, stateDir, supportScore, toPosix } from "./governance-lib.mjs";
@@ -72,6 +72,10 @@ const task = argValue("--task", "");
 const actionTask = argValue("--action-task", task);
 const fetchOnly = process.argv.includes("--fetch-only");
 const hostWorkOrder = JSON.parse(argValue("--thinking-work-order-json", "null"));
+// Optional diagnostic selection supplied by the current host after reading the
+// source contract. Word overlap alone only recalls candidates. This assessment
+// does not grant execution, replace a Thinking work order or confirm a user choice.
+const methodAssessment = JSON.parse(argValue("--method-assessment-json", "null"));
 const methodWorkKind = argValue("--method-work-kind", null);
 const methodCapabilityId = argValue("--method-capability-id", null);
 const methodContextRaw = argValue("--method-context-json", null);
@@ -520,6 +524,8 @@ async function projectRuntimeAgents() {
     { runtime: "claude_code", dir: ".claude/agents", extension: ".md" },
     { runtime: "codex", dir: ".codex/agents", extension: ".toml" },
     { runtime: "cursor", dir: ".cursor/agents", extension: ".md" },
+    { runtime: "gemini", dir: ".gemini/agents", extension: ".md" },
+    { runtime: "zcode", dir: ".zcode/agents", extension: ".md" },
   ];
   const agents = [];
   for (const { runtime: runtimeName, dir, extension } of dirs) {
@@ -725,6 +731,9 @@ async function globalRuntimeAgentProviders() {
 async function projectSkillProviders() {
   const dirs = [
     { runtime: "codex", dir: ".agents/skills", marker: "SKILL.md" },
+    { runtime: "gemini", dir: ".agents/skills", marker: "SKILL.md" },
+    { runtime: "gemini", dir: ".gemini/skills", marker: "SKILL.md" },
+    { runtime: "zcode", dir: ".zcode/skills", marker: "SKILL.md" },
     { runtime: "claude_code", dir: ".claude/skills", marker: "SKILL.md" },
     { runtime: "cursor", dir: ".cursor/skills", marker: "SKILL.md" },
     { runtime: "openclaw", dir: "openclaw/skills", marker: "SKILL.md" },
@@ -737,6 +746,8 @@ async function projectSkillProviders() {
     const entries = await fs.readdir(absDir, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
+      if (runtimeName === "gemini" && dir === ".gemini/skills" &&
+          providers.some((candidate) => candidate.runtime === "gemini" && candidate.id === entry.name)) continue;
       const skillFile = path.join(dir, entry.name, marker);
       const skillPath = inspectTrustedPath(dependencyProjectRoot, skillFile)?.target;
       if (!skillPath) continue;
@@ -759,9 +770,12 @@ async function projectCapabilityProviders() {
     { runtime: "claude_code", dir: ".claude/hooks", type: "hooks", source: "project_runtime_hook_inventory", extensions: [".js", ".mjs", ".cjs", ".ts", ".py", ".sh"] },
     { runtime: "codex", dir: ".codex/hooks", type: "hooks", source: "project_runtime_hook_inventory", extensions: [".js", ".mjs", ".cjs", ".ts", ".py", ".sh"] },
     { runtime: "cursor", dir: ".cursor/hooks", type: "hooks", source: "project_runtime_hook_inventory", extensions: [".js", ".mjs", ".cjs", ".ts", ".py", ".sh"] },
+    { runtime: "gemini", dir: ".gemini/hooks", type: "hooks", source: "project_runtime_hook_inventory", extensions: [".js", ".mjs", ".cjs", ".ts", ".py", ".sh"] },
     { runtime: "openclaw", dir: "openclaw/hooks", type: "hooks", source: "project_runtime_hook_inventory", extensions: [".js", ".mjs", ".cjs", ".ts", ".py", ".sh"] },
     { runtime: "claude_code", dir: ".claude/commands", type: "commands", source: "project_runtime_command_inventory", extensions: [".md", ".toml", ".yaml", ".yml"], recursive: true },
     { runtime: "codex", dir: ".codex/commands", type: "commands", source: "project_runtime_command_inventory", extensions: [".md", ".toml", ".yaml", ".yml"], recursive: true },
+    { runtime: "gemini", dir: ".gemini/commands", type: "commands", source: "project_runtime_command_inventory", extensions: [".toml"], recursive: true },
+    { runtime: "zcode", dir: ".zcode/commands", type: "commands", source: "project_runtime_command_inventory", extensions: [".md"], recursive: true },
     { runtime: "cursor", dir: ".cursor/rules", type: "rules", source: "project_runtime_rule_inventory", extensions: [".mdc", ".md"], recursive: true },
     { runtime: "codex", dir: ".codex/prompts", type: "prompts", source: "project_runtime_prompt_inventory", extensions: [".md", ".txt", ".yaml", ".yml"], recursive: true },
     { runtime: "claude_code", dir: ".claude/prompts", type: "prompts", source: "project_runtime_prompt_inventory", extensions: [".md", ".txt", ".yaml", ".yml"], recursive: true },
@@ -783,6 +797,7 @@ async function projectCapabilityProviders() {
   for (const file of [
     { id: "claude-settings-json", runtime: "claude_code", sourceRef: ".claude/settings.json" },
     { id: "cursor-hooks-json", runtime: "cursor", sourceRef: ".cursor/hooks.json" },
+    { id: "gemini-settings-json", runtime: "gemini", sourceRef: ".gemini/settings.json" },
     { id: "openclaw-template-json", runtime: "openclaw", sourceRef: "openclaw/openclaw.template.json" },
   ]) {
     if (await exists(repoPath(file.sourceRef))) {
@@ -811,6 +826,8 @@ async function projectCapabilityProviders() {
     { id: "repo-mcp", type: "mcpServers", source: "project_runtime_mcp_inventory", runtime: "shared", sourceRef: ".mcp.json" },
     { id: "cursor-mcp", type: "mcpServers", source: "project_runtime_mcp_inventory", runtime: "cursor", sourceRef: ".cursor/mcp.json" },
     { id: "codex-config-mcp", type: "mcpServers", source: "project_runtime_mcp_inventory", runtime: "codex", sourceRef: ".codex/config.toml" },
+    { id: "gemini-config-mcp", type: "mcpServers", source: "project_runtime_mcp_inventory", runtime: "gemini", sourceRef: ".gemini/settings.json" },
+    { id: "zcode-config-mcp", type: "mcpServers", source: "project_runtime_mcp_inventory", runtime: "zcode", sourceRef: ".zcode/config.json" },
   ]) {
     if (await exists(repoPath(file.sourceRef))) providers.push(file);
   }
@@ -821,6 +838,27 @@ async function scanSkillRoot(rootDir, source, platformId, { maxProviders = 160 }
   const providers = [];
   if (!(await exists(rootDir))) return providers;
   const home = process.env.USERPROFILE ?? process.env.HOME ?? "";
+  const maxSkillBytes = 256 * 1024;
+  let remainingBytes = 8 * 1024 * 1024;
+  async function currentSkillDigest(skillFile) {
+    const checked = inspectTrustedPath(home || rootDir, path.relative(home || rootDir, skillFile));
+    if (!checked) return null;
+    let handle;
+    try {
+      handle = await fs.open(checked.target, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+      const info = await handle.stat();
+      if (!info.isFile() || info.size < 1 || info.size > maxSkillBytes || info.size > remainingBytes) return null;
+      // Read at most the observed size plus one byte. A growing/changing file
+      // cannot acquire a binding from a silently truncated read.
+      const content = Buffer.alloc(info.size + 1);
+      const { bytesRead } = await handle.read(content, 0, content.length, 0);
+      const after = await handle.stat();
+      remainingBytes -= bytesRead;
+      if (bytesRead !== info.size || after.size !== info.size || after.mtimeMs !== info.mtimeMs) return null;
+      return createHash("sha256").update(content.subarray(0, bytesRead)).digest("hex");
+    } catch { return null; }
+    finally { await handle?.close(); }
+  }
   function displaySkillRef(skillFile) {
     const normalizedSkillFile = toPosix(skillFile);
     const normalizedHome = home ? toPosix(home) : "";
@@ -840,12 +878,15 @@ async function scanSkillRoot(rootDir, source, platformId, { maxProviders = 160 }
     if (entries.some((entry) => entry.isFile() && entry.name === "SKILL.md")) {
       const rel = toPosix(path.relative(rootDir, absDir));
       const id = rel && rel !== "." ? rel : path.basename(absDir);
+      const contentDigest = await currentSkillDigest(path.join(absDir, "SKILL.md"));
+      if (!contentDigest) return;
       providers.push({
         id,
         type: "skills",
         source,
         platformId,
         sourceRef: displaySkillRef(path.join(absDir, "SKILL.md")),
+        contentDigest,
       });
       return;
     }
@@ -1005,7 +1046,8 @@ const localToolExecutionGate = {
 };
 const professionalMethodDemand = Boolean(methodCapabilityId || requirementsContext?.methods.length);
 const dependencyAgentMatches = matchDependencyAgentContracts(professionalMethodDemand
-  ? [actionTask, ...(requirementsContext?.capabilityNeed ?? methodContext.capabilityNeed)].join("\n") : task, dependencyAgentDiscovery.agents);
+  ? [actionTask, ...(requirementsContext?.capabilityNeed ?? methodContext.capabilityNeed)].join("\n") : task,
+  dependencyAgentDiscovery.agents, { hostSelection: methodAssessment });
 const explorationMethod = requirementsContext?.methods.length === 1 ? requirementsContext.methods[0] : null;
 const methodContractOwners = methodCapabilityId ? dependencyAgentDiscovery.agents.filter((agent) =>
   agent.ownerContract.capabilities.some((capability) => methodCapabilityId === capability.id ||
@@ -1022,13 +1064,13 @@ const methodContractOwners = methodCapabilityId ? dependencyAgentDiscovery.agent
   }) : [];
 const currentMethodOperation = professionalMethodDemand || requirementsContext ? inspectCurrentMethodOperation(requirementsContext
   ? actionTask : [actionTask, ...methodContext.capabilityNeed].join("\n")) : null;
-// Dependency discovery already verifies source bytes, read-only permissions and
-// sideEffects=[]. A support demand selects that bounded method, not a verb-prefix
-// grammar. Future flow consumers do not turn its current review into implementation.
+// Source permissions describe the method, not the current request. A diagnostic
+// support flag cannot turn an unclassified or subjective change into a read-only
+// review. Unknown actions remain for the host's source-bound Thinking work order.
 const readOnlyProfessionalReview = (methodWorkKind === "support" || requirementsContext) && methodContractOwners.length === 1 &&
   methodContractOwners[0].routeEligible === true && methodContractOwners[0].executionBlock !== true &&
   !currentMethodOperation.sideEffectRequested && !currentMethodOperation.unclearProhibition &&
-  (!requirementsContext || currentMethodOperation.readOnlyReview);
+  currentMethodOperation.readOnlyReview;
 const currentReadOnlyOperation = readOnlyProfessionalReview;
 const explicitCapabilityLifecycle = durableCapabilityRequestsFromTask(task).some(
   (request) => request.mutationAuthorized && request.candidateType !== "script",
@@ -1369,6 +1411,8 @@ function platformMatchesRuntime(agent) {
   if (runtime === "codex") return normalized === "codex" || normalized === "codexapp";
   if (runtime === "cursor") return normalized === "cursor";
   if (runtime === "openclaw") return normalized === "openclaw";
+  if (runtime === "gemini") return normalized === "gemini";
+  if (runtime === "zcode") return normalized === "zcode";
   return false;
 }
 
@@ -2027,8 +2071,8 @@ if (fetchOnly || hostWorkOrder) {
     ownerContract: owner?.ownerContract ?? null, purpose: hostWorkOrder.todayTask, scopeFiles, shardScope,
     codexSpawnBinding: binding, agentCapabilityProfile: snapshot,
     mutationPolicy: readOnly ? "read_only" : "scoped_local_writes_only", externalWriteBoundary: hostWorkOrder.effectClass === "external_write",
-    workspaceIsolation: readOnly ? "shared_read_only_workspace" : "unproven", externalWritePolicy: "forbidden_without_host_authorization",
-    collisionPolicy: readOnly ? "single_worker_bounded_scope" : "unproven",
+    workspaceIsolation: readOnly ? "shared_workspace_read_only" : "unproven", externalWritePolicy: "forbidden_without_host_authorization",
+    collisionPolicy: readOnly ? "no_overlap" : "unproven",
     safetyEvidence: { status: ready && readOnly ? "proven" : "unproven", shardScope,
       ...(localWrite ? { planningBlockers } : {}),
       evidenceBasis: localWrite ? "trusted_project_paths_pending_current_thinking_graph" : "current_discovered_sources_and_requested_read_only_scope_not_permission" } };
@@ -3131,17 +3175,18 @@ function executionCapabilityDiscoveryRoute() {
   // findskill is a reference-only discovery capability consumed in model
   // context. It may be selected for discovery, while execution providers
   // continue through the strict reference-only filter.
-  const selectedSkillDiscovery = selectProvider(
-    "skills",
-    ["findskill", "skill-scout", "skill-stocktake"],
-    { allowReferenceOnly: true },
-  );
+  const selectedSkillDiscovery = sortProvidersForRuntime(reusableProviders.filter((provider) =>
+    provider.type === "skills" && ["findskill", "skill-scout", "skill-stocktake"].includes(provider.id) &&
+    providerEligibleForRoute(provider, { allowReferenceOnly: true })))[0]
+    ?? reusableProviders.find((provider) => provider.type === "commands" &&
+      provider.id === "package-script:meta:capability:search" && providerEligibleForRoute(provider))
+    ?? null;
   const selectedSkillCreation = sortProvidersForRuntime(reusableProviders.filter((provider) =>
     provider.type === "skills" && provider.id === "meta-skill-creator" && providerEligibleForRoute(provider)))[0] ?? null;
   const selectedSkill = usesDependencyContract ? null : wantsSkillAuthoring
     ? selectedSkillCreation
     : wantsDiscovery
-    ? selectedSkillDiscovery ?? selectedSkillCreation
+    ? (selectedSkillDiscovery?.type === "skills" ? selectedSkillDiscovery : selectProvider("skills", ["meta-theory"])) ?? selectedSkillCreation
     : selectProvider("skills", ["tdd-workflow", "verification-loop", "meta-theory"]);
   const selectedAgentCreation = selectProvider("skills", ["create-agent", "agent-teams-playbook", "meta-skill-creator"]);
   const discoveredMcpServer = selectProvider("mcpServers", ["meta-kim-runtime", "repo-mcp", "codex-config-mcp"]);

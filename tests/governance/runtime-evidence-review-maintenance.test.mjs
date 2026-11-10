@@ -6,13 +6,23 @@ import {
   RuntimeCapabilityEvidenceError,
   assertRuntimeCapabilityClaims,
   runtimeCapabilityFailureDetails,
+  validateRuntimeCapabilityClaims,
 } from "../../scripts/runtime-capability-evidence.mjs";
 
 function fixture() {
-  return {
+  const value = {
     matrix: JSON.parse(readFileSync(new URL("../../config/runtime-capability-matrix.json", import.meta.url))),
     ledger: JSON.parse(readFileSync(new URL("../../config/runtime-capability-evidence.json", import.meta.url))),
   };
+  // This in-memory clock fixture isolates expiry boundaries from independently
+  // reviewed production rows. It is never saved or used as review evidence.
+  const fixtureDate = "2026-01-01";
+  value.matrix.lastReviewedAt = fixtureDate;
+  for (const platform of value.matrix.platforms) {
+    for (const row of platform.capabilities) row.reviewState.lastReviewedAt = fixtureDate;
+  }
+  for (const observation of value.ledger.observations) observation.observedAt = fixtureDate;
+  return value;
 }
 
 function afterDays(matrix, days) {
@@ -36,6 +46,19 @@ test("review monitor considers row and conservative-evidence ages, not just the 
   assert.equal(checkRuntimeEvidenceReview(matrix, ledger, { now }).status, "due_soon");
   ledger.observations.find((entry) => entry.observationClass === "conservative_review").observedAt = afterDays(matrix, -12).slice(0, 10);
   assert.equal(checkRuntimeEvidenceReview(matrix, ledger, { now }).status, "invalid");
+});
+
+test("a newer matrix review does not renew independently stale rows or conservative evidence", () => {
+  const { matrix, ledger } = fixture();
+  const now = afterDays(matrix, 31);
+  matrix.lastReviewedAt = afterDays(matrix, 20).slice(0, 10);
+  const before = JSON.stringify({ matrix, ledger });
+  const issues = validateRuntimeCapabilityClaims(matrix, ledger, { now });
+  assert.ok(issues.some((issue) => issue.includes("reviewState must be fresh")));
+  assert.ok(issues.some((issue) => issue.includes("review must bind fresh conservative_review evidence")));
+  assert.ok(!issues.some((issue) => issue.includes("matrix lastReviewedAt")));
+  assert.equal(checkRuntimeEvidenceReview(matrix, ledger, { now }).status, "invalid");
+  assert.equal(JSON.stringify({ matrix, ledger }), before);
 });
 
 test("review monitor rejects invalid clocks and does not hide non-freshness validation errors", () => {

@@ -11,6 +11,8 @@ const forbiddenRuntimeSources = [
   ".codex/",
   ".agents/",
   ".cursor/",
+  ".gemini/",
+  ".zcode/",
   "openclaw/",
   "codex/",
   ".mcp.json",

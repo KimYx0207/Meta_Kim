@@ -4,6 +4,7 @@ import path from "node:path";
 
 import {
   materializeGlobalProjectionPackage,
+  packageContentClosure,
   projectionPackageWriteBoundaryFindings,
   sanitizeProjectionPackageEnvironment,
   verifyExecutingGlobalProjectionPackage,
@@ -191,6 +192,27 @@ export function createProjectionPackageBoundary({
     });
   }
 
+  let readSourceClosure = null;
+  async function resolveMatchingReadAuthority(candidateRoot) {
+    if (typeof candidateRoot !== "string" || !path.isAbsolute(candidateRoot)) return null;
+    const candidate = path.resolve(candidateRoot);
+    const relativeCandidate = path.relative(storeRoot, candidate);
+    if (!relativeCandidate || relativeCandidate === ".." ||
+        relativeCandidate.startsWith(`..${path.sep}`) || path.isAbsolute(relativeCandidate)) return null;
+    // The existing project manifest supplies a locator, never proof. Reuse an
+    // installed command path only after the immutable receipt, its whole bundle,
+    // and the current source's npm file closure independently agree.
+    const verified = await verifyExecutingGlobalProjectionPackage({
+      packageRoot: candidate,
+      homeRoot: resolvedHomeRoot,
+    });
+    if (!verified) return null;
+    readSourceClosure ??= packageContentClosure(sourceRoot, { env, homeRoot: resolvedHomeRoot });
+    const sourceClosure = await readSourceClosure;
+    return sourceClosure.sha256 === verified.firstPartyClosure.sha256 &&
+      sourceClosure.entryCount === verified.firstPartyClosure.entryCount ? verified : null;
+  }
+
   async function launchStableSetup(
     stablePackage,
     { args, deployments = [], fallbackTargets = [] },
@@ -253,6 +275,7 @@ export function createProjectionPackageBoundary({
     detectExecutingStablePackage,
     readStableProjectDeploymentHandoff,
     materializeStablePackage,
+    resolveMatchingReadAuthority,
     launchStableSetup,
     verifyExecutingIntegrity,
   });

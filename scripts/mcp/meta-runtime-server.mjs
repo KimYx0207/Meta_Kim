@@ -420,9 +420,16 @@ server.registerResource(
 server.registerTool(
   "calculate_materials",
   {
-    description: "按用户原始需求和明确提供的 JSON 材料，通过既有 Meta 路由调用已审核的外部只读计算能力。输入字段、材料上限、专业结果校验、补问与报告由所选能力合同提供。保留原始请求和材料，不将示例当事实；来源、运行时或权限不满足时停止。不授予外部行动权限，不声称原生 Agent 或模型语义验收。",
+    description: "按用户原始需求、明确提供的 JSON 材料和当前宿主对已发现合同的 methodAssessment，通过既有 Meta 路由调用已审核的外部只读计算能力。选择须绑定原始任务、当前来源摘要和实际运行时；缺失或过期时停止，不按关键词自动选择。输入字段、材料上限、专业结果校验、补问与报告由所选能力合同提供。不授予外部行动权限，不声称原生 Agent 或模型语义验收。",
     inputSchema: { task: z.string().min(1).max(6000), inputJson: z.string().max(262144),
-      dependencyRoot: z.string().optional() },
+      dependencyRoot: z.string().optional(),
+      methodAssessment: z.object({ schemaVersion: z.literal(1), runtime: z.enum(["codex", "claude", "claude_code", "cursor", "openclaw"]),
+        taskHash: z.string().regex(/^[a-f0-9]{64}$/u), agentId: z.string().min(1).max(200),
+        contentDigest: z.string().regex(/^[a-f0-9]{64}$/u), componentContentSha256: z.string().regex(/^[a-f0-9]{64}$/u),
+        operation: z.string().min(1).max(6000), deliverable: z.string().min(1).max(6000),
+        fitRationale: z.string().min(1).max(4000), nonGoals: z.array(z.string().min(1).max(1000)).max(32),
+        evidenceRefs: z.array(z.string().min(1).max(2048)).min(1).max(32),
+      }).strict().optional() },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   async (args) => ({ content: [{ type: "text", text: JSON.stringify(await runDependencyCalculation({

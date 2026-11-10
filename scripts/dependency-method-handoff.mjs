@@ -22,9 +22,14 @@ export function buildDependencyMethodHandoff({ task = "", match, scopeExclusion 
   return {
     schemaVersion: "dependency-method-handoff-v1",
     taskHash: createHash("sha256").update(task).digest("hex"),
-    status: recommendation ? "method_recommended_host_binding_required" : "no_verified_method_match",
+    status: recommendation ? "method_recommended_host_binding_required" : match?.candidates?.length ? "method_candidates_require_host_assessment" : "no_verified_method_match",
     evidenceClass: "advisory_source_bound_method_recommendation",
     recommendation,
+    candidates: structuredClone(match?.candidates ?? []),
+    ...(recommendation || !match?.candidates?.length ? {} : { nextAction: {
+      stage: "Thinking", action: "assess_professional_method_fit",
+      instruction: "Read candidate contracts and assess the current operation, deliverable, stage, non-goals and exclusions. Select a fitting source-bound provider in the existing Thinking work order, or abstain and continue discovery. Do not ask the user to choose an internal role.",
+    } }),
     matchReason: match?.reason ?? "not_checked",
     scopeExclusion,
     executionAllowed: false,

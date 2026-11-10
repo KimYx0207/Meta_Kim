@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { checkedPath, componentHash, stableJson, sha256 } from "./dependency-source-integrity.mjs";
+import { checkedPath, componentHash, stableJson, sha256 } from "../src/infrastructure/capabilities/source-integrity.mjs";
 import { dependencyRootBinding } from "./managed-dependency-source.mjs";
 import { OS_TARGETS, RUNTIMES, repoRoot, toPosix } from "./governance-lib.mjs";
 import { matchDependencyAgentContracts } from "./dependency-agent-matching.mjs";
 import { sanitizeCapabilityPublicationText } from "./capability-publication-sanitizer.mjs";
+import { loadMethodKnowledgeAssets } from "../src/infrastructure/capabilities/dependency-method-knowledge.mjs";
 
 export { matchDependencyAgentContracts };
 
@@ -246,6 +247,7 @@ export async function loadDependencyAgentMethod({ packet, environment = process.
     stringArray(method.steps, "method.steps", true);
     stringArray(method.acceptance, "method.acceptance", true);
   } catch (error) { if (error.code !== "ENOENT") throw error; }
+  const knowledgeAssets = await loadMethodKnowledgeAssets({ componentRoot, method, capabilityId: capability.id, packet });
   assert.equal(sha256(sourceText), owner.contentDigest, "owner method changed after discovery");
   assert.equal(await componentHash(componentRoot), owner.ownerContract.componentContentSha256, "owner component changed after discovery");
   return {
@@ -263,6 +265,7 @@ export async function loadDependencyAgentMethod({ packet, environment = process.
     inputContract: capability.input,
     outputContract: capability.output,
     method,
+    knowledgeAssets,
     methodStatus: method ? "structured_method_loaded" : "legacy_agent_text_only",
     methodSha256: method ? sha256(stableJson(method)) : null,
   };

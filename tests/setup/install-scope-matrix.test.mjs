@@ -40,18 +40,18 @@ test("install scope verification proves global/project target boundaries", () =>
   assert.deepEqual(summary.classification.projectLayer.defaultTargets, ["claude", "codex"]);
   assert.deepEqual(
     sorted(summary.classification.globalLayer.platformSupportTiers.formalProjectionTargets),
-    ["claude", "codex", "cursor", "openclaw"],
+    ["claude", "codex", "cursor", "gemini", "openclaw", "zcode"],
   );
   assert.deepEqual(
     sorted(
       summary.classification.globalLayer.platformSupportTiers
         .nonDefaultFormalProjectionTargets,
     ),
-    ["cursor", "openclaw"],
+    ["cursor", "gemini", "openclaw", "zcode"],
   );
   assert.deepEqual(
     sorted(summary.classification.globalLayer.platformSupportTiers.dependencyInstallTargets),
-    ["antigravity", "codebuddy", "gemini", "joycode", "opencode", "qwen", "zed"],
+    ["antigravity", "codebuddy", "joycode", "opencode", "qwen", "zed"],
   );
   assert.deepEqual(
     sorted(summary.classification.globalLayer.platformSupportTiers.candidateProbeTargets),
@@ -67,14 +67,27 @@ test("install scope verification proves global/project target boundaries", () =>
   assert.equal(globalById.get("global-default-claude-codex").checks.cursorHomeUntouched, true);
   assert.equal(globalById.get("global-default-claude-codex").checks.openclawHomeUntouched, true);
   assert.equal(globalById.get("global-default-claude-codex").checks.codexGlobalHooksJson, true);
+  assert.equal(globalById.get("global-default-claude-codex").checks.geminiHomeUntouched, true);
+  assert.equal(globalById.get("global-default-claude-codex").checks.zcodeHomeUntouched, true);
   assert.equal(globalById.get("global-all-formal-targets").status, "pass");
   assert.equal(globalById.get("global-all-formal-targets").checks.cursorSkill, true);
   assert.equal(globalById.get("global-all-formal-targets").checks.openclawSkill, true);
   assert.equal(globalById.get("global-all-formal-targets").checks.codexGlobalHooksJson, true);
+  for (const runtime of ["gemini", "zcode"]) {
+    for (const suffix of ["Skill", "Agent", "Mcp", "GlobalHooks"]) {
+      assert.equal(globalById.get("global-all-formal-targets").checks[`${runtime}${suffix}`], true);
+    }
+  }
   assert.equal(globalById.get("global-all-formal-targets").checks.cursorHomeUntouched, undefined);
   assert.equal(globalById.get("global-all-formal-targets").checks.openclawHomeUntouched, undefined);
 
   const byId = new Map(summary.projectResults.map((entry) => [entry.id, entry]));
+  for (const runtime of ["gemini", "zcode"]) {
+    assert.equal(byId.get(`project-${runtime}`).status, "pass");
+    assert.deepEqual(byId.get(`project-${runtime}`).unexpectedPresent, []);
+    assert.deepEqual(byId.get(`project-${runtime}`).globalWrites, []);
+    assert.equal(byId.get(`project-${runtime}`).postApplyPendingCount, 0);
+  }
   assert.equal(byId.get("project-claude").status, "pass");
   assert.deepEqual(byId.get("project-claude").unexpectedPresent, []);
   assert.equal(byId.get("project-codex").status, "pass");

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -21,7 +21,11 @@ function write(root, relative, content) {
  * capabilities and not evidence that a host has invoked a tool or agent.
  */
 export function createGovernanceRuntimeFixture(t, { graph = false } = {}) {
-  const root = mkdtempSync(path.join(os.tmpdir(), "meta-kim-governance-fixture-"));
+  // Anchor our newly created disposable tree once. macOS /var aliases and
+  // Windows short names must not give the test host a different project/HOME
+  // identity from Node's imported modules or spawned process cwd. This does
+  // not normalize arbitrary caller inputs or relax production link refusal.
+  const root = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "meta-kim-governance-fixture-")));
   const repoRoot = path.join(root, "repo");
   const home = path.join(root, "home");
   const cleanup = () => rmSync(root, { recursive: true, force: true });

@@ -17,6 +17,7 @@ const specs = [
   ["hookprompt", "hooks/hookprompt"], ["meta-skill-creator", "skills/meta-skill-creator"],
   ["goalpro", "skills/goalpro"], ["kim-decision", "skills/kim-decision"],
 ];
+const installSpecs = specs.filter(([id]) => manifest.skills.some((entry) => entry.id === id));
 function put(file, content) { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(file, content); }
 function treeHash(root, includeGit = false) {
   const hash = createHash("sha256");
@@ -111,7 +112,7 @@ function fixture(root, { withProfessionalAgent = false } = {}) {
   }
   return source;
 }
-function run(ctx, source, { ids = specs.map(([id])=>id), targets = "claude,codex,cursor,openclaw", update = false, local = true, dryRun = false } = {}) {
+function run(ctx, source, { ids = installSpecs.map(([id])=>id), targets = "claude,codex,cursor,openclaw", update = false, local = true, dryRun = false } = {}) {
   const args = [installer, "--targets", targets, "--skills", ids.join(","), "--skip-plugins", "--skip-inventory-refresh"];
   if (local) args.push("--prefer-local-dependencies"); if (update) args.push("--update");
   if (dryRun) args.push("--dry-run");
@@ -137,8 +138,8 @@ function mockRemoteSource(ctx, source) {
 for(const key of ['spawn','spawnSync']){const original=cp[key];cp[key]=function(command,args,options){if(/(?:^|[\\\\/])git(?:\\.exe)?$/i.test(String(command))&&['clone','sparse-checkout'].includes(args?.[0]))return original.call(this,process.execPath,[${JSON.stringify(worker)},JSON.stringify(args)],options);return original.apply(this,arguments);};}syncBuiltinESMExports();`);
   ctx.env.NODE_OPTIONS += ` --import=${new URL(`file:///${hook.replaceAll("\\", "/")}`).href}`;
 }
-function verifySix(ctx, source) {
-  for (const [id, subdir] of specs) {
+function verifyInstallable(ctx, source) {
+  for (const [id, subdir] of installSpecs) {
     const skillSpec=manifest.skills.find(item=>item.id===id);
     for (const runtime of skillSpec.targets) {
       const roots=runtime==="codex" && id==="meta-skill-creator" ? [".agents",".codex"] : [`.${runtime}`];
@@ -157,20 +158,20 @@ function verifySix(ctx, source) {
   assert.ok(existsSync(path.join(ctx.home,".codex/hooks.json")));
   assert.ok(existsSync(path.join(ctx.home,".cursor/hooks.json")));
 }
-test("six Service components install and update offline with Hook and license closure", (t) => {
+test("installable Service components install and update offline with Hook and license closure", (t) => {
   const ctx=sandbox(t); const source=fixture(ctx.root); const before=sourceHash(source);
   put(path.join(ctx.home,".claude/user-owned.txt"),"preserve\n");
-  passed(run(ctx,source)); verifySix(ctx,source); passed(run(ctx,source,{update:true})); verifySix(ctx,source);
+  passed(run(ctx,source)); verifyInstallable(ctx,source); passed(run(ctx,source,{update:true})); verifyInstallable(ctx,source);
   assert.equal(readFileSync(path.join(ctx.home,".claude/user-owned.txt"),"utf8"),"preserve\n"); assert.equal(sourceHash(source),before);
 });
 test("an existing later runtime supplies missing runtimes and Hook attachments without a local checkout", (t) => {
   const ctx=sandbox(t); const source=fixture(ctx.root); passed(run(ctx,source));
   rmSync(path.join(ctx.home,".claude/skills"),{recursive:true}); rmSync(path.join(ctx.home,".agents/skills/meta-skill-creator"),{recursive:true}); rmSync(path.join(ctx.home,".claude/hooks/user-prompt-submit.js")); rmSync(path.join(ctx.home,".claude/prompt-optimizer-meta.md"));
-  passed(run(ctx,path.join(ctx.root,"no-checkout"),{local:false})); verifySix(ctx,source);
+  passed(run(ctx,path.join(ctx.root,"no-checkout"),{local:false})); verifyInstallable(ctx,source);
 });
 test("single-runtime local install also uses the real component source", (t) => {
   const ctx=sandbox(t); const source=fixture(ctx.root); passed(run(ctx,source,{targets:"claude"}));
-  for (const [id] of specs) assert.ok(existsSync(path.join(ctx.home,".claude/skills",id,id==="hookprompt"?".claude/hooks/user-prompt-submit.js":"SKILL.md")));
+  for (const [id] of installSpecs) assert.ok(existsSync(path.join(ctx.home,".claude/skills",id,id==="hookprompt"?".claude/hooks/user-prompt-submit.js":"SKILL.md")));
 });
 
 test("selected HookPrompt update preserves Codex configuration and unselected runtime content", (t) => {
@@ -346,7 +347,7 @@ test("unknown target is preserved before repair; recognized historical repo is r
   assert.equal(readFileSync(path.join(legacyBackup(target),"user-owned.txt"),"utf8"),"keep\n");
 });
 test("unowned matching Service entrypoints do not authorize directory replacement or adoption", (t) => {
-  for (const [id] of specs) {
+  for (const [id] of installSpecs) {
     const ctx = sandbox(t); const source = fixture(ctx.root);
     const subdir = specs.find(([candidate]) => candidate === id)[1];
     const target = path.join(ctx.home, ".claude/skills", id);
@@ -494,7 +495,7 @@ test("all unowned findskill and meta-skill targets are reported while unrelated 
     assert.ok(result.stderr.includes(path.join(ctx.home, relative)), `report ${relative}`);
     assert.equal(readFileSync(path.join(ctx.home, relative, "user-owned.txt"), "utf8"), relative);
   }
-  for (const runtime of [".claude", ".codex"]) for (const id of ["agent-teams-playbook", "goalpro", "kim-decision"])
+  for (const runtime of [".claude", ".codex"]) for (const id of ["agent-teams-playbook", "goalpro"])
     assert.ok(existsSync(path.join(ctx.home, runtime, "skills", id, "SKILL.md")));
   const entries = JSON.parse(readFileSync(path.join(ctx.home, ".meta-kim/install-manifest.json"))).entries;
   for (const relative of collisions) assert.equal(entries.some(entry => entry.path === path.join(ctx.home, relative)), false);
@@ -580,5 +581,5 @@ test("kim-decision source discovery remains reference-only and ignores incomplet
 });
 test("actual readonly Service checkout installs and updates through the same product paths", {skip: !process.env.META_KIM_TEST_KIM_SERVICE_SOURCE}, (t) => {
   const ctx=sandbox(t); const source=process.env.META_KIM_TEST_KIM_SERVICE_SOURCE;
-  const before=sourceHash(source); passed(run(ctx,source)); verifySix(ctx,source); passed(run(ctx,source,{update:true})); verifySix(ctx,source); assert.equal(sourceHash(source),before);
+  const before=sourceHash(source); passed(run(ctx,source)); verifyInstallable(ctx,source); passed(run(ctx,source,{update:true})); verifyInstallable(ctx,source); assert.equal(sourceHash(source),before);
 });

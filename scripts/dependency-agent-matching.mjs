@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 const segmenter = new Intl.Segmenter("zh", { granularity: "word" });
 const stopWords = new Set([
   "用户", "提供", "根据", "明确", "需要", "当前", "使用", "内容", "没有", "一个", "一些", "这些", "什么", "怎样", "怎么",
@@ -30,7 +31,7 @@ function terms(value) {
 // Candidate ranking uses the package's own positive trigger evidence. It does
 // not execute the role, waive its exclusions, or turn an ambiguous match into
 // a product decision. No industry-to-owner routing table lives here.
-export function matchDependencyAgentContracts(request, agents = []) {
+export function matchDependencyAgentContracts(request, agents = [], { hostSelection = null, discoveryOnly = false } = {}) {
   const requestText = normalized(request);
   const requestTerms = terms(request);
   // In "把报价进度写成周报", 报价 names the input while 周报 names the
@@ -64,11 +65,38 @@ export function matchDependencyAgentContracts(request, agents = []) {
   }).filter((entry) => entry.score > 0).sort((a, b) => b.score - a.score || a.agent.id.localeCompare(b.agent.id));
   const best = scores[0];
   const ambiguous = Boolean(best && scores[1] && best.score - scores[1].score < 2);
-  const selected = best && best.score >= 8 && !ambiguous ? best.agent : null;
+  const taskHash = createHash("sha256").update(String(request ?? "")).digest("hex");
+  const recallCandidate = best && best.score >= 8 && !ambiguous ? best.agent : null;
+  // Word overlap is useful retrieval evidence, not semantic owner selection.
+  // The current host records its task/contract-bound assessment after reading
+  // the inputs, deliverable, non-goals and exclusions. It grants no permission.
+  let selected = null;
+  let reason = best && best.score >= 8 ? ambiguous ? "ambiguous_contract_matches" : "candidates_require_host_assessment" : "no_specific_contract_match";
+  if (discoveryOnly) {
+    selected = recallCandidate;
+    reason = selected ? "lexical_discovery_candidate" : reason;
+  } else if (hostSelection) {
+    const matches = candidates.filter(agent => agent.id === hostSelection.agentId);
+    const owner = matches.length === 1 ? matches[0] : null;
+    const strings = value => Array.isArray(value) && value.every(item => typeof item === "string" && item.trim());
+    const bound = hostSelection.schemaVersion === 1 && hostSelection.taskHash === taskHash && owner &&
+      /^[a-f0-9]{64}$/u.test(owner.contentDigest ?? "") && hostSelection.contentDigest === owner.contentDigest &&
+      /^[a-f0-9]{64}$/u.test(owner.ownerContract?.componentContentSha256 ?? "") &&
+      hostSelection.componentContentSha256 === owner.ownerContract.componentContentSha256 &&
+      ["operation", "deliverable", "fitRationale"].every(key => typeof hostSelection[key] === "string" && hostSelection[key].trim()) &&
+      strings(hostSelection.nonGoals) && strings(hostSelection.evidenceRefs) && hostSelection.evidenceRefs.length > 0;
+    if (bound) { selected = owner; reason = "current_host_contract_fit_assessment"; }
+    else reason = "invalid_or_stale_host_method_assessment";
+  }
   return {
     selected,
-    candidates: scores.slice(0, 5).map(({ agent, score, matchedTerms }) => ({ id: agent.id, score, matchedTerms })),
-    reason: selected ? "matched_contract_trigger_evidence" : ambiguous ? "ambiguous_contract_matches" : "no_specific_contract_match",
+    candidates: scores.slice(0, 5).map(({ agent, score, matchedTerms }) => ({ id: agent.id, score, matchedTerms,
+      sourceRef: agent.sourceRef ?? null, contentDigest: agent.contentDigest ?? null,
+      componentContentSha256: agent.ownerContract?.componentContentSha256 ?? null })),
+    reason,
+    taskHash,
+    evidenceClass: discoveryOnly ? "lexical_source_discovery" : selected ? "host_reported_contract_fit" : "lexical_candidate_recall",
+    semanticFitVerified: false,
     invocationStatus: "not_invoked",
   };
 }

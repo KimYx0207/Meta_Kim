@@ -7,15 +7,30 @@ import path from "node:path";
 import test, { before, after } from "node:test";
 import { syncBuiltinESMExports } from "node:module";
 import { fileURLToPath } from "node:url";
-import { runDependencyCalculation } from "../../scripts/governed-execution/dependency-calculation.mjs";
+import { runDependencyCalculation as sourceRunDependencyCalculation } from "../../scripts/governed-execution/dependency-calculation.mjs";
 import { componentHash, stableJson } from "../../scripts/dependency-agent-discovery.mjs";
+import { connectFixtureMcpWithDiagnostics, fixtureCalculationAssessment, fixtureCalculationDiagnostics } from "../helpers/calculation-host-fixture.mjs";
+import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
+import { refreshFixtureSourcePins } from "../helpers/host-reasoning-fixture.mjs";
 
-const repo = fileURLToPath(new URL("../../", import.meta.url));
+const sourceRepo = fileURLToPath(new URL("../../", import.meta.url));
+let repo = sourceRepo, runDependencyCalculation = sourceRunDependencyCalculation, fixture;
 const dependencyRoot = process.env.META_KIM_TEST_KIM_SERVICE_SOURCE;
 const task = "帮我比较材料中的两家采购供应商：120个同规格白色M号纸袋，CNY，最长8天到货；算到货总支出和超购，保留质量证据缺口，不设默认权重，不联系供应商或下单。";
 const sourceOptions = { skip: !dependencyRoot && "Requires explicitly selected real Kim_Service source", timeout: 45000 };
 const inputJson = () => fs.readFileSync(path.join(dependencyRoot, "agents/supplier-comparison-analyst/tests/fixtures/normal.json"), "utf8");
-const run = (overrides = {}) => runDependencyCalculation({ task, inputJson: inputJson(), dependencyRoot, runtime: "codex", ...overrides });
+const selection = { ownerId: "kim-service:supplier-comparison-analyst",
+  operation: "Compare the supplied procurement quotes using their quantities, costs and constraints",
+  deliverable: "Exact landed costs and excess quantities with quality evidence gaps, without a default ranking",
+  fitRationale: "The test host inspected the supplier contract's supported materials, exact arithmetic and read-only exclusions.",
+  nonGoals: ["No supplier contact, procurement or invented quality evidence"] };
+const assessment = overrides => fixtureCalculationAssessment({ task, dependencyRoot, ...selection, ...overrides });
+const run = async (overrides = {}) => {
+  const input = { task, inputJson: inputJson(), dependencyRoot, runtime: "codex", ...overrides };
+  if (!Object.hasOwn(overrides, "methodAssessment")) input.methodAssessment = await assessment({ task: input.task,
+    dependencyRoot: input.dependencyRoot, runtime: input.runtime });
+  return runDependencyCalculation(input);
+};
 let testHome;
 const priorEnvironment = new Map();
 function discoverInventory(home) {
@@ -26,9 +41,14 @@ function discoverInventory(home) {
     "--runtime-inventory-only", "--targets", "codex", "--json"], { cwd: home, env, encoding: "utf8", timeout: 30000 });
   assert.equal(scan.status, 0, scan.stderr); return env;
 }
-before(() => {
+before(async () => {
   if (!dependencyRoot) return;
-  testHome = fs.mkdtempSync(path.join(os.tmpdir(), "meta-kim-calculation-home-"));
+  fixture = createGovernanceRuntimeFixtureScope(null);
+  repo = fixture.repoRoot;
+  refreshFixtureSourcePins(fixture);
+  fs.symlinkSync(path.join(sourceRepo, "node_modules"), path.join(repo, "node_modules"), process.platform === "win32" ? "junction" : "dir");
+  ({ runDependencyCalculation } = await fixture.import("scripts/governed-execution/dependency-calculation.mjs"));
+  testHome = fixture.home;
   const env = discoverInventory(testHome);
   for (const key of ["HOME", "USERPROFILE", "CODEX_HOME", "META_KIM_PROFILE", "META_KIM_RUNTIME_FAMILY"]) {
     priorEnvironment.set(key, process.env[key]); process.env[key] = env[key];
@@ -38,7 +58,7 @@ after(() => {
   for (const [key, value] of priorEnvironment) {
     if (value === undefined) delete process.env[key]; else process.env[key] = value;
   }
-  if (testHome) fs.rmSync(testHome, { recursive: true, force: true });
+  fixture?.cleanup();
 });
 
 test("calculation envelope refuses malformed, oversized and unbound inputs before execution", async () => {
@@ -48,6 +68,31 @@ test("calculation envelope refuses malformed, oversized and unbound inputs befor
     assert.equal(result.status, "invalid_input"); assert.equal(result.toolInvoked, false);
   }
   assert.equal((await runDependencyCalculation({ task, inputJson: "{}", dependencyRoot: "", runtime: "codex" })).code, "explicit_dependency_root_required");
+});
+
+test("missing, wrong-task, stale-source and wrong-runtime host choices cannot launch a calculator", sourceOptions, async () => {
+  const current = await assessment();
+  const original = childProcess.spawnSync; let launches = 0;
+  childProcess.spawnSync = (command, args, options) => {
+    if (args?.includes("--input-json")) { launches++; throw new Error("Unbound assessment launched Python"); }
+    return original(command, args, options);
+  }; syncBuiltinESMExports();
+  try {
+    assert.equal((await run({ methodAssessment: null })).code, "host_method_assessment_required");
+    for (const changed of [
+      { taskHash: "0".repeat(64) }, { agentId: "kim-service:missing-owner" },
+      { contentDigest: "0".repeat(64) }, { componentContentSha256: "0".repeat(64) },
+      { operation: "" }, { fitRationale: "" }, { evidenceRefs: [] },
+    ]) {
+      const rejected = await run({ methodAssessment: { ...current, ...changed } });
+      assert.equal(rejected.code, "host_method_assessment_rejected");
+      assert.equal(rejected.toolInvoked, false);
+    }
+    assert.equal((await run({ task: task + " Changed scope.", methodAssessment: current })).code, "host_method_assessment_rejected");
+    assert.equal((await run({ methodAssessment: { ...current, runtime: "cursor" } })).code, "host_method_runtime_binding_rejected");
+    assert.equal((await run({ methodAssessment: { ...current, fitRationale: "x".repeat(16384) } })).code, "invalid_host_method_assessment");
+    assert.equal(launches, 0);
+  } finally { childProcess.spawnSync = original; syncBuiltinESMExports(); }
 });
 
 test("unbound or blocked routes never launch the calculation process", sourceOptions, async () => {
@@ -165,7 +210,10 @@ test("missing-value clarification never hides duplicate JSON keys", sourceOption
 
 test("informational and other-owner tasks cannot use this calculator", sourceOptions, async () => {
   assert.equal((await run({ task: "超购和总支出是什么意思？" })).code, "request_is_not_execution");
-  const other = await run({ task: "帮我准备一份四十五分钟的分数教案" });
+  const request = "帮我准备一份四十五分钟的分数教案";
+  const other = await run({ task: request, methodAssessment: await assessment({ task: request,
+    ownerId: "kim-service:lesson-planner", operation: "Plan the supplied fraction lesson", deliverable: "A forty-five minute lesson plan",
+    fitRationale: "The test host selected the lesson planning contract; it has no reviewed arithmetic helper." }) });
   assert.equal(other.code, "selected_owner_has_no_reviewed_calculator"); assert.equal(other.toolInvoked, false);
 });
 
@@ -224,13 +272,24 @@ test("real MCP tool call delivers the same calculation without a native Agent or
     args: [path.join(repo, "scripts/mcp/meta-runtime-server.mjs")], cwd: home, env, stderr: "pipe" });
   const client = new Client({ name: "real-calculation-integration", version: "1.0.0" });
   try {
-    await client.connect(transport);
+    await connectFixtureMcpWithDiagnostics(client, transport);
     assert((await client.listTools()).tools.some((tool) => tool.name === "calculate_materials"));
-    const response = await client.callTool({ name: "calculate_materials", arguments: { task, inputJson: inputJson(), dependencyRoot } });
+    const response = await client.callTool({ name: "calculate_materials", arguments: { task, inputJson: inputJson(), dependencyRoot,
+      methodAssessment: await assessment() } });
     assert.equal(response.isError, undefined);
     const result = JSON.parse(response.content[0].text);
-    assert.equal(result.status, "completed"); assert.equal(result.toolInvoked, true);
+    assert.equal(result.status, "completed", fixtureCalculationDiagnostics(result)); assert.equal(result.toolInvoked, true);
     assert.equal(result.execution.exitCode, 0); assert.match(result.delivery, /275 CNY/);
+    const current = await assessment();
+    for (const methodAssessment of [undefined, { ...current, taskHash: "0".repeat(64) },
+      { ...current, componentContentSha256: "0".repeat(64) }, { ...current, runtime: "cursor" }]) {
+      const rejected = await client.callTool({ name: "calculate_materials", arguments: {
+        task, inputJson: inputJson(), dependencyRoot, ...(methodAssessment ? { methodAssessment } : {}) } });
+      assert.equal(rejected.isError, undefined);
+      const pending = JSON.parse(rejected.content[0].text);
+      assert.equal(pending.toolInvoked, false);
+      assert.match(pending.code, /^host_method_/u);
+    }
   } finally { await client.close(); await transport.close(); }
 });
 
@@ -246,10 +305,11 @@ test("MCP runtime comes from server configuration, never a default Codex identit
       args: [path.join(repo, "scripts/mcp/meta-runtime-server.mjs")], cwd: home, env, stderr: "pipe" });
     const client = new Client({ name: "runtime-binding-regression", version: "1.0.0" });
     try {
-      await client.connect(transport);
+      await connectFixtureMcpWithDiagnostics(client, transport);
       const tool = (await client.listTools()).tools.find((entry) => entry.name === "calculate_materials");
       assert.equal(Object.hasOwn(tool.inputSchema.properties, "runtime"), false);
-      const response = await client.callTool({ name: "calculate_materials", arguments: { task, inputJson: inputJson(), dependencyRoot } });
+      const response = await client.callTool({ name: "calculate_materials", arguments: { task, inputJson: inputJson(), dependencyRoot,
+        methodAssessment: await assessment({ runtime: runtime ?? "codex" }) } });
       const result = JSON.parse(response.content[0].text);
       assert.equal(result.toolInvoked, false);
       assert.equal(result.code, runtime ? "route_not_ready_for_host_handoff" : "runtime_binding_required");

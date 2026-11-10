@@ -134,6 +134,36 @@ test("Windows file scopes normalize case and separators and preserve parent-chil
   assert.deepEqual(ready.deferredNodeIds, [stageLaneNodeId("Execution", "child")]);
 });
 
+test("filesystem aliases and unresolved root bindings never release concurrent mutations", () => {
+  const scopePairs = [
+    ["file:src/../shared.mjs", "file:shared.mjs"],
+    ["file:src/./shared.mjs", "path:./src/shared.mjs"],
+    ["path:src/../shared", "file:shared/child.mjs"],
+    ["file:shared.mjs", "file:/repo/shared.mjs"],
+    ["file:../shared.mjs", "file:other.mjs"],
+    ["file:C:shared.mjs", "file:C:/repo/other.mjs"],
+    ["file://server/share/a.mjs", "file://server/other/b.mjs"],
+  ];
+  for (const scopes of scopePairs) {
+    const graph = buildStageDagPacket({ stageOrder: ["Execution"], stageLanes: {
+      Execution: scopes.map((scope, index) => lane(`worker-${index}`, { resourceScopes: [scope] })),
+    } });
+    const ready = selectMaximalSafeReadySet(graph, { capacity: 2 });
+    assert.equal(ready.readyNodeIds.length, 1, `Unsafe pair: ${scopes.join(" / ")}`);
+    assert.equal(ready.deferredNodeIds.length, 1);
+  }
+});
+
+test("normalizing aliases preserves parallelism for proven disjoint files in one root", () => {
+  const graph = buildStageDagPacket({ stageOrder: ["Execution"], stageLanes: {
+    Execution: [
+      lane("a", { resourceScopes: ["file:src/../a.mjs"] }),
+      lane("b", { resourceScopes: ["path:./b.mjs"] }),
+    ],
+  } });
+  assert.equal(selectMaximalSafeReadySet(graph, { capacity: 2 }).readyNodeIds.length, 2);
+});
+
 test("ready-set maximizes cardinality instead of accepting a greedy blocking lane", () => {
   const packet = buildStageDagPacket({
     stageOrder: ["Execution"],

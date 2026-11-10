@@ -7,17 +7,28 @@ import test, { before, after } from "node:test";
 import { syncBuiltinESMExports } from "node:module";
 import { fileURLToPath } from "node:url";
 import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
+import { connectFixtureMcpWithDiagnostics, fixtureCalculationAssessment, runWithCalculationHostThinking } from "../helpers/calculation-host-fixture.mjs";
+import { refreshFixtureSourcePins } from "../helpers/host-reasoning-fixture.mjs";
 
 const dependencyRoot = process.env.META_KIM_TEST_KIM_SERVICE_SOURCE;
 const sourceOptions = { skip: !dependencyRoot && "Requires explicitly selected real Kim_Service source", timeout: 120000 };
 const repo = fileURLToPath(new URL("../../", import.meta.url));
 const task = "帮我复盘这周店铺数据";
-let fixture, calculator, runner, handoffApi, bridgeApi, sourceApi, sequence = 0;
+const selection = { ownerId: "kim-service:store-performance-analyst",
+  operation: "Review only the supplied store rows and metric definitions using exact arithmetic",
+  deliverable: "Complete input rows and typed receipt with exact store metrics, retaining missing costs and definition conflicts",
+  fitRationale: "The test host inspected the current store analysis contract and selected its read-only arithmetic with a separate review owner.",
+  nonGoals: ["No store changes, external writes, invented costs or causal claims"] };
+const assessment = overrides => fixtureCalculationAssessment({ task, dependencyRoot, ...selection, ...overrides });
+let fixture, calculator, runner, rawRunner, handoffApi, bridgeApi, sourceApi, sequence = 0;
 before(async () => {
   if (!dependencyRoot) return;
   fixture = createGovernanceRuntimeFixtureScope(null, { graph: true });
+  refreshFixtureSourcePins(fixture);
+  fs.symlinkSync(path.join(repo, "node_modules"), path.join(fixture.repoRoot, "node_modules"), process.platform === "win32" ? "junction" : "dir");
   ({ runDependencyCalculation: calculator } = await fixture.import("scripts/governed-execution/dependency-calculation.mjs"));
-  ({ runMetaTheoryGovernedExecution: runner } = await fixture.import("scripts/run-meta-theory-governed-execution.mjs"));
+  ({ runMetaTheoryGovernedExecution: rawRunner } = await fixture.import("scripts/run-meta-theory-governed-execution.mjs"));
+  runner = config => runWithCalculationHostThinking(rawRunner, config, selection);
   handoffApi = await fixture.import("scripts/governed-execution/dependency-calculation-handoff.mjs");
   bridgeApi = await fixture.import("scripts/governed-execution/stage-runner-bridge.mjs");
   sourceApi = await fixture.import("scripts/dependency-agent-discovery.mjs");
@@ -25,13 +36,19 @@ before(async () => {
 after(() => fixture?.cleanup());
 const materials = (name = "normal") => JSON.parse(fs.readFileSync(path.join(dependencyRoot,
   `agents/store-performance-analyst/fixtures/${name}.json`), "utf8"));
-const run = (input = materials(), overrides = {}) => calculator({ task, inputJson: JSON.stringify(input),
-  dependencyRoot, runtime: "codex", osTarget: "linux", ...overrides });
+const run = async (input = materials(), overrides = {}) => {
+  const options = { task, inputJson: JSON.stringify(input), dependencyRoot, runtime: "codex", osTarget: "linux", ...overrides };
+  if (!Object.hasOwn(overrides, "methodAssessment")) options.methodAssessment = await assessment({ task: options.task,
+    dependencyRoot: options.dependencyRoot, runtime: options.runtime });
+  return calculator(options);
+};
 function options(input = materials(), extra = {}) {
   const runId = `store-calculation-${++sequence}`, output = path.join(fixture.root, runId);
   return { task, runId, runtime: "codex", osTarget: "linux", stateDir: output, artifactDir: output,
     dbPath: path.join(output, "runs.sqlite"), projectRoot: fixture.repoRoot, projectCapabilityMutationMode: "read_only",
-    dependencyCalculationInput: { inputJson: JSON.stringify(input), dependencyRoot },
+    dependencyCalculationInput: { inputJson: JSON.stringify(input), dependencyRoot,
+      methodInputs: { metrics: JSON.stringify(input), ...(input.rows ? { table: structuredClone(input.rows) } : {}),
+        ...(input.definitions ? { definitions: structuredClone(input.definitions) } : {}) } },
     stageRunner: { enabled: true, capacity: 1, durableDbPath: path.join(output, "durable.sqlite"),
       invokeWorker: async () => { throw new Error("Unexpected model/callback call"); } }, ...extra };
 }
@@ -125,9 +142,13 @@ test("definition conflicts keep actual per-row metrics and restrictions through 
   assert.equal(report.dependencyCalculationPacket.status, "ready_for_worker");
   assert.equal(report.dependencyCalculationPacket.receiptStatus, "partial");
   assert.deepEqual(report.dependencyCalculationPacket.questions, []);
-  assert.ok(report.dependencyCalculationPacket.issues.some((issue) => issue.reasons?.includes("definition_conflict")
-    && issue.conflictingFields.includes("visitorBasis")));
   assert.equal(captures.length, 1);
+  assert.ok(captures[0].context.calculation.issues.some((issue) => issue.reasons?.includes("definition_conflict")
+    && issue.conflictingFields.includes("visitorBasis")));
+  for (const [index, issue] of report.dependencyCalculationPacket.issues.entries()) {
+    assert.deepEqual(Object.keys(issue).sort(), ["code", "detailSha256"]);
+    assert.equal(issue.detailSha256, sourceApi.sha256(sourceApi.stableJson(captures[0].context.calculation.issues[index])));
+  }
   assert.deepEqual(captures[0].context.calculation.receipt, result.receipt);
   assert.match(captures[0].prompt, /拒绝跨期比较和汇总/);
 });
@@ -135,6 +156,7 @@ test("definition conflicts keep actual per-row metrics and restrictions through 
 test("formal stage runner passes complete materials and receipt to the verified existing store method; resume stays historical", sourceOptions, async () => {
   const input = materials();
   input.rows = Array.from({ length: 20 }, (_, index) => ({ ...input.rows[index % 2], sku: `SKU-${index}` }));
+  input.rows[0].sku = "PRIVATE-STORE-MATERIAL-MARKER";
   assert.ok(JSON.stringify(input).length > 2000);
   const captures = [], config = options(input); config.stageRunner.invokeWorker = captureWorker(captures);
   const report = await runner(config);
@@ -159,6 +181,9 @@ test("formal stage runner passes complete materials and receipt to the verified 
   assert.equal(report.dependencyCalculationPacket.nativeAgentInvocation, false);
   assert.equal(report.stageRunnerBridgePacket.executionProjection.invocationTruth.nativeRuntimeInvoked, false);
   assert.equal(report.executionResult.actualWorkerExecution, false);
+  assert.equal(JSON.stringify(report).includes("PRIVATE-STORE-MATERIAL-MARKER"), false, "Private metrics mapping is not published in artifacts");
+  assert.ok(prompt.includes("PRIVATE-STORE-MATERIAL-MARKER"));
+  assert.equal(report.workerTaskPackets[0].methodInputs == null, true);
   const original = childProcess.spawnSync;
   childProcess.spawnSync = (command, args, opts) => {
     if (args?.includes("--input-json")) throw new Error("Materialized resume must not recalculate");
@@ -251,14 +276,15 @@ test("real MCP calculate_materials exposes and executes store inputs without a p
   const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
   const { StdioClientTransport } = await import("@modelcontextprotocol/sdk/client/stdio.js");
   const transport = new StdioClientTransport({ command: process.execPath,
-    args: [path.join(repo, "scripts/mcp/meta-runtime-server.mjs")], cwd: fixture.home,
+    args: [path.join(fixture.repoRoot, "scripts/mcp/meta-runtime-server.mjs")], cwd: fixture.home,
     env: { ...fixture.env, META_KIM_RUNTIME_FAMILY: "codex" }, stderr: "pipe" });
   const client = new Client({ name: "store-calculation-integration", version: "1.0.0" });
   try {
-    await client.connect(transport);
+    await connectFixtureMcpWithDiagnostics(client, transport);
     const tool = (await client.listTools()).tools.find((entry) => entry.name === "calculate_materials");
     assert.match(tool.description, /所选能力合同/); assert.equal(Object.hasOwn(tool.inputSchema.properties, "runtime"), false);
-    const response = await client.callTool({ name: "calculate_materials", arguments: { task, inputJson: JSON.stringify(materials()), dependencyRoot } });
+    const response = await client.callTool({ name: "calculate_materials", arguments: { task, inputJson: JSON.stringify(materials()), dependencyRoot,
+      methodAssessment: await assessment() } });
     assert.equal(response.isError, undefined);
     const result = JSON.parse(response.content[0].text);
     assert.equal(result.status, "completed"); assert.equal(result.execution.exitCode, 0);

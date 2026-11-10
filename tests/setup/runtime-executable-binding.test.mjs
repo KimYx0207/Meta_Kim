@@ -129,6 +129,8 @@ test("Windows setup inventory records the shell-free launch descriptor actually 
   const root = mkdtempSync(path.join(tmpdir(), "meta-kim-runtime-launch-descriptor-"));
   try {
     const fixture = npmShim(root, "codex");
+    const physicalEntry = realpathSync.native(fixture.jsEntry);
+    const physicalNode = realpathSync.native(process.execPath);
     const versionCalls = [];
     recordSetupRuntimeExecutableBindings({
       roots: [root],
@@ -146,16 +148,16 @@ test("Windows setup inventory records the shell-free launch descriptor actually 
     assert.equal(inventory.executionAuthority, false);
     assert.equal(inventory.purpose, "setup_inventory_and_drift_detection");
     assert.equal(binding.executionAuthority, false);
-    assert.equal(binding.launchDescriptor.discoveredEntry.realpath, fixture.discovered);
-    assert.equal(binding.launchDescriptor.shim.realpath, fixture.shim);
-    assert.equal(binding.launchDescriptor.launcher.realpath, process.execPath);
-    assert.equal(binding.launchDescriptor.jsEntry.realpath, fixture.jsEntry);
-    assert.deepEqual(binding.launchDescriptor.argsPrefix, [fixture.jsEntry]);
+    assert.equal(binding.launchDescriptor.discoveredEntry.realpath, realpathSync.native(fixture.discovered));
+    assert.equal(binding.launchDescriptor.shim.realpath, realpathSync.native(fixture.shim));
+    assert.equal(binding.launchDescriptor.launcher.realpath, physicalNode);
+    assert.equal(binding.launchDescriptor.jsEntry.realpath, physicalEntry);
+    assert.deepEqual(binding.launchDescriptor.argsPrefix, [physicalEntry]);
     for (const component of ["discoveredEntry", "shim", "launcher", "jsEntry"]) {
       assert.match(binding.launchDescriptor[component].sha256, /^[a-f0-9]{64}$/u);
       assert.equal(Number.isSafeInteger(binding.launchDescriptor[component].size), true);
     }
-    assert.deepEqual(versionCalls, [{ launcher: process.execPath, args: [fixture.jsEntry, "--version"] }]);
+    assert.deepEqual(versionCalls, [{ launcher: physicalNode, args: [physicalEntry, "--version"] }]);
     const loaded = loadSetupBoundRuntimeExecutable({
       projectRoot: root,
       globalRoot: path.join(root, "unused-global"),
@@ -163,8 +165,8 @@ test("Windows setup inventory records the shell-free launch descriptor actually 
       runtime: "codex",
       pathResolver: () => fixture.discovered,
     });
-    assert.equal(loaded.realpath, process.execPath);
-    assert.deepEqual(loaded.argsPrefix, [fixture.jsEntry]);
+    assert.equal(loaded.realpath, physicalNode);
+    assert.deepEqual(loaded.argsPrefix, [physicalEntry]);
     assert.equal(loaded.executionAuthority, false);
     assert.match(loaded.trustBoundary, /not a same-user trust root|does not eliminate TOCTOU/iu);
   } finally {

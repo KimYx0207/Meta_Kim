@@ -27,17 +27,16 @@ import { assertExactStandardRuntimeObservationSet } from "./runtime-execution-ga
 import { assertExactMarkerEventLifecycles } from "./live-acceptance/validate-marker-lifecycle.mjs";
 import { validateNativeCliEventTape } from "./native-cli-event-tape.mjs";
 import { packedProductProofComplete } from "./packed-product-proof.mjs";
+import { RUNTIMES } from "./governance-lib.mjs";
 
 export const ACCEPTANCE_ATTEMPT_SCHEMA_VERSION = "meta-kim-runtime-capability-acceptance-attempt-v1";
 export const ACCEPTANCE_INDEX_SCHEMA_VERSION = "meta-kim-runtime-capability-acceptance-index-v1";
 export const PRODUCER_RECEIPT_SCHEMA_VERSION = "meta-kim-runtime-capability-producer-receipt-v1";
-export const SUPPORTED_RUNTIME_IDS = Object.freeze([
-  "claude_code",
-  "codex",
-  "cursor",
-  "openclaw",
-]);
+// The observation store covers all formal projections. Live producer support
+// is a separate, narrower boundary and cannot be inferred from this list.
+export const SUPPORTED_RUNTIME_IDS = Object.freeze([...RUNTIMES]);
 const SUPPORTED_RUNTIME_ID_SET = new Set(SUPPORTED_RUNTIME_IDS);
+const CONTROLLED_LIVE_RUNTIME_IDS = new Set(["claude_code", "codex"]);
 const CLAIM_SCHEMA_VERSION = 2;
 const LIVE_FUSE_CAPABILITIES = new Set(["agent", "subagent", "custom agent"]);
 const PACKED_CAPABILITIES = new Set([
@@ -457,6 +456,9 @@ function validatePackedReport(report, runtime, capability) {
 }
 
 function validateControlledProducerReceipt(receipt, runtime, capability, mode) {
+  if (!CONTROLLED_LIVE_RUNTIME_IDS.has(runtime)) {
+    throw new Error(`no controlled live producer is implemented for runtime ${runtime}`);
+  }
   if (
     receipt.schemaVersion !== PRODUCER_RECEIPT_SCHEMA_VERSION ||
     receipt.attestationAuthority !== "controlled_producer" ||
