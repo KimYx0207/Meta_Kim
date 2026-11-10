@@ -1,4 +1,6 @@
 import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
+import { fixtureCritical, fixtureReadWorkOrder, fixtureThinkingInput, runWithFixtureHostThinking } from "../helpers/host-reasoning-fixture.mjs";
+import { localProtocolFixtureTaskFacts } from "../helpers/task-design-facts.mjs";
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
@@ -28,6 +30,54 @@ before(async () => {
   ({ readGovernedExecutionRun, renameWithTransientWindowsRetry, runMetaTheoryGovernedExecution } = await runtimeFixture.import("scripts/run-meta-theory-governed-execution.mjs"));
 });
 after(() => runtimeFixture?.cleanup());
+
+const SURFACE_READ_TASK = "Read package.json and report its name. Do not modify files.";
+
+// These reporting scenarios need a real prepared plan. The test host supplies
+// an explicit bounded read decision; it never manufactures worker execution.
+function surfaceHostInputs(task) {
+  const criticalInput = fixtureCritical({ task, successCriteria: [{ id: "package-name",
+    condition: "Report the package name from the current package.json.",
+    evidenceRequired: "The current source bytes and an independently reviewed worker result." }],
+    nonGoals: ["No source edits, external actions or native execution claims."] });
+  return { criticalInput, governanceTaskFacts: localProtocolFixtureTaskFacts(task),
+    workOrders: preparation => [fixtureReadWorkOrder(preparation, { id: "surface-package-read",
+      todayTask: task, output: "Source-bound package name report", criterionIds: ["package-name"],
+      taskFacts: localProtocolFixtureTaskFacts(task) })] };
+}
+
+function runSurfaceFixture(options) {
+  return runWithFixtureHostThinking(runMetaTheoryGovernedExecution, options, surfaceHostInputs(options.task));
+}
+
+// Split the real CLI prepare/resume handshake so the final child may also be
+// launched with a deliberately closed stderr pipe. Inputs remain on disk and
+// are bound to the actual Fetch inventory, not to invented provider objects.
+async function prepareSurfaceCli(argv) {
+  const task = argv[argv.indexOf("--task") + 1];
+  const runId = argv[argv.indexOf("--run-id") + 1];
+  const host = surfaceHostInputs(task);
+  const directory = path.join(runtimeFixture.root, "surface-inputs", runId);
+  await mkdir(directory, { recursive: true });
+  const write = async (name, value) => {
+    const target = path.join(directory, name + ".json");
+    await writeFile(target, JSON.stringify(value), "utf8");
+    return target;
+  };
+  const inputs = ["--critical-input", await write("critical", host.criticalInput),
+    "--governance-task-facts-input", await write("facts", host.governanceTaskFacts)];
+  const prepareArgs = argv.filter(arg => arg !== "--emit-conversation-notice");
+  prepareArgs[prepareArgs.indexOf("--run-id") + 1] = runId + "-fetch";
+  const prepared = runtimeFixture.run([...prepareArgs, ...inputs, "--no-emit-conversation-notice"]);
+  assert.equal(prepared.status, 0, prepared.stderr || prepared.stdout);
+  const summary = JSON.parse(prepared.stdout);
+  assert.equal(summary.status, "needs_thinking", JSON.stringify(summary.nextAction));
+  const preparation = JSON.parse(await readFile(summary.input, "utf8"));
+  assert.equal(preparation.artifactKind, "host_preparation");
+  assert.deepEqual(preparation.workerTaskPackets, []);
+  return [...argv, ...inputs, "--thinking-input", await write("thinking", fixtureThinkingInput(preparation, host)),
+    "--previous-plan-challenge-run", preparation.runId];
+}
 
 
 function createRepoReportProfile(label) {
@@ -453,8 +503,8 @@ describe("55 - governed run identity, language, and chat surface", () => {
   test("unverified host-visible names never promote runner presentation or visible surfaces", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-host-visible-presentation-"));
     try {
-      const hintOnlyRun = await runMetaTheoryGovernedExecution({
-        task: "使用多个 agent 审查并修复这个可配置工作流",
+      const hintOnlyRun = await runSurfaceFixture({
+        task: "读取 package.json 并报告名称，不修改文件。",
         runId: "host-visible-hint-only",
         outputLanguage: "zh-CN",
         stateDir: tempDir,
@@ -511,8 +561,8 @@ describe("55 - governed run identity, language, and chat surface", () => {
   test("chat and report expose capability-family decisions and the project customization decision", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-capability-ledger-surface-"));
     try {
-      const run = await runMetaTheoryGovernedExecution({
-        task: "帮我检查 Agent、Skill、Command、MCP 是否真的调用，并明确项目级能力是否需要创建",
+      const run = await runSurfaceFixture({
+        task: "读取 package.json 并报告名称，同时显示 Agent、Skill、Command、MCP 的真实调用状态，不创建项目级能力。",
         runId: "capability-ledger-surface",
         outputLanguage: "zh-CN",
         stateDir: tempDir,
@@ -600,8 +650,8 @@ describe("55 - governed run identity, language, and chat surface", () => {
   test("explicit runId stays compatible and resolved language reaches report, packets, and chat blocks", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-language-run-"));
     try {
-      const run = await runMetaTheoryGovernedExecution({
-        task: "Please keep the essential guidance in the chat window.",
+      const run = await runSurfaceFixture({
+        task: SURFACE_READ_TASK,
         runId: "explicit-language-run",
         outputLanguage: "ja",
         stateDir: tempDir,
@@ -684,10 +734,10 @@ describe("55 - governed run identity, language, and chat surface", () => {
     try {
       const result = spawnSync(
         process.execPath,
-        [
+        await prepareSurfaceCli([
           "scripts/run-meta-theory-governed-execution.mjs",
           "--task",
-          "中文任务仍应服从显式 CLI 输出语言",
+          "读取 package.json 并报告名称，不修改文件。",
           "--run-id",
           "cli-language-run",
           "--lang",
@@ -696,7 +746,7 @@ describe("55 - governed run identity, language, and chat surface", () => {
           tempDir,
           "--db",
           path.join(tempDir, "runs.sqlite"),
-        ],
+        ]),
         { cwd: process.cwd(), encoding: "utf8" },
       );
       assert.equal(result.status, 0, result.stderr);
@@ -725,13 +775,13 @@ describe("55 - governed run identity, language, and chat surface", () => {
         { cwd: process.cwd(), encoding: "utf8" },
       );
       assert.equal(duplicate.status, 1);
-      assert.match(duplicate.stderr, /already exists/u);
+      assert.match(duplicate.stderr, /already exists|Existing run differs or already executes/u);
       const overwrite = spawnSync(
         process.execPath,
-        [
+        await prepareSurfaceCli([
           "scripts/run-meta-theory-governed-execution.mjs",
           "--task",
-          "replacement",
+          "读取 package.json 并报告名称，不修改文件。",
           "--run-id",
           "cli-language-run",
           "--lang",
@@ -741,7 +791,7 @@ describe("55 - governed run identity, language, and chat surface", () => {
           "--db",
           path.join(tempDir, "runs.sqlite"),
           "--overwrite-run",
-        ],
+        ]),
         { cwd: process.cwd(), encoding: "utf8" },
       );
       assert.equal(overwrite.status, 0, overwrite.stderr);
@@ -765,12 +815,12 @@ describe("55 - governed run identity, language, and chat surface", () => {
             stateDir: tempDir,
             dbPath: path.join(tempDir, "runs.sqlite"),
           }),
-          /Invalid requested runId/u,
+          /Invalid (?:requested |control )?runId/u,
         );
       }
 
-      const first = await runMetaTheoryGovernedExecution({
-        task: "first explicit run",
+      const first = await runSurfaceFixture({
+        task: SURFACE_READ_TASK,
         runId: "protected-run",
         stateDir: tempDir,
         dbPath: path.join(tempDir, "runs.sqlite"),
@@ -794,10 +844,10 @@ describe("55 - governed run identity, language, and chat surface", () => {
           stateDir: tempDir,
           dbPath: path.join(tempDir, "runs.sqlite"),
         }),
-        /already exists/u,
+        /already exists|Existing run differs or already executes/u,
       );
-      const replaced = await runMetaTheoryGovernedExecution({
-        task: "authorized replacement",
+      const replaced = await runSurfaceFixture({
+        task: SURFACE_READ_TASK,
         runId: "protected-run",
         allowOverwrite: true,
         stateDir: tempDir,
@@ -1095,8 +1145,8 @@ describe("55 - governed run identity, language, and chat surface", () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-progress-events-"));
     const events = [];
     try {
-      const run = await runMetaTheoryGovernedExecution({
-        task: "Build a safe configurable workflow and review it.",
+      const run = await runSurfaceFixture({
+        task: SURFACE_READ_TASK,
         runId: "progress-event-run",
         outputLanguage: "en",
         stateDir: tempDir,
@@ -1131,8 +1181,8 @@ describe("55 - governed run identity, language, and chat surface", () => {
       assert.equal(run.userExperienceNotice.conversationNoticeObserved, false);
       assert.match(run.userExperienceNotice.statusReason, /transport only/u);
 
-      const observedRun = await runMetaTheoryGovernedExecution({
-        task: "Build a safe configurable workflow and review it.",
+      const observedRun = await runSurfaceFixture({
+        task: SURFACE_READ_TASK,
         runId: "progress-event-run",
         allowOverwrite: true,
         outputLanguage: "en",
@@ -1164,10 +1214,10 @@ describe("55 - governed run identity, language, and chat surface", () => {
       const cliDir = path.join(tempDir, "cli");
       const cli = spawnSync(
         process.execPath,
-        [
+        await prepareSurfaceCli([
           "scripts/run-meta-theory-governed-execution.mjs",
           "--task",
-          "Build and review a staged workflow.",
+          SURFACE_READ_TASK,
           "--run-id",
           "cli-progress-run",
           "--output-language",
@@ -1177,7 +1227,7 @@ describe("55 - governed run identity, language, and chat surface", () => {
           "--db",
           path.join(cliDir, "runs.sqlite"),
           "--emit-conversation-notice",
-        ],
+        ]),
         { cwd: process.cwd(), encoding: "utf8" },
       );
       assert.equal(cli.status, 0, cli.stderr);
@@ -1207,10 +1257,10 @@ describe("55 - governed run identity, language, and chat surface", () => {
   test("a closed CLI stderr pipe preserves JSON stdout and never claims emitted progress", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-closed-progress-"));
     try {
-      const child = spawn(process.execPath, ["scripts/run-meta-theory-governed-execution.mjs",
+      const child = spawn(process.execPath, await prepareSurfaceCli(["scripts/run-meta-theory-governed-execution.mjs",
         "--task", "Read package.json and report its name. Do not modify files.",
         "--run-id", "closed-progress-pipe", "--state-dir", tempDir,
-        "--db", path.join(tempDir, "runs.sqlite"), "--emit-conversation-notice"],
+        "--db", path.join(tempDir, "runs.sqlite"), "--emit-conversation-notice"]),
         { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
       child.stderr.destroy();
       let output = "";
@@ -1228,14 +1278,14 @@ describe("55 - governed run identity, language, and chat surface", () => {
 
   test("English, Japanese, and Korean key chat/report surfaces do not leak Chinese templates", async () => {
     const cases = [
-      ["en", "Build a modular workflow.", /[\u3400-\u9fff，。；：、]/u],
-      ["ja", "モジュール化されたワークフローを構築してください。", /用户目标状态|编排检查状态|开始原因|自动化与人工决策边界|三目标产品验收/u],
-      ["ko", "모듈형 워크플로를 만들어 주세요.", /[\u3400-\u9fff]/u],
+      ["en", SURFACE_READ_TASK, /[\u3400-\u9fff，。；：、]/u],
+      ["ja", "package.json を読み、名前を報告してください。ファイルは変更しないでください。", /用户目标状态|编排检查状态|开始原因|自动化与人工决策边界|三目标产品验收/u],
+      ["ko", "package.json을 읽고 이름을 보고하세요. 파일을 변경하지 마세요.", /[\u3400-\u9fff]/u],
     ];
     for (const [language, task, forbidden] of cases) {
       const tempDir = await mkdtemp(path.join(os.tmpdir(), `meta-kim-locale-${language}-`));
       try {
-        const run = await runMetaTheoryGovernedExecution({
+        const run = await runSurfaceFixture({
           task,
           runId: `locale-${language}`,
           outputLanguage: language,
@@ -1280,7 +1330,7 @@ describe("55 - governed run identity, language, and chat surface", () => {
       ]);
       assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
       assert.equal(results.filter((result) => result.status === "rejected").length, 1);
-      assert.match(results.find((result) => result.status === "rejected").reason.message, /reserved|already exists/u);
+      assert.match(results.find((result) => result.status === "rejected").reason.message, /reserved|already exists|reservation: transaction_in_progress/u);
       assert.equal(existsSync(path.join(tempDir, "concurrent-run.reservation.json")), true);
     } finally {
       await rm(tempDir, { recursive: true, force: true });

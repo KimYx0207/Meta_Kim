@@ -1,3 +1,4 @@
+import { readOnlyWorkerPacket } from "../helpers/read-only-worker-packet.mjs";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import os from "node:os";
@@ -14,6 +15,7 @@ import { buildStageDagPacket } from "../../scripts/governed-execution/stage-dag.
 
 const BRIDGE_URL = pathToFileURL(path.resolve("scripts/governed-execution/stage-runner-bridge.mjs")).href;
 const DAG_URL = pathToFileURL(path.resolve("scripts/governed-execution/stage-dag.mjs")).href;
+const WORKER_FIXTURE_URL = pathToFileURL(path.resolve("tests/helpers/read-only-worker-packet.mjs")).href;
 
 function lane(taskPacketId) {
   return {
@@ -29,7 +31,7 @@ function lane(taskPacketId) {
 }
 
 function packet(taskPacketId) {
-  return {
+  return readOnlyWorkerPacket({
     taskPacketId,
     ownerAgent: "test-automator",
     description: `Read ${taskPacketId}.txt`,
@@ -37,7 +39,7 @@ function packet(taskPacketId) {
     dependsOn: [],
     executionMode: "primary_execution",
     externalWriteBoundary: false,
-  };
+  });
 }
 
 function dagFor(taskPacketIds = ["one"]) {
@@ -325,6 +327,7 @@ test("69 — strict-mode host survives a fire-and-forget callback after bridge t
   const childSource = `
     import { runStageRunnerBridge } from ${JSON.stringify(BRIDGE_URL)};
     import { buildStageDagPacket } from ${JSON.stringify(DAG_URL)};
+    import { readOnlyWorkerPacket } from ${JSON.stringify(WORKER_FIXTURE_URL)};
     const lane = {
       laneId: "one",
       laneKind: "execution_worker",
@@ -345,7 +348,7 @@ test("69 — strict-mode host survives a fire-and-forget callback after bridge t
       runId: "p119-late-callback-strict-child",
       runtime: "codex",
       stageDagPacket: dag,
-      workerTaskPackets: [{
+      workerTaskPackets: [readOnlyWorkerPacket({
         taskPacketId: "one",
         ownerAgent: "test-automator",
         description: "Read one.txt",
@@ -353,7 +356,7 @@ test("69 — strict-mode host survives a fire-and-forget callback after bridge t
         dependsOn: [],
         executionMode: "primary_execution",
         externalWriteBoundary: false,
-      }],
+      })],
       workspaceRoot: process.cwd(),
       readySetTimeoutMs: 20,
       invokeWorker: async () => { throw new Error("late callback must never invoke worker"); },

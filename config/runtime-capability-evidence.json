@@ -565,7 +565,7 @@
         { "path": "canonical/runtime-assets/codex", "digestKind": "sha256", "sha256": "5cb91cf2adf020ae3e13c21bc419e08ce6527f29072561177a189464680a39ed" },
         { "path": "scripts/runtime-hook-mapping.mjs", "digestKind": "sha256", "sha256": "e7de7774341afe7206ad90d0f291284cae9f344e7b2a0757ecd06ebe0df7046b" },
         { "path": "setup.mjs", "digestKind": "sha256", "sha256": "41ea8e78891a0723893ce191012985e78e51922652d9d3cf6a9778ed5c9215a4" },
-        { "path": "AGENTS.md", "digestKind": "sha256", "sha256": "b274f788233c18086ef53d9655a2294ebe222eb574580f354956bc193001b005" }
+        { "path": "AGENTS.md", "digestKind": "sha256", "sha256": "1af2b83ae22fcf36fa4c89e6a6ff896adb3ffbaac0fcd237b38de24b000adad8" }
       ],
       "summary": "Canonical runtime projection sources and install wiring are present in the repository.",
       "limitations": [

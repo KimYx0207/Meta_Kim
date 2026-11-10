@@ -270,6 +270,18 @@ test("short intent, quoted context and negative role mentions cannot silently be
   }
 });
 
+test("Service read and search tools share the existing filesystem read contract without granting native execution", async (t) => {
+  for (const tools of ["Read, Grep, Glob", "Grep, Glob"]) {
+    const { options } = fixture(t, { tools });
+    const result = await discoverDependencyAgentContracts(options);
+    assert.equal(result.sources[0].status, "verified_local", JSON.stringify(result.sources));
+    assert.ok(result.agents.length > 0);
+    assert.ok(result.agents.every(agent => agent.validCustomAgentDefinition === false));
+    assert.ok(result.capabilities.every(capability => capability.canExecute === false));
+    assert.ok(result.capabilities.every(capability => capability.risk.canMutateFiles === false));
+  }
+});
+
 test("a reindexed prompt cannot grant tools absent from its read-only capability contract", async (t) => {
   const { options } = fixture(t, { tools: "Read, Bash" });
   const result = await discoverDependencyAgentContracts(options);

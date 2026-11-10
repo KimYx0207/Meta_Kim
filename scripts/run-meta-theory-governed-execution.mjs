@@ -21,6 +21,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { classifyMetaTheoryEntry } from "./meta-theory-entry-classifier.mjs";
+import { renderPreparationNotice } from "./governed-execution/preparation-notice.mjs";
 import { inspectTrustedPath, withSafeManagedFileLock } from "./safe-managed-file-operations.mjs";
 import { scopeComparisonKey, scopeKeysAreProvablyDisjoint } from "./task-scope-comparison.mjs";
 import { projectWorkflowWorkerResults } from "./governed-execution/worker-result-projection.mjs";
@@ -3753,6 +3754,9 @@ function buildLocalizedGovernedRunReport({
   capabilityInvocationTruthPacket,
   capabilityInvocationPresentationPacket,
   productExperiencePacket,
+  verificationPacket,
+  summaryPacket,
+  actualWorkerExecution = false,
   labels,
 }) {
   const surface = getGovernedRunSurfaceLabels(labels.htmlLang);
@@ -3766,9 +3770,22 @@ function buildLocalizedGovernedRunReport({
     "ja-JP": ["Critical：目標と境界を確認します。", "Fetch：証拠と利用可能な機能を確認します。", "Thinking：ルートと担当を整理します。", "Execution：選択した作業を準備または実行します。", "Review：品質、リスク、読みやすさを確認します。", "Verification：受け入れ基準に照らして結果を確認します。", "Evolution：必要に応じて再利用可能な結論を記録します。"],
     "ko-KR": ["Critical: 목표와 경계를 확인합니다.", "Fetch: 증거와 사용 가능한 기능을 확인합니다.", "Thinking: 경로와 책임을 정리합니다.", "Execution: 선택한 작업을 준비하거나 실행합니다.", "Review: 품질, 위험, 가독성을 확인합니다.", "Verification: 승인 기준에 따라 결과를 확인합니다.", "Evolution: 필요하면 재사용 가능한 결론을 기록합니다."],
   }[labels.htmlLang] ?? [];
-  const verificationSentence = runtimeEvidence.status === "pass"
+  const verificationPassed = verificationPacket?.verified === true && summaryPacket?.verifyPassed === true;
+  const verificationSentence = verificationPassed
     ? { en: "Verification checks completed successfully.", "zh-CN": "验证检查已完成。", "ja-JP": "検証チェックは完了しました。", "ko-KR": "검증 확인을 완료했습니다." }[labels.htmlLang]
     : { en: "Verification still needs additional evidence.", "zh-CN": "验证仍需补充证据。", "ja-JP": "検証には追加の証拠が必要です。", "ko-KR": "검증에 추가 증거가 필요합니다." }[labels.htmlLang];
+  const preparedSentence = {
+    en: "The plan is recorded; execution and acceptance still need current evidence.",
+    "zh-CN": "计划已记录，执行和验收仍需当前证据。",
+    "ja-JP": "計画を記録しました。実行と受け入れには現在の証拠が必要です。",
+    "ko-KR": "계획을 기록했습니다. 실행과 검수에는 현재 증거가 더 필요합니다.",
+  }[labels.htmlLang];
+  const nextSentence = verificationPassed ? surface.notice.nextDetail : {
+    en: "The current assistant should complete the remaining execution and review, then report the actual evidence and any decisions needed from you.",
+    "zh-CN": "当前助手继续处理未完成的执行与复核，再交代实际证据和需要你判断的问题。",
+    "ja-JP": "担当アシスタントが未完了の実行と確認を進め、実際の証拠と必要な判断を報告します。",
+    "ko-KR": "현재 어시스턴트가 남은 실행과 검토를 진행하고 실제 증거 및 필요한 결정을 보고합니다.",
+  }[labels.htmlLang];
   return [
     `# ${labels.governedExecutionReportTitle}`,
     "",
@@ -3776,7 +3793,7 @@ function buildLocalizedGovernedRunReport({
     "",
     `## ${report.goal}`,
     "",
-    `- ${surface.notice.resultDetail(artifactStatus)}`,
+    `- ${actualWorkerExecution ? surface.notice.resultDetail(artifactStatus) : preparedSentence}`,
     `- ${surface.notice.riskDetail((businessPhasePlanPacket?.phases ?? []).filter((phase) => phase.status === "blocked").length)}`,
     "",
     `## ${report.orchestration}`,
@@ -3800,343 +3817,13 @@ function buildLocalizedGovernedRunReport({
     `## ${report.verification}`,
     "",
     `- ${verificationSentence}`,
-    `- ${report.next}: ${surface.notice.nextDetail}`,
+    `- ${report.next}: ${nextSentence}`,
     "",
   ].join("\n");
 }
 
-function buildUserReadableRunReport({
-  runId,
-  task,
-  artifactStatus,
-  orchestrationReport,
-  decisionResults,
-  runtimeEvidence,
-  writebackFlow,
-  cardPlanPacket,
-  businessPhasePlanPacket,
-  governanceStartReasonPacket,
-  userExperienceNotice,
-  stageOperationPlan,
-  visibleMetaTheorySurfacePacket,
-  capabilityInvocationTruthPacket,
-  capabilityInvocationPresentationPacket,
-  productExperiencePacket,
-  markdownPath,
-}) {
-  const labels = getReportLabelsForPath(markdownPath);
-  const sectionLabels = labels.sections;
-  const toolList = labels.toolList(labels.toolNames);
-  const cardSummary = buildUserFacingCardSummary(cardPlanPacket, labels);
-  return buildLocalizedGovernedRunReport({
-      runId,
-      task,
-      artifactStatus,
-      orchestrationReport,
-      runtimeEvidence,
-      writebackFlow,
-      governanceStartReasonPacket,
-      businessPhasePlanPacket,
-      stageOperationPlan,
-      visibleMetaTheorySurfacePacket,
-      capabilityInvocationTruthPacket,
-      capabilityInvocationPresentationPacket,
-      productExperiencePacket,
-      labels,
-    });
-  /* The detailed packet-oriented report below is retained as internal source context only.
-     User-readable Markdown returns above; strict details remain in JSON/debug artifacts. */
-  const visibleAutomationAllowed = [
-    "收集证据",
-    "草拟候选选项",
-    "运行确定性检查",
-    "提示风险与阻塞",
-    "整理用户可见状态",
-  ];
-  const visibleAutomationForbidden = [
-    "不能替用户选择会改变路线的分支",
-    "不能替用户接受风险",
-    "不能在证据不足时声称可公开交付",
-    "不能用报告或 Hook 提示冒充原生选择证据",
-    "不能把未确认调用说成已经调用",
-    "不能替代 Review 的人工判断",
-  ];
-  const lines = [
-    `# ${labels.governedExecutionReportTitle}`,
-    "",
-    `${labels.runId}: ${runId}`,
-    "",
-    `## ${sectionLabels.decisionSummary}`,
-    "",
-    `- ${labels.status}: ${artifactStatus}`,
-    `- 用户目标状态: ${artifactStatus === "pass" ? "已完成" : "部分完成"}`,
-    `- 编排检查状态: ${orchestrationReport.status}`,
-    `- ${labels.inputTask}: ${task}`,
-    `- ${labels.capabilityGaps}: ${orchestrationReport.capabilityGaps.length}`,
-    `- ${labels.workerTasks}: ${orchestrationReport.workerTaskPackets.length}`,
-    `- ${labels.synthesisOwner}: ${orchestrationReport.orchestrationTaskBoardPacket.synthesisOwner}`,
-    "",
-    "## 开始原因",
-    "",
-    `- ${governanceStartReasonPacket.summary}`,
-    `- 8 阶段: ${governanceStartReasonPacket.spineReason}`,
-    `- 11 阶段: ${governanceStartReasonPacket.workflowReason}`,
-    `- 发牌: ${governanceStartReasonPacket.cardReason}`,
-    "",
-    `## ${labels.userExperienceNotice.title}`,
-    "",
-    `- ${labels.status}: ${userExperienceNotice.status}`,
-    `- ${labels.userExperienceNotice.primarySurface}: ${userExperienceNotice.primarySurface}`,
-    `- ${labels.reason}: ${userExperienceNotice.statusReason}`,
-    `- ${labels.userExperienceNotice.expectationLabel}: ${userExperienceNotice.expectation}`,
-    `- ${labels.userExperienceNotice.boundaryLabel}: ${userExperienceNotice.accuracyBoundary}`,
-    `- ${labels.userExperienceNotice.mustNotClaimLabel}: ${userExperienceNotice.mustNotClaim}`,
-    ...(userExperienceNotice.conversationNoticeEvidence
-      ? [
-          `- ${labels.userExperienceNotice.emissionEvidenceLabel}: ${userExperienceNotice.conversationNoticeEvidence.channel} / ${userExperienceNotice.conversationNoticeEvidence.adapter} / ${userExperienceNotice.conversationNoticeEvidence.textSha256}`,
-        ]
-      : []),
-    `| ${labels.userExperienceNotice.signal} | ${labels.routeImpact} |`,
-    "|---|---|",
-    ...userExperienceNotice.userVisibleSignals.map(
-      (signal) => `| ${signal.label} | ${String(signal.detail).replaceAll("|", "\\|")} |`
-    ),
-    `| ${labels.userExperienceNotice.internalOnly} | ${labels.userExperienceNotice.internalOnlySummary} |`,
-    "",
-    "## 自动化与人工决策边界",
-    "",
-    `- 状态: ${productExperiencePacket?.automationDecisionBoundary?.status ?? "missing"}`,
-    `- 原则: ${productExperiencePacket?.automationDecisionBoundary?.principle ?? "Automation assists; humans decide."}`,
-    `- 决策权: ${productExperiencePacket?.automationDecisionBoundary?.decisionAuthority ?? "missing"}`,
-    `- 人工判断阶段: ${(productExperiencePacket?.automationDecisionBoundary?.humanJudgmentStages ?? []).join(" -> ")}`,
-    `- 自动化角色: ${productExperiencePacket?.automationDecisionBoundary?.automationRole ?? "missing"}`,
-    "",
-    "| 自动化可以做 | 自动化不能做 |",
-    "|---|---|",
-    ...Array.from({
-      length: Math.max(
-        visibleAutomationAllowed.length,
-        visibleAutomationForbidden.length,
-      ),
-    }).map((_, index) => {
-      const allowed = visibleAutomationAllowed[index] ?? "";
-      const forbidden = visibleAutomationForbidden[index] ?? "";
-      return `| ${String(allowed).replaceAll("|", "\\|")} | ${String(forbidden).replaceAll("|", "\\|")} |`;
-    }),
-    "",
-    "## Meta-Theory 可见编排面",
-    "",
-    `- 状态: ${visibleMetaTheorySurfacePacket?.status ?? "missing"}`,
-    `- 编排: board=${visibleMetaTheorySurfacePacket?.orchestration?.boardId ?? "missing"} / owner=${visibleMetaTheorySurfacePacket?.orchestration?.synthesisOwner ?? "missing"} / workers=${visibleMetaTheorySurfacePacket?.orchestration?.workerTaskCount ?? 0}`,
-    `- Dynamic Workflow: lanes=${visibleMetaTheorySurfacePacket?.dynamicWorkflow?.selectedLaneIds?.length ?? 0} / bindings=${visibleMetaTheorySurfacePacket?.dynamicWorkflow?.visibleRows?.length ?? 0}`,
-    `- 能力发现: total=${visibleMetaTheorySurfacePacket?.capabilityInventory?.total ?? 0} / nonSkillTypes=${visibleMetaTheorySurfacePacket?.capabilityInventory?.nonSkillCapabilityTypeCount ?? 0} / notSkillOnly=${labels.boolean(Boolean(visibleMetaTheorySurfacePacket?.capabilityInventory?.notSkillOnly))}`,
-    `- ${getGovernedRunSurfaceLabels(labels.htmlLang).invocationPresentation.executionLabel}: ${capabilityInvocationPresentationPacket?.userSummary ?? "运行记录待关联；以当前聊天中的实际调用结果为准，额外独立复核不会改变本次运行。"}`,
-    `- Agent Teams Playbook: status=${visibleMetaTheorySurfacePacket?.agentTeamsPlaybook?.status ?? "missing"} / selected=${labels.boolean(Boolean(visibleMetaTheorySurfacePacket?.agentTeamsPlaybook?.selected))} / waves=${visibleMetaTheorySurfacePacket?.agentTeamsPlaybook?.waveCount ?? 0}`,
-    `- Peer Agent Mesh: peers=${visibleMetaTheorySurfacePacket?.peerAgentMesh?.peerCount ?? 0} / handoffs=${visibleMetaTheorySurfacePacket?.peerAgentMesh?.handoffCount ?? 0}`,
-    `- LangGraph-style: nodes=${visibleMetaTheorySurfacePacket?.langGraph?.nodeCount ?? 0} / edges=${visibleMetaTheorySurfacePacket?.langGraph?.edgeCount ?? 0} / conditional=${visibleMetaTheorySurfacePacket?.langGraph?.conditionalEdgeCount ?? 0} / checkpoints=${visibleMetaTheorySurfacePacket?.langGraph?.checkpointCount ?? 0}`,
-    "",
-    "| 面 | 用户应该看见什么 | 证据 | 状态 |",
-    "|---|---|---|---|",
-    `| 编排 orchestration | worker 数、parallelGroup、mergeOwner、synthesis owner | visibleMetaTheorySurfacePacket.orchestration | ${visibleMetaTheorySurfacePacket?.orchestration?.status ?? "missing"} |`,
-    `| Dynamic Workflow | selected lanes、omitted lanes、capability bindings、worker results | visibleMetaTheorySurfacePacket.dynamicWorkflow | ${visibleMetaTheorySurfacePacket?.dynamicWorkflow?.status ?? "missing"} |`,
-    `| 能力发现 capability inventory | agent/skill/command/MCP/tool/hook/runtime/memory/graph/research，不只 Skill | visibleMetaTheorySurfacePacket.capabilityInventory | ${visibleMetaTheorySurfacePacket?.capabilityInventory?.notSkillOnly ? "pass" : "partial"} |`,
-    `| 能力调用展示 | ${capabilityInvocationPresentationPacket?.userSummary ?? "运行记录待关联；以当前聊天中的实际调用结果为准，额外独立复核不会改变本次运行。"} | 当前运行展示摘要 | ${capabilityInvocationPresentationPacket?.executionLabel ?? "运行记录待关联（以当前聊天中的实际调用结果为准）"} |`,
-    `| Agent Teams Playbook | 2+ 并行 lane 时发现并选中 fan-out 编排适配器，同时保留 live spawn_agent 边界 | visibleMetaTheorySurfacePacket.agentTeamsPlaybook | ${visibleMetaTheorySurfacePacket?.agentTeamsPlaybook?.status ?? "missing"} |`,
-    `| Peer Agent Mesh | peer workers、handoff、merge owner、result status | visibleMetaTheorySurfacePacket.peerAgentMesh | ${visibleMetaTheorySurfacePacket?.peerAgentMesh?.status ?? "missing"} |`,
-    `| LangGraph-style 控制图 | nodes、edges、conditional edges、state、checkpoint、replay | visibleMetaTheorySurfacePacket.langGraph | ${visibleMetaTheorySurfacePacket?.langGraph?.status ?? "missing"} |`,
-    "",
-    "### 能力发现矩阵",
-    "",
-    "| capability | status | source | route impact |",
-    "|---|---|---|---|",
-    ...((visibleMetaTheorySurfacePacket?.capabilityInventory?.visibleRows ?? []).map(
-      (row) =>
-        `| ${row.capabilityType} | ${row.status} | ${String(row.source).replaceAll("|", "\\|")} | ${String(row.routeImpact).replaceAll("|", "\\|")} |`
-    )),
-    "",
-    "### Dynamic Workflow 绑定",
-    "",
-    "| lane | owner | skill | MCP | command | tool | hook | workerResult |",
-    "|---|---|---|---|---|---|---|---|",
-    ...((visibleMetaTheorySurfacePacket?.dynamicWorkflow?.visibleRows ?? []).map(
-      (row) =>
-        `| ${row.laneLabel ?? row.laneId ?? "lane"} | ${row.owner} | ${row.skills} | ${row.mcp} | ${row.commands} | ${row.runtimeTools} | ${row.hooks} | ${labels.boolean(row.workerResult)} |`
-    )),
-    "",
-    "### Peer Agent Mesh",
-    "",
-    "| peer | role | task | mergeOwner | result |",
-    "|---|---|---|---|---|",
-    ...((visibleMetaTheorySurfacePacket?.peerAgentMesh?.visibleRows ?? []).map(
-      (row) =>
-        `| ${row.peerId} | ${row.roleDisplayName} | ${row.taskPacketId} | ${row.mergeOwner} | ${row.resultStatus} |`
-    )),
-    "",
-    "## 三目标产品验收",
-    "",
-    `- 状态: ${productExperiencePacket?.status ?? "missing"}`,
-    `- 证据层: ${productExperiencePacket?.evidenceTier ?? "missing"}`,
-    `- 边界: ${productExperiencePacket?.nativeRuntimeBoundary ?? "未记录"}`,
-    `| 目标 | 状态 | 证据层 | 失败条件 |`,
-    "|---|---|---|---|",
-    ...((productExperiencePacket?.goals ?? []).map(
-      (goal) =>
-        `| ${goal.id} ${goal.name} | ${goal.status} | ${goal.evidenceKind} | ${String(goal.failIf).replaceAll("|", "\\|")} |`
-    )),
-    "",
-    `| 支撑门 | 状态 | 证据层 | 失败条件 |`,
-    "|---|---|---|---|",
-    ...((productExperiencePacket?.supportGates ?? []).map(
-      (gate) =>
-        `| ${gate.id} ${gate.name} | ${gate.status} | ${gate.evidenceKind} | ${String(gate.failIf).replaceAll("|", "\\|")} |`
-    )),
-    "",
-    `## ${labels.stageOperationPlan.title}`,
-    "",
-    `| ${labels.stageOperationPlan.stage} | ${labels.owner} | ${labels.stageOperationPlan.whatHappens} | ${labels.stageOperationPlan.uses} | ${labels.stageOperationPlan.outputShape} | ${labels.stageOperationPlan.resultReport} | ${labels.stageOperationPlan.nextWork} |`,
-    "|---|---|---|---|---|---|---|",
-    ...stageOperationPlan.stages.map(
-      (stage) =>
-        `| ${stage.stage} | ${stage.owner} | ${String(stage.whatHappens).replaceAll("|", "\\|")} | ${String(stage.uses).replaceAll("|", "\\|")} | ${String(stage.outputShape).replaceAll("|", "\\|")} | ${String(stage.resultReport).replaceAll("|", "\\|")} | ${stage.nextWork} |`
-    ),
-    "",
-    `## ${labels.stageOperationPlan.executionTitle}`,
-    "",
-    `| ${labels.stageOperationPlan.order} | ${labels.workerTask} | ${labels.agent} | ${labels.skill} | ${labels.mcp} | ${labels.commands} | ${labels.stageOperationPlan.does} | ${labels.stageOperationPlan.resultReport} | ${labels.stageOperationPlan.nextWork} |`,
-    "|---|---|---|---|---|---|---|---|---|",
-    ...(stageOperationPlan.stages.find((stage) => stage.stage === "Execution")?.workerTasks ?? []).map(
-      (taskItem) =>
-        `| ${taskItem.order} | ${taskItem.roleDisplayName} | ${taskItem.owner} | ${taskItem.skill} | ${taskItem.mcp} | ${taskItem.command} | ${String(taskItem.does).replaceAll("|", "\\|")} | ${String(taskItem.resultReport).replaceAll("|", "\\|")} | ${taskItem.nextWork} |`
-    ),
-    "",
-    `## ${labels.stageSummaryTitle}`,
-    "",
-    `- ${renderReportLabel(labels.stageSummaries.critical, toolList)}`,
-    `- ${labels.stageSummaries.fetch(orchestrationReport.fetchEvidence.capabilityInventory.length)}`,
-    `- ${labels.stageSummaries.thinking(
-      orchestrationReport.thinkingRoute.boardMode,
-      orchestrationReport.orchestrationTaskBoardPacket.synthesisOwner
-    )}`,
-    `- ${renderReportLabel(labels.stageSummaries.review, toolList)}`,
-    "",
-    `## ${labels.cardPlanTitle}`,
-    "",
-    `### ${labels.cardVisibleSummary.sectionTitle}`,
-    "",
-    `#### ${cardSummary.progressSectionTitle}`,
-    "",
-    ...cardSummary.progressNotices.flatMap((notice) => [
-      `- ${notice.stageLine}`,
-      `  - ${notice.dealLine}`,
-    ]),
-    "",
-    `- ${cardSummary.dealtLine}`,
-    `- ${cardSummary.inactiveLine}`,
-    `- ${cardSummary.userLine}`,
-    `- ${cardSummary.repeatPolicy}`,
-    `- ${cardSummary.nextLine}`,
-    `- ${cardSummary.nativeChoiceBoundary}`,
-    "",
-    `- ${labels.cardPlanSummary(
-      cardPlanPacket.visibleSummary.eventCount,
-      cardPlanPacket.visibleSummary.cardTypeCount ?? 0,
-      cardPlanPacket.visibleSummary.forcedPauseRule
-    )}`,
-    `- Deal standard: minimum score ${cardPlanPacket.dealStandard.minimumScore}, threshold ${cardPlanPacket.dealStandard.passThreshold}, coverage=${cardPlanPacket.dealStandard.coveragePass ? "pass" : "fail"}`,
-    `- ${labels.cardDealer}: ${cardPlanPacket.dealerOwner}`,
-    `| ${labels.card} | ${labels.status} | Decision | Score | ${labels.owner} | ${labels.cardShell} | ${labels.cardWhy} |`,
-    "|---|---|---|---|---|---|---|",
-    ...cardPlanPacket.cardTypeDecisions.map(
-      (card) =>
-        `| ${card.label} | ${card.cardDecision} | ${card.decisionEvaluation.decisionState} | ${card.decisionEvaluation.accuracyScore} (threshold ${card.decisionEvaluation.passThreshold}) | ${card.owner} | ${card.deliveryShellId} | ${String(card.cardReason).replaceAll("|", "\\|")} |`
-    ),
-    "",
-    `## ${labels.businessPhasePlanTitle}`,
-    "",
-    `- ${labels.businessPhaseSummary(businessPhasePlanPacket.phaseCount)}`,
-    `- Trigger standard: minimum score ${businessPhasePlanPacket.triggerStandard.minimumScore}, threshold ${businessPhasePlanPacket.triggerStandard.passThreshold}, coverage=${businessPhasePlanPacket.triggerStandard.coveragePass ? "pass" : "fail"}`,
-    `- ${labels.spineRelationship}: ${businessPhasePlanPacket.spineRelationship}`,
-    `| ${labels.phase} | ${labels.status} | Trigger | Score | ${labels.owner} | ${labels.mapsToSpine} | ${labels.evidence} | Reason | Next |`,
-    "|---|---|---|---|---|---|---|---|---|",
-    ...businessPhasePlanPacket.phases.map(
-      (phase) =>
-        `| ${phase.phaseIndex}. ${phase.label} | ${phase.status} | ${phase.triggerEvaluation.activationState} | ${phase.triggerEvaluation.triggerScore} (threshold ${phase.triggerEvaluation.passThreshold}) | ${phase.owner} | ${phase.mapsToSpine.join("+")} | ${String(phase.evidence).replaceAll("|", "\\|")} | ${String(phase.statusReason).replaceAll("|", "\\|")} | ${String(phase.nextAction).replaceAll("|", "\\|")} |`
-    ),
-    "",
-    `## ${labels.capabilityRouteTitle}`,
-    "",
-    `| ${labels.capabilityType} | ${labels.status} | ${labels.source} | ${labels.routeImpact} |`,
-    "|---|---|---|---|",
-    ...orchestrationReport.fetchEvidence.capabilityInventory.map(
-      (item) =>
-        `| ${item.capabilityType} | ${item.coverageStatus} | ${item.source.replaceAll("|", "\\|")} | ${item.routeImpact.replaceAll("|", "\\|")} |`
-    ),
-    "",
-    `## ${labels.durableAgentPolicyTitle}`,
-    "",
-    ...renderReportList(
-      labels.durableAgentPolicyBullets,
-      labels.toolProfiles ?? []
-    ).map((item) => `- ${item}`),
-    "",
-    `## ${sectionLabels.whyDecision}`,
-    "",
-    `| ${labels.gap} | ${labels.decision} | ${labels.reason} | ${labels.owner} | ${labels.blocked} |`,
-    "|---|---|---|---|---|",
-    ...orchestrationReport.capabilityGaps.map(
-      (gap) =>
-        `| ${gap.gapId} | ${gap.decision} | ${String(gap.decisionReason).replaceAll("|", "\\|")} | ${gap.owner} | ${labels.boolean(gap.blocked)} |`
-    ),
-    "",
-    `## ${sectionLabels.ownerHandoff}`,
-    "",
-    `| ${labels.workerTask} | ${labels.role} | ${labels.owner} | ${labels.parallelGroup} | ${labels.mergeOwner} |`,
-    "|---|---|---|---|---|",
-    ...orchestrationReport.workerTaskPackets.map(
-      (packet) =>
-        `| ${packet.taskPacketId} | ${packet.roleDisplayName} | ${packet.owner} | ${packet.parallelGroup} | ${packet.mergeOwner} |`
-    ),
-    "",
-    `## ${sectionLabels.toolEvidenceFull(toolList)}`,
-    "",
-    `| ${labels.tool} | ${labels.status} | ${labels.failureClass} | ${labels.entry} | ${labels.remainingAction} |`,
-    "|---|---|---|---|---|",
-    ...runtimeEvidence.results.map(
-      (item) =>
-        `| ${item.runtime} | ${item.status} | ${item.failureClass} | ${item.runtimeEntry} | ${item.remainingAction.replaceAll("|", "\\|")} |`
-    ),
-    "",
-    `## ${sectionLabels.capabilityUpgrade}`,
-    "",
-    `| ${labels.candidate} | ${labels.type} | ${labels.decision} | ${labels.target} | ${labels.dryRunWrites} | ${labels.verification} |`,
-    "|---|---|---|---|---|---|",
-    ...(writebackFlow.candidates.length > 0
-      ? writebackFlow.candidates.map(
-          (item) =>
-            `| ${item.candidateId} | ${item.candidateType} | ${item.writebackDecision} | ${
-              item.targetRelativeToCanonical
-                ? `canonical/${item.targetRelativeToCanonical}`
-                : item.target ?? "none"
-            } | ${item.dryRunArtifact.canonicalWrites} | ${item.verificationResult.status} |`
-        )
-      : [`| ${labels.none} | ${labels.none} | none-with-reason | ${labels.none} | 0 | ${labels.notRun} |`]),
-    "",
-    `## ${sectionLabels.wardenApproval}`,
-    "",
-    `- ${labels.approvalRequired}: ${writebackFlow.approvalRequired}`,
-    `- ${labels.approvalValidation}: ${writebackFlow.approvalValidation.ok ? "pass" : "missing"}`,
-    `- ${labels.dryRunCanonicalWrites}: ${writebackFlow.dryRun.canonicalWrites}`,
-    "",
-    `## ${sectionLabels.verificationStatus}`,
-    "",
-    `- ${labels.orchestrationReview}: ${orchestrationReport.reviewResult.status}`,
-    `- ${sectionLabels.toolEvidenceFull(toolList)}：${runtimeEvidence.status}`,
-    `- ${labels.releaseGradeComplete}：${runtimeEvidence.releaseGrade}`,
-    `- ${labels.writeback}: ${writebackFlow.status}`,
-    `- ${labels.decisionRuns}: ${decisionResults.length}`,
-    "",
-  ];
-  return `${lines.join("\n")}`;
+function buildUserReadableRunReport(options) {
+  return buildLocalizedGovernedRunReport({ ...options, labels: getReportLabelsForPath(options.markdownPath) });
 }
 
 function buildRunReportPanelContract({
@@ -7555,7 +7242,13 @@ function exactRequestedCandidate(candidates, request) {
     )
     .find((candidate) => {
     const id = String(candidate?.id ?? candidate?.name ?? "").toLowerCase().trim();
-    return id.length >= 3 && (sourceText.includes(id) || requested === safeSlug(id));
+    if (id.length < 3) return false;
+    // Component identities must match as a whole. A request to create
+    // "reviewed-release-auditor" must not silently reuse the global "review"
+    // Agent, nor may "new-review" be mistaken for an explicit source reference.
+    const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const explicitId = new RegExp(`(?:^|[^a-z0-9_-])${escapedId}(?=$|[^a-z0-9_-])`, "u");
+    return requested === safeSlug(id) || explicitId.test(sourceText);
     }) ?? null;
 }
 
@@ -10086,21 +9779,20 @@ export function buildRouteBranchingOptions(orchestrationReport) {
       continue;
     }
     seenLabels.add(label);
-    const summary = [
-      routeOption.bestFor,
-      routeOption.benefit,
-      routeOption.cost,
-      routeOption.risk,
+    const summary = [...new Set([
+      routeOption.problemSolved,
+      ...(routeOption.advantages ?? []),
+      ...(routeOption.disadvantages ?? []),
+      routeOption.decisionImpact,
       routeOption.expectedResult,
-      routeOption.verification,
     ]
       .map((value) => String(value ?? "").trim())
-      .filter(Boolean)
+      .filter(Boolean))]
       .join("；") || null;
     options.push({
       label,
       summary,
-      recommended: String(routeOption.id ?? "").trim() === recommendedDefault,
+      recommended: String(routeOption.optionId ?? "").trim() === recommendedDefault,
     });
   }
   return options;
@@ -12782,6 +12474,16 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   // the immutable execution identity; the confirmed intent/design still is.
   const taskFingerprint = productDesign || designRequirementSnapshot
     ? stableId("task", JSON.stringify([allocatedTaskFingerprint, productDesign?.designDigest ?? null, designRequirementSnapshot])) : allocatedTaskFingerprint;
+  // A Fetch preparation has no workers to allocate yet. Adding the current
+  // host's normalized criterion assignment during Thinking changes execution
+  // identity, but may still consume that same unallocated preparation. Keep
+  // calculation, design and requirement inputs in both fingerprints; only the
+  // newly supplied allocation may differ. Materialized runs use the full
+  // fingerprint exclusively and cannot reuse this preparation-only transition.
+  const unallocatedPreparationFingerprint = taskCriterionAssignmentsSnapshot == null ? null
+    : productDesign || designRequirementSnapshot
+      ? stableId("task", JSON.stringify([baseTaskFingerprint, productDesign?.designDigest ?? null, designRequirementSnapshot]))
+      : baseTaskFingerprint;
   const machineHostBound = stageRunner?.enabled !== false && typeof stageRunner?.adapterRegistry?.invoke === "function" && typeof stageRunner?.authorize === "function";
   if (machineHostBound) stageRunner = { ...stageRunner, enabled: true };
   const durableStageRunnerEnabled = stageRunner?.enabled === true;
@@ -12813,6 +12515,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
         artifactPath: resolveOutputFile(outputDir, `${requestedPreviousRunId}.json`),
         previousRunId: requestedPreviousRunId,
         taskFingerprint,
+        unallocatedPreparationFingerprint,
         taskHash: intentDialogue.taskHash,
         intentDigest: consumedPlanChoice?.status === "consumed" && requestedPreviousRunId === consumedQuestionArtifact.runId
           ? consumedPlanChoice.binding.intentDigest : intentDialogue.intentDigest ?? null,
@@ -13764,27 +13467,6 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     conversationNotice,
     cardPlanPacket,
   });
-  const userReportMarkdown = buildUserReadableRunReport({
-    runId: effectiveRunId,
-    task: normalizedTask,
-    artifactStatus,
-    orchestrationReport,
-    decisionResults,
-    runtimeEvidence,
-    writebackFlow,
-    cardPlanPacket,
-    businessPhasePlanPacket,
-    governanceStartReasonPacket,
-    userExperienceNotice,
-    stageOperationPlan,
-    visibleMetaTheorySurfacePacket: coreLoop.visibleMetaTheorySurfacePacket,
-    capabilityInvocationTruthPacket: coreLoop.capabilityInvocationTruthPacket,
-    capabilityInvocationPresentationPacket: coreLoop.capabilityInvocationPresentationPacket,
-    capabilityLedgerPacket: coreLoop.capabilityLedgerPacket,
-    projectCustomizationPacket: coreLoop.projectCustomizationPacket,
-    productExperiencePacket: coreLoop.productExperiencePacket,
-    markdownPath,
-  });
   const runReportPanelContract = buildRunReportPanelContract({
     contractDefinition: panelContractDefinition,
     aiReadableStandards,
@@ -13831,6 +13513,30 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     requestedSideEffectActions: governedSideEffectActions,
     planChallengePreview,
     governanceRequirementPlan: governanceRequirementPlanPacket,
+  });
+  const userReportMarkdown = buildUserReadableRunReport({
+    runId: effectiveRunId,
+    task: normalizedTask,
+    artifactStatus,
+    orchestrationReport,
+    decisionResults,
+    runtimeEvidence,
+    writebackFlow,
+    cardPlanPacket,
+    businessPhasePlanPacket,
+    governanceStartReasonPacket,
+    userExperienceNotice,
+    stageOperationPlan,
+    visibleMetaTheorySurfacePacket: coreLoop.visibleMetaTheorySurfacePacket,
+    capabilityInvocationTruthPacket: coreLoop.capabilityInvocationTruthPacket,
+    capabilityInvocationPresentationPacket: coreLoop.capabilityInvocationPresentationPacket,
+    capabilityLedgerPacket: coreLoop.capabilityLedgerPacket,
+    projectCustomizationPacket: coreLoop.projectCustomizationPacket,
+    productExperiencePacket: coreLoop.productExperiencePacket,
+    verificationPacket: workflowContractPackets.verificationPacket,
+    summaryPacket: workflowContractPackets.summaryPacket,
+    actualWorkerExecution: coreLoop.executionResult.actualWorkerExecution === true,
+    markdownPath,
   });
   coreLoop = {
     ...coreLoop,
@@ -14521,9 +14227,14 @@ async function main() {
       : null,
   });
   if (report.preparation) {
+    if (emitConversationProgress) process.stderr.write(renderPreparationNotice(report) + "\n");
     process.stdout.write(JSON.stringify({ status: report.preparation.status, runId: report.runId, executionAllowed: false,
       nextAction: report.hostInvocationRequestPacket.nextAction, pendingDecisions: report.hostInvocationRequestPacket.pendingDecisions,
-      inventoryDigest: report.fetchPacket.capabilityDiscovery?.inventoryDigest ?? null, input: report.paths.json, report: report.paths.markdown }) + "\n");
+      inventoryDigest: report.fetchPacket.capabilityDiscovery?.inventoryDigest ?? null, input: report.paths.json,
+      report: temporaryOutputRoot ? relative(report.paths.markdown) : report.paths.markdown,
+      temporaryOutput: temporaryOutputRoot ? { root: temporaryOutputRoot, stateDir, artifactDir,
+        dbPath: path.join(temporaryOutputRoot, "runs.sqlite") } : null }) + "\n");
+    if (process.argv.includes("--strict-exit-code")) process.exitCode = 1;
     return;
   }
   process.stdout.write(

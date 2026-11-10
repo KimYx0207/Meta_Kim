@@ -1,4 +1,4 @@
-import { describe, test } from "node:test";
+import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -11,11 +11,51 @@ import {
   buildPlanChallengeState,
   parsePlanChallengeControl,
   planChallengeAuthorizationBinding,
-  runMetaTheoryGovernedExecution,
   selectHighestImpactOpenQuestion,
 } from "../../scripts/run-meta-theory-governed-execution.mjs";
 import { validateArtifactFile } from "../../scripts/validate-run-artifact.mjs";
-import { selectReadyDecisionFrontier } from "../../scripts/governed-execution/plan-challenge-policy.mjs";
+import { validateWardenWritebackApproval } from "../../src/domain/evolution/warden-writeback-approval.mjs";
+import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
+import { fixtureCritical, fixtureReadWorkOrder, runWithFixtureHostThinking } from "../helpers/host-reasoning-fixture.mjs";
+import { localProtocolFixtureTaskFacts } from "../helpers/task-design-facts.mjs";
+
+let runtimeFixture, runMetaTheoryGovernedExecution, buildWardenWritebackFlow;
+before(async () => {
+  runtimeFixture = createGovernanceRuntimeFixtureScope(null, { graph: true });
+  ({ runMetaTheoryGovernedExecution, buildWardenWritebackFlow } = await runtimeFixture.import("scripts/run-meta-theory-governed-execution.mjs"));
+});
+after(() => runtimeFixture?.cleanup());
+
+// Current host judgment declares a real scope decision. Task wording alone
+// does not supply Critical, invent options, or authorize any side effect.
+function pendingChallengeInputs(task) {
+  const questionId = "release-review-scope";
+  const criticalInput = fixtureCritical({ task, successCriteria: ["Review the selected release scope and report source-bound findings."],
+    blockingUnknowns: [questionId], nonGoals: ["Do not publish, create capabilities or change files before the current scope decision."] });
+  return { criticalInput, requirementsDiscoveryInput: { schemaVersion: 1, taskHash: criticalInput.taskHash, intentDigest: null, evidenceRefs: ["package.json"],
+    decisionItems: [{ questionId, question: "本次交付只包含回滚审查，还是也要准备容量验证方案？", questionTarget: "wrong_goal_risk",
+      decisionImpact: "Capacity validation changes the deliverable and requires traffic assumptions and a safe test environment.",
+      impactPriority: 80, dependsOn: [], evidenceRefs: ["package.json"], resolutionClass: "material_user_decision",
+      recommendedAnswer: "只做回滚审查", recommendationRationale: "This keeps the first review bounded while making the capacity evidence gap explicit.",
+      options: [{ label: "只做回滚审查", tradeoff: "Review the existing rollback approach; capacity evidence remains missing." },
+        { label: "同时准备容量验证", tradeoff: "Expand the review and obtain workload assumptions before proposing validation." }] }] } };
+}
+
+function runPendingChallenge(options) {
+  return runMetaTheoryGovernedExecution({ ...options, ...pendingChallengeInputs(options.task) });
+}
+
+function assertPendingPreparation(report) {
+  assert.equal(report.artifactKind, "host_preparation");
+  assert.equal(report.preparation.status, "needs_input");
+  assert.equal(report.preDecisionOptionFrame.planChallengeState.phase, "awaiting_user_answer");
+  assert.equal(report.preDecisionOptionFrame.planChallengeState.executionAllowed, false);
+  assert.deepEqual(report.workerTaskPackets, []);
+  assert.equal(report.coreLoop.stageDagPacket, undefined);
+  assert.equal(report.projectCustomizationPacket, undefined);
+  assert.equal(report.wardenWritebackFlow, undefined);
+  assert.equal(report.coreLoop.executionResult.actualWorkerExecution, false);
+}
 
 const CORE_LOOP_CONTRACT = JSON.parse(
   readFileSync(new URL("../../config/contracts/core-loop-contract.json", import.meta.url), "utf8"),
@@ -34,7 +74,7 @@ function selectRoute(task, extraArgs = []) {
     "--json",
     ...extraArgs,
   ], {
-    cwd: REPO_ROOT,
+    cwd: runtimeFixture?.repoRoot ?? REPO_ROOT,
     encoding: "utf8",
     maxBuffer: 20 * 1024 * 1024,
   });
@@ -895,7 +935,7 @@ describe("57 - risk-adaptive plan challenge", () => {
     ].join("\n");
 
     try {
-      const candidateOnly = await runMetaTheoryGovernedExecution({
+      const candidateOnly = await runPendingChallenge({
         task,
         runId: "plan-challenge-write-gate-candidate",
         stateDir: path.join(tempDir, "candidate-state"),
@@ -904,30 +944,29 @@ describe("57 - risk-adaptive plan challenge", () => {
         canonicalRoot,
         projectCapabilityMutationMode: "auto",
       });
-      assert.ok(
-        candidateOnly.wardenWritebackFlow.candidates.length > 0,
-        "the fixture must produce a real canonical candidate before testing the gate",
-      );
-      assert.equal(candidateOnly.projectCustomizationPacket.execution.appliedCount, 0);
-      assert.equal(
-        existsSync(path.join(projectRoot, ".codex", "commands", "governed-challenge-report.md")),
-        false,
-      );
-
-      const targetRelative =
-        candidateOnly.wardenWritebackFlow.candidates[0].targetRelativeToCanonical;
+      assertPendingPreparation(candidateOnly);
+      assert.equal(existsSync(path.join(projectRoot, ".codex", "commands", "governed-challenge-report.md")), false);
+      const candidateFlow = await buildWardenWritebackFlow({ canonicalRoot, decisionResults: [{
+        capabilityGap: { gapId: "fixture-review-standard", requestedCapability: "fixture review standard" },
+        gapDecision: { decision: "create_skill", verificationOwner: "meta-prism" },
+        candidateWriteback: { candidateId: "fixture-review-candidate", candidateType: "skill" },
+        decisionOutput: { owner: "meta-artisan", scope: "isolated mechanism fixture", verification: { owner: "meta-prism" } },
+      }] });
+      assert.equal(candidateFlow.candidates.length, 1);
+      const targetRelative = candidateFlow.candidates[0].targetRelativeToCanonical;
       const approvalPacket = {
         schemaVersion: "warden-approval-v0.2",
         approvalId: "plan-challenge-write-gate-approval",
         approver: "meta-warden",
         approvedAt: "2026-07-14T00:00:00.000Z",
         scope: "canonical_reverse_sync",
-        mutationBindings: [candidateOnly.wardenWritebackFlow.candidates[0].mutationBinding],
+        mutationBindings: [candidateFlow.candidates[0].mutationBinding],
         diffSummary: "Approve the temp candidate only after the challenge closes.",
         rollbackPlan: "Remove the temp canonical file.",
         riskReview: { status: "accepted", owner: "meta-sentinel" },
       };
-      const blocked = await runMetaTheoryGovernedExecution({
+      assert.equal(validateWardenWritebackApproval({ approvalPacket, candidates: candidateFlow.candidates.map(candidate => candidate.mutationBinding) }).ok, true);
+      const blocked = await runPendingChallenge({
         task,
         runId: "plan-challenge-write-gate-approved",
         stateDir: path.join(tempDir, "approved-state"),
@@ -939,10 +978,8 @@ describe("57 - risk-adaptive plan challenge", () => {
         projectCapabilityMutationMode: "auto",
       });
 
-      assert.equal(blocked.wardenWritebackFlow.approvalValidation.ok, true);
-      assert.equal(blocked.wardenWritebackFlow.dryRun.canonicalWrites, 0);
+      assertPendingPreparation(blocked);
       assert.equal(existsSync(path.join(canonicalRoot, targetRelative)), false);
-      assert.equal(blocked.projectCustomizationPacket.execution.appliedCount, 0);
       assert.equal(
         existsSync(path.join(projectRoot, ".codex", "commands", "governed-challenge-report.md")),
         false,
@@ -978,7 +1015,7 @@ describe("57 - risk-adaptive plan challenge", () => {
       modeled = build(task, { requestedSideEffectActions, responses });
     }
     try {
-      const report = await runMetaTheoryGovernedExecution({
+      const report = await runPendingChallenge({
         task,
         runId: "plan-challenge-untrusted-runner",
         stateDir: path.join(tempDir, "state"),
@@ -994,8 +1031,8 @@ describe("57 - risk-adaptive plan challenge", () => {
       });
       assert.equal(report.preDecisionOptionFrame.planChallengeState.phase, "awaiting_user_answer");
       assert.equal(report.preDecisionOptionFrame.planChallengeState.executionAllowed, false);
-      assert.equal(report.projectCustomizationPacket.execution.appliedCount, 0);
-      assert.notEqual(report.wardenWritebackFlow.status, "approved-for-writeback");
+      assertPendingPreparation(report);
+      assert.equal(existsSync(path.join(projectRoot, ".codex", "commands", "governed-untrusted-check.md")), false);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -1009,7 +1046,7 @@ describe("57 - risk-adaptive plan challenge", () => {
     await writeFile(path.join(projectRoot, "package.json"), '{"name":"challenge-continuation"}\n');
     const task = "请先压力测试这个生产发布方案，确认后发布到生产环境。";
     try {
-      const first = await runMetaTheoryGovernedExecution({
+      const first = await runPendingChallenge({
         task,
         runId: "plan-challenge-continuation-0",
         stateDir,
@@ -1019,7 +1056,7 @@ describe("57 - risk-adaptive plan challenge", () => {
       assert.equal(first.preDecisionOptionFrame.planChallengeState.phase, "awaiting_user_answer");
       await validateArtifactFile(first.paths.json);
       let verifierCalls = 0;
-      const second = await runMetaTheoryGovernedExecution({
+      const second = await runPendingChallenge({
         task,
         runId: "plan-challenge-continuation-1",
         previousPlanChallengeRunId: first.runId,
@@ -1051,7 +1088,7 @@ describe("57 - risk-adaptive plan challenge", () => {
     await writeFile(path.join(projectRoot, "package.json"), '{"name":"wrong-chain"}\n');
     const task = "请先压力测试这个生产发布方案。";
     try {
-      const first = await runMetaTheoryGovernedExecution({
+      const first = await runPendingChallenge({
         task,
         runId: "plan-challenge-wrong-chain-0",
         stateDir,
@@ -1059,7 +1096,7 @@ describe("57 - risk-adaptive plan challenge", () => {
         projectRoot,
       });
       await assert.rejects(
-        runMetaTheoryGovernedExecution({
+        runPendingChallenge({
           task: "请先压力测试另一个生产发布方案。",
           runId: "plan-challenge-wrong-chain-task",
           previousPlanChallengeRunId: first.runId,
@@ -1074,9 +1111,9 @@ describe("57 - risk-adaptive plan challenge", () => {
             evidenceRefs: ["host-event:wrong-task"],
           }),
         }),
-        /different task/iu,
+        /different task|Pending preparation identity or paired material mismatch/iu,
       );
-      const ignoredBinding = await runMetaTheoryGovernedExecution({
+      const ignoredBinding = await runPendingChallenge({
           task,
           runId: "plan-challenge-wrong-chain-binding",
           previousPlanChallengeRunId: first.runId,
@@ -1109,14 +1146,14 @@ describe("57 - risk-adaptive plan challenge", () => {
     await writeFile(path.join(projectRoot, "package.json"), '{"name":"control-chain"}\n');
     const task = "请先压力测试这个生产发布方案。";
     try {
-      const first = await runMetaTheoryGovernedExecution({
+      const first = await runPendingChallenge({
         task,
         runId: "plan-challenge-control-chain-0",
         stateDir,
         dbPath: path.join(tempDir, "runs.sqlite"),
         projectRoot,
       });
-      const second = await runMetaTheoryGovernedExecution({
+      const second = await runPendingChallenge({
         task,
         runId: "plan-challenge-control-chain-1",
         previousPlanChallengeRunId: first.runId,
@@ -1139,7 +1176,7 @@ describe("57 - risk-adaptive plan challenge", () => {
         false,
       );
 
-      const third = await runMetaTheoryGovernedExecution({
+      const third = await runPendingChallenge({
         task,
         runId: "plan-challenge-control-chain-2",
         previousPlanChallengeRunId: second.runId,
@@ -1189,102 +1226,82 @@ describe("57 - risk-adaptive plan challenge", () => {
     assert.equal(result.planChallengeState.chatSummaryRef, "summaryPacket");
   });
 
-  test("pending artifacts validate honestly while forged execution state fails closed", async () => {
+  test("pending preparations and complete reports validate honestly while forged execution and route states fail closed", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-plan-challenge-validator-"));
     try {
-      const report = await runMetaTheoryGovernedExecution({
+      const report = await runPendingChallenge({
         task: "帮我压力测试这个方案，然后将版本发布到生产环境。",
-        runId: "plan-challenge-validator-pending",
-        stateDir: tempDir,
-        artifactDir: tempDir,
-        dbPath: path.join(tempDir, "runs.sqlite"),
-        projectCapabilityMutationMode: "read_only",
+        runId: "plan-challenge-validator-pending", stateDir: tempDir, artifactDir: tempDir,
+        dbPath: path.join(tempDir, "runs.sqlite"), projectCapabilityMutationMode: "read_only",
       });
       const valid = await validateArtifactFile(report.paths.json);
       assert.equal(valid.runId, report.runId);
-      assert.equal(report.preDecisionOptionFrame.solutionChoiceState, "pending_user_choice");
-      assert.equal(report.coreLoop.executionResult.executionGate, "blocked_by_plan_challenge");
+      assertPendingPreparation(report);
+      assert.equal(report.machineExecution.status, "blocked");
+      assert.equal(report.preDecisionOptionFrame.planChallengeState.pendingUserChoice.status, "required_not_invoked");
+      assert.equal(report.selectedExecutionRoute, null, "A scope question needs no invented execution route");
 
-      // Isolated hosts may discover no viable owner while understanding or
-      // permission is still pending. Keep that gap honest instead of padding
-      // the frame with an unevidenced route.
-      const emptyCandidates = JSON.parse(readFileSync(report.paths.json, "utf8"));
-      assert.equal(emptyCandidates.preDecisionOptionFrame.planChallengeState.active, true);
-      assert.equal(emptyCandidates.coreLoop.executionResult.executionAllowed, false);
-      assert.notEqual(emptyCandidates.status, "pass");
-      // This fixture isolates the non-route permission question. Local
-      // inventory can otherwise add a separate route question to the report.
-      emptyCandidates.preDecisionOptionFrame.unresolvedQuestions =
-        emptyCandidates.preDecisionOptionFrame.unresolvedQuestions.filter((question) =>
-          question.questionId !== "plan-challenge-route-selection");
-      emptyCandidates.preDecisionOptionFrame.candidateOptions = [];
-      const emptyCandidatesPath = path.join(tempDir, "pending-no-routes.json");
-      await writeFile(emptyCandidatesPath, `${JSON.stringify(emptyCandidates, null, 2)}\n`, "utf8");
-      await validateArtifactFile(emptyCandidatesPath);
+      // Candidate quality belongs to a complete report, which is produced only
+      // after the explicit host consumes actual Fetch data and supplies Thinking.
+      const task = "Read package.json and report its name. Do not modify files.";
+      const criticalInput = fixtureCritical({ task, successCriteria: [{ id: "package-name", condition: "Report the exact package name", evidenceRequired: "Current package.json bytes and an independently reviewed worker result" }] });
+      const full = await runWithFixtureHostThinking(runMetaTheoryGovernedExecution, {
+        task, runId: "plan-challenge-validator-complete-plan", stateDir: tempDir, artifactDir: tempDir,
+        dbPath: path.join(tempDir, "runs.sqlite"), projectCapabilityMutationMode: "read_only",
+      }, { criticalInput, governanceTaskFacts: localProtocolFixtureTaskFacts(task),
+        workOrders: preparation => [fixtureReadWorkOrder(preparation, { id: "validator-package-read", todayTask: task,
+          output: "Source-bound package name", criterionIds: ["package-name"], taskFacts: localProtocolFixtureTaskFacts(task) })] });
+      await validateArtifactFile(full.paths.json);
+      assert.notEqual(full.artifactKind, "host_preparation");
+      assert.deepEqual(full.preDecisionOptionFrame.candidateOptions, [], "A bounded source read needs no artificial alternatives");
+      assert.notEqual(full.status, "pass", "Planning does not prove worker execution or accepted output");
 
-      const invalidCandidate = structuredClone(emptyCandidates);
+      const invalidCandidate = structuredClone(full);
       invalidCandidate.preDecisionOptionFrame.candidateOptions = [{}];
       const invalidCandidatePath = path.join(tempDir, "pending-invalid-route.json");
-      await writeFile(invalidCandidatePath, `${JSON.stringify(invalidCandidate, null, 2)}\n`, "utf8");
+      await writeFile(invalidCandidatePath, JSON.stringify(invalidCandidate), "utf8");
       await assert.rejects(validateArtifactFile(invalidCandidatePath), /candidateOptions\[0\].*missing required field/iu);
 
-      const routeChoice = structuredClone(emptyCandidates);
+      // Synthetic mutations exercise the full report validator, not a claimed
+      // current user decision. Required route choice must keep two real paths.
+      const routeChoice = structuredClone(full);
       const routeFrame = routeChoice.preDecisionOptionFrame;
-      const previousQuestionId = routeFrame.planChallengeState.selectedQuestionId;
-      const routeQuestionId = "plan-challenge-route-selection";
-      for (const question of routeFrame.unresolvedQuestions) {
-        if (question.questionId === previousQuestionId) question.questionId = routeQuestionId;
-        question.dependsOn = question.dependsOn.map((id) => id === previousQuestionId ? routeQuestionId : id);
-      }
-      routeFrame.planChallengeState.selectedQuestionId = routeQuestionId;
-      routeFrame.planChallengeState.pendingUserChoice.question.binding = `plan-challenge-response:${routeQuestionId}`;
-      routeFrame.readyDecisionFrontier = selectReadyDecisionFrontier(routeFrame.unresolvedQuestions);
+      Object.assign(routeFrame, build(task, { branchingOptions: [
+        { label: "Report exact metadata", summary: "Only the current package name" },
+        { label: "Report dependency metadata", summary: "A broader report that adds dependency analysis" },
+      ] }), { requiresUserChoice: true, candidateOptions: [], solutionChoiceState: "pending_user_choice",
+        userChoiceState: "pending_user_choice", choiceGateSkip: null, skipSource: "pending_host_adapter" });
+      routeChoice.coreLoop.executionResult.executionAllowed = false;
+      routeChoice.coreLoop.executionResult.executionGate = "blocked_by_plan_challenge";
       const routeChoicePath = path.join(tempDir, "route-choice-no-routes.json");
-      await writeFile(routeChoicePath, `${JSON.stringify(routeChoice, null, 2)}\n`, "utf8");
+      await writeFile(routeChoicePath, JSON.stringify(routeChoice), "utf8");
       await assert.rejects(validateArtifactFile(routeChoicePath), /at least two paths for a required route choice/iu);
-      // This deliberately incomplete option checks the count before any option
-      // quality checks; a single route cannot become a real branching choice.
       routeFrame.candidateOptions = [{}];
-      await writeFile(routeChoicePath, `${JSON.stringify(routeChoice, null, 2)}\n`, "utf8");
+      await writeFile(routeChoicePath, JSON.stringify(routeChoice), "utf8");
       await assert.rejects(validateArtifactFile(routeChoicePath), /at least two paths for a required route choice/iu);
       routeFrame.requiresUserChoice = false;
-      await writeFile(routeChoicePath, `${JSON.stringify(routeChoice, null, 2)}\n`, "utf8");
+      await writeFile(routeChoicePath, JSON.stringify(routeChoice), "utf8");
       await assert.rejects(validateArtifactFile(routeChoicePath), /at least two paths for a required route choice/iu);
 
-      const forged = JSON.parse(await readFileSync(report.paths.json, "utf8"));
+      const forged = structuredClone(report);
       forged.preDecisionOptionFrame.planChallengeState.executionAllowed = true;
       forged.coreLoop.executionResult.executionAllowed = true;
       forged.coreLoop.executionResult.executionGate = "ready";
       const forgedPath = path.join(tempDir, "forged.json");
-      await writeFile(forgedPath, `${JSON.stringify(forged, null, 2)}\n`, "utf8");
-      await assert.rejects(
-        validateArtifactFile(forgedPath),
-        /executionAllowed must remain false/iu,
-      );
+      await writeFile(forgedPath, JSON.stringify(forged), "utf8");
+      await assert.rejects(validateArtifactFile(forgedPath), /cannot assert execution|executionAllowed must remain false|questions cannot grant execution/iu);
 
-      const impossibleReady = JSON.parse(readFileSync(report.paths.json, "utf8"));
+      const impossibleReady = structuredClone(report);
       const challenge = impossibleReady.preDecisionOptionFrame.planChallengeState;
       challenge.phase = "ready_for_execution";
       challenge.executionAllowed = true;
       challenge.planChallengeSatisfied = false;
       challenge.pendingUserChoice = { status: "not_required", question: null, controls: [] };
-      impossibleReady.preDecisionOptionFrame.requiresUserChoice = false;
-      impossibleReady.preDecisionOptionFrame.solutionChoiceState = "confirmed";
-      impossibleReady.preDecisionOptionFrame.userChoiceState = "confirmed";
-      impossibleReady.preDecisionOptionFrame.choiceGateSkip = null;
-      impossibleReady.preDecisionOptionFrame.skipSource = "user_confirmed";
       impossibleReady.coreLoop.executionResult.executionAllowed = true;
       impossibleReady.coreLoop.executionResult.executionGate = "ready";
       const impossibleReadyPath = path.join(tempDir, "impossible-ready.json");
-      await writeFile(
-        impossibleReadyPath,
-        `${JSON.stringify(impossibleReady, null, 2)}\n`,
-        "utf8",
-      );
-      await assert.rejects(
-        validateArtifactFile(impossibleReadyPath),
-        /executionAllowed must remain false|cannot claim ready_for_execution/iu,
-      );
+      await writeFile(impossibleReadyPath, JSON.stringify(impossibleReady), "utf8");
+      await assert.rejects(validateArtifactFile(impossibleReadyPath), /cannot assert execution|executionAllowed must remain false|cannot claim ready_for_execution/iu);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -1468,6 +1485,7 @@ describe("57 - risk-adaptive plan challenge", () => {
           options: [
             {
               id: "incremental-route",
+              materialDimensions: ["scope", "cost"], evidenceRefs: ["fixture:existing-architecture"], owner: "backend",
               bestFor: "existing project",
               benefit: "smallest scope",
               cost: "slower migration",
@@ -1477,6 +1495,7 @@ describe("57 - risk-adaptive plan challenge", () => {
             },
             {
               id: "rebuild-route",
+              materialDimensions: ["scope", "cost"], evidenceRefs: ["fixture:replacement-architecture"], owner: "backend",
               bestFor: "new architecture",
               benefit: "clean boundary",
               cost: "larger change",
@@ -1492,8 +1511,14 @@ describe("57 - risk-adaptive plan challenge", () => {
     const routeOptions = buildRouteBranchingOptions(routeReport);
 
     assert.equal(routeOptions.length, 2);
-    assert.equal(routeOptions[0].label, "incremental-route");
+    assert.equal(routeOptions[0].label, "existing project");
     assert.equal(routeOptions[0].recommended, true);
+    assert.equal(routeOptions[1].recommended, false);
+    assert.match(routeOptions[0].summary, /smallest scope.*slower migration.*partial support.*bounded execution/u);
+    assert.match(routeOptions[1].summary, /clean boundary.*larger change.*higher migration cost.*new route/u);
+    const unbound = structuredClone(routeReport);
+    for (const option of unbound.selectedExecutionRoute.decisionCard.options) delete option.evidenceRefs;
+    assert.deepEqual(buildRouteBranchingOptions(unbound), [], "A card without current evidence must not invent viable alternatives");
     const result = build("帮我修复当前登录功能。", { branchingOptions: routeOptions });
     assert.ok(result.planChallengeState.triggerReasons.includes("branching_decision"));
     assert.equal(result.planChallengeState.pendingUserChoice.status, "required_not_invoked");

@@ -8,6 +8,7 @@ Keep these rules in mind:
 
 - Meta_Kim is one cross-runtime governance system. Claude Code, Codex, OpenClaw, Cursor, Gemini CLI, and ZCode are projections of the same canonical layer. Gemini CLI and ZCode are optional native projections; installation and structural checks do not establish live host acceptance.
 - Its core is general agent governance: understand the current user goal, compare evidenced feasible routes, discover capabilities, orchestrate execution and verify outcomes across domains. Industry packages are optional capability sources; framework acceptance must never replace the user's outcome.
+- DeepSeek Harness has a separate opt-in `meta-kim dsh` profile/Skill/MCP lifecycle. The canonical nine roles remain Skills there, not registered custom-agent presets. Official no-model config/Skill/MCP observations do not authorize the stage runner, prove hard Hook enforcement or certify professional results. See `canonical/skills/meta-theory/references/runtime-dsh.md`.
 - `meta-warden` is the normal public front door. Other meta agents are backstage specialists.
 - Dispatch is capability-first: describe the capability, search agents / skills / tools / capability indexes, then choose the best owner.
 - Long-term behavior lives in `canonical/`, `config/contracts/`, and `config/capability-index/`. Runtime trees (`.claude/`, `.codex/`, `.agents/`, `.cursor/`, `.gemini/`, `.zcode/`, `openclaw/`) are gitignored projections — run `npm run meta:sync` after clone to generate the selected targets locally.
@@ -78,7 +79,7 @@ Treat these as generated mirrors or runtime adapters unless the task explicitly 
 
 After changing canonical sources, sync projections instead of hand-forking runtime copies.
 
-Open-source boundary: runtime projection directories are generated local outputs, not GitHub source. `.claude/`, `.codex/`, `.agents/`, `.cursor/`, `.gemini/`, `.zcode/`, `openclaw/`, `.mcp.json`, and `codex/` must stay gitignored and excluded from package files. The nine governance agents are sourced from `canonical/agents/`. Codex `.toml` projection is limited to those governance mirrors; execution-layer labels such as `worker`, `explorer`, `frontend`, `backend`, `test`, `review`, `analysis`, `verify`, or `docs` are not Meta_Kim projection targets.
+Open-source boundary: runtime projection directories are generated local outputs, not GitHub source. `.claude/`, `.codex/`, `.agents/`, `.cursor/`, `.gemini/`, `.zcode/`, `.dsh/`, `openclaw/`, `.mcp.json`, and `codex/` must stay gitignored and excluded from package files. The nine governance agents are sourced from `canonical/agents/`. Codex `.toml` projection is limited to those governance mirrors; execution-layer labels such as `worker`, `explorer`, `frontend`, `backend`, `test`, `review`, `analysis`, `verify`, or `docs` are not Meta_Kim projection targets.
 
 ## Install Scope And Runtime Sedimentation
 

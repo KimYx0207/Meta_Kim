@@ -5,6 +5,8 @@ import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { runDiagnosticReadPlan } from "../../scripts/diagnostic-host-protocol.mjs";
+import { refreshFixtureSourcePins } from "../helpers/host-reasoning-fixture.mjs";
 import { createGovernanceRuntimeFixture, createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
 import {
   assertOptionalPlaybookContract,
@@ -24,6 +26,7 @@ before(async () => {
   // These tests require discoverable execution owners, not the maintainer's
   // installed roles. Enter the disposable source/HOME before importing paths.
   runtimeFixture = createGovernanceRuntimeFixtureScope(null, { graph: true });
+  refreshFixtureSourcePins(runtimeFixture);
   ({ agentTeamsCandidateSkillPaths, buildRuntimeProjectionEvidence, buildWardenWritebackFlow,
     classifyProjectionFailure, exactInvocationBindingMatches, evaluateInvocationCoverage,
     readGovernedExecutionRun, runMetaTheoryGovernedExecution } = await runtimeFixture.import("scripts/run-meta-theory-governed-execution.mjs"));
@@ -36,6 +39,17 @@ const multiGapTask = [
   "内部知识库需要 MCP provider 边界。",
 ].join("\n");
 const scopedPlanTask = "Run meta-theory. In parallel inspect package.json; review AGENTS.md; read README.md; audit config/contracts/workflow-contract.json.";
+
+const boundedScopes = ["package.json", "AGENTS.md", "README.md", "config/contracts/workflow-contract.json"];
+function runBoundedRead(options) {
+  assert.equal(options.task, scopedPlanTask, "This fixture supplies a plan only for its declared bounded read task");
+  return runDiagnosticReadPlan(runMetaTheoryGovernedExecution, options, boundedScopes);
+}
+function selectProductCandidateRoute(task) {
+  const result = runtimeFixture.run(["scripts/select-execution-route.mjs", "--task", task, "--runtime", "codex", "--os", "windows"]);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  return JSON.parse(result.stdout);
+}
 
 const productExperienceTask =
   "帮我做个小红书营销自动发布器，需要动态规划、平台规则研究、内容策略、前端界面、后端 API、数据模型、平台集成、权限风控、测试验收和发布运维，但不要真实发布或使用生产凭证。";
@@ -106,7 +120,7 @@ describe("32 — Meta-theory three product goals and support gates", () => {
   test("T-001 runs the default governed orchestration runtime path", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-governed-run-"));
     try {
-      const report = await runMetaTheoryGovernedExecution({
+      const report = await runBoundedRead({
         task: scopedPlanTask,
         outputLanguage: "zh-CN",
         runId: "test-run-default",
@@ -489,8 +503,8 @@ describe("32 — Meta-theory three product goals and support gates", () => {
   test("T-002 records Claude, Codex, Cursor, and OpenClaw projection smoke evidence", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-runtime-smoke-"));
     try {
-      const report = await runMetaTheoryGovernedExecution({
-        task: multiGapTask,
+      const report = await runBoundedRead({
+        task: scopedPlanTask,
         runId: "test-run-runtime-smoke",
         stateDir: tempDir,
         dbPath: path.join(tempDir, "runs.sqlite"),
@@ -607,90 +621,40 @@ describe("32 — Meta-theory three product goals and support gates", () => {
     }
   });
 
-  test("T-003 distinguishes candidate_only from Warden approved writeback and can apply to a temp canonical root", async () => {
+  test("T-003 distinguishes candidate_only from exact approved writeback and verifies the created file", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-writeback-"));
     try {
       const canonicalRoot = path.join(tempDir, "canonical");
-      const candidateOnly = await runMetaTheoryGovernedExecution({
-        task: "同一套 PRD review standard 需要 skill。",
-        runId: "test-run-candidate-only",
-        stateDir: path.join(tempDir, "candidate"),
-        dbPath: path.join(tempDir, "candidate.sqlite"),
-        canonicalRoot,
-      });
-      assert.equal(candidateOnly.wardenWritebackFlow.status, "candidate_only");
-      assert.equal(candidateOnly.wardenWritebackFlow.approvalRequired, true);
-      assert.equal(candidateOnly.wardenWritebackFlow.approvalValidation.ok, false);
-      assert.ok(candidateOnly.wardenWritebackFlow.approvalRequest);
-      assert.equal(candidateOnly.wardenWritebackFlow.dryRun.canonicalWrites, 0);
-      assert.equal(candidateOnly.wardenWritebackFlow.candidates[0].writebackDecision, "candidate_only");
-      assert.equal(candidateOnly.wardenWritebackFlow.candidates[0].applyStatus, "planned");
-      assert.equal(candidateOnly.wardenWritebackFlow.candidates[0].dryRunArtifact.canonicalWrites, 0);
-      assert.equal(candidateOnly.durableAgentLifecyclePacket.status, "partial");
-      assert.equal(
-        candidateOnly.durableAgentLifecyclePacket.stages.find(
-          (stage) => stage.stage === "definition_candidate"
-        ).status,
-        "pass"
-      );
-      assert.equal(
-        candidateOnly.durableAgentLifecyclePacket.stages.find(
-          (stage) => stage.stage === "definition_writeback"
-        ).status,
-        "partial"
-      );
-
+      const decisionResults = [{
+        capabilityGap: { requestedCapability: "review standard skill" },
+        gapDecision: { decision: "create_skill" },
+        candidateWriteback: { candidateType: "skill" },
+        decisionOutput: { owner: "meta-artisan", scope: "test-owned review standard", verification: { owner: "meta-prism" } },
+      }];
+      // This is the writeback mechanism's declared candidate, not an inferred
+      // product decision or a claim that a reusable method has improved.
+      const candidateOnly = await buildWardenWritebackFlow({ decisionResults, canonicalRoot });
+      assert.equal(candidateOnly.status, "candidate_only");
+      assert.equal(candidateOnly.approvalRequired, true);
+      assert.equal(candidateOnly.approvalValidation.ok, false);
+      assert.equal(candidateOnly.dryRun.canonicalWrites, 0);
+      assert.equal(candidateOnly.candidates[0].applyStatus, "planned");
       const approvalPacket = {
-        schemaVersion: "warden-approval-v0.2",
-        approvalId: "warden-approved-test-evidence",
-        approver: "meta-warden",
-        approvedAt: "2026-06-04T00:00:00.000Z",
-        scope: "canonical_reverse_sync",
-        mutationBindings: [
-          candidateOnly.wardenWritebackFlow.candidates[0].mutationBinding,
-        ],
-        diffSummary: "Create one skill candidate in temp canonical root.",
-        rollbackPlan: { action: "remove_generated_temp_canonical_file" },
-        riskReview: { status: "accepted", owner: "meta-sentinel" },
+        schemaVersion: "warden-approval-v0.2", approvalId: "warden-approved-test-evidence", approver: "meta-warden",
+        approvedAt: "2026-06-04T00:00:00.000Z", scope: "canonical_reverse_sync",
+        mutationBindings: candidateOnly.candidates.map(candidate => candidate.mutationBinding),
+        diffSummary: "Create one skill candidate in the disposable canonical root.",
+        rollbackPlan: { action: "remove_generated_temp_canonical_file" }, riskReview: { status: "accepted", owner: "meta-sentinel" },
       };
-
-      const approved = await runMetaTheoryGovernedExecution({
-        task: "同一套 PRD review standard 需要 skill。",
-        runId: "test-run-approved-writeback",
-        stateDir: path.join(tempDir, "approved"),
-        dbPath: path.join(tempDir, "approved.sqlite"),
-        canonicalRoot,
-        approvalPacket,
-        applyWriteback: true,
-      });
-      const candidate = approved.wardenWritebackFlow.candidates[0];
-      assert.equal(approved.wardenWritebackFlow.status, "approved-for-writeback");
-      assert.equal(approved.wardenWritebackFlow.approvalValidation.ok, true);
+      const approved = await buildWardenWritebackFlow({ decisionResults, canonicalRoot, approvalPacket, applyWriteback: true });
+      const candidate = approved.candidates[0];
+      assert.equal(approved.status, "approved-for-writeback");
+      assert.equal(approved.approvalValidation.ok, true);
       assert.equal(candidate.writebackDecision, "approved-for-writeback");
       assert.equal(candidate.applyStatus, "created");
       assert.equal(candidate.dryRunArtifact.canonicalWrites, 1);
       assert.equal(candidate.verificationResult.status, "pass");
-      assert.match(candidate.diffSummary, /^Created /);
-      assert.equal(approved.durableAgentLifecyclePacket.status, "partial");
-      assert.equal(
-        approved.durableAgentLifecyclePacket.stages.find(
-          (stage) => stage.stage === "definition_writeback"
-        ).status,
-        "pass"
-      );
-      assert.equal(
-        approved.durableAgentLifecyclePacket.stages.find(
-          (stage) => stage.stage === "host_discovery_reload"
-        ).status,
-        "partial"
-      );
-
-      const targetPath = path.join(
-        tempDir,
-        "canonical",
-        candidate.targetRelativeToCanonical
-      );
-      const written = await readFile(targetPath, "utf8");
+      const written = await readFile(path.join(canonicalRoot, candidate.targetRelativeToCanonical), "utf8");
       assert.match(written, /Generated by the Warden-approved Capability Gap writeback flow/);
       assert.match(written, /approvalContract: warden-approval-v0\.2-exact-binding/);
     } finally {
@@ -828,8 +792,9 @@ describe("32 — Meta-theory three product goals and support gates", () => {
   test("T-004 renders and reads a user-readable run report by runId", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-run-report-"));
     try {
-      const report = await runMetaTheoryGovernedExecution({
-        task: multiGapTask,
+      const report = await runBoundedRead({
+        task: scopedPlanTask,
+        outputLanguage: "zh-CN",
         runId: "test-run-readable-report",
         stateDir: tempDir,
         dbPath: path.join(tempDir, "runs.sqlite"),
@@ -931,12 +896,13 @@ describe("32 — Meta-theory three product goals and support gates", () => {
       import path from "node:path";
       import { agentTeamsCandidateSkillPaths, runMetaTheoryGovernedExecution }
         from "./scripts/run-meta-theory-governed-execution.mjs";
+      import { runDiagnosticReadPlan } from "./scripts/diagnostic-host-protocol.mjs";
       const branch = process.argv[1];
       const stateDir = path.join(process.cwd(), "tmp", branch);
-      const report = await runMetaTheoryGovernedExecution({
+      const report = await runDiagnosticReadPlan(runMetaTheoryGovernedExecution, {
         task: ${JSON.stringify(scopedPlanTask)}, runId: "optional-provider-fixture", stateDir,
         dbPath: path.join(stateDir, "runs.sqlite"),
-      });
+      }, ["package.json", "AGENTS.md", "README.md", "config/contracts/workflow-contract.json"]);
       console.log(JSON.stringify({
         packet: report.defaultRuntimePath.agentTeamsPlaybookPacket,
         invocationTruth: report.capabilityInvocationTruthPacket,
@@ -990,11 +956,10 @@ describe("32 — Meta-theory three product goals and support gates", () => {
     }
     const withoutOwners = fixture.run(["scripts/discover-global-capabilities.mjs", "--runtime-inventory-only"]);
     assert.equal(withoutOwners.status, 0, withoutOwners.stderr || withoutOwners.stdout);
-    const missingOwners = execute("execution-owners-absent");
-    await assertOptionalPlaybookContract(missingOwners.packet, missingOwners.invocationTruth, missingOwners.candidates, { ready: false });
-    assert.equal(missingOwners.actualWorkerExecution, false);
-    assert.ok(missingOwners.workerReadiness.every((readiness) => readiness === "incomplete"));
-    assert.equal(missingOwners.pendingFamilies.includes("agent_subagent"), false);
+    const missingOwners = fixture.run(["--input-type=module", "--eval", childSource, "execution-owners-absent"]);
+    assert.notEqual(missingOwners.status, 0);
+    assert.match(missingOwners.stderr, /Diagnostic capability unavailable: agents backend, analysis/);
+    assert.equal(missingOwners.stdout.trim(), "", "Missing execution owners must not produce a completed diagnostic report");
   });
 
   test("T-005 validates the three product goals and support gates", async () => {
@@ -1028,8 +993,8 @@ describe("32 — Meta-theory three product goals and support gates", () => {
     assert.ok(output.langGraph.nodes >= 8);
     assert.ok(output.langGraph.edges >= 7);
     assert.equal(output.dynamicWorkflow.skill, true);
-    assert.equal(output.dynamicWorkflow.mcp, true);
-    assert.equal(output.dynamicWorkflow.command, true);
+    assert.equal(output.dynamicWorkflow.mcp, false);
+    assert.equal(output.dynamicWorkflow.command, false);
     assert.equal(output.dynamicWorkflow.tools, false);
     assert.equal(output.dynamicWorkflow.hooks, true);
     assert.ok(output.peers > 0);
@@ -1055,145 +1020,65 @@ describe("32 — Meta-theory three product goals and support gates", () => {
     assert.ok(output.userPerceptionCues >= 6);
   });
 
-  test("T-005b binds product-build lanes by capabilityNeed instead of fixed agent-skill pairs", async () => {
-    const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-product-build-dynamic-match-"));
-    try {
-      const report = await runMetaTheoryGovernedExecution({
-        task: productExperienceTask,
-        runId: "test-product-build-dynamic-match",
-        stateDir: tempDir,
-        dbPath: path.join(tempDir, "runs.sqlite"),
-      });
-      const lanes = report.defaultRuntimePath.workerTaskPackets;
-      const rows = report.coreLoop.dynamicWorkflowRuntimePacket.capabilityBindingRows;
-      const marketResearch = lanes.find(
-        (packet) => packet.businessFlowLaneId === "market-research"
-      );
-      const capabilityTeamBlueprint =
-        report.sourceArtifacts.orchestrationReport.selectedExecutionRoute.recommendedRoute
-          .subjectiveUiCapabilityAmplification.capabilityTeamBlueprint;
-
-      assert.equal(lanes.length, 11);
-      assert.match(capabilityTeamBlueprint.inspiration, /agent-teams-playbook/);
-      assert.equal(capabilityTeamBlueprint.rows.length, lanes.length);
-      assert.equal(capabilityTeamBlueprint.rows.every((row) => row.capabilitySlot && row.providerBindingPolicy === "capability_need_runtime_match"), true);
-      assert.equal(capabilityTeamBlueprint.capabilityResolutionPolicy.mode, "stop_on_first_qualified_provider");
-      assert.equal(
-        capabilityTeamBlueprint.capabilityResolutionPolicy.externalDiscoveryTrigger,
-        "only_after_local_multi_provider_gap_is_proven",
-      );
-      assert.ok(
-        capabilityTeamBlueprint.capabilityResolutionPolicy.forbidden.includes(
-          "label_successful_native_agent_dispatch_as_fallback",
-        ),
-      );
-      assert.equal(Object.hasOwn(capabilityTeamBlueprint, "fallbackChain"), false);
-      assert.ok(
-        lanes.every(
-          (packet) =>
-            Array.isArray(packet.capabilityNeed) &&
-            packet.capabilityNeed.length > 0 &&
-            packet.capabilitySelection?.selectionPolicy === "capability_need_runtime_match" &&
-            packet.capabilitySelection?.candidateProviders.length > 0
-        )
-      );
-      assert.ok(
-        marketResearch.capabilityNeed.includes("capability-discovery-and-retrieval")
-      );
-      // findskill is registered reference_only / invokeAs: reference, so the
-      // shared provider boundary keeps it out of dynamic lane bindings and it
-      // stays reachable through the dedicated skillDiscovery slot instead. The
-      // property this lane proves is that candidates arrive through
-      // capabilityNeed matching, which holds without naming any one provider.
-      const marketResearchCandidates = marketResearch.capabilitySelection.candidateProviders;
-      assert.equal(
-        marketResearchCandidates.some((provider) => provider.id === "findskill"),
-        false,
-        "a reference-only dependency must not re-enter as a dynamic lane candidate"
-      );
-      const marketResearchMatchedTerms = [
-        ...new Set(marketResearchCandidates.flatMap((provider) => provider.matchedTerms ?? [])),
-      ];
-      assert.ok(
-        marketResearchMatchedTerms.length > 0,
-        "market-research candidates must be bound by capabilityNeed terms"
-      );
-      assert.deepEqual(
-        marketResearchMatchedTerms.filter((term) =>
-          productExperienceTask.toLowerCase().includes(term)
-        ),
-        [],
-        "candidates should be discovered through capabilityNeed, not injected by user wording"
-      );
-      assert.ok(
-        rows.every(
-          (row) =>
-            Array.isArray(row.capabilityNeed) &&
-            row.capabilityNeed.length > 0 &&
-            row.capabilitySelection?.selectionPolicy === "capability_need_runtime_match"
-        )
-      );
-      assert.ok(
-        rows.some((row) => row.capabilitySelection.selectedProvider?.id),
-        "dynamic workflow rows should expose selected providers from capabilityNeed matching"
-      );
-    } finally {
-      await rm(tempDir, { recursive: true, force: true });
+  test("T-005b product research proposes capability-bound lanes without inventing a host decision", async () => {
+    const route = selectProductCandidateRoute(productExperienceTask);
+    const proposal = route.recommendedRoute.subjectiveUiCapabilityAmplification;
+    const lanes = proposal.lanes;
+    const capabilityTeamBlueprint = proposal.capabilityTeamBlueprint;
+    const marketResearch = lanes.find(packet => packet.businessFlowLaneId === "market-research");
+    assert.equal(lanes.length, 11);
+    assert.match(capabilityTeamBlueprint.inspiration, /agent-teams-playbook/);
+    assert.equal(capabilityTeamBlueprint.rows.length, lanes.length);
+    assert.ok(capabilityTeamBlueprint.rows.every(row => row.capabilitySlot && row.providerBindingPolicy === "capability_need_runtime_match"));
+    assert.equal(capabilityTeamBlueprint.capabilityResolutionPolicy.mode, "stop_on_first_qualified_provider");
+    assert.equal(capabilityTeamBlueprint.capabilityResolutionPolicy.externalDiscoveryTrigger, "only_after_local_multi_provider_gap_is_proven");
+    assert.ok(capabilityTeamBlueprint.capabilityResolutionPolicy.forbidden.includes("label_successful_native_agent_dispatch_as_fallback"));
+    assert.equal(Object.hasOwn(capabilityTeamBlueprint, "fallbackChain"), false);
+    for (const lane of lanes) {
+      assert.ok(lane.capabilityNeed.length > 0);
+      assert.equal(lane.capabilityBinding.selectionPolicy, "capability_need_runtime_match");
+      assert.ok(lane.capabilityBinding.candidateProviders.length > 0);
     }
+    assert.ok(marketResearch.capabilityNeed.includes("capability-discovery-and-retrieval"));
+    const candidates = marketResearch.capabilityBinding.candidateProviders;
+    assert.equal(candidates.some(provider => provider.id === "findskill"), false);
+    const matchedTerms = [...new Set(candidates.flatMap(provider => provider.matchedTerms ?? []))];
+    assert.ok(matchedTerms.length > 0);
+    assert.deepEqual(matchedTerms.filter(term => productExperienceTask.toLowerCase().includes(term)), [],
+      "The research lane discovers capability terms not supplied as provider names by the user");
+    // Unlike the four file-read diagnostic, this research proposal really needs
+    // command and MCP capabilities. Preserve positive coverage of both slots.
+    assert.ok(lanes.some(lane => lane.capabilityBinding.selectedProviders.mcp?.id));
+    assert.ok(lanes.some(lane => lane.capabilityBinding.selectedProviders.command?.id));
+    assert.ok(route.workerTaskPacketDrafts.length > 0);
+    assert.equal(route.routeExecutionGate.canEnterExecution, false,
+      "Candidate selection alone cannot supply Critical, design, host decision or authority");
   });
 
-  test("T-005c content-shaped product work omits unrelated technical lanes", async () => {
-    const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-product-build-content-lanes-"));
-    try {
-      const report = await runMetaTheoryGovernedExecution({
-        task: contentOnlyProductTask,
-        runId: "test-product-build-content-lanes",
-        stateDir: tempDir,
-        dbPath: path.join(tempDir, "runs.sqlite"),
-      });
-      const lanes = report.defaultRuntimePath.workerTaskPackets;
-      const selectedLaneIds = lanes.map((packet) => packet.businessFlowLaneId);
-      const omittedLaneIds = report.coreLoop.thinkingPacket.omittedLanesWithReason ?? [];
-      const omittedLaneRecords = report.coreLoop.thinkingPacket.omittedLaneRecords ?? [];
-      const capabilityTeamBlueprint =
-        report.sourceArtifacts.orchestrationReport.selectedExecutionRoute.recommendedRoute
-          .subjectiveUiCapabilityAmplification.capabilityTeamBlueprint;
-
-      assert.ok(selectedLaneIds.includes("product-definition"));
-      assert.ok(selectedLaneIds.includes("content-strategy"));
-      assert.ok(!selectedLaneIds.includes("backend-api"));
-      assert.ok(!selectedLaneIds.includes("data-model"));
-      assert.ok(!selectedLaneIds.includes("platform-integration"));
-      assert.ok(omittedLaneIds.includes("backend-api"));
-      assert.ok(omittedLaneIds.includes("data-model"));
-      assert.ok(omittedLaneIds.includes("platform-integration"));
-      assert.ok(
-        omittedLaneRecords.some(
-          (lane) => lane.laneId === "backend-api" && lane.reason && lane.evidenceRef,
-        ),
-      );
-      assert.ok(lanes.length < 11, "content-only work should not inherit the full product-build template");
-      assert.equal(capabilityTeamBlueprint.rows.length, lanes.length);
-      assert.equal(capabilityTeamBlueprint.omittedCapabilitySlots.some((lane) => lane.laneId === "backend-api"), true);
-      assert.notEqual(capabilityTeamBlueprint.scenario.scenario, 4);
-      assert.ok(
-        lanes.every(
-          (packet) =>
-            Array.isArray(packet.capabilityNeed) &&
-            packet.capabilityNeed.length > 0 &&
-            packet.capabilitySelection?.selectionPolicy === "capability_need_runtime_match"
-        )
-      );
-    } finally {
-      await rm(tempDir, { recursive: true, force: true });
+  test("T-005c content-only research proposals omit unrelated technical lanes", () => {
+    const route = selectProductCandidateRoute(contentOnlyProductTask);
+    const proposal = route.recommendedRoute.subjectiveUiCapabilityAmplification;
+    const lanes = proposal.lanes;
+    const selectedLaneIds = lanes.map(packet => packet.businessFlowLaneId);
+    const omitted = proposal.omittedLanesWithReason;
+    assert.ok(selectedLaneIds.includes("product-definition"));
+    assert.ok(selectedLaneIds.includes("content-strategy"));
+    for (const id of ["backend-api", "data-model", "platform-integration"]) {
+      assert.equal(selectedLaneIds.includes(id), false);
+      assert.ok(omitted.some(lane => lane.laneId === id && lane.reason));
     }
+    assert.ok(lanes.length < 11);
+    assert.equal(proposal.capabilityTeamBlueprint.rows.length, lanes.length);
+    assert.ok(proposal.capabilityTeamBlueprint.omittedCapabilitySlots.some(lane => lane.laneId === "backend-api"));
+    assert.notEqual(proposal.capabilityTeamBlueprint.scenario.scenario, 4);
+    assert.ok(lanes.every(lane => lane.capabilityNeed.length > 0 && lane.capabilityBinding.selectionPolicy === "capability_need_runtime_match"));
   });
 
   test("T-006 caller-trusted claims still need external observer evidence", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-host-evidence-no-native-"));
     try {
-      const report = await runMetaTheoryGovernedExecution({
-        task: productExperienceTask,
+      const report = await runBoundedRead({
+        task: scopedPlanTask,
         runId: "test-run-host-evidence-no-native",
         stateDir: tempDir,
         dbPath: path.join(tempDir, "runs.sqlite"),
@@ -1249,8 +1134,8 @@ describe("32 — Meta-theory three product goals and support gates", () => {
   test("T-006b host-shaped fixtures plus native choice cannot promote product pass", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-host-evidence-pass-"));
     try {
-      const report = await runMetaTheoryGovernedExecution({
-        task: productExperienceTask,
+      const report = await runBoundedRead({
+        task: scopedPlanTask,
         runId: "test-run-host-evidence-pass",
         stateDir: tempDir,
         dbPath: path.join(tempDir, "runs.sqlite"),
@@ -1319,7 +1204,7 @@ describe("32 — Meta-theory three product goals and support gates", () => {
   test("T-007 untrusted host invocation claims do not satisfy real invocation coverage", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-host-evidence-reject-"));
     try {
-      const report = await runMetaTheoryGovernedExecution({
+      const report = await runBoundedRead({
         task: scopedPlanTask,
         runId: "test-run-host-evidence-reject",
         stateDir: tempDir,
@@ -1463,7 +1348,7 @@ describe("32 — Meta-theory three product goals and support gates", () => {
       );
       assert.equal(result.status, 0, result.stderr);
       const summary = JSON.parse(result.stdout);
-      assert.equal(summary.status, "partial");
+      assert.equal(summary.status, "needs_thinking");
       assert.equal(summary.runId, "test-run-cli");
       assert.match(summary.report, /test-run-cli\.zh-CN\.md$/);
     } finally {
@@ -1487,7 +1372,7 @@ describe("32 — Meta-theory three product goals and support gates", () => {
       );
       assert.equal(result.status, 0, result.stderr);
       const summary = JSON.parse(result.stdout);
-      assert.equal(summary.status, "partial");
+      assert.equal(summary.status, "needs_thinking");
       assert.equal(summary.runId, "test-run-cli-positional");
       assert.match(summary.report, /test-run-cli-positional\.zh-CN\.md$/);
     } finally {
@@ -1516,7 +1401,7 @@ describe("32 — Meta-theory three product goals and support gates", () => {
       );
       assert.equal(result.status, 1, result.stderr);
       const summary = JSON.parse(result.stdout);
-      assert.equal(summary.status, "partial");
+      assert.equal(summary.status, "needs_thinking");
       assert.equal(summary.runId, "test-run-cli-strict");
     } finally {
       await rm(tempDir, { recursive: true, force: true });

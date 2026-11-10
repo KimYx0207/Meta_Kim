@@ -1,5 +1,15 @@
 {
   "appliedTransitions": {
+    "dsh-professional-20261111:reviewed-runtime-source": {
+      "appliedAt": "2026-11-10T21:28:32.162Z",
+      "approvalDigest": "sha256:d31e152dcc39521a28db66cfde23981e45377568305d181391b8bbb363475db5",
+      "candidateDigest": "sha256:31a3bb89d091ce0cc844170716730b44a4a055517036cbe3a867fdafe4db21de",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "rollbackPlanDigest": "sha256:d063ff3022567bb06393c45bdcebd35927fbec1fe2addc84b2d8dedcd631c855",
+      "targetRef": "canonical/skills/meta-theory/SKILL.md",
+      "toStatus": "active"
+    },
     "intent-to-delivery-20261110:reviewed-absorbed-decision-methods": {
       "appliedAt": "2026-11-10T13:15:56.623Z",
       "approvalDigest": "sha256:9d4340f6da9129dbed55d26528dc4cb81889dfcc3244bd187f45c6ec887b588e",
@@ -107,9 +117,9 @@
       "foundational": true,
       "kind": "knowledge",
       "lifecycle": {
-        "changedAt": "2026-11-10T13:09:02.004Z",
-        "lastTransitionId": "intent-to-delivery-20261110:reviewed-scoped-human-gates",
-        "reason": "Reviewed all five changed source lines against the exact revision-8 registered body and current implementation. Desktop overlap requires the existing current graph, exact graph and attempt-definition binding, unrelated ancestry and supported read-only effects; CLI forwards that same optional graph. Missing evidence keeps the human gate pending and no graph input grants execution permission. Capability discovery starts with bounded first-party cached-index search; findskill is used only when installed and appropriate, with no default full scan or external request. All other source bytes match the previously reviewed source."
+        "changedAt": "2026-11-10T21:28:32.162Z",
+        "lastTransitionId": "dsh-professional-20261111:reviewed-runtime-source",
+        "reason": "Reviewed the sole changed canonical paragraph against the registered main source and official DSh loading evidence. Add the DSh runtime reference, require complete methods/resources, distinguish native Skills from custom agent presets, and preserve separate loading, delegation and final outcome evidence. No governance ownership, execution permission, model route or existing stage barrier changes."
       },
       "provenance": {
         "evidenceRefs": [
@@ -121,7 +131,7 @@
         ]
       },
       "replacementRefs": [],
-      "sourceDigest": "sha256:a1ff5063973ebda3ff01ed5d6fecc56b063a415c1980639ef38a4b8cbf732576",
+      "sourceDigest": "sha256:dccb061bda5c47d61c170df45e23ad2afa63c3c51dcbcdabd1cae5979ccc7c3a",
       "status": "active",
       "targetRef": "canonical/skills/meta-theory/SKILL.md"
     },
@@ -502,6 +512,39 @@
       "targetRef": "config/governance/decision-pattern-catalog.json",
       "toStatus": "active",
       "transitionId": "intent-to-delivery-20261110:reviewed-absorbed-decision-methods"
+    },
+    {
+      "appliedAt": "2026-11-10T21:28:32.162Z",
+      "approvalDigest": "sha256:d31e152dcc39521a28db66cfde23981e45377568305d181391b8bbb363475db5",
+      "candidateDigest": "sha256:31a3bb89d091ce0cc844170716730b44a4a055517036cbe3a867fdafe4db21de",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "previousEntry": {
+        "executionClass": "execution_eligible",
+        "foundational": true,
+        "kind": "knowledge",
+        "lifecycle": {
+          "changedAt": "2026-11-10T13:09:02.004Z",
+          "lastTransitionId": "intent-to-delivery-20261110:reviewed-scoped-human-gates",
+          "reason": "Reviewed all five changed source lines against the exact revision-8 registered body and current implementation. Desktop overlap requires the existing current graph, exact graph and attempt-definition binding, unrelated ancestry and supported read-only effects; CLI forwards that same optional graph. Missing evidence keeps the human gate pending and no graph input grants execution permission. Capability discovery starts with bounded first-party cached-index search; findskill is used only when installed and appropriate, with no default full scan or external request. All other source bytes match the previously reviewed source."
+        },
+        "provenance": {
+          "evidenceRefs": [
+            "AGENTS.md#Meta-Theory-Activation"
+          ],
+          "recordedAt": "2026-08-12T00:00:00.000Z",
+          "sourceRefs": [
+            "canonical/skills/meta-theory/SKILL.md"
+          ]
+        },
+        "replacementRefs": [],
+        "sourceDigest": "sha256:a1ff5063973ebda3ff01ed5d6fecc56b063a415c1980639ef38a4b8cbf732576",
+        "status": "active",
+        "targetRef": "canonical/skills/meta-theory/SKILL.md"
+      },
+      "targetRef": "canonical/skills/meta-theory/SKILL.md",
+      "toStatus": "active",
+      "transitionId": "dsh-professional-20261111:reviewed-runtime-source"
     }
   ],
   "policy": {
@@ -511,7 +554,7 @@
     "referenceOnlyPromotion": false,
     "retiredRecordsRemainTombstones": true
   },
-  "revision": 10,
+  "revision": 11,
   "schemaVersion": "knowledge-lifecycle-registry-v1",
-  "updatedAt": "2026-11-10T13:15:56.623Z"
+  "updatedAt": "2026-11-10T21:28:32.162Z"
 }

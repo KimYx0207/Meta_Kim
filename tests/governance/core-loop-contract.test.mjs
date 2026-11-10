@@ -4,10 +4,13 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createGovernanceRuntimeFixture } from "../helpers/governance-runtime-fixture.mjs";
+import { fixtureCritical, fixtureReadWorkOrder, refreshFixtureSourcePins, runFixtureHostCli } from "../helpers/host-reasoning-fixture.mjs";
+import { localProtocolFixtureTaskFacts } from "../helpers/task-design-facts.mjs";
 
 let runtimeFixture;
 before(() => {
   runtimeFixture = createGovernanceRuntimeFixture(null, { graph: true });
+  refreshFixtureSourcePins(runtimeFixture);
 });
 after(() => runtimeFixture?.cleanup());
 
@@ -26,6 +29,18 @@ const EXPECTED_STAGES = [
 
 function getPath(value, dottedPath) {
   return dottedPath.split(".").reduce((current, key) => current?.[key], value);
+}
+
+// These protocol tests deliberately supply host judgment. The public entry
+// without those inputs is separately checked below and must remain pending.
+function runCoreProtocol(argv, options = {}) {
+  const task = argv[argv.indexOf("--task") + 1];
+  const criticalInput = fixtureCritical({ task, successCriteria: ["The bounded source-inspection plan preserves the eight-stage contract and never claims execution or user acceptance."] });
+  const governanceTaskFacts = localProtocolFixtureTaskFacts(task);
+  return runFixtureHostCli(runtimeFixture, argv, { criticalInput, governanceTaskFacts,
+    workOrders: preparation => [fixtureReadWorkOrder(preparation, { id: "core-contract-read", todayTask: task,
+      output: "Source-bound protocol report", criterionIds: ["user-outcome"], taskFacts: governanceTaskFacts })],
+  }, options);
 }
 
 test("core-loop contract binds the default governed execution path", () => {
@@ -59,7 +74,7 @@ test("core-loop contract binds the default governed execution path", () => {
 test("default CLI keeps stdout machine-readable while progress uses stderr", () => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-cli-streams-"));
   try {
-    const visible = runtimeFixture.run(
+    const visible = runCoreProtocol(
       [
         "scripts/run-meta-theory-governed-execution.mjs",
         "--emit-conversation-notice",
@@ -83,7 +98,7 @@ test("default CLI keeps stdout machine-readable while progress uses stderr", () 
       assert.equal(visible.stderr.includes(marker), true, `missing stderr progress marker ${marker}`);
     }
 
-    const machine = runtimeFixture.run(
+    const machine = runCoreProtocol(
       [
         "scripts/run-meta-theory-governed-execution.mjs",
         "--no-emit-conversation-notice",
@@ -196,7 +211,7 @@ test("capability discovery is multi-type and verification is a fuse", () => {
 test("governed execution emits a coreLoop artifact summary", () => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-core-loop-contract-"));
   const runId = "core-loop-contract-test";
-  const result = runtimeFixture.run(
+  const result = runCoreProtocol(
     [
       "scripts/run-meta-theory-governed-execution.mjs",
       "--task",
@@ -274,10 +289,12 @@ test("governed execution emits a coreLoop artifact summary", () => {
       (item) => item.stage === stage,
     );
     assert.ok(summary, `${stage} must exist in the stage DAG`);
-    assert.ok(
-      summary.laneNodeIds.length >= (stage === "Execution" ? 1 : 2),
-      `${stage} must expose its materialized contract or worker lanes`,
-    );
+    const optionalGate = { Review: "review", "Meta-Review": "metaReview", Evolution: "evolution" }[stage];
+    if (optionalGate && artifact.governanceRequirementPlanPacket.gates[optionalGate].effectiveRequired === false) {
+      assert.equal(summary.laneNodeIds.length, 1, `${stage} retains only its control barrier when no work is required`);
+      assert.equal(artifact.coreLoop.stageDagPacket.nodes.find(node => node.nodeId === summary.laneNodeIds[0]).laneKind, "stage_control");
+    } else assert.ok(summary.laneNodeIds.length >= (stage === "Execution" ? 1 : 2),
+      `${stage} must expose its materialized contract or worker lanes`);
     const contractStage = CORE_LOOP.stages.find((item) => item.stage === stage);
     assert.equal(summary.mergeAuthority, contractStage.parallelPolicy.mergeAuthority);
   }
@@ -502,7 +519,7 @@ test("governed execution emits a coreLoop artifact summary", () => {
 test("caller-provided host-visible names remain unverified hints", () => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-host-visible-"));
   const runId = "core-loop-host-visible-subagent-test";
-  const result = runtimeFixture.run(
+  const result = runCoreProtocol(
     [
       "scripts/run-meta-theory-governed-execution.mjs",
       "--task",
@@ -618,7 +635,7 @@ test("core-loop contract declares three product goals plus support gates", () =>
 test("project-understanding governed run records deep Fetch source classes", () => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-project-understanding-"));
   const runId = "core-loop-project-understanding-fetch-test";
-  const result = runtimeFixture.run(
+  const result = runCoreProtocol(
     [
       "scripts/run-meta-theory-governed-execution.mjs",
       "--task",
@@ -670,7 +687,7 @@ test("project-understanding governed run records deep Fetch source classes", () 
   rmSync(tempDir, { recursive: true, force: true });
 });
 
-test("default governed run is route-driven instead of old capability-gap orchestration", () => {
+test("ordinary subjective intent waits for current host judgment before producing a worker route", () => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-route-driven-"));
   const runId = "route-driven-subjective-ui";
   const result = runtimeFixture.run(
@@ -690,33 +707,15 @@ test("default governed run is route-driven instead of old capability-gap orchest
   assert.equal(result.status, 0, result.stderr || result.stdout);
 
   const artifact = JSON.parse(readFileSync(path.join(tempDir, `${runId}.json`), "utf8"));
-  const report = artifact.sourceArtifacts.orchestrationReport;
-  assert.equal(
-    report.selectedExecutionRoute.recommendedRoute.id,
-    "subjective-ui-design-orchestration:codex:windows",
-  );
-  assert.equal(report.decisionCounts.oldDefaultPath, 0);
-  assert.equal(artifact.workerTaskPackets.length, 6);
-  assert.ok(
-    artifact.workerTaskPackets.every(
-      (packet) => packet.packetKind === "run_scoped_task_not_agent_definition",
-    ),
-    "worker task cards must be marked as run tasks, not durable agent settings",
-  );
-  for (const packet of artifact.workerTaskPackets) {
-    assert.ok(Array.isArray(packet.skillLoadout), `${packet.roleInstanceId} missing skillLoadout`);
-    assert.ok(Array.isArray(packet.mcpLoadout), `${packet.roleInstanceId} missing mcpLoadout`);
-    assert.ok(Array.isArray(packet.toolLoadout), `${packet.roleInstanceId} missing toolLoadout`);
-    assert.ok(Array.isArray(packet.commandLoadout), `${packet.roleInstanceId} missing commandLoadout`);
-  }
-  assert.equal(
-    artifact.workerTaskPackets.some(
-      (packet) =>
-        packet.roleInstanceId === "read-before-edit-implementation" &&
-        packet.readBeforeEditRequired === true,
-    ),
-    true,
-  );
+  assert.equal(artifact.artifactKind, "host_preparation");
+  assert.equal(artifact.task, "这个页面不好看，帮我弄高级一点");
+  assert.equal(artifact.preparation.status, "needs_thinking");
+  assert.equal(artifact.thinkingPacket.status, "host_reasoning_required");
+  assert.deepEqual(artifact.workerTaskPackets, []);
+  assert.equal(artifact.coreLoop.stageDagPacket, undefined);
+  assert.equal(artifact.stageRunnerBridgePacket, undefined);
+  assert.equal(artifact.publicReadyDecision.publicReady, false);
+  assert.ok(artifact.hostInvocationRequestPacket.nextAction);
   rmSync(tempDir, { recursive: true, force: true });
 });
 

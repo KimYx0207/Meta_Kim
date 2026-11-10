@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { buildIsolatedTestEnvironment } from "../../scripts/run-local-verification.mjs";
 
 const CANONICAL_INDEX_PATH = "config/capability-index/meta-kim-capabilities.json";
 let canonicalIndexBefore;
@@ -41,16 +42,10 @@ function scan(langFlag = "--zh") {
     "--runtime-inventory-only",
   ];
   if (langFlag) args.push(langFlag);
-  const localAppData = path.join(isolatedHome, "AppData", "Local");
-  mkdirSync(localAppData, { recursive: true });
   const result = spawnSync(process.execPath, args, {
     encoding: "utf8",
     env: {
-      ...process.env,
-      HOME: isolatedHome,
-      USERPROFILE: isolatedHome,
-      LOCALAPPDATA: localAppData,
-      APPDATA: path.join(isolatedHome, "AppData", "Roaming"),
+      ...buildIsolatedTestEnvironment(isolatedHome),
       META_KIM_PROFILE: "discover-i18n-test",
     },
   });
@@ -66,6 +61,9 @@ describe("52 — Discover capabilities i18n truncate format", () => {
   before(() => {
     canonicalIndexBefore = readFileSync(CANONICAL_INDEX_PATH);
     isolatedHome = mkdtempSync(path.join(tmpdir(), "meta-kim-discover-i18n-"));
+    for (const directory of ["tmp", "appdata", "localappdata", "config", "cache", "data", "state", "npm-cache"]) {
+      mkdirSync(path.join(isolatedHome, directory));
+    }
     seedSkillFamilies();
   });
 

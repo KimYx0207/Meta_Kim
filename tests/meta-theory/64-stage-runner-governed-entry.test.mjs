@@ -4,6 +4,8 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test, { after, before } from "node:test";
+import { fixtureCritical, fixtureReadWorkOrder, runWithFixtureHostThinking } from "../helpers/host-reasoning-fixture.mjs";
+import { localProtocolFixtureTaskFacts } from "../helpers/task-design-facts.mjs";
 let runMetaTheoryGovernedExecution;
 
 let runtimeFixture;
@@ -13,13 +15,22 @@ before(async () => {
 });
 after(() => runtimeFixture?.cleanup());
 
+async function runMetadataReport(options) {
+  const criticalInput = fixtureCritical({ task: options.task, successCriteria: [{ id: "package-metadata", condition: "The bounded report identifies the current package name and version from package.json.", evidenceRequired: "Read-only work order, worker receipt and exact source comparison" }], nonGoals: ["No source edits or native execution claims"] });
+  const governanceTaskFacts = localProtocolFixtureTaskFacts(options.task);
+  return runWithFixtureHostThinking(runMetaTheoryGovernedExecution, options, {
+    criticalInput, governanceTaskFacts,
+    workOrders: preparation => [fixtureReadWorkOrder(preparation, { id: "package-metadata", todayTask: options.task,
+      output: "Read-only verification report of the exact package name and version", criterionIds: ["package-metadata"], taskFacts: governanceTaskFacts })],
+  });
+}
 
 test("formal governed entrypoint records a synthetic bridge result without claiming native execution", async (t) => {
   const outputRoot = await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-p117-governed-test-"));
   t.after(async () => fs.rm(outputRoot, { recursive: true, force: true }));
   const task = "Run meta-theory: inspect package.json and produce a durable verification report of the exact package name and version. Do not modify files.";
   const prompts = [];
-  const report = await runMetaTheoryGovernedExecution({
+  const report = await runMetadataReport({
     task,
     runId: "p117-governed-entry-test",
     runtime: "codex",
@@ -61,7 +72,7 @@ test("formal governed entrypoint records a synthetic bridge result without claim
   });
   assert.equal(report.stageRunnerBridgePacket.status, "pass");
   assert.equal(report.workerTaskPackets.length, 1);
-  assert.deepEqual(report.workerTaskPackets[0].scopeFiles, ["package.json"]);
+  assert.deepEqual(report.workerTaskPackets[0].scopeFiles.map(file => path.resolve(file)), [path.resolve("package.json")]);
   assert.equal(report.workerTaskPackets[0].workOrderReadiness, "ready");
   assert.match(report.workerTaskPackets[0].todayTask, /exact package name and version/);
   assert.equal(report.stageRunnerBridgePacket.executionProjection.durable.enabled, true);
@@ -107,6 +118,7 @@ function stageStatuses(stages) {
 async function governedRunnerSpineFixture(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-runner-spine-project-"));
   const outputRoot = await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-runner-spine-output-"));
+  await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ name: "spine-fixture", version: "1.0.0" }));
   t.after(async () => Promise.all([
     fs.rm(root, { recursive: true, force: true }),
     fs.rm(outputRoot, { recursive: true, force: true }),
@@ -116,7 +128,7 @@ async function governedRunnerSpineFixture(t) {
 }
 
 function governedRunnerSpineRun({ root, outputRoot, runId, hostEnv }) {
-  return runMetaTheoryGovernedExecution({
+  return runMetadataReport({
     task: "Inspect package metadata and prepare a read-only verification summary.",
     runId,
     runtime: "codex",
@@ -152,7 +164,8 @@ test("real governed runner publishes its exact worker task IDs into the host-act
   const report = await governedRunnerSpineRun({ root, outputRoot, runId: activated.runId });
   const state = await spine.readSpineState(root);
   const taskPacketIds = report.workerTaskPackets.map((packet) => packet.taskPacketId);
-  assert.equal(report.coreLoop.runnerSpineBindingPacket.status, "published");
+  assert.equal(report.coreLoop.runnerSpineBindingPacket.status, "published", JSON.stringify({ binding: report.coreLoop.runnerSpineBindingPacket,
+    workOrders: report.workerTaskPackets.map(packet => ({ id: packet.taskPacketId, readiness: packet.workOrderReadiness, reasons: packet.workOrderReadinessReasons })) }));
   assert.equal(state.runId, activated.runId);
   assert.deepEqual(state.workerTaskPackets.map((packet) => packet.taskPacketId), taskPacketIds);
   assert.deepEqual(state.runnerDispatchBindingEnvelope.taskPacketIds, taskPacketIds);

@@ -147,8 +147,16 @@ describe("runtime compatibility catalog", () => {
       assert.equal(product.formalProjection.hasProjectionLayout, false, id);
       assert.equal(product.formalProjection.isDefaultTarget, false, id);
       assert.equal(syncManifest.supportedTargets.includes(id), false, id);
-      assert.match(product.decision, /packed structural/i, id);
-      assert.match(product.decision, /not.*formal|forbid formal/i, id);
+      if (id === "deepseek-harness") {
+        assert.match(product.decision, /existing plan-only candidate authority/u);
+        assert.match(product.decision, /opt-in native profile\/Skills\/MCP installation/u);
+        assert.match(product.decision, /no promotion of stage-runner authority/u);
+        assert.equal(product.genericCompatibility.status, "partial");
+        assert.equal(product.genericCompatibility.hookConfig, null);
+      } else {
+        assert.match(product.decision, /packed structural/i, id);
+        assert.match(product.decision, /not.*formal|forbid formal/i, id);
+      }
     }
   });
 

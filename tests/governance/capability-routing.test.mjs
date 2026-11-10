@@ -281,7 +281,7 @@ test("routing fixtures recall internal patterns and platform/OS matrices", (t) =
   assert.equal(contentGrowthDecision.recommendedRoute?.decisionLensProvider, "kim-decision");
   assert.deepEqual(
     contentGrowthDecision.recommendedRoute?.selectedCapabilityProviders,
-    [],
+    {},
     "reference-only decision lens must not fall back to an executable skill provider",
   );
   assert.equal(contentGrowthDecision.recommendedRoute?.boundary?.executionMode, "model_context");

@@ -94,7 +94,10 @@ describe("27 — Governance agent upgrade plan", async () => {
     );
     assert.doesNotMatch(
       JSON.stringify(stationContract),
-      /gstack|gbrain|wshobson|Anthropic|skill-creator/i
+      /gstack|gbrain|wshobson|Anthropic|(?<!meta-)\bskill-creator\b/i
     );
+    assert.ok(stationContract.stations.find(station => station.id === "loadout_station")
+      .failIf.some(reason => reason.includes("required meta-skill-creator")),
+    "the first-party capability factory remains a required ownership boundary");
   });
 });

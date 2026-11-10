@@ -12,68 +12,31 @@ before(async () => {
 after(() => runtimeFixture?.cleanup());
 
 describe("26 — Core MVP acceptance report", async () => {
-  test("maps PRD FRs and quantitative metrics to executable evidence", async () => {
+  test("keeps acceptance pending until the current host supplies Critical and Thinking evidence", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-core-acceptance-"));
     try {
       const jsonPath = path.join(tempDir, "acceptance.json");
       const markdownPath = path.join(tempDir, "acceptance.md");
       const report = await runCoreMvpAcceptance({ jsonPath, markdownPath });
-
-      assert.equal(report.status, "pass");
-      assert.equal(report.frChecks.length, 11);
-      assert.deepEqual(
-        report.frChecks.map((check) => check.id),
-        [
-          "FR-001",
-          "FR-002",
-          "FR-003",
-          "FR-004",
-          "FR-005",
-          "FR-006",
-          "FR-007",
-          "FR-008",
-          "FR-009",
-          "FR-010",
-          "FR-011",
-        ]
-      );
-      for (const check of [...report.frChecks, ...report.metricChecks]) {
-        assert.equal(check.passed, true, `${check.id} must pass`);
-        assert.ok(check.evidence, `${check.id} must carry replayable evidence`);
-      }
-
-      assert.equal(report.summary.decisionsCovered, 6);
-      assert.equal(report.summary.branchesCovered, 6);
-      assert.equal(report.summary.agentDesignEvaluation, "pass");
-      assert.equal(report.summary.governanceProcessMvp, "pass");
-      assert.equal(report.summary.stationPacketsCovered, 5);
-      assert.equal(report.summary.completeProductMvp, "pass");
-      assert.equal(report.summary.analyticsMetrics, 6);
-      assert.ok(
-        report.evidence.commands.includes("npm run meta:core:mvp:acceptance")
-      );
-      assert.ok(
-        report.evidence.commands.includes("npm run meta:gap:complete-product:acceptance")
-      );
-      for (const metricId of [
-        "complete_product_mvp_pass",
-        "analytics_decision_distribution",
-        "analytics_user_corrections",
-        "analytics_candidate_acceptance",
-        "analytics_repeat_keys",
-        "analytics_owner_failure_rate",
-      ]) {
-        assert.ok(
-          report.metricChecks.some((check) => check.id === metricId),
-          `${metricId} metric missing`
-        );
-      }
-
+      assert.equal(report.artifactKind, "host_preparation");
+      assert.equal(report.status, "partial");
+      assert.equal(report.preparation.status, "needs_thinking");
+      assert.equal(report.summary.consumer, "core_mvp_acceptance");
+      assert.equal(report.nextAction.stage, "Critical");
+      assert.equal(report.nextAction.producer, "current_host_ai");
+      assert.deepEqual(report.workerTaskPackets, []);
+      assert.equal(report.coreLoop.stageDagPacket, undefined);
+      assert.equal(report.publicReadyDecision.publicReady, false);
+      assert.equal(report.frChecks, undefined, "Fixture replay alone cannot certify product acceptance");
+      assert.equal(report.metricChecks, undefined);
+      const saved = JSON.parse(await readFile(jsonPath, "utf8"));
+      assert.equal(saved.preparation.bindingDigest, report.preparation.bindingDigest);
       const markdown = await readFile(markdownPath, "utf8");
-      assert.match(markdown, /# Meta_Kim Core MVP 验收报告/);
-      assert.match(markdown, /FR-009/);
-      assert.match(markdown, /langgraph_branch_coverage/);
-      assert.match(markdown, /station_output_coverage/);
+      assert.equal(markdown, await readFile(report.paths.markdown, "utf8"));
+      assert.match(markdown, /needs_thinking/u);
+      assert.match(markdown, /尚未形成正式执行工单/u);
+      // The paired source survives the diagnostic's temporary replay cleanup.
+      assert.equal(JSON.parse(await readFile(report.paths.json, "utf8")).runId, report.runId);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

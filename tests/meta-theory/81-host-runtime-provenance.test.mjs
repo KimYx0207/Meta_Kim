@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { promises as fs, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { promisify } from "node:util";
+import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
+import { fixtureCritical, fixtureReadWorkOrder, runFixtureHostCli } from "../helpers/host-reasoning-fixture.mjs";
+import { localProtocolFixtureTaskFacts } from "../helpers/task-design-facts.mjs";
 
 import {
   HOST_INHERITED_ENV_NAMES,
@@ -418,6 +419,7 @@ test("the run's state profile is read from the injected environment, not from th
  * provenance.
  */
 test("a CLI run with no declared runtime records the host it was actually started under", async (t) => {
+  const fixture = createGovernanceRuntimeFixtureScope(t, { graph: true });
   const outputRoot = await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-cli-hostprov-"));
   t.after(async () => fs.rm(outputRoot, { recursive: true, force: true }));
   const runId = "meta-cli-hostprov-1";
@@ -427,14 +429,22 @@ test("a CLI run with no declared runtime records the host it was actually starte
   }
   delete env.META_KIM_RUNTIME;
 
-  await promisify(execFile)(process.execPath, [
+  const task = "Read package metadata and report the exact package name.";
+  const criticalInput = fixtureCritical({ task, successCriteria: [{ id: "package-name", condition: "The bounded report reads the current package name from package.json.", evidenceRequired: "Current source and explicit read-only work order" }] });
+  const governanceTaskFacts = localProtocolFixtureTaskFacts(task);
+  const executed = runFixtureHostCli(fixture, [
     "scripts/run-meta-theory-governed-execution.mjs",
-    "--task", "Read package metadata and report the exact package name.",
+    "--task", task,
     "--run-id", runId,
     "--state-dir", outputRoot,
     "--artifact-dir", outputRoot,
     "--db", path.join(outputRoot, "runs.sqlite"),
-  ], { env, cwd: process.cwd(), maxBuffer: 64 * 1024 * 1024 });
+    "--project-capability-mutation-mode", "read_only", "--no-emit-conversation-notice",
+  ], { criticalInput, governanceTaskFacts,
+    workOrders: preparation => [fixtureReadWorkOrder(preparation, { id: "package-name", todayTask: task,
+      output: "Exact package name from the current source", criterionIds: ["package-name"], taskFacts: governanceTaskFacts })],
+  }, { env, cwd: process.cwd(), maxBuffer: 64 * 1024 * 1024 });
+  assert.equal(executed.status, 0, executed.stderr || executed.stdout);
 
   const artifact = JSON.parse(await fs.readFile(path.join(outputRoot, `${runId}.json`), "utf8"));
   assert.equal(artifact.sourceRuntime, "claude");

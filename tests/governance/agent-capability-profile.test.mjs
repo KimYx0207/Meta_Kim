@@ -5,6 +5,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import os from "node:os";
 import path from "node:path";
 import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
+import { fixtureCritical, fixtureInventoryProvider, fixtureReadWorkOrder, runWithFixtureHostThinking } from "../helpers/host-reasoning-fixture.mjs";
+import { localProtocolFixtureTaskFacts } from "../helpers/task-design-facts.mjs";
 import {
   agentCapabilityProfileDigest,
   agentProfileOwnerBinding,
@@ -301,9 +303,16 @@ test("agent profile route consumes actual A/B sources through selector, runner A
   assert.equal(codexMessage.requiredMaterials.find((entry) => entry.sourceRef === material.ref).content, readFileSync(path.join(projectRoot, material.ref), "utf8"));
   assert.equal(codexMessage.requiredMaterials.find((entry) => entry.sourceRef === baseMaterial.ref).content, readFileSync(path.join(sourceRoot, baseMaterial.ref), "utf8"));
   const runner = await runtime.import("scripts/run-meta-theory-governed-execution.mjs");
-  const api = await runner.runMetaTheoryGovernedExecution({ task, projectRoot, runId: "agent-profile-api", artifactDir: path.join(runtime.root, "artifacts"),
+  const criticalInput = fixtureCritical({ task, successCriteria: [{ id: "profile-source-binding", condition: "The selected frontend work order contains the actual source-A and project-B method content.", evidenceRequired: "workerTaskPackets and read-only worker prompt" }] });
+  const governanceTaskFacts = localProtocolFixtureTaskFacts(task);
+  const api = await runWithFixtureHostThinking(runner.runMetaTheoryGovernedExecution, { task, projectRoot, runId: "agent-profile-api", artifactDir: path.join(runtime.root, "artifacts"),
     stateDir: path.join(runtime.root, "state"), dbPath: path.join(runtime.root, "state.sqlite"), agentCapabilityProfileContext: context,
-    projectCapabilityMutationMode: "read_only", emitConversationNotice: false });
+    projectCapabilityMutationMode: "read_only", emitConversationNotice: false }, {
+      criticalInput, governanceTaskFacts,
+      workOrders: preparation => [fixtureReadWorkOrder(preparation, { id: "frontend-profile-read", owner: "frontend", todayTask: task,
+        output: "Source-bound Vue interaction guidance", criterionIds: ["profile-source-binding"], taskFacts: governanceTaskFacts,
+        selectedProviders: { skill: fixtureInventoryProvider(preparation, "design-html", "providers") } })],
+    });
   const packet = api.coreLoop.thinkingPacket.workerTaskPackets.find((entry) => entry.ownerAgent === "frontend");
   assert.equal(packet.agentCapabilityProfile.contentDigest, module.agentCapabilityProfileDigest(profile));
   assert.equal(packet.capabilityLoadout.capabilityProfileId, "vue-project");

@@ -17,6 +17,8 @@ const READ_ONLY_PERMISSIONS = new Set([
 ]);
 const TOOL_PERMISSIONS = {
   Read: "filesystem:read-user-materials",
+  Grep: "filesystem:read-user-materials",
+  Glob: "filesystem:read-user-materials",
   WebSearch: "network:read-web-search",
   WebFetch: "network:read-web-fetch",
 };

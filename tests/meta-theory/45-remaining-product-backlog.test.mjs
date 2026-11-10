@@ -90,6 +90,9 @@ describe("45 — Remaining product backlog reports", () => {
 
     const { report, markdown } = readReport(summary);
     assert.equal(report.schemaVersion, "warden-approval-experience-v0.1");
+    assert.equal(report.evidenceKind, "isolated_writeback_mechanism_rehearsal");
+    assert.equal(report.nativeExecutionVerified, false);
+    assert.equal(report.methodImprovementVerified, false);
     assert.equal(report.status, "pass");
     assert.equal(report.approvalPanel.schemaVersion, "warden-approval-panel-v0.1");
     assert.equal(report.approvalPanel.approvalRequired, true);

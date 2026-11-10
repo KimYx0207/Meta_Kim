@@ -94,8 +94,22 @@ const PURE_QUERY_RE =
   /^(?:what|why|how|when|where|who|is|are|can|could|should)\b|^(?:什么|为什么|怎么|如何|是否|能否|可以|介绍|解释|说明)/iu;
 const DEFINITION_QUERY_RE = /^what\s+(?:does|do)\s+(?:it\s+mean\s+to\s+[^,.?!;，。？！；\r\n]+|[^,.?!;，。？！；\r\n]+\s+mean)[.?？]?\s*$/iu;
 function isDefinitionQuery(text) {
-  return DEFINITION_QUERY_RE.test(text)
-    && !/\b(?:and|then)\s+(?:please\b|(?:can|could|would)\s+you\b)|(?:请|帮我|然后|并且)/iu.test(text);
+  if (DEFINITION_QUERY_RE.test(text)
+    && !/\b(?:and|then)\s+(?:please\b|(?:can|could|would)\s+you\b)|(?:请|帮我|然后|并且)/iu.test(text)) return true;
+  // A named action can be the subject of an explanation. Preserve a later
+  // imperative clause ("explain this design, then redesign the page") as work.
+  const clauses = affirmativeRequestClauses(text);
+  const explanationPrefix = /^(?:(?:(?:please|can you|could you|would you)\s+)*(?:explain|describe)\b|(?:请|请帮我|帮我)?(?:解释|说明)(?:一下|下)?(?:如何|怎么|为什么|什么|这个|这段|此))/iu;
+  if (!explanationPrefix.test(clauses[0] ?? "")) return false;
+  const subsequentWork = clauses.slice(1).some(clause => ACTION_RE.test(clause) || EXPLICIT_META_THEORY_RE.test(clause));
+  if (!subsequentWork) return true;
+  // "Explain how to export and save" is one procedural explanation. An
+  // explicit new sentence, sequencing word or request restarts the work scope.
+  const proceduralExplanation = /^(?:(?:please|can you|could you|would you)\s+)*(?:explain|describe)\s+how\b/iu.test(text);
+  const explicitFollowup = /\b(?:then|but|and\s+(?:please|can you|could you|would you))\b/iu.test(text)
+    || text.split(/[,.!?;，。！？；\r\n]+/u).slice(1)
+      .some(clause => affirmativeRequestClauses(clause).some(part => ACTION_RE.test(part) || EXPLICIT_META_THEORY_RE.test(part)));
+  return proceduralExplanation && !explicitFollowup;
 }
 
 const CHINESE_QUERY_WORD_RE = /(?:什么|为什么|怎么|如何|是否|能否|可以吗|吗|介绍|解释|说明)/u;
@@ -225,7 +239,7 @@ export function classifyMetaTheoryEntry(prompt) {
   const lower = text.toLowerCase();
   const explicitMetaTheory = EXPLICIT_META_THEORY_RE.test(text);
   const subjectiveQuality = SUBJECTIVE_QUALITY_RE.test(text);
-  const actionIntent = ACTION_RE.test(text) && !isDefinitionQuery(text);
+  const actionIntent = affirmativeRequestClauses(text).some(clause => ACTION_RE.test(clause)) && !isDefinitionQuery(text);
   const durableOutputIntent = DURABLE_OUTPUT_RE.test(text);
   const fileOrMutationIntent = FILE_OR_MUTATION_RE.test(text);
   const productBuildIntent = actionIntent && hasProductBuildIntent(text);

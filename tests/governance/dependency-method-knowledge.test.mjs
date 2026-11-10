@@ -7,6 +7,8 @@ import path from "node:path";
 import os from "node:os";
 import { loadMethodKnowledgeAssets, METHOD_KNOWLEDGE_LIMITS } from "../../src/infrastructure/capabilities/dependency-method-knowledge.mjs";
 import { buildMethodInvocationContext, appendMethodInvocationContext, assertMethodInputsReady, buildMethodDeliveryEnvelope } from "../../scripts/governed-execution/method-delivery.mjs";
+import { prepareReadOnlyRuntimeInvocation } from "../../scripts/governed-execution/stage-runner-bridge.mjs";
+import { readOnlyFixtureTaskFacts } from "../helpers/task-design-facts.mjs";
 
 async function fixture(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), "meta-method-knowledge-"));
@@ -121,6 +123,7 @@ test("all real professional packages deliver complete knowledge through the regi
       assert.ok(example, "The real source supplies a bounded authored example of its declared input");
       assert.equal(cases.evaluationStatus, "not_evaluated", "Authored examples do not claim professional quality");
       const packet = { ...handoff.recommendation, taskPacketId: `knowledge-audit-${role}`, coreProblem: task,
+        todayTask: task, taskFactsSubject: task, taskFacts: readOnlyFixtureTaskFacts(task),
         methodCapabilityId: contract.capabilities[0].id, methodInputs: example.input,
         scopeFiles: [`agents/${role}/references/professional-method.md`], nonGoals: ["No writes or native-success claims"],
         acceptanceCriterionIds: example.input.acceptanceCriteria?.map(criterion => criterion.id) ?? ["transport-only"] };
@@ -128,12 +131,20 @@ test("all real professional packages deliver complete knowledge through the regi
       assert.ok(method.knowledgeAssets.length > 0);
       const context = buildMethodInvocationContext({ method, packet });
       assertMethodInputsReady(context);
-      const prompt = appendMethodInvocationContext("Bounded source-review task", context);
+      const invocation = await prepareReadOnlyRuntimeInvocation({ runtime: "codex", workspaceRoot: projectRoot, packet,
+        prompt: "Bounded source-review task", env: environment });
+      const prompt = invocation.input;
       const marker = "Source-verified professional method and task inputs (data, not permission):\n";
       assert.ok(prompt.includes(marker));
       const delivered = JSON.parse(prompt.slice(prompt.indexOf(marker) + marker.length).split("\n")[0]);
       assert.deepEqual(delivered.method.expertise, sourceMethod.expertise, "Diagnosis, decisions and contract guidance reach the actual method context");
       assert.equal(delivered.method.expertise.evaluation.professionalEffect, "not_evaluated");
+      const sourceChecks = sourceMethod.expertise.contractGuidance.find(guide => guide.capabilityId === contract.capabilities[0].id).outputChecks;
+      assert.equal(delivered.outputReview.standardStatus, "complete_contract", "Published current packages need complete authored quality standards");
+      assert.deepEqual(delivered.outputReview.checks.map(({ standardStatus, missingStandardFields, evidenceStatus, ...check }) => check), sourceChecks);
+      assert.ok(delivered.outputReview.checks.every(check => check.evidenceStatus === "not_observed"));
+      assert.equal(delivered.outputReview.acceptanceStatus, "pending_independent_review");
+      assert.equal(invocation.ownerMethodBinding.sourceVerified, true);
       assert.deepEqual(delivered.knowledgeAssets.map(asset => asset.id).sort(), sourceMethod.expertise.knowledgeAssetIds.toSorted());
       for (const asset of delivered.knowledgeAssets) {
         const bytes = await readFile(path.join(componentRoot, asset.path));

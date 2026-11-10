@@ -67,7 +67,13 @@ The Live page reads a bounded projection with public node identities. It disting
 
 A reusable professional package needs domain concepts, diagnosis, decision rules, required inputs, output checks, common failure modes, escalation boundaries and authored positive/negative cases. Existing specialist methods and deterministic helpers remain useful; absence of a `method.json` alone does not prove a package lacks knowledge.
 
+The selected capability's existing `expertise.contractGuidance.outputChecks` now carries a stable check ID, pass and rejection conditions, verification method, evidence requirements and blocking flag. The actual invocation context projects these as `outputReview`; it is not another acceptance store. A complete source contract starts with unobserved evidence. Missing standards remain `legacy_incomplete`, and worker reports remain pending independent review. A source check ID does not silently become a host-assigned task criterion. A failed or unobserved blocking condition cannot be compensated by a high aggregate score.
+
 Knowledge resources are selected by declared applicability, read as actual bounded UTF-8 bytes and bound to the current component hash. Contract validation checks integrity and compatibility. For calculation handoffs, explicit host-supplied typed inputs stay with the original private materials and current task/source bindings. The normal required-input validator still applies; conflicting inputs or changed materials cannot reuse an old work order. Public diagnostics contain bounded codes and detail digests, while complete diagnostic material remains available privately to the selected worker. Authored examples describe expected behavior; they are not executed model evaluations. A professional-effect claim needs separate observed outcomes and appropriate independent review. Missing knowledge causes further discovery or a bounded limitation, rather than a fabricated expert role.
+
+## DSh remains a host adapter
+
+The opt-in `meta-kim dsh` entry installs native Skills, a profile/project patch and the native MCP client through the existing install manifest and immutable executable store. Long Markdown has lossless bounded views because the reviewed host can prune long tool results. Canonical roles are reusable methods loaded into the real host context; they are not invented custom-agent presets. The native subagent tool inherits the host's current preset. Configuration/Skill/MCP observations remain separate from native delegation, hard Hook enforcement and professional task quality. The [DSh reference](../canonical/skills/meta-theory/references/runtime-dsh.md) owns the pinned host details and lifecycle commands; this path does not expand stage-runner authority.
 
 ## Absorb methods; retain engines where they add capability
 
@@ -88,6 +94,21 @@ Reviewed against primary sources on 2026-11-10:
 | [Vercel agent-desktop](https://github.com/vercel-labs/agent-desktop), [agent-browser](https://github.com/vercel-labs/agent-browser), [Playwright MCP](https://github.com/microsoft/playwright-mcp) | Concrete desktop/browser operations and native interfaces | Optional providers with observed local availability; no automatic installation or native-live certification. |
 
 The earlier [intent-to-delivery reference](../canonical/skills/meta-theory/references/intent-to-delivery.md) covers specification, professional design, reflection and cleanup research. These are adaptation decisions, not imported frameworks or claims of equivalent performance.
+
+## Follow-up comparison: turn reference ideas into observable checks
+
+Reviewed again on 2026-11-11 (Asia/Shanghai). The links below identify the inspected primary-source documents; rolling branches are not immutable version pins. These are focused comparisons of mechanisms, not whole-project audits or imported code. Each adoption must fit an existing Meta_Kim authority and have a concrete check.
+
+| Primary reference | Useful mechanism | Meta_Kim / Kim_Service application | Check and limit |
+| --- | --- | --- | --- |
+| [Spec Kit agentic SDD](https://github.com/github/spec-kit/blob/main/docs/reference/agentic-sdd.md) | Separate specification, technical plan and dependency tasks; check their consistency | Keep architecture and module views inside the existing design digest; bind module criteria to actual tasks and interfaces | `tests/governance/software-design.test.mjs`; a valid schema does not prove the chosen product is useful |
+| [BMAD planning paths](https://github.com/bmad-code-org/BMAD-METHOD/blob/main/docs/plan/choose-a-planning-path.md) | Planning depth follows what remains unclear about the intended outcome | Preserve task-fact-based depth, existing settled decisions and exploration before delivery; do not require a full new PRD for a clear local repair | Current preparation and goal-binding tests; classification is routing evidence, not semantic understanding by itself |
+| [Superpowers subagent development](https://github.com/obra/superpowers/blob/main/skills/subagent-driven-development/SKILL.md) | Bounded worker context, task review and whole-change review have different purposes | Deliver the selected professional method and exact task inputs; retain independent review of the result and final cross-repository integration | Method-delivery and knowledge-handoff tests; source check IDs do not silently become task criteria, and worker claims remain unverified |
+| [GSD architecture](https://github.com/gsd-build/get-shit-done/blob/main/docs/ARCHITECTURE.md) | Persist task context, dependencies and handoff artifacts across workers | Use the existing durable DAG, planning continuity and branch-local human gates; retain one writer for shared planning state | Human-gate/restart and scheduling tests; use dynamic ready sets instead of importing fixed waves or bypassing Hooks |
+| [LangGraph persistence](https://docs.langchain.com/oss/javascript/langgraph/persistence) | Persist execution state and completed work for resumable runs | Keep committed independent results and bind resumed inputs to the current task/version | Durable repository and resume tests; an uncertain external side effect still needs reconciliation before retry |
+| [NVIDIA SkillEvaluator](https://github.com/NVIDIA/SkillEvaluator) and [Anthropic agent evaluations](https://www.anthropic.com/research/demystifying-evals-for-ai-agents) | Static content checks, task outcomes and comparative effectiveness answer different questions | Check every professional capability's cases, field criteria and required evidence; preserve separate outcome trials and `not_evaluated` where effects were not measured | Service validators and recorded task trials; no borrowed benchmark score, certification or claim of universal improvement |
+
+The user keeps the same client and model preference. These references do not add a second agent loop, mandatory model router, approval store or dependency installation. Existing useful tools remain available. Cleanup requires evidence about actual consumers and ownership, not a repository's popularity or a static zero-reference count.
 
 ## Verification and remaining limits
 

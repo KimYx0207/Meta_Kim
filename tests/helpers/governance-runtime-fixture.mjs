@@ -40,7 +40,7 @@ export function createGovernanceRuntimeFixture(t, { graph = false } = {}) {
     // Copy only source inputs. Scripts resolve their repository from import.meta
     // rather than cwd, so a fresh HOME alone would still mutate the real checkout.
     for (const entry of [
-      "canonical", "config", "scripts", "src", "docs", "tests/fixtures", "tests/meta-theory/scenarios",
+      "canonical", "config", "scripts", "src", "docs", "tests/fixtures", "tests/helpers", "tests/meta-theory/scenarios",
       "package.json", "setup.mjs", "AGENTS.md", "CLAUDE.md", "LICENSE",
       ...readdirSync(sourceRoot).filter((name) => /^README(?:\.[\w-]+)?\.md$/u.test(name)),
     ]) {

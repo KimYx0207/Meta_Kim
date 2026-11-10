@@ -147,6 +147,8 @@ developer_instructions = "Do not use the filename as agent_type. OPENAI_API_KEY=
     ...process.env,
     USERPROFILE: home,
     HOME: home,
+    CODEX_HOME: join(home, ".codex"),
+    META_KIM_CODEX_HOME: join(home, ".codex"),
     META_KIM_PROFILE: profile,
     META_KIM_RUNTIME_FAMILY: "codex",
   };
@@ -209,7 +211,7 @@ developer_instructions = "Do not use the filename as agent_type. OPENAI_API_KEY=
       [
         "scripts/select-execution-route.mjs",
         "--task",
-        "Critical Thinking Fetch Deep Thinking Review why Codex creates an agent instead of finding a global agent",
+        "Search the local source files with a discovered global execution agent and report exact evidence paths",
         "--runtime",
         "codex",
         "--os",
@@ -272,6 +274,8 @@ developer_instructions = "Use a different search policy and return evidence."
     ...process.env,
     USERPROFILE: home,
     HOME: home,
+    CODEX_HOME: join(home, ".codex"),
+    META_KIM_CODEX_HOME: join(home, ".codex"),
     META_KIM_PROFILE: profile,
     META_KIM_RUNTIME_FAMILY: "codex",
   };
@@ -280,7 +284,7 @@ developer_instructions = "Use a different search policy and return evidence."
     [
       "scripts/select-execution-route.mjs",
       "--task",
-      "Critical Thinking Fetch Deep Thinking Review search for a matching global execution agent",
+      "Search the local source files with a matching global execution agent and report exact evidence paths",
       "--runtime",
       "codex",
       "--os",
@@ -442,6 +446,8 @@ developer_instructions = "Use the current filesystem search policy."
     ...process.env,
     USERPROFILE: home,
     HOME: home,
+    CODEX_HOME: join(home, ".codex"),
+    META_KIM_CODEX_HOME: join(home, ".codex"),
     META_KIM_PROFILE: profile,
     META_KIM_RUNTIME_FAMILY: "codex",
   };
@@ -450,7 +456,7 @@ developer_instructions = "Use the current filesystem search policy."
     [
       "scripts/select-execution-route.mjs",
       "--task",
-      "Critical Thinking Fetch Deep Thinking Review search using the current global agent",
+      "Search the local source files using the current global agent and report exact evidence paths",
       "--runtime",
       "codex",
       "--os",

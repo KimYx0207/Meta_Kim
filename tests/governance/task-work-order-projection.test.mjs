@@ -96,6 +96,9 @@ test("actual generated plan preserves worker dependencies and passes the artifac
     import { runMetaTheoryGovernedExecution } from './scripts/run-meta-theory-governed-execution.mjs';
     import { intentDialogueDigest } from './scripts/governed-execution/intent-dialogue.mjs';
     import { taskOutcomeDigest } from './src/domain/governance/task-outcome.mjs';
+    import { fixtureCritical, fixtureReadWorkOrder, fixtureThinkingInput } from './tests/helpers/host-reasoning-fixture.mjs';
+    import { localProtocolFixtureTaskFacts } from './tests/helpers/task-design-facts.mjs';
+    import { mkdir, readFile, writeFile } from 'node:fs/promises';
     import path from 'node:path';
     import { createHash } from 'node:crypto';
     const task = 'Run meta-theory. First inspect the API contract in src/api/Contract.json; then use the API contract findings to review src/client/Types.ts; finally review tests/client.test.ts against those findings.';
@@ -106,7 +109,41 @@ test("actual generated plan preserves worker dependencies and passes the artifac
       const outputText = 'Injected callback for transport testing only; no native or semantic acceptance claim.';
       return { status: 'pass', outputText, outputSha256: createHash('sha256').update(outputText).digest('hex'), runtimeProcessInvoked: false, durationMs: 1 };
     } };
-    const options = { task, confirmedIntent: intent, sharedUnderstandingConfirmed: { trusted: true, binding: 'plan-challenge-understanding-confirmation', taskHash: intent.taskHash, intentDigest: intentDialogueDigest(intent), evidenceRefs: intent.evidenceRefs }, stateDir: path.resolve('tmp/work-order'), dbPath: path.resolve('tmp/work-order.sqlite'), projectCapabilityMutationMode: 'read_only', stageRunner };
+    const sources = [
+      ['contract', 'src/api/Contract.json', [], '{"schemaVersion":1,"response":{"name":"string"}}'],
+      ['client', 'src/client/Types.ts', ['contract'], 'export type Response = { name: string };'],
+      ['tests', 'tests/client.test.ts', ['contract', 'client'], '// Source-only fixture: compare response name with the current API contract.'],
+    ];
+    for (const [, file, , content] of sources) {
+      await mkdir(path.dirname(file), { recursive: true });
+      await writeFile(file, content, 'utf8');
+    }
+    const criticalInput = fixtureCritical({ task, intentDigest: intentDialogueDigest(intent),
+      successCriteria: intent.acceptanceCriteria.map(criterion => ({ id: criterion.id, condition: criterion.description,
+        evidenceRequired: 'The inspected source and an independently reviewed result.' })),
+      nonGoals: ['add case studies', 'No source edits or native execution claims.'] });
+    const governanceTaskFacts = localProtocolFixtureTaskFacts(task, { change: { multiStep: true } });
+    const baseOptions = { task, confirmedIntent: intent, sharedUnderstandingConfirmed: { trusted: true, binding: 'plan-challenge-understanding-confirmation', taskHash: intent.taskHash, intentDigest: intentDialogueDigest(intent), evidenceRefs: intent.evidenceRefs }, stateDir: path.resolve('tmp/work-order'), dbPath: path.resolve('tmp/work-order.sqlite'), projectCapabilityMutationMode: 'read_only', criticalInput, governanceTaskFacts };
+    const prepared = await runMetaTheoryGovernedExecution({ ...baseOptions, runId: 'work-order-fetch' });
+    const preparation = JSON.parse(await readFile(prepared.paths.json, 'utf8'));
+    if (preparation.preparation?.status !== 'needs_thinking' || preparation.workerTaskPackets.length !== 0) throw new Error('Absent host Thinking must not manufacture a plan');
+    const thinkingInput = fixtureThinkingInput(preparation, { criticalInput, workOrders: current => sources.map(([id, file, dependsOn]) => ({
+      ...fixtureReadWorkOrder(current, { id, todayTask: 'Inspect ' + file + ' and compare its contract with the upstream findings.',
+        output: 'Source-bound findings for ' + file, criterionIds: [],
+        taskFacts: localProtocolFixtureTaskFacts('Inspect ' + file + ' and compare its contract with the upstream findings.') }),
+      evidenceRefs: [file], scopeFiles: [file], shardScope: [file], dependsOn,
+      capabilityNeed: ['Read and compare the current API contract'],
+      referenceDirection: 'Inspect the current ' + file + ' after the declared upstream work completes.',
+      verifySteps: [{ id: id + '-check', step: 'Compare the current source with the upstream contract findings', verify: 'Source-bound comparison; no native result or semantic acceptance claim.' }],
+    })) });
+    const options = { ...baseOptions, thinkingInput, previousPlanChallengeRunId: preparation.runId, stageRunner };
+    let changedRequirementRejected = false;
+    try {
+      await runMetaTheoryGovernedExecution({ ...options, runId: 'changed-preparation-requirement',
+        designRequirement: { required: true, reason: 'A newly declared shared architecture requires design.' },
+        taskCriterionAssignments: { taskHash: intent.taskHash, intentDigest: intentDialogueDigest(intent), assignments: [] } });
+    } catch (error) { changedRequirementRejected = /Pending preparation identity or paired material mismatch/.test(error.message); }
+    if (!changedRequirementRejected || invocations !== 0) throw new Error('Allocation transition admitted a changed design requirement');
     const first = await runMetaTheoryGovernedExecution({ ...options, runId: 'work-order-plan', taskCriterionAssignments: { taskHash: intent.taskHash, intentDigest: intentDialogueDigest(intent), assignments: [] } });
     const producers = first.workerTaskPackets;
     if (invocations !== 0 || first.stageRunnerBridgePacket.failure.failureClass !== 'work_order_design_incomplete') throw new Error('Unassigned required criteria reached execution');
@@ -117,6 +154,14 @@ test("actual generated plan preserves worker dependencies and passes the artifac
     ] };
     await runMetaTheoryGovernedExecution({ ...options, runId: 'assigned-work-order-plan', taskCriterionAssignments: assignments });
     if (invocations !== 3) throw new Error('Assigned exact three-step plan did not invoke its three injected callbacks: ' + invocations);
+    const allocatedPreparation = await runMetaTheoryGovernedExecution({ ...baseOptions, runId: 'already-allocated-fetch', taskCriterionAssignments: assignments });
+    let changedPreparationRejected = false;
+    try {
+      await runMetaTheoryGovernedExecution({ ...options, previousPlanChallengeRunId: allocatedPreparation.runId,
+        runId: 'changed-preparation-allocation', taskCriterionAssignments: { ...assignments,
+          assignments: assignments.assignments.map((entry, index) => ({ ...entry, criterionIds: [index ? 'contract' : 'client'] })) } });
+    } catch (error) { changedPreparationRejected = /Pending preparation identity or paired material mismatch/.test(error.message); }
+    if (!changedPreparationRejected || invocations !== 3) throw new Error('An already-bound preparation silently changed its allocation');
     let admissions = 0;
     const waiting = await runMetaTheoryGovernedExecution({ ...options, runId: 'machine-host-resource-wait', taskCriterionAssignments: assignments,
       stageRunner: { adapterRegistry: { invoke: async () => { throw new Error('Resource wait reached provider'); } },
@@ -148,7 +193,9 @@ test("actual generated plan preserves worker dependencies and passes the artifac
   const artifact = JSON.parse(readFileSync(file, "utf8"));
   assert.equal(artifact.workerTaskPackets.length, 3, "Confirmed outcome and constraint prose must not become extra executable actions");
   assert.equal(artifact.machineExecution.reason, "current_host_execution_adapter_required");
-  assert.deepEqual(artifact.workerTaskPackets.map(packet => packet.scopeFiles), [["src/api/Contract.json"], ["src/client/Types.ts"], ["tests/client.test.ts"]]);
+  assert.deepEqual(artifact.workerTaskPackets.map(packet => packet.scopeFiles),
+    ["src/api/Contract.json", "src/client/Types.ts", "tests/client.test.ts"].map(file => [path.join(fixture.repoRoot, file)]),
+    "The actual host handoff resolves each declared scope to the exact trusted project file");
   assert.deepEqual(artifact.workerTaskPackets.map(packet => packet.dependsOn), [[], [artifact.workerTaskPackets[0].taskPacketId], [artifact.workerTaskPackets[0].taskPacketId, artifact.workerTaskPackets[1].taskPacketId]]);
   for (const packet of artifact.workerTaskPackets) {
     const board = artifact.orchestrationTaskBoardPacket.tasks.find((entry) => entry.taskId === packet.taskPacketId);

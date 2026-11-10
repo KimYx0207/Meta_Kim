@@ -15,3 +15,12 @@ runtime. The adapter must receive explicit probe facts for version and features.
 missing fact remains unknown and blocks the plan. Probe code must not install,
 start, invoke, spend quota, write files, overwrite user configuration, or
 retain credentials/raw model output.
+
+## Native host integration
+
+The separate `meta-kim dsh install|update|check|uninstall` entry now owns the
+native DSh profile/patch, Skill projection and MCP configuration. Its contract
+is documented in `canonical/skills/meta-theory/references/runtime-dsh.md`.
+This older candidate-preset API remains non-authorizing design-time input;
+installing native Skills does not turn its planning result into execution
+authority, native custom-agent registration, Hook enforcement or model acceptance.

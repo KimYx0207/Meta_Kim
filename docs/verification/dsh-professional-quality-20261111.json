@@ -1,0 +1,286 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-11-11",
+  "timezone": "Asia/Shanghai",
+  "scope": "source iteration and regression validation; no new npm/GitHub Release",
+  "baselineCommit": "b8599184b9624fbb1cee0feeccaffa0d8fed76d2",
+  "sourceSha256": {
+    "scripts/dsh-profile-package.mjs": "ac1595ab15ee4e9b5f7e39a8b596decc1a654468721b24712a9ba71cf83f7cfb",
+    "scripts/diagnostic-host-protocol.mjs": "5239083da69f32d93bbf2d6d59c79746f96c95f2cc0e326116a7f994793da835",
+    "scripts/governed-execution/plan-challenge-host-continuation.mjs": "d17476243387fb2b15d56484a376afad4e073070fc8765c0f325c7a5779d2fbd",
+    "scripts/run-meta-theory-governed-execution.mjs": "124dcb07b8b32b388857c25ffb67573e2e22de3be511fe06b634c73b27f4f50d",
+    "scripts/governed-execution/method-delivery.mjs": "894b715511b22be2435647bd38e23dca1400a380a92e537f42df86066ed5f58e",
+    "scripts/dependency-agent-discovery.mjs": "baa2e4001248c7f93493388ff2399163252f82c2aa48d5b4cc12b2cf711f081b"
+  },
+  "checks": {
+    "meta-theory-resumed.log": {
+      "sha256": "2f0a787e91234134260b4ac8620d905526d5e8fe220a6b0ef96b84c7876f1efc",
+      "bytes": 190482,
+      "lastReportedCounts": {
+        "tests": 1671,
+        "pass": 1666,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 5
+      }
+    },
+    "meta-governance-final.log": {
+      "sha256": "9ce22cd0369c471e3eb076ac0feb64e0430cc0f49d3dc02c2a2e3dbd1d993299",
+      "bytes": 120293,
+      "lastReportedCounts": {
+        "tests": 1171,
+        "pass": 1134,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 37
+      }
+    },
+    "meta-unit-poc-resumed.log": {
+      "sha256": "71895a5353ba510f5b14c50f7f6108c82a770c2a56f0e4514b903c1f578241e8",
+      "bytes": 15218,
+      "lastReportedCounts": {
+        "tests": 59,
+        "pass": 59,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0
+      }
+    },
+    "meta-integration-resumed.log": {
+      "sha256": "b8d46a1e4c68a4ec690c0ea1556f9fea8b4876c15c11f4a7d6c2e6d5311aaec9",
+      "bytes": 4599,
+      "lastReportedCounts": {
+        "tests": 1,
+        "pass": 1,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0
+      }
+    },
+    "meta-live-resumed.log": {
+      "sha256": "a5f8bafe3f760e4959d0c417a922cea693f148ecc6052401f073c1c38bc43441",
+      "bytes": 100834,
+      "lastReportedCounts": {
+        "tests": 959,
+        "pass": 958,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 1
+      }
+    },
+    "meta-setup-platform-resumed.log": {
+      "sha256": "0e4a39b4a894181ec94bd7aa9718482b2d3f54f428299f589e3c3aab9cbd7b0d",
+      "bytes": 15546,
+      "lastReportedCounts": {
+        "tests": 152,
+        "pass": 148,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 4
+      }
+    },
+    "meta-process-guard-resumed.log": {
+      "sha256": "f324b43198d14c1aafb32b0babc822505099970180ae5e41112df17220593581",
+      "bytes": 6588,
+      "lastReportedCounts": {
+        "tests": 56,
+        "pass": 56,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0
+      }
+    },
+    "meta-work-order-final.log": {
+      "sha256": "eddd43783896cfaa98aa244dca7a4b00114bf18de00100d39cdc6188e9555cdd",
+      "bytes": 903,
+      "lastReportedCounts": {
+        "tests": 7,
+        "pass": 7,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0
+      }
+    },
+    "meta-memory-hooks-isolation-fixed.log": {
+      "sha256": "643ce97a1e43e00a9cdeff51cf61e535e771d87599ee8a34b0e64428d73a27ab",
+      "bytes": 7701
+    },
+    "meta-memory-hooks-junction-isolation-fixed.log": {
+      "sha256": "b6b1902572d384e8d1f516b12321bae0a54a064a35987a92683b3fe628d3c31c",
+      "bytes": 296
+    },
+    "meta-codex-hook-order-stable-source.log": {
+      "sha256": "2642c22e824b8a471a95202fb42542aa5d8ce55e4d35a4057ddea4ab43a2da67",
+      "bytes": 215
+    },
+    "meta-setup-packed-resumed.log": {
+      "sha256": "134b5d409524e4f9e1c72a43fdc99fb8734a913d5dae457e5bcc98521bb5aa3d",
+      "bytes": 18252
+    }
+  },
+  "nativeDshReport": "dsh-native-host-20261111.json",
+  "professionalEffect": "not_evaluated",
+  "paidModelCalls": 0,
+  "protectedAssets": {
+    "contact-qr.png": "68f910168cbe5a6095dfba73648abb06f8f6ad6231c97b8cf0d68e77a07c1f67",
+    "wechat-pay.jpg": "447b93d173582283712b4652c89a02d55f1b64253aa6b003127d8b5b70990839",
+    "alipay.jpg": "79d7327408159145ff45996b5051886aed9d25b51e4f9e0a25e07fa0151d9754"
+  },
+  "contactFooterComparison": {
+    "README.md": true,
+    "README.zh-CN.md": true,
+    "README.ja-JP.md": true,
+    "README.ko-KR.md": true
+  },
+  "validationBoundary": "Local tests use fixtures where declared. Native DSh configuration/Skill/MCP loading does not certify native model delegation or professional outcomes.",
+  "results": [
+    {
+      "name": "governance-final",
+      "command": "META_KIM_DISABLE_SIBLING_DEP_PROBE=1 node --test --test-concurrency=4 tests/governance/*.test.mjs",
+      "tests": 1171,
+      "passed": 1134,
+      "skipped": 37,
+      "failed": 0,
+      "exitCode": 0,
+      "scope": "Complete unchanged test selection, native process isolation, after the final continuation fix.",
+      "log": {
+        "filename": "meta-governance-final.log",
+        "sha256": "9ce22cd0369c471e3eb076ac0feb64e0430cc0f49d3dc02c2a2e3dbd1d993299"
+      }
+    },
+    {
+      "name": "meta-theory-complete",
+      "command": "node scripts/run-node-tests.mjs tests/meta-theory/*.test.mjs",
+      "tests": 1671,
+      "passed": 1666,
+      "skipped": 5,
+      "failed": 0,
+      "exitCode": 0,
+      "scope": "Complete suite before the final continuation fix; all affected plan/durable-entry checks rerun afterward below.",
+      "log": {
+        "filename": "meta-theory-resumed.log",
+        "sha256": "2f0a787e91234134260b4ac8620d905526d5e8fe220a6b0ef96b84c7876f1efc"
+      }
+    },
+    {
+      "name": "plan-durable-after-fix",
+      "command": "node --test tests/meta-theory/57-plan-challenge-policy.test.mjs tests/meta-theory/67-durable-governed-entry.test.mjs",
+      "tests": 71,
+      "passed": 71,
+      "skipped": 0,
+      "failed": 0,
+      "exitCode": 0,
+      "log": {
+        "filename": "meta-plan-durable-transition-regression.log",
+        "sha256": "fa6535ebc481c8f708939298922200b7fc881989ddb329f4f9ba612e6f08127a"
+      }
+    },
+    {
+      "name": "work-order-final",
+      "command": "node --test tests/governance/task-work-order-projection.test.mjs",
+      "tests": 7,
+      "passed": 7,
+      "skipped": 0,
+      "failed": 0,
+      "exitCode": 0,
+      "log": {
+        "filename": "meta-work-order-final.log",
+        "sha256": "eddd43783896cfaa98aa244dca7a4b00114bf18de00100d39cdc6188e9555cdd"
+      }
+    },
+    {
+      "name": "actual-service-calculation-handoff",
+      "command": "META_KIM_TEST_KIM_SERVICE_SOURCE=<current-reviewed-Kim_Service> node --test tests/governance/dependency-calculation-handoff.test.mjs",
+      "tests": 13,
+      "passed": 13,
+      "skipped": 0,
+      "failed": 0,
+      "exitCode": 0,
+      "scope": "Actual current Service source and real Python calculations; synthetic worker callbacks, no model calls.",
+      "log": {
+        "filename": "meta-calculation-preparation-regression.log",
+        "sha256": "ff6485eff8c9a49954575c4e63afdc8d88ed3b295f22662424c8476554273e54"
+      }
+    },
+    {
+      "name": "unit",
+      "command": "npm run meta:test:unit (first unit suite)",
+      "tests": 113,
+      "passed": 112,
+      "skipped": 1,
+      "failed": 0,
+      "exitCode": 0,
+      "skipReason": "Windows authority lookup casing test is not applicable to this Linux host.",
+      "log": {
+        "filename": "meta-unit-poc-resumed.log",
+        "sha256": "71895a5353ba510f5b14c50f7f6108c82a770c2a56f0e4514b903c1f578241e8"
+      }
+    },
+    {
+      "name": "poc-design-gate",
+      "command": "npm run meta:test:unit (included PoC design gate)",
+      "tests": 59,
+      "passed": 59,
+      "skipped": 0,
+      "failed": 0,
+      "exitCode": 0,
+      "log": {
+        "filename": "meta-unit-poc-resumed.log",
+        "sha256": "71895a5353ba510f5b14c50f7f6108c82a770c2a56f0e4514b903c1f578241e8"
+      }
+    },
+    {
+      "name": "integration",
+      "command": "npm run meta:test:integration",
+      "tests": 1,
+      "passed": 1,
+      "skipped": 0,
+      "failed": 0,
+      "exitCode": 0,
+      "log": {
+        "filename": "meta-integration-resumed.log",
+        "sha256": "b8d46a1e4c68a4ec690c0ea1556f9fea8b4876c15c11f4a7d6c2e6d5311aaec9"
+      }
+    }
+  ],
+  "localGlobalInstallation": {
+    "status": "incomplete_environment",
+    "projectCheck": "7 checks passed",
+    "findings": [
+      "Existing local command projections were out of sync",
+      "Setup launch inventory was unavailable"
+    ],
+    "claim": "No global install success is inferred for this ChatGPT environment; isolated package lifecycle checks remain separate."
+  },
+  "reviewedServiceCommit": "d637ee67ba90c1a563bfab28e41e22e822b772d0",
+  "packedSuiteRecovery": {
+    "initialRun": {
+      "tests": 100,
+      "pass": 96,
+      "fail": 4
+    },
+    "initialCauses": [
+      "Three test fixtures inherited an external CODEX_HOME despite a temporary HOME",
+      "Source changed between packed install and readback, correctly rejecting a stale firstPartyClosure"
+    ],
+    "changes": "Only fixture environment isolation changed; production ownership and closure validation unchanged",
+    "rechecks": {
+      "memoryHooksFullFile": {
+        "tests": 79,
+        "pass": 79,
+        "fail": 0
+      },
+      "junctionIsolation": {
+        "tests": 1,
+        "pass": 1,
+        "fail": 0
+      },
+      "codexObjectOrderStableSource": {
+        "tests": 1,
+        "pass": 1,
+        "fail": 0
+      }
+    },
+    "scope": "Affected files and cases rerun; the unrelated long bundle suite was not rerun and is not represented as one 100/100 run."
+  }
+}

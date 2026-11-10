@@ -3,7 +3,7 @@
   "purpose": "Versioned multilingual lexical signals for natural-language Meta_Kim entry classification. Protocol routes, precedence, risk rules, and confidence remain implemented in code.",
   "categories": {
     "action": {
-      "en": ["build", "create", "implement", "fix", "repair", "change", "update", "refactor", "plan", "start", "handle", "organize", "prioritize", "verify", "review", "audit", "generate", "write", "sync", "streamline", "improve", "make", "calculate", "compare"],
+      "en": ["build", "create", "implement", "fix", "repair", "change", "update", "refactor", "redesign", "plan", "start", "handle", "organize", "prioritize", "verify", "review", "audit", "generate", "write", "save", "export", "sync", "streamline", "improve", "make", "calculate", "compare"],
       "zh": ["帮我", "开始", "处理", "整理", "规划", "修复", "验证", "审查", "检查", "生成", "写", "改", "优化", "同步", "做", "拆", "拆解", "落地", "捋顺", "改善"],
       "ja": ["作る", "実装", "修正", "改善", "更新", "整理", "計画", "検証", "レビュー"],
       "ko": ["만들", "구현", "수정", "개선", "업데이트", "정리", "계획", "검증", "리뷰"]
@@ -21,7 +21,7 @@
       "ko": ["좋은", "나쁜", "원활", "명확", "알기 쉬운", "사용하기 어려운", "느린"]
     },
     "fileOrMutationObject": {
-      "en": ["file", "code", "repo", "repository", "project", "app", "page", "component", "test", "tests", "config", "contract", "script", "onboarding", "onboarding experience", "recovery", "user experience"],
+      "en": ["file", "code", "repo", "repository", "project", "app", "page", "component", "frontend", "backend", "api", "database", "ui", "user interface", "test", "tests", "config", "contract", "script", "onboarding", "onboarding experience", "recovery", "user experience"],
       "zh": ["文件", "代码", "仓库", "项目", "页面", "组件", "测试", "配置", "合同", "脚本", "新手上手", "上手体验", "恢复体验", "用户体验"],
       "ja": ["ファイル", "コード", "リポジトリ", "プロジェクト", "アプリ", "ページ", "テスト", "設定", "オンボーディング", "復旧", "ユーザー体験"],
       "ko": ["파일", "코드", "저장소", "프로젝트", "앱", "페이지", "테스트", "설정", "온보딩", "복구", "사용자 경험"]

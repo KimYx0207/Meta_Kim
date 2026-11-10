@@ -389,13 +389,20 @@ export async function loadPlanChallengeContinuationCandidate({
   artifactPath,
   previousRunId,
   taskFingerprint,
+  unallocatedPreparationFingerprint = null,
   taskHash,
   intentDigest,
 }) {
   const raw = await validateArtifactFile(artifactPath);
   if (raw.preparation) {
     const markdownPath = path.join(path.dirname(artifactPath), raw.runId + "." + raw.resolvedOutputLanguage + ".md");
-    if (raw.runId !== previousRunId || raw.taskFingerprint !== taskFingerprint || raw.goalContractPacket?.taskHash !== taskHash ||
+    // Only an empty, paired preparation can introduce a criterion allocation.
+    // Existing assigned preparations and all materialized executions still bind
+    // their exact fingerprint. The caller derives this alternative from the
+    // same current task/calculation/design inputs without the new allocation.
+    const fingerprintMatches = raw.taskFingerprint === taskFingerprint ||
+      (unallocatedPreparationFingerprint != null && raw.taskFingerprint === unallocatedPreparationFingerprint);
+    if (raw.runId !== previousRunId || !fingerprintMatches || raw.goalContractPacket?.taskHash !== taskHash ||
         (raw.intentPacket.intentBinding?.intentDigest ?? null) !== (intentDigest ?? null) ||
         raw.workerTaskPackets.length || raw.coreLoop?.stageDagPacket ||
         createHash("sha256").update(readFileSync(markdownPath)).digest("hex") !== raw.preparation.markdownSha256) {
