@@ -14,7 +14,7 @@ The installed official `@deepseek-ai/dsh` version was `0.2.2-rc.1`, running with
 | Complete primary methods | 144 parts read per scope and reconstructed byte for byte |
 | Complete text and code resources | 1,636 resources, 3,432 parts, including 524 JSON resources and 234 executable-source resources |
 | Native read and result-pruner checks | Largest rendered result 6,726 characters; zero bounded results pruned; unbounded JSON/code controls demonstrated pruning |
-| Local native MCP integration | 11 tools and 5 resources discovered; role listing and canonical Skill resource read succeeded |
+| Local native MCP integration | 10 tools and 5 resources discovered; role listing and canonical Skill resource read succeeded |
 | Packed lifecycle | Install, unchanged update, integrity check, uninstall and reinstall passed |
 | Independent scope ownership | Project removal preserved the full global installation |
 | Nested Git-root handling | Installer refused a child directory before writing; official provider selected the Git root when queried from that child |
