@@ -100,13 +100,13 @@ node setup.mjs --update
 | **Gemini CLI** | 按需启用的原生投影：Agent、共享中立 Skill、原生设置和 Hook | 结构与生命周期验证；模型真实执行尚未认证 |
 | **ZCode** | 按需启用的原生投影：Agent、Skill、MCP 和用户级 Hook | 当前客户端忽略项目级 Hook；模型真实执行尚未认证 |
 | **OpenClaw** | 保留现有非默认兼容投影 | 需要自身配置和宿主证据 |
-| **DSh / DeepSeek Harness** | 通过 `meta-kim dsh` 接入原生 Skill、独立 profile／项目 patch 和 MCP | 已做不调用模型的官方配置、Skill 和 MCP 探测；自定义原生 Agent、强制 Hook 与业务质量分别验收 |
+| **DSH / DeepSeek Harness** | 通过 `meta-kim dsh` 接入原生 Skill、独立 profile／项目 patch 和 MCP | 已做不调用模型的官方配置、Skill 和 MCP 探测；自定义原生 Agent、强制 Hook 与业务质量分别验收 |
 
-Qoder、Trae 保持 **Beta 兼容 adapter**。DSh 保留历史只读候选适配器，另增按需启用的原生接入；不因此扩张现有执行桥的运行时权限。ZCode 历史上的只读候选适配器与新增的按需投影分别保留。详情见[兼容目录](config/runtime-compatibility-catalog.json)、[Gemini 说明](canonical/skills/meta-theory/references/runtime-gemini.md)和 [ZCode 说明](canonical/skills/meta-theory/references/runtime-zcode.md)。
+Qoder、Trae 保持 **Beta 兼容 adapter**。DSH 保留历史只读候选适配器，另增按需启用的原生接入；不因此扩张现有执行桥的运行时权限。ZCode 历史上的只读候选适配器与新增的按需投影分别保留。详情见[兼容目录](config/runtime-compatibility-catalog.json)、[Gemini 说明](canonical/skills/meta-theory/references/runtime-gemini.md)和 [ZCode 说明](canonical/skills/meta-theory/references/runtime-zcode.md)。
 
 依赖项目自己的安装目标由上游项目维护，不能据此宣称 Meta_Kim 已通过适配。Gemini 与 Codex 共存时使用宿主中立的项目 Skill，具体工具和路径由当前客户端决定。[Gemini Skill 官方说明](https://geminicli.com/docs/cli/skills/)和 [ZCode Hook 官方说明](https://zcode.z.ai/en/docs/hooks)给出了这些差异的依据。
 
-### DSh 快速开始
+### DSH 快速开始
 
 安装当前 Meta_Kim 源码后执行：
 
@@ -116,7 +116,7 @@ node bin/meta-kim.mjs dsh check
 dsh --profile meta-kim
 ```
 
-DSh 本身要求 **Node >=24.9.0**，Meta_Kim 其他客户端的版本要求不变。本适配核对 DSh `0.2.2-rc.1`。加 `--service-package /path/to/kim-service-dsh`，可以接入 [Kim_Service 构建的完整专业 Skills](https://github.com/KimYx0207/Kim_Service/blob/main/docs/dsh.md)。同一入口支持 `update`、`check`、`uninstall`，保留用户文件和改动。[DSh 说明](canonical/skills/meta-theory/references/runtime-dsh.md)包含项目安装、完整方法读取、共享包保留和验证边界。
+DSH 本身要求 **Node >=24.9.0**，Meta_Kim 其他客户端的版本要求不变。本适配核对 DSH `0.2.2-rc.1`。加 `--service-package /path/to/kim-service-dsh`，可以接入 [Kim_Service 构建的完整专业 Skills](https://github.com/KimYx0207/Kim_Service/blob/main/docs/dsh.md)。同一入口支持 `update`、`check`、`uninstall`，保留用户文件和改动。[DSH 说明](canonical/skills/meta-theory/references/runtime-dsh.md)包含项目安装、完整方法读取、共享包保留和验证边界。
 
 ## 连续性和自我进化如何落地？
 

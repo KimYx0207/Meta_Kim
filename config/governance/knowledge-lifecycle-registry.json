@@ -1,5 +1,15 @@
 {
   "appliedTransitions": {
+    "dsh-display-name-20261110:canonical-spelling": {
+      "appliedAt": "2026-11-10T23:01:18.142Z",
+      "approvalDigest": "sha256:f619120a2231d5a05e65fa82e44cc9147cd9fa5bf7a7b7a40b728862f05e8720",
+      "candidateDigest": "sha256:f718737ea3583073b49d7d666c99bcd84a37e3c583e28e95624a76f1b81b2073",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "rollbackPlanDigest": "sha256:d063ff3022567bb06393c45bdcebd35927fbec1fe2addc84b2d8dedcd631c855",
+      "targetRef": "canonical/skills/meta-theory/SKILL.md",
+      "toStatus": "active"
+    },
     "dsh-professional-20261111:reviewed-runtime-source": {
       "appliedAt": "2026-11-10T21:28:32.162Z",
       "approvalDigest": "sha256:d31e152dcc39521a28db66cfde23981e45377568305d181391b8bbb363475db5",
@@ -117,9 +127,9 @@
       "foundational": true,
       "kind": "knowledge",
       "lifecycle": {
-        "changedAt": "2026-11-10T21:28:32.162Z",
-        "lastTransitionId": "dsh-professional-20261111:reviewed-runtime-source",
-        "reason": "Reviewed the sole changed canonical paragraph against the registered main source and official DSh loading evidence. Add the DSh runtime reference, require complete methods/resources, distinguish native Skills from custom agent presets, and preserve separate loading, delegation and final outcome evidence. No governance ownership, execution permission, model route or existing stage barrier changes."
+        "changedAt": "2026-11-10T23:01:18.142Z",
+        "lastTransitionId": "dsh-display-name-20261110:canonical-spelling",
+        "reason": "Apply the user-requested DSH display spelling. The canonical source differs only by DSh to DSH; preserve all methods, official lowercase command/package/API/path identifiers, permission boundaries and existing evidence distinctions."
       },
       "provenance": {
         "evidenceRefs": [
@@ -131,7 +141,7 @@
         ]
       },
       "replacementRefs": [],
-      "sourceDigest": "sha256:dccb061bda5c47d61c170df45e23ad2afa63c3c51dcbcdabd1cae5979ccc7c3a",
+      "sourceDigest": "sha256:4d5aa879eca0466b3c5f5ed56681f75064f9ac6f931c2a84b3cb24afc3408272",
       "status": "active",
       "targetRef": "canonical/skills/meta-theory/SKILL.md"
     },
@@ -545,6 +555,39 @@
       "targetRef": "canonical/skills/meta-theory/SKILL.md",
       "toStatus": "active",
       "transitionId": "dsh-professional-20261111:reviewed-runtime-source"
+    },
+    {
+      "appliedAt": "2026-11-10T23:01:18.142Z",
+      "approvalDigest": "sha256:f619120a2231d5a05e65fa82e44cc9147cd9fa5bf7a7b7a40b728862f05e8720",
+      "candidateDigest": "sha256:f718737ea3583073b49d7d666c99bcd84a37e3c583e28e95624a76f1b81b2073",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "previousEntry": {
+        "executionClass": "execution_eligible",
+        "foundational": true,
+        "kind": "knowledge",
+        "lifecycle": {
+          "changedAt": "2026-11-10T21:28:32.162Z",
+          "lastTransitionId": "dsh-professional-20261111:reviewed-runtime-source",
+          "reason": "Reviewed the sole changed canonical paragraph against the registered main source and official DSh loading evidence. Add the DSh runtime reference, require complete methods/resources, distinguish native Skills from custom agent presets, and preserve separate loading, delegation and final outcome evidence. No governance ownership, execution permission, model route or existing stage barrier changes."
+        },
+        "provenance": {
+          "evidenceRefs": [
+            "AGENTS.md#Meta-Theory-Activation"
+          ],
+          "recordedAt": "2026-08-12T00:00:00.000Z",
+          "sourceRefs": [
+            "canonical/skills/meta-theory/SKILL.md"
+          ]
+        },
+        "replacementRefs": [],
+        "sourceDigest": "sha256:dccb061bda5c47d61c170df45e23ad2afa63c3c51dcbcdabd1cae5979ccc7c3a",
+        "status": "active",
+        "targetRef": "canonical/skills/meta-theory/SKILL.md"
+      },
+      "targetRef": "canonical/skills/meta-theory/SKILL.md",
+      "toStatus": "active",
+      "transitionId": "dsh-display-name-20261110:canonical-spelling"
     }
   ],
   "policy": {
@@ -554,7 +597,7 @@
     "referenceOnlyPromotion": false,
     "retiredRecordsRemainTombstones": true
   },
-  "revision": 11,
+  "revision": 12,
   "schemaVersion": "knowledge-lifecycle-registry-v1",
-  "updatedAt": "2026-11-10T21:28:32.162Z"
+  "updatedAt": "2026-11-10T23:01:18.142Z"
 }

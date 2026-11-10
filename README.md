@@ -98,9 +98,9 @@ The released baseline is [v3.9.0](https://github.com/KimYx0207/Meta_Kim/releases
 | **Gemini CLI** | Opt-in native projection with agents, shared host-neutral skills and native settings/Hooks | Structural/lifecycle validation; native model execution remains unverified |
 | **ZCode** | Opt-in native projection with agents, skills, MCP and user-level Hooks | Project Hooks are ignored by the current client; native model execution remains unverified |
 | **OpenClaw** | Existing non-default compatibility projections | Requires its own configuration and host evidence |
-| **DSh / DeepSeek Harness** | Opt-in native Skills, an isolated profile/project patch and MCP through `meta-kim dsh` | Official config/Skill/MCP probes use no model; custom-agent presets, hard Hooks and native task quality are separate |
+| **DSH / DeepSeek Harness** | Opt-in native Skills, an isolated profile/project patch and MCP through `meta-kim dsh` | Official config/Skill/MCP probes use no model; custom-agent presets, hard Hooks and native task quality are separate |
 
-Qoder and Trae remain **Beta compatibility adapters**. DSh keeps its historical plan-only candidate adapter and adds a separate, opt-in native integration without expanding the existing stage-runner authority. ZCode's historical plan-only adapter remains separate from its new opt-in projection. See the [compatibility catalog](config/runtime-compatibility-catalog.json) and the [Gemini](canonical/skills/meta-theory/references/runtime-gemini.md) / [ZCode](canonical/skills/meta-theory/references/runtime-zcode.md) references.
+Qoder and Trae remain **Beta compatibility adapters**. DSH keeps its historical plan-only candidate adapter and adds a separate, opt-in native integration without expanding the existing stage-runner authority. ZCode's historical plan-only adapter remains separate from its new opt-in projection. See the [compatibility catalog](config/runtime-compatibility-catalog.json) and the [Gemini](canonical/skills/meta-theory/references/runtime-gemini.md) / [ZCode](canonical/skills/meta-theory/references/runtime-zcode.md) references.
 
 Dependency-project install targets are handled by those upstream projects. Installing an upstream package does not certify Meta_Kim support. Gemini and Codex share host-neutral project skills; the active host determines paths and tool schemas. [Gemini's skill discovery](https://geminicli.com/docs/cli/skills/) and [ZCode's Hook configuration rules](https://zcode.z.ai/en/docs/hooks) explain these client-specific boundaries.
 
@@ -114,11 +114,11 @@ node bin/meta-kim.mjs dsh check
 dsh --profile meta-kim
 ```
 
-DSh itself requires **Node >=24.9.0**; the other Meta_Kim clients keep their existing requirement. The native integration is reviewed against DSh `0.2.2-rc.1`. Add `--service-package /path/to/kim-service-dsh` to install the full professional Skills built by [Kim_Service](https://github.com/KimYx0207/Kim_Service/blob/main/docs/dsh.md). Use `update`, `check` and `uninstall` through the same entry. User-owned files and edits are preserved. [DSh details](canonical/skills/meta-theory/references/runtime-dsh.md) explain project scope, complete method loading, shared package retention and observed evidence.
+DSH itself requires **Node >=24.9.0**; the other Meta_Kim clients keep their existing requirement. The native integration is reviewed against DSH `0.2.2-rc.1`. Add `--service-package /path/to/kim-service-dsh` to install the full professional Skills built by [Kim_Service](https://github.com/KimYx0207/Kim_Service/blob/main/docs/dsh.md). Use `update`, `check` and `uninstall` through the same entry. User-owned files and edits are preserved. [DSH details](canonical/skills/meta-theory/references/runtime-dsh.md) explain project scope, complete method loading, shared package retention and observed evidence.
 
 ## How continuity and improvement work
 
-Each selected professional output carries a pass condition, rejection condition, verification method, required evidence and blocking rule. Meta_Kim includes these in the actual worker context. A self-reported pass remains unverified; critical missing evidence cannot be averaged away. See the [quality and DSh verification record](docs/verification/dsh-professional-quality-20261111.md).
+Each selected professional output carries a pass condition, rejection condition, verification method, required evidence and blocking rule. Meta_Kim includes these in the actual worker context. A self-reported pass remains unverified; critical missing evidence cannot be averaged away. See the [quality and DSH verification record](docs/verification/dsh-professional-quality-20261111.md).
 
 Architecture and modules are views of **one PRD**, linked to the same tasks and acceptance criteria. A module change follows actual dependencies; unaffected completed outputs can be considered for reuse after their current bindings are checked.
 

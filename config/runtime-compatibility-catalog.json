@@ -985,7 +985,7 @@
         {
           "type": "local_file",
           "ref": "canonical/runtime-assets/dsh/host-contract.json",
-          "claim": "Pinned native host interfaces and explicit unsupported boundaries for the separate opt-in DSh integration."
+          "claim": "Pinned native host interfaces and explicit unsupported boundaries for the separate opt-in DSH integration."
         },
         {
           "type": "local_file",

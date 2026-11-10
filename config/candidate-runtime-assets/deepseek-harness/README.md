@@ -19,7 +19,7 @@ retain credentials/raw model output.
 ## Native host integration
 
 The separate `meta-kim dsh install|update|check|uninstall` entry now owns the
-native DSh profile/patch, Skill projection and MCP configuration. Its contract
+native DSH profile/patch, Skill projection and MCP configuration. Its contract
 is documented in `canonical/skills/meta-theory/references/runtime-dsh.md`.
 This older candidate-preset API remains non-authorizing design-time input;
 installing native Skills does not turn its planning result into execution

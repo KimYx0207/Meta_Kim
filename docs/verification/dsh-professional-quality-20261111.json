@@ -5,7 +5,7 @@
   "scope": "source iteration and regression validation; no new npm/GitHub Release",
   "baselineCommit": "b8599184b9624fbb1cee0feeccaffa0d8fed76d2",
   "sourceSha256": {
-    "scripts/dsh-profile-package.mjs": "ac1595ab15ee4e9b5f7e39a8b596decc1a654468721b24712a9ba71cf83f7cfb",
+    "scripts/dsh-profile-package.mjs": "09b3493d5311d8b83f42f8cb5d86ab587435af960ca88072e2eac5076c351873",
     "scripts/diagnostic-host-protocol.mjs": "5239083da69f32d93bbf2d6d59c79746f96c95f2cc0e326116a7f994793da835",
     "scripts/governed-execution/plan-challenge-host-continuation.mjs": "d17476243387fb2b15d56484a376afad4e073070fc8765c0f325c7a5779d2fbd",
     "scripts/run-meta-theory-governed-execution.mjs": "124dcb07b8b32b388857c25ffb67573e2e22de3be511fe06b634c73b27f4f50d",
@@ -15,7 +15,10 @@
     "scripts/governed-execution/dependency-calculation.mjs": "b3519d28389b47725c2ce50eece87c6f6059bdb6ee762e115db4afe2c54c0772",
     "tests/governance/dependency-calculation-process.test.mjs": "0effe992bf8ce39d4f85b071e763c67a0f9006d6acc5ac426d5f5c99bf5a2f98",
     "tests/governance/dependency-calculation.test.mjs": "cc3816c1bb2fc6fd85808dd6858ee6aac749ade8a8a1258828408577603a2f97",
-    "tests/governance/dependency-calculation-handoff.test.mjs": "664dec7c74c5dcb69cdfe15a7f8d80e2072837578c34bdbe3bebdb0d3cf19adc"
+    "tests/governance/dependency-calculation-handoff.test.mjs": "664dec7c74c5dcb69cdfe15a7f8d80e2072837578c34bdbe3bebdb0d3cf19adc",
+    "config/runtime-capability-evidence.json": "86b1ed05527c91638e9e1e11624e8ea5ff596c0ca110affaa1679d00f1874b8b",
+    "config/runtime-capability-matrix.json": "b581bdf2851b0bf1a74cd9ce1a55646177ae122cf653e6a7b36a67411340a1a7",
+    "tests/governance/store-calculation-integration.test.mjs": "19aeb440a087b97041a189bc339ee4a4148d054951bd489b2d4847ebf8219ca6"
   },
   "checks": {
     "meta-theory-resumed.log": {
@@ -169,6 +172,10 @@
     "meta-inventory-final-async.log": {
       "sha256": "2447e6fb683dc15d66fba9ef542249d04335d45dc84cda959442072416898bb7",
       "bytes": 663
+    },
+    "meta-dsh-display-name-tests.log": {
+      "sha256": "cca8aeac17013c10d66a06661751a1224d6206ce6a3d86bfb70e412c8200425b",
+      "bytes": 2265
     }
   },
   "nativeDshReport": "dsh-native-host-20261111.json",
@@ -305,7 +312,7 @@
     ],
     "claim": "No global install success is inferred for this ChatGPT environment; isolated package lifecycle checks remain separate."
   },
-  "reviewedServiceCommit": "5034d62512691dbea8da7133c3005a6037bf695d",
+  "reviewedServiceCommit": "2f93f0ab23ee452918fe9cd0f1ff8d985dca398b",
   "packedSuiteRecovery": {
     "initialRun": {
       "tests": 100,
@@ -448,5 +455,128 @@
       "protectedOriginalAssets": 3,
       "protectedAssetHashesMatch": true
     }
+  },
+  "asynchronousStoreFixtureRecovery": {
+    "status": "test_migration_complete",
+    "sourceHeadBeforeFix": "4373551a2f423965c4ffb240b7c79ff4efc2c2e8",
+    "serviceSource": "5034d62512691dbea8da7133c3005a6037bf695d",
+    "fix": {
+      "file": "tests/governance/store-calculation-integration.test.mjs",
+      "sha256": "19aeb440a087b97041a189bc339ee4a4148d054951bd489b2d4847ebf8219ca6",
+      "productionFilesChanged": false,
+      "reason": "Store fixture spies still patched spawnSync after the production transport became asynchronous. Unavailable Python was not injected; normal execution returned code null.",
+      "changes": [
+        "Patch actual spawn and synchronize builtin exports.",
+        "Keep the actual Python child and mutate only a complete stdout receipt via Transform.",
+        "Assert unavailable launch count 1, each of six mutation launch and transform counts 1, and unchanged plus changed-input resume launch count 0."
+      ],
+      "independentReview": "kimservice_recovery reviewed the patch and all related tests/spies; no remaining calculation-path spawnSync interception found."
+    },
+    "initialCI": {
+      "runId": 42917534366,
+      "linux": {
+        "jobId": 130183709848,
+        "pass": 47,
+        "fail": 1,
+        "skip": 0
+      },
+      "macos": {
+        "jobId": 130183709918,
+        "pass": 47,
+        "fail": 1,
+        "skip": 0
+      },
+      "windows": {
+        "jobId": 130183709728,
+        "pass": 45,
+        "fail": 1,
+        "skip": 2
+      },
+      "failureInAllThree": "unavailable Python permits explicitly uncomputed owner analysis, while fabricated receipts fail closed"
+    },
+    "localValidation": {
+      "command": "META_KIM_TEST_KIM_SERVICE_SOURCE=<reviewed-Kim_Service> node --test tests/governance/dependency-calculation-process.test.mjs tests/governance/dependency-calculation.test.mjs tests/governance/dependency-calculation-handoff.test.mjs tests/governance/store-calculation-integration.test.mjs tests/governance/dependency-delivery-envelope.test.mjs",
+      "tests": 48,
+      "pass": 48,
+      "fail": 0,
+      "skip": 0,
+      "durationMs": 111131.100223,
+      "log": {
+        "sha256": "61857f425fcbdade9b99b20e54a363d23602c5dd958246f92cd04780f3a56b6d",
+        "bytes": 5421,
+        "filename": "meta-calculation-final-five-files.log"
+      }
+    },
+    "finalStrengthenedResumeAssertion": {
+      "tests": 1,
+      "pass": 1,
+      "fail": 0,
+      "skip": 0,
+      "log": {
+        "sha256": "db7eb7163449aa2502b7b803dd4c57beb9af150c096620bfe2a406b54f0338cd",
+        "bytes": 258,
+        "filename": "meta-store-resume-async-final.log"
+      }
+    },
+    "remoteEvidenceAlreadyPassed": {
+      "governance": {
+        "tests": 1179,
+        "pass": 1140,
+        "fail": 0,
+        "skip": 39
+      },
+      "metaTheory": {
+        "tests": 1671,
+        "pass": 1666,
+        "fail": 0,
+        "skip": 5
+      },
+      "unit": {
+        "tests": 113,
+        "pass": 112,
+        "fail": 0,
+        "skip": 1
+      },
+      "poc": {
+        "tests": 59,
+        "pass": 59,
+        "fail": 0,
+        "skip": 0
+      },
+      "integration": {
+        "tests": 1,
+        "pass": 1,
+        "fail": 0,
+        "skip": 0
+      }
+    },
+    "remaining": "Publish this test-only fix and collect final remote platform outcomes; original failures retained as evidence, not relabeled historical."
+  },
+  "runtimeEvidenceReview": {
+    "record": "runtime-evidence-review-2026-11-10.md",
+    "reviewDateUtc": "2026-11-10",
+    "officialUrlsReviewed": 38,
+    "sourcePinsRecomputed": 23,
+    "capabilitySupportAndAcceptanceUnchanged": true,
+    "historicalObservationsUnchanged": true,
+    "tests": 50,
+    "pass": 49,
+    "skip": 1,
+    "fail": 0,
+    "checkerStatus": "current",
+    "daysRemaining": 30,
+    "issueCount": 0
+  },
+  "displayNameCorrection": {
+    "name": "DSH",
+    "meaning": "DeepSeek Harness",
+    "scope": "23 display-text/assertion files and the existing knowledge-lifecycle CAS update; lowercase command/package/API/path identifiers and historic raw observations preserved",
+    "lifecycleTests": 17,
+    "candidateTests": 6,
+    "failed": 0,
+    "projectedTargets": 6,
+    "canonicalResources": 68,
+    "uncoveredResources": 0,
+    "knowledgeRegistryRevision": 12
   }
 }

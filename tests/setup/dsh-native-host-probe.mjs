@@ -55,7 +55,7 @@ async function nativeWorker({ dshRoot, servicePackage, keepArtifacts, temp, home
   const nativeManifestPath = nativeRequire.resolve("@deepseek-ai/dsh/package.json");
   const nativeManifest = readJson(nativeManifestPath);
   assert.equal(nativeManifest.name, "@deepseek-ai/dsh");
-  assert.equal(nativeManifest.version, contract.reviewedVersion, "Review/pin a new upstream contract before certifying another DSh version");
+  assert.equal(nativeManifest.version, contract.reviewedVersion, "Review/pin a new upstream contract before certifying another DSH version");
   const load = (name) => import(pathToFileURL(nativeRequire.resolve(name)).href);
   const [{ Context }, { default: SystemPrompt }, { default: Tools }, { default: McpResources }, Mcp, { FileSystemSkillProvider }, { default: LocalFs }, ToolFs, { default: SessionProjections }, { default: WorkingDirectory }, { default: TokenMeter }, { default: ResultPruner }, { default: Skills, renderSkillContent }] = await Promise.all([
     load("@deepseek-ai/cordis"), load("@deepseek-ai/dsh-system-prompt"), load("@deepseek-ai/dsh-tools"),
@@ -274,7 +274,7 @@ async function main(argv) {
     await nativeWorker(JSON.parse(argv[1]));
     return;
   }
-  if (!argv.length || argv.includes("--help")) { console.log("node tests/setup/dsh-native-host-probe.mjs --dsh-root /path/to/npm/environment [--service-package /path/to/package] [--report /path/to/report.json] [--keep-artifacts]\nUses an installed pinned official DSh package, isolated HOME, actual packed CLI/config/Skills/MCP. No model calls."); return; }
+  if (!argv.length || argv.includes("--help")) { console.log("node tests/setup/dsh-native-host-probe.mjs --dsh-root /path/to/npm/environment [--service-package /path/to/package] [--report /path/to/report.json] [--keep-artifacts]\nUses an installed pinned official DSH package, isolated HOME, actual packed CLI/config/Skills/MCP. No model calls."); return; }
   const options = {}; let reportPath;
   const flags = new Map([["--dsh-root", "dshRoot"], ["--service-package", "servicePackage"]]);
   for (let index = 0; index < argv.length; index += 1) {
@@ -291,5 +291,5 @@ async function main(argv) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  main(process.argv.slice(2)).catch((error) => { console.error(`DSh native probe: ${error.stack ?? error.message}`); process.exitCode = 1; });
+  main(process.argv.slice(2)).catch((error) => { console.error(`DSH native probe: ${error.stack ?? error.message}`); process.exitCode = 1; });
 }

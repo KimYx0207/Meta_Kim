@@ -260,7 +260,7 @@ test("project installs refuse invisible nested roots and diagnose a later parent
   const projectRoot = path.join(parent, "app");
   fs.mkdirSync(projectRoot, { recursive: true });
   const marker = path.join(parent, ".git");
-  // Linked worktrees use a marker file; DSh treats it just like a directory.
+  // Linked worktrees use a marker file; DSH treats it just like a directory.
   fs.writeFileSync(marker, "gitdir: /unread-placeholder\n");
   await assert.rejects(manageDsh("install", { ...opts, scope: "project", projectRoot }), /discovers project Skills from/u);
   assert.equal(fs.existsSync(path.join(projectRoot, ".dsh")), false);
@@ -344,12 +344,12 @@ test("check refuses a ledger subset that omits an expected core resource", async
   assert.ok(result.issues.some((issue) => issue.path === omitted && issue.reason === "missing_projection_file_ownership"));
 });
 
-test("public CLI discovers DSh and rejects unknown flags without falling into setup", () => {
+test("public CLI discovers DSH and rejects unknown flags without falling into setup", () => {
   const help = spawnSync(process.execPath, [path.join(ROOT, "bin/meta-kim.mjs"), "--help"], { encoding: "utf8" });
   assert.match(help.stdout, /meta-kim dsh install/u);
   const result = spawnSync(process.execPath, [path.join(ROOT, "bin/meta-kim.mjs"), "dsh", "install", "--not-a-real-option"], { encoding: "utf8" });
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /Unknown DSh option/u);
+  assert.match(result.stderr, /Unknown DSH option/u);
   const target = spawnSync(process.execPath, [path.join(ROOT, "bin/meta-kim.mjs"), "install", "--targets", "dsh"], { encoding: "utf8" });
   assert.equal(target.status, 2);
   assert.match(target.stderr, /meta-kim dsh install --help/u);

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Native DSh profile/Skill projection. The existing install manifest owns every write. */
+/** Native DSH profile/Skill projection. The existing install manifest owns every write. */
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -57,10 +57,10 @@ function filesBelow(root) {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name, "en"))) {
       const file = path.join(dir, entry.name);
       const stat = fs.lstatSync(file);
-      if (stat.isSymbolicLink()) throw new Error(`Links are not allowed in a DSh package: ${file}`);
+      if (stat.isSymbolicLink()) throw new Error(`Links are not allowed in a DSH package: ${file}`);
       if (stat.isDirectory()) walk(file);
       else if (stat.isFile()) files.push(file);
-      else throw new Error(`Non-regular DSh package file: ${file}`);
+      else throw new Error(`Non-regular DSH package file: ${file}`);
     }
   };
   walk(root);
@@ -76,17 +76,17 @@ function frontmatterField(text, field) {
 
 function hostContract(sourceRoot) {
   const value = JSON.parse(readPlain(path.join(sourceRoot, "canonical/runtime-assets/dsh/host-contract.json")));
-  if (value.schemaVersion !== 1 || value.runtime !== "deepseek-harness") throw new Error("Unsupported DSh host contract");
-  if (!/^[a-z][a-z0-9_-]{0,63}$/u.test(value.profileName) || ["web", "headless", "sdk", "sdk-minimal", "acp", "desktop"].includes(value.profileName)) throw new Error("DSh profile name must be an isolated custom profile");
-  for (const key of ["skillBodyMaxCharacters", "resourcePartMaxCharacters"]) if (!Number.isInteger(value[key]) || value[key] < 256 || value[key] > 6000) throw new Error(`Invalid bounded DSh contract limit: ${key}`);
-  if (!Array.isArray(value.bundles) || !value.bundles.length || value.bundles.some((bundle) => typeof bundle !== "string" || !bundle.startsWith("@deepseek-ai/dsh-"))) throw new Error("DSh profile must declare its reviewed native bundles");
-  if (!/^[A-Za-z0-9_-]{1,32}$/u.test(value.mcpServerName)) throw new Error("Invalid DSh MCP server name");
+  if (value.schemaVersion !== 1 || value.runtime !== "deepseek-harness") throw new Error("Unsupported DSH host contract");
+  if (!/^[a-z][a-z0-9_-]{0,63}$/u.test(value.profileName) || ["web", "headless", "sdk", "sdk-minimal", "acp", "desktop"].includes(value.profileName)) throw new Error("DSH profile name must be an isolated custom profile");
+  for (const key of ["skillBodyMaxCharacters", "resourcePartMaxCharacters"]) if (!Number.isInteger(value[key]) || value[key] < 256 || value[key] > 6000) throw new Error(`Invalid bounded DSH contract limit: ${key}`);
+  if (!Array.isArray(value.bundles) || !value.bundles.length || value.bundles.some((bundle) => typeof bundle !== "string" || !bundle.startsWith("@deepseek-ai/dsh-"))) throw new Error("DSH profile must declare its reviewed native bundles");
+  if (!/^[A-Za-z0-9_-]{1,32}$/u.test(value.mcpServerName)) throw new Error("Invalid DSH MCP server name");
   return value;
 }
 
 /** Lossless bounded views, alongside the original bytes. Links retain the original base. */
 export function addDshResource(files, target, bytes, limit = 6000) {
-  if (!Number.isInteger(limit) || limit < 2 || limit > 6000) throw new Error("Invalid DSh resource part character limit");
+  if (!Number.isInteger(limit) || limit < 2 || limit > 6000) throw new Error("Invalid DSH resource part character limit");
   files.set(target, Buffer.from(bytes));
   if (!READABLE_RESOURCE.test(target)) return;
   const text = bytes.toString("utf8");
@@ -142,8 +142,8 @@ export function buildDshProjection({ sourceRoot = ROOT, executionRoot = null, sc
   const dispatcher = readPlain(path.join(sourceRoot, "canonical/runtime-assets/dsh/dispatcher.md")).toString("utf8");
   const roleBody = readPlain(path.join(sourceRoot, "canonical/runtime-assets/dsh/governance-role.md")).toString("utf8");
   const skill = (name, description, body, original) => {
-    if (!/^[a-z][a-z0-9-]{0,63}$/u.test(name)) throw new Error(`Invalid DSh skill name: ${name}`);
-    if (body.length > contract.skillBodyMaxCharacters) throw new Error(`DSh entry exceeds its bounded body limit: ${name}`);
+    if (!/^[a-z][a-z0-9-]{0,63}$/u.test(name)) throw new Error(`Invalid DSH skill name: ${name}`);
+    if (body.length > contract.skillBodyMaxCharacters) throw new Error(`DSH entry exceeds its bounded body limit: ${name}`);
     files.set(`skills/${name}/SKILL.md`, Buffer.from(`---\nname: ${name}\ndescription: ${JSON.stringify(description)}\n---\n${body.trim()}\n`));
     const source = path.posix.relative(`skills/${name}`, `${sourcePrefix}/${original}`);
     const index = JSON.parse(files.get(`${sourcePrefix}/${original}.dsh-parts/index.json`));
@@ -154,7 +154,7 @@ export function buildDshProjection({ sourceRoot = ROOT, executionRoot = null, sc
   };
   skill("meta-theory", "Govern substantial work, architecture and module PRDs, evidence, dynamic delegation, review, verification and project evolution with Meta_Kim.", dispatcher, "canonical/skills/meta-theory/SKILL.md");
   const agentFiles = filesBelow(path.join(sourceRoot, "canonical/agents")).filter((file) => /^meta-[a-z-]+\.md$/u.test(path.basename(file)));
-  if (agentFiles.length !== 9) throw new Error("DSh requires the existing nine canonical Meta governance owners");
+  if (agentFiles.length !== 9) throw new Error("DSH requires the existing nine canonical Meta governance owners");
   for (const agentFile of agentFiles) {
     const content = readPlain(agentFile).toString("utf8");
     skill(frontmatterField(content, "name"), frontmatterField(content, "description"), roleBody, portable(path.relative(sourceRoot, agentFile)));
@@ -188,7 +188,7 @@ export function buildDshProjection({ sourceRoot = ROOT, executionRoot = null, sc
 export function readDshServicePackage(root) {
   const absoluteRoot = path.resolve(root);
   const manifest = JSON.parse(readPlain(path.join(absoluteRoot, "dsh-package.json")));
-  if (manifest.schemaVersion !== 1 || manifest.kind !== "kim-service-dsh-skills" || !Array.isArray(manifest.files)) throw new Error("Unsupported Kim_Service DSh package manifest");
+  if (manifest.schemaVersion !== 1 || manifest.kind !== "kim-service-dsh-skills" || !Array.isArray(manifest.files)) throw new Error("Unsupported Kim_Service DSH package manifest");
   const files = new Map();
   for (const item of manifest.files) {
     const rel = normalizeManagedRelPath(item?.path);
@@ -217,13 +217,13 @@ function commonRoot(left, right) {
   let root = path.resolve(left);
   while (!inside(root, right)) {
     const parent = path.dirname(root);
-    if (parent === root) throw new Error("DSh home and install ledger must be on the same filesystem root");
+    if (parent === root) throw new Error("DSH home and install ledger must be on the same filesystem root");
     root = parent;
   }
   return root;
 }
 
-// The reviewed DSh filesystem provider scans the nearest ancestor with a .git
+// The reviewed DSH filesystem provider scans the nearest ancestor with a .git
 // marker (directory or worktree file), falling back to the launch directory.
 // Do not install an apparently successful project package in an invisible child.
 function nativeProjectRoot(projectRoot) {
@@ -237,13 +237,13 @@ function nativeProjectRoot(projectRoot) {
 }
 
 function locations({ scope = "global", projectRoot, dshHome, homeRoot = os.homedir(), sourceRoot = ROOT } = {}) {
-  if (!["global", "project"].includes(scope)) throw new Error("DSh scope must be global or project");
+  if (!["global", "project"].includes(scope)) throw new Error("DSH scope must be global or project");
   const ledgerRoot = path.resolve(scope === "project" ? projectRoot ?? process.env.META_KIM_CALLER_CWD ?? process.cwd() : homeRoot);
   inspectPlainAbsolutePath(ledgerRoot, { kind: "directory" });
   const runtimeRoot = scope === "project" ? path.join(ledgerRoot, ".dsh") : path.resolve(dshHome ?? process.env.DSH_HOME ?? path.join(homeRoot, ".dsh"));
   const trustedRoot = commonRoot(ledgerRoot, runtimeRoot);
   inspectPlainAbsolutePath(trustedRoot, { kind: "directory" });
-  if (!inspectTrustedPath(trustedRoot, portable(path.relative(trustedRoot, runtimeRoot)), { allowMissing: true })) throw new Error("DSh home has an unsafe path or link");
+  if (!inspectTrustedPath(trustedRoot, portable(path.relative(trustedRoot, runtimeRoot)), { allowMissing: true })) throw new Error("DSH home has an unsafe path or link");
   const manifestPath = scope === "global" ? path.join(ledgerRoot, ".meta-kim/install-manifest.json") : manifestPathFor(scope, ledgerRoot);
   if (!inspectTrustedPath(trustedRoot, portable(path.relative(trustedRoot, manifestPath)), { allowMissing: true })) throw new Error("Install manifest has an unsafe path or link");
   return { scope, ledgerRoot, runtimeRoot, trustedRoot, manifestPath, profileName: hostContract(sourceRoot).profileName,
@@ -341,11 +341,11 @@ function applyPlan(loc, plan, options) {
 }
 
 export async function manageDsh(action, options = {}) {
-  if (!["install", "update", "check", "uninstall"].includes(action)) throw new Error(`Unknown DSh action: ${action}`);
+  if (!["install", "update", "check", "uninstall"].includes(action)) throw new Error(`Unknown DSH action: ${action}`);
   const loc = locations(options);
   const projectRootMismatch = loc.scope === "project" && loc.hostProjectRoot !== loc.ledgerRoot;
   if (["install", "update"].includes(action) && projectRootMismatch) {
-    throw new Error(`DSh discovers project Skills from ${loc.hostProjectRoot}, not the requested child directory ${loc.ledgerRoot}. Retry with --project-root ${JSON.stringify(loc.hostProjectRoot)}. No project files were changed.`);
+    throw new Error(`DSH discovers project Skills from ${loc.hostProjectRoot}, not the requested child directory ${loc.ledgerRoot}. Retry with --project-root ${JSON.stringify(loc.hostProjectRoot)}. No project files were changed.`);
   }
   if (action === "check") {
     const manifest = ledgerAt(loc);
@@ -395,19 +395,19 @@ export async function manageDsh(action, options = {}) {
   return { ...result, scope: loc.scope, runtimeRoot: loc.runtimeRoot, skillCount: installedSkillCount(loc), mcpConfigured: Boolean(executionRoot), nativeModelExecutionVerified: false,
     launch: loc.scope === "global" ? ["dsh", "--profile", projection.contract.profileName] : ["dsh", "--profile", "web", "--patch", patch],
     launchEnvironment: loc.scope === "global" ? { DSH_HOME: loc.runtimeRoot } : {},
-    nodeRequirement: `DSh requires Node >=${projection.contract.minimumNodeVersion}; Meta_Kim's other hosts keep their own requirements.`,
+    nodeRequirement: `DSH requires Node >=${projection.contract.minimumNodeVersion}; Meta_Kim's other hosts keep their own requirements.`,
   };
 }
 
-const HELP = `Meta_Kim native DSh integration
+const HELP = `Meta_Kim native DSH integration
   meta-kim dsh install|update|check|uninstall [--scope global|project] [--project-root PATH]
       [--dsh-home PATH] [--service-package PATH] [--no-mcp] [--dry-run] [--json]
 
-Global: an isolated 'meta-kim' DSh profile plus native Skills under DSH_HOME (default ~/.dsh).
+Global: an isolated 'meta-kim' DSH profile plus native Skills under DSH_HOME (default ~/.dsh).
 Project: .dsh/skills plus a --patch overlay; the user's DSH_HOME and credentials stay active.
 MCP uses Meta_Kim's verified immutable package store. --no-mcp installs Skills without an executable binding.
 The existing install manifest owns all files. User edits/unowned files are preserved; check reports drift.
-DSh 0.2.2-rc.1 requires Node >=24.9.0. Skills are not native custom-agent presets or Hook enforcement.
+DSH 0.2.2-rc.1 requires Node >=24.9.0. Skills are not native custom-agent presets or Hook enforcement.
 No command here calls a model or installs a model credential. Run the returned launch command yourself.
 `;
 
@@ -426,12 +426,12 @@ export async function runDshCli(argv = process.argv.slice(2)) {
     } else if (key === "--json" && inline === undefined) options.json = true;
     else if (key === "--dry-run" && inline === undefined) options.dryRun = true;
     else if (key === "--no-mcp" && inline === undefined) options.mcp = false;
-    else throw new Error(`Unknown DSh option: ${args[index]}`);
+    else throw new Error(`Unknown DSH option: ${args[index]}`);
   }
   const result = await manageDsh(action, options);
   if (options.json) console.log(json(result));
   else {
-    console.log(`DSh ${action}: ${result.status}`);
+    console.log(`DSH ${action}: ${result.status}`);
     if (result.skillCount !== undefined) console.log(`Native Skills: ${result.skillCount}. MCP configured: ${result.mcpConfigured === true ? "yes" : result.mcpConfigured === false ? "no" : "unknown"}.`);
     if (result.launch) console.log(`Launch argv: ${JSON.stringify(result.launch)}${Object.keys(result.launchEnvironment).length ? `; environment: ${JSON.stringify(result.launchEnvironment)}` : ""}`);
     for (const item of result.conflicts ?? result.issues ?? []) console.log(`Preserved / needs attention: ${item.path} (${item.reason})`);
