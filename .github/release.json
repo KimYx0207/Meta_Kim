@@ -1,0 +1,13 @@
+{
+  "repository": "KimYx0207/Meta_Kim",
+  "title": "Meta_Kim",
+  "versionFile": "package.json",
+  "tagPrefix": "v",
+  "workflows": [".github/workflows/ci.yml", ".github/workflows/graphify-managed.yml", ".github/workflows/runtime-evidence-review.yml"],
+  "changelogs": [
+    { "file": "CHANGELOG.md", "language": "English" },
+    { "file": "CHANGELOG.zh-CN.md", "language": "简体中文" },
+    { "file": "CHANGELOG.ja-JP.md", "language": "日本語" },
+    { "file": "CHANGELOG.ko-KR.md", "language": "한국어" }
+  ]
+}

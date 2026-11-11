@@ -2,57 +2,40 @@
 
 # 元 · Meta_Kim
 
-**From a rough idea to work you can follow and verify.**
+**From one idea to coordinated, verifiable work.**
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja-JP.md) · [한국어](README.ko-KR.md)
 
-<a href="https://github.com/KimYx0207/Meta_Kim/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/KimYx0207/Meta_Kim?style=flat"/></a>
-<a href="LICENSE"><img alt="Apache 2.0 license" src="https://img.shields.io/badge/license-Apache--2.0-green"/></a>
-
-<a href="config/runtime-compatibility-catalog.json"><img alt="Default: Claude Code and Codex; compatibility: OpenClaw and Cursor" src="https://img.shields.io/badge/default-Claude%20Code%20%7C%20Codex%20%2B%20compat--OpenClaw%20%7C%20Cursor-111827"/></a>
-<a href="config/runtime-compatibility-catalog.json"><img alt="Opt-in projections: Gemini CLI and ZCode" src="https://img.shields.io/badge/opt--in-Gemini%20CLI%20%7C%20ZCode-4F46E5"/></a>
+[![GitHub stars](https://img.shields.io/github/stars/KimYx0207/Meta_Kim?style=flat&label=stars)](https://github.com/KimYx0207/Meta_Kim/stargazers)
+[![license Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 
 </div>
 
-## What is it?
+## Turn an idea into a finished piece of work
 
-**Meta_Kim is a harness for your AI coding assistant: it helps turn a rough request into decisions, a shared plan, coordinated work and results you can inspect.** It runs through your selected host. You describe what you want; Meta_Kim organizes the work around that outcome.
+**Meta_Kim helps your AI assistant plan, coordinate and finish work across files, specialties and sessions.** Describe the outcome in your usual client. Meta_Kim gathers project context, compares useful approaches, organizes the work and keeps the decisions available for the next session.
 
-Use it for work that spans decisions, files, specialties or multiple sessions: developing a product, changing an existing system, researching an approach or coordinating a substantial repair. A small, clear change takes a lighter path.
+> “Build a mobile-friendly event registration tool. Help me choose an approach, keep the attendee list accurate, and show me that registration and export work.”
 
-> “I want a registration tool. People should sign up from their phones, and I need a reliable list of attendees. Work out the options with me, then build and verify the chosen approach.”
+![From your goal through research, a two-level PRD and specialist work to a checked result](docs/images/intent-to-delivery.svg)
 
-![How Meta_Kim connects an idea, research, the two PRD views, professional capabilities and verified delivery](docs/images/intent-to-delivery.svg)
+*How the two projects work together. Tasks with satisfied dependencies can proceed in parallel.*
 
-*Architecture illustration. Actual scheduling depends on the current host, task dependencies, permissions and verification evidence.*
-
-## What you get
-
-| Step | What you can see |
+| What you need | What Meta_Kim organizes |
 | --- | --- |
-| Understand | The intended outcome, existing project facts, constraints and open questions |
-| Research and decide | Relevant sources, feasible options, a recommendation and practical tradeoffs |
-| Design | One PRD: first the system and technology baseline, then modules, interfaces, states and acceptance |
-| Coordinate | Named owners with the selected methods and materials; independent eligible work can run concurrently |
-| Review and verify | Actual deliverables, fresh checks, failures and remaining gaps |
-| Continue and improve | Settled decisions and completed work survive interruptions; reviewed lessons can become reusable improvements |
+| A clear direction | Project facts, useful references, options and a recommendation |
+| A plan people can build | One PRD: system and technology choices, then modules, interfaces and acceptance |
+| Professional execution | Specialists with the relevant methods, project materials and output criteria |
+| Work that survives interruptions | Saved decisions, completed results, dependencies and the next action |
+| Visible progress | The Live task board, current owners, outputs and checks |
 
-**You choose product direction when it matters.** The host selects internal agents and tools from observed capabilities. Word overlap recalls candidates; it does not prove that an agent fits the job.
-
-### Meta_Kim + Kim Service
-
-| Project | Responsibility |
-| --- | --- |
-| **[Meta_Kim](https://github.com/KimYx0207/Meta_Kim)** | Understand, research, decide, coordinate, review, verify and maintain continuity |
-| **[Kim Service](https://github.com/KimYx0207/Kim_Service)** | Reusable professional Agents, Skills, Hooks and Tools with methods, examples and input/output boundaries |
-
-A frontend agent needs design and engineering knowledge, project constraints and actual task material. The integration loads selected package resources, checks their bytes and includes them in the worker handoff. A role title or successful schema check alone cannot establish professional quality.
+**[Kim Service](https://github.com/KimYx0207/Kim_Service) supplies the professional methods; Meta_Kim coordinates the whole job.** Use them together or connect other capability sources. Product direction goes to you when a choice materially changes the outcome; routine implementation decisions stay with the working team.
 
 ## Start in three steps
 
-Requires **Node.js 22.13.0 or newer** and a supported host configured by you.
+Requires **Node.js 22.13.0+** and a configured AI client. Current release: **[v3.10.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.10.0)**.
 
-**1. Install from the repository.**
+**1. Install and choose your clients.**
 
 ```bash
 git clone https://github.com/KimYx0207/Meta_Kim.git
@@ -61,52 +44,40 @@ npm install
 node setup.mjs
 ```
 
-Choose the clients you use. The default install reuses capabilities globally; project-specific overrides use the existing project bootstrap. Global Hooks are opt-in with `--with-global-hooks`. Existing user configuration is merged through ownership-aware installation records.
+The default install reuses capabilities globally. Choose project setup when a project needs its own configuration; add `--with-global-hooks` when you want global Hooks. Existing user settings are merged. You can also start with `npx --yes github:KimYx0207/Meta_Kim`.
 
-For an npx entry, use `npx --yes github:KimYx0207/Meta_Kim`. Persistent runtime assets are materialized into a stable package store so they do not depend on the disposable npm cache.
+**2. Open your project and describe the outcome.**
 
-**2. Open your project in the selected host and describe the outcome.**
+You do not need to memorize commands or choose technical roles. Explain what should work and what you want to preserve. The assistant reads available project information and asks questions that change the plan.
 
-You do not need to memorize commands or choose technical roles. Say what should work, what must be preserved and how you will judge the result. The host inspects available project evidence and asks only material unresolved questions.
+**3. Follow the work and try the result.**
 
-**3. Follow the work and inspect the result.**
+Open the current run's Live link or run `node bin/meta-kim.mjs live`. The board connects tasks, owners, dependencies and outputs. [View the real Live renderer with Chinese demo data](docs/images/meta-kim-live-demo.png).
 
-Use the Live link supplied for the current project/run, or `node bin/meta-kim.mjs live`. The view shows task ownership, dependencies, outputs and blockers from the same underlying records.
-
-![Meta_Kim Live work board using representative demo data](docs/images/meta-kim-live-demo.png)
-
-*The real Live renderer with representative demo data. A returned tool call, a passed check and an accepted product result are separate states.*
-
-### Updating a clone
+To update a clone:
 
 ```bash
 git pull --ff-only
 node setup.mjs --update
+node setup.mjs --check
 ```
 
-Check your selected installation with `node setup.mjs --check`. Local edits and unverified historical files are preserved for review. Source updates, dependency updates and native host verification have separate results.
+## Client integrations
 
-## Client support: what is implemented and what is verified
+| Client | Available integration |
+| --- | --- |
+| **Codex · Claude Code** | Main integrations: native instructions, Agents, Skills, configuration and Hooks |
+| **Cursor · OpenClaw** | Optional compatibility integrations using each client's supported formats |
+| **Gemini CLI** | Optional native Agents, shared Skills, settings and Hooks |
+| **ZCode** | Optional Agents, Skills, MCP and user-level Hooks |
+| **DSH — DeepSeek Harness** | Native Skills, an isolated profile or project setup, and MCP |
+| **Qoder · Trae** | Beta compatibility adapters |
 
-The released baseline is [v3.9.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.9.0). Additions described in [Unreleased](CHANGELOG.md#unreleased) belong to the source version and have not been published as a new release.
+Installation, package loading and task execution have separate test coverage. DSH has an official no-model configuration/Skill/MCP probe; Gemini CLI and ZCode have projection and lifecycle checks. Native model task quality is evaluated on the actual task. See the [compatibility catalog](config/runtime-compatibility-catalog.json) and [verification record](docs/verification/dsh-professional-quality-20261111.md) for details. Dependency projects maintain their own client support.
 
-| Client | Current source integration | Evidence boundary |
-| --- | --- | --- |
-| **Codex** | Primary formal projections; native instructions, agents, skills, Hook/config integration and read-only execution bridge | Availability and execution depend on the active host and current evidence |
-| **Claude Code** | Primary formal projections; native Agent/Skill/Hook integration and read-only execution bridge | Its native tool contract is maintained separately from Codex |
-| **Cursor** | Non-default compatibility projections for rules, skills, agents and supported config | Projection checks do not certify every native workflow |
-| **Gemini CLI** | Opt-in native projection with agents, shared host-neutral skills and native settings/Hooks | Structural/lifecycle validation; native model execution remains unverified |
-| **ZCode** | Opt-in native projection with agents, skills, MCP and user-level Hooks | Project Hooks are ignored by the current client; native model execution remains unverified |
-| **OpenClaw** | Existing non-default compatibility projections | Requires its own configuration and host evidence |
-| **DSH / DeepSeek Harness** | Opt-in native Skills, an isolated profile/project patch and MCP through `meta-kim dsh` | Official config/Skill/MCP probes use no model; custom-agent presets, hard Hooks and native task quality are separate |
+### DSH quick start
 
-Qoder and Trae remain **Beta compatibility adapters**. DSH keeps its historical plan-only candidate adapter and adds a separate, opt-in native integration without expanding the existing stage-runner authority. ZCode's historical plan-only adapter remains separate from its new opt-in projection. See the [compatibility catalog](config/runtime-compatibility-catalog.json) and the [Gemini](canonical/skills/meta-theory/references/runtime-gemini.md) / [ZCode](canonical/skills/meta-theory/references/runtime-zcode.md) references.
-
-Dependency-project install targets are handled by those upstream projects. Installing an upstream package does not certify Meta_Kim support. Gemini and Codex share host-neutral project skills; the active host determines paths and tool schemas. [Gemini's skill discovery](https://geminicli.com/docs/cli/skills/) and [ZCode's Hook configuration rules](https://zcode.z.ai/en/docs/hooks) explain these client-specific boundaries.
-
-### DeepSeek Harness quick start
-
-After installing this source version of Meta_Kim:
+DSH requires **Node.js 24.9.0+**. The integration is checked against DSH `0.2.2-rc.1`.
 
 ```sh
 node bin/meta-kim.mjs dsh install
@@ -114,59 +85,42 @@ node bin/meta-kim.mjs dsh check
 dsh --profile meta-kim
 ```
 
-DSH itself requires **Node >=24.9.0**; the other Meta_Kim clients keep their existing requirement. The native integration is reviewed against DSH `0.2.2-rc.1`. Add `--service-package /path/to/kim-service-dsh` to install the full professional Skills built by [Kim_Service](https://github.com/KimYx0207/Kim_Service/blob/main/docs/dsh.md). Use `update`, `check` and `uninstall` through the same entry. User-owned files and edits are preserved. [DSH details](canonical/skills/meta-theory/references/runtime-dsh.md) explain project scope, complete method loading, shared package retention and observed evidence.
+Add `--service-package /path/to/kim-service-dsh` to include the professional packages built by [Kim Service](https://github.com/KimYx0207/Kim_Service/blob/main/docs/dsh.md). The same entry supports `update` and `uninstall`. [DSH guide](canonical/skills/meta-theory/references/runtime-dsh.md) · [ZCode guide](canonical/skills/meta-theory/references/runtime-zcode.md).
 
-## How continuity and improvement work
+## Keep work moving, contain repeated failures
 
-Each selected professional output carries a pass condition, rejection condition, verification method, required evidence and blocking rule. Meta_Kim includes these in the actual worker context. A self-reported pass remains unverified; critical missing evidence cannot be averaged away. See the [quality and DSH verification record](docs/verification/dsh-professional-quality-20261111.md).
+The default Hook mode gives guidance as work proceeds. It no longer switches to blocking merely because a project has been running for seven days.
 
-Architecture and modules are views of **one PRD**, linked to the same tasks and acceptance criteria. A module change follows actual dependencies; unaffected completed outputs can be considered for reuse after their current bindings are checked.
+A prepared single-task work order can start a monitored trial. For supervised tasks, two ineffective attempts with the same strategy and evidence open a fuse for that task. Independent work continues. A reviewed change of approach gets a recovery trial, with its outcome recorded before wider reuse. Permissions, file ownership and destructive actions still follow the current authorization.
 
-The durable read-only executor takes the smaller of observed host capacity and planned capacity, starts eligible independent work, and fills a freed slot when dependencies become ready. Unknown capacity defaults to one. Global stage barriers and write permissions remain in force.
+Waiting for your review also affects only the tasks that depend on it. Completed independent work stays available when you resume. Reusable improvements follow the same practical idea: try a candidate, measure the result, then promote a version that has earned its place.
 
-Human acceptance is local to the affected branch: A can wait while independent B/C continue. Completed work is retained on resume, and final delivery still waits for every required gate. The Live view shows pending acceptance separately from independent work.
+<details>
+<summary>Optional memory service</summary>
 
-Optional dependencies are selected for the capability they add. Repeated workflow prompts are consolidated into the existing first-party method; browser, desktop and other execution engines retain their own interfaces. See the [architecture and capability model](docs/harness-architecture.md).
-
-RSI is a measured improvement loop: observed work → candidate method → evaluation → reviewed promotion. Missing quality observations remain unevaluated. A reflection, score or evidence filename cannot approve its own change. Instruction changes invalidate fitness-trial reuse; historical results do not certify a new scaffold.
-
-Current source navigation helps locate callers and related files even without Graphify. Static absence of references is a cleanup lead; dynamic imports, configuration, generated consumers and external entry points require inspection before removal.
-
-### Optional memory: check what actually works
-
-If you enabled the optional Memory service, its default local health endpoint can be checked with:
+Project continuity uses durable run records. If you also enable Memory, check its configured endpoint, for example:
 
 ```bash
 curl -fsS --max-time 3 http://127.0.0.1:8000/api/health
 ```
 
-Use your configured address if you changed it. An entry in `.mcp.json`, an installed hook or health checks alone cannot prove successful memory writes, reads or cross-session recall; each needs a fresh receipt from that operation. `npm run meta:test:mcp` checks Meta_Kim's own MCP server contract, not those external Memory operations. Memory is optional and does not replace the project's durable run records.
+Memory configuration in `.mcp.json`, hook installation, service health, writes, reads and cross-session recall are checked separately. `npm run meta:test:mcp` checks Meta_Kim's own MCP server. Health checks alone report service availability.
 
-## Find the right file
+</details>
+
+## Explore and contribute
 
 | Location | Purpose |
 | --- | --- |
-| `canonical/` | Source governance agents, skills, rules and runtime assets |
-| `config/` | Contracts, compatibility declarations and evidence |
-| `scripts/` · `src/` | Execution, validation, adapters, storage and user-facing tools |
-| `tests/` | Behavior and regression checks; fixtures identify their evidence limits |
-| Generated client directories | Local projections rebuilt from canonical sources |
-| `.meta-kim/` | Private run state, project planning, evidence and backups |
+| `canonical/` | Shared Agents, Skills, rules and runtime assets |
+| `config/` | Capability indexes and machine-readable contracts |
+| `scripts/` · `src/` | Installation, execution, storage and Live |
+| `tests/` | Behavior and regression checks |
+| `.meta-kim/` | Local task state, planning and backups |
 
-Read [intent to delivery](canonical/skills/meta-theory/references/intent-to-delivery.md) for the full workflow and research decisions, [project/research/PRD](canonical/skills/meta-theory/references/project-research-prd.md) for the data flow, and [AGENTS.md](AGENTS.md) before contributing. The existing eight-stage spine remains the governing process.
+Client-specific directories are generated locally from shared sources and excluded from GitHub source by `.gitignore`. Read [AGENTS.md](AGENTS.md) before contributing.
 
-Generated runtime projection directories are local outputs, gitignored, and not GitHub source.
-
-Useful maintainer commands:
-
-```bash
-npm run meta:sync
-npm run meta:validate
-npm run meta:test:ci -- --suite core
-npm run meta:test:ci -- --suite governance
-```
-
-A local test pass proves only what that check exercised. Native CLI observations, model quality and final user acceptance need their own evidence. See [native CLI observation and privacy](docs/native-cli-observation.md), [Live SDK](docs/live-sdk.md), [Graphify lifecycle](docs/graphify-managed-lifecycle.md) and the [changelog](CHANGELOG.md).
+[Architecture](docs/harness-architecture.md) · [Intent to delivery](canonical/skills/meta-theory/references/intent-to-delivery.md) · [Live SDK](docs/live-sdk.md) · [Changelog](CHANGELOG.md)
 
 ## Contact
 

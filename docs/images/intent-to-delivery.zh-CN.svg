@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="1016" viewBox="0 0 760 1016" lang="zh-CN" xml:lang="zh-CN" role="img" aria-labelledby="title desc">
+<title id="title">从意图到交付</title><desc id="desc">Meta_Kim 把目标转为研究、决策、两层 PRD 和协作任务。Kim Service 提供专业方法。已经就绪的独立任务并行推进，再检查交付。本图是工作方式示意图。</desc>
+<defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M1 1L7 4.5L1 8" fill="none" stroke="#7996ba" stroke-width="1.5"/></marker><style>text{font-family:Inter,"Noto Sans CJK SC","Microsoft YaHei",Arial,sans-serif}.title{fill:#f4f7ff;font-weight:700}.body{fill:#bfcde2}.accent{fill:#8ce4d7;font-weight:700}.card{fill:#14233c;stroke:#344e70;stroke-width:1.5}.design{fill:#242140;stroke:#7d6bba;stroke-width:1.5}.methods{fill:#0f3035;stroke:#398b85;stroke-width:1.5}.result{fill:#192f4b;stroke:#5485b8;stroke-width:1.5}.line{fill:none;stroke:#7996ba;stroke-width:2;marker-end:url(#arrow)}</style></defs>
+<rect width="760" height="1016" rx="24" fill="#091426"/>
+<text x="40" y="47" class="accent" font-size="18">META_KIM  /  KIM SERVICE</text>
+<text x="40" y="91" class="title" font-size="30">把一句想法，变成能用的结果。</text>
+<rect x="40" y="122" width="680" height="92" rx="18" class="card"/>
+<text x="64" y="159" class="title" font-size="25">你的目标</text><text x="64" y="191" class="body" font-size="22">想做到什么，已有条件，需要保留什么</text>
+<path d="M380 215V240" class="line"/>
+<rect x="40" y="248" width="680" height="92" rx="18" class="card"/>
+<text x="64" y="285" class="title" font-size="25">研究，再选择</text><text x="64" y="317" class="body" font-size="22">查找有效参考，比较方案，确定方向</text>
+<path d="M380 341V366" class="line"/>
+<rect x="40" y="374" width="680" height="138" rx="18" class="design"/>
+<text x="64" y="412" class="title" font-size="25">一份 PRD，两个层次</text>
+<path d="M380 430V489" stroke="#6c6091"/>
+<text x="64" y="450" class="title" font-size="22">1  系统框架与技术栈</text><text x="64" y="482" class="body" font-size="20">共同的决定</text>
+<text x="404" y="450" class="title" font-size="22">2  模块、流程与接口</text><text x="404" y="482" class="body" font-size="20">具体的验收标准</text>
+<path d="M380 513V536" class="line"/>
+<rect x="40" y="544" width="680" height="86" rx="18" class="methods"/>
+<text x="64" y="578" class="accent" font-size="23">KIM SERVICE · 专业方法</text><text x="64" y="607" class="body" font-size="22">按需配上知识、工具与完整案例</text>
+<path d="M380 631V645H200V659" class="line"/><path d="M380 645H560V659" class="line"/>
+<rect x="40" y="667" width="320" height="112" rx="18" class="card"/><rect x="400" y="667" width="320" height="112" rx="18" class="card"/>
+<text x="64" y="701" class="title" font-size="25">模块 A</text><text x="64" y="732" class="body" font-size="21">负责人 + 方法</text><text x="64" y="761" class="body" font-size="21">当前项目资料</text>
+<text x="424" y="701" class="title" font-size="25">模块 B</text><text x="424" y="732" class="body" font-size="21">负责人 + 方法</text><text x="424" y="761" class="body" font-size="21">当前项目资料</text>
+<path d="M200 780V798H380V811" class="line"/><path d="M560 780V798H380" fill="none" stroke="#7996ba" stroke-width="2"/>
+<rect x="40" y="819" width="680" height="92" rx="18" class="result"/>
+<text x="64" y="856" class="title" font-size="25">审查、验证、交付</text><text x="64" y="887" class="body" font-size="21">实际检查成果，保存决定和下一步</text>
+<text x="40" y="953" class="accent" font-size="23">继续做，也越做越熟悉</text><text x="40" y="985" class="body" font-size="20">就绪任务可以并行，经过评价的经验可以复用。</text>
+</svg>

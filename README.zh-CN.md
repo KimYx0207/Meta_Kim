@@ -2,59 +2,40 @@
 
 # 元 · Meta_Kim
 
-**把一句想法，变成可追踪、可验收的交付。**
+**把一句想法，变成能继续、能协作、能验收的工作。**
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja-JP.md) · [한국어](README.ko-KR.md)
 
-<a href="https://github.com/KimYx0207/Meta_Kim/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/KimYx0207/Meta_Kim?style=flat"/></a>
-<a href="LICENSE"><img alt="Apache 2.0 license" src="https://img.shields.io/badge/license-Apache--2.0-green"/></a>
-
-<a href="config/runtime-compatibility-catalog.json"><img alt="Default: Claude Code and Codex; compatibility: OpenClaw and Cursor" src="https://img.shields.io/badge/default-Claude%20Code%20%7C%20Codex%20%2B%20compat--OpenClaw%20%7C%20Cursor-111827"/></a>
-<a href="config/runtime-compatibility-catalog.json"><img alt="Opt-in projections: Gemini CLI and ZCode" src="https://img.shields.io/badge/opt--in-Gemini%20CLI%20%7C%20ZCode-4F46E5"/></a>
+[![GitHub 星标](https://img.shields.io/github/stars/KimYx0207/Meta_Kim?style=flat&label=%E6%98%9F%E6%A0%87)](https://github.com/KimYx0207/Meta_Kim/stargazers)
+[![许可证 Apache 2.0](https://img.shields.io/badge/%E8%AE%B8%E5%8F%AF%E8%AF%81-Apache--2.0-green)](LICENSE)
 
 </div>
 
-## 这是什么？
+## 从一句想法，做到实际交付
 
-**Meta_Kim 是 AI 编程助手的 Harness 框架：把一个还没想完整的需求，组织成明确的决策、共同的计划、协作任务和可检查的结果。** 你继续使用自己的 AI 客户端，用自然语言说目标，由 Meta_Kim 围绕目标组织工作。
+**Meta_Kim 帮你的 AI 助手把跨文件、跨专业、跨会话的事情做下去。** 你在常用客户端里说目标，它读取项目、研究方案、组织协作，并保存已经做出的决定和已经完成的成果。
 
-说直白一点：**Meta_Kim 管整件事怎么往前走，Kim Service 提供每项工作需要的专业方法。** 你说“继续”，它应接着当前决定和成果往下做；你改变需求，它按关联关系找出需要重做的部分。
+> “帮我做个手机上能用的活动报名工具。先帮我选方案，再把报名、名单和导出做出来，最后实际用一遍给我看。”
 
-适合涉及多个决策、文件、专业或会话的任务：做一个产品、迭代已有系统、研究技术方案、协调一次复杂修复。清晰的小改动会走较轻的流程。
+![从用户目标、研究决策、两层 PRD 和专业协作，到检查后的交付](docs/images/intent-to-delivery.zh-CN.svg)
 
-> “我想做一个活动报名工具。用户能在手机上报名，我能看到准确的名单。先帮我研究怎么做、比较方案，再把选定的方案做出来并验证。”
+*两个项目的协作方式。依赖已经满足的独立任务可以并行推进。*
 
-![Meta_Kim 从意图、研究、两层 PRD 到专业协作和验证交付的关系图](docs/images/intent-to-delivery.svg)
-
-*这是架构示意图。实际调度取决于当前客户端能力、任务依赖、权限和验证证据。*
-
-## 你能看到什么
-
-| 过程 | 用户能理解的结果 |
+| 你需要什么 | Meta_Kim 帮你组织什么 |
 | --- | --- |
-| 理解 | 目标、现有项目事实、约束，以及还没弄清楚的问题 |
-| 研究和决策 | 相关资料、可行方案、推荐理由和实际取舍 |
-| 设计 | 一份 PRD 的两层视图：先定系统和技术基线，再细化模块、接口、状态和验收 |
-| 组织执行 | 每项工作有负责人、专业方法和必要资料；符合条件的独立任务可以并行 |
-| 审查和验证 | 实际产物、刚执行的检查、失败项和剩余缺口 |
-| 继续和改进 | 中断后保留已定决策与已完成工作，经过评价的经验可以成为可复用能力 |
+| 想清楚方向 | 项目现状、有效参考、可选方案和推荐理由 |
+| 一份能开工的计划 | 一份 PRD：先定系统与技术，再细化模块、接口和验收 |
+| 专业的人做专业的事 | 为执行者配上方法、项目资料和交付标准 |
+| 中断后继续 | 保存决定、成果、依赖关系和下一步 |
+| 看得见进展 | Live 工作看板里的任务、负责人、产物和检查结果 |
 
-**方向、范围、成本或验收确实需要你做决定时，才把选择交给你。** 内部 Agent 和工具由宿主从实际发现的能力中选择。文字相似只能找到候选，不能证明这个专业角色适合当前任务。
-
-### Meta_Kim 与 Kim Service 怎么配合？
-
-| 项目 | 负责什么 |
-| --- | --- |
-| **[Meta_Kim](https://github.com/KimYx0207/Meta_Kim)** | 理解、研究、决策、编排、审查、验证和跨轮连续性 |
-| **[Kim Service](https://github.com/KimYx0207/Kim_Service)** | 可复用的专业 Agent、Skill、Hook、Tool，以及方法、示例和输入输出边界 |
-
-前端 Agent 需要真实的设计与工程知识、项目约束和当前任务资料。集成会读取选中的专业资料，校验其内容，并送进实际工单。一个角色名字、几句提示词或通过 JSON 校验，都不能代替专业质量。
+**[Kim Service](https://github.com/KimYx0207/Kim_Service) 提供专业方法，Meta_Kim 管整件事怎么往前走。** 两者可以配合使用，也可以接入其他能力来源。真正影响产品结果的选择交给你，日常实现细节由执行团队处理。
 
 ## 三步开始
 
-需要 **Node.js 22.13.0 或更新版本**，以及你已配置好的客户端。
+需要 **Node.js 22.13.0+**，以及已配置好的 AI 客户端。当前版本：**[v3.10.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.10.0)**。
 
-**1. 获取并安装。**
+**1. 安装，选择你使用的客户端。**
 
 ```bash
 git clone https://github.com/KimYx0207/Meta_Kim.git
@@ -63,52 +44,40 @@ npm install
 node setup.mjs
 ```
 
-在安装器里选择自己使用的客户端。默认在全局复用能力，项目需要专门配置时再使用现有的项目引导流程。需要全局 Hook 时显式添加 `--with-global-hooks`。安装记录会区分自己管理的内容与用户已有配置。
+默认在全局复用能力；项目需要专门配置时，再选择项目安装。需要全局 Hook 时添加 `--with-global-hooks`，已有用户配置会合并保留。也可以通过 `npx --yes github:KimYx0207/Meta_Kim` 开始。
 
-也可以通过 `npx --yes github:KimYx0207/Meta_Kim` 进入。持久化的客户端资源会落到稳定的软件包目录，不依赖临时 npm 缓存。
+**2. 打开项目，直接说想要的结果。**
 
-**2. 在选定客户端打开你的项目，直接说想要的结果。**
+不用背命令，也不用先报出技术角色。说清楚希望什么能用、哪些内容要保留。助手先读取项目中已有的信息，再问真正会改变方案的问题。
 
-不用背命令，也不用先报出技术角色。说明什么应该能用、哪些内容必须保留、你会怎样验收。宿主先查项目中能查到的事实，再问真正影响方向且尚未解决的问题。
+**3. 看进展，使用交付物。**
 
-**3. 看进展，检查交付。**
+打开当前任务的 Live 链接，或运行 `node bin/meta-kim.mjs live`。看板会把任务、负责人、依赖和产物串起来。[查看真实 Live 界面的中文示例](docs/images/meta-kim-live-demo.png)。
 
-使用当前项目/任务给出的 Live 链接，或者运行 `node bin/meta-kim.mjs live`。界面从同一份任务记录展示负责人、依赖、产物和阻塞。
-
-![Meta_Kim Live 工作看板，使用示例数据展示真实界面](docs/images/meta-kim-live-demo.png)
-
-*真实 Live 渲染器配合代表性示例数据。工具返回、检查通过、产品被验收，是不同的状态。*
-
-### 已克隆用户怎么更新？
+已有克隆仓库这样更新：
 
 ```bash
 git pull --ff-only
 node setup.mjs --update
+node setup.mjs --check
 ```
 
-用 `node setup.mjs --check` 检查所选安装。用户改动和无法确认归属的历史文件会保留供审查。源码更新、依赖更新和客户端真实执行分别报告。
+## 客户端接入
 
-## 客户端支持：做到哪一步，验证到哪一步
+| 客户端 | 已提供的接入方式 |
+| --- | --- |
+| **Codex · Claude Code** | 主要集成：原生指令、Agent、Skill、配置和 Hook |
+| **Cursor · OpenClaw** | 可选兼容集成，使用各自支持的配置格式 |
+| **Gemini CLI** | 可选原生 Agent、共享 Skill、设置和 Hook |
+| **ZCode** | 可选 Agent、Skill、MCP 和用户级 Hook |
+| **DSH — DeepSeek Harness** | 原生 Skill、独立配置或项目安装，以及 MCP |
+| **Qoder · Trae** | Beta 兼容适配器 |
 
-已发布基线是 [v3.9.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.9.0)。[Unreleased](CHANGELOG.zh-CN.md#unreleased---未发布) 记录当前源码新增内容，不代表已经发布了新版本。
-
-| 客户端 | 当前源码接入 | 验证边界 |
-| --- | --- | --- |
-| **Codex** | Primary 正式投影：指令、Agent、Skill、Hook/配置和只读执行桥 | 以当前宿主实际能力和证据为准 |
-| **Claude Code** | Primary 正式投影：原生 Agent、Skill、Hook 和只读执行桥 | 单独维护其原生工具约定 |
-| **Cursor** | 非默认兼容投影：规则、Skill、Agent 和对应配置 | 投影检查不等于所有客户端流程已验证 |
-| **Gemini CLI** | 按需启用的原生投影：Agent、共享中立 Skill、原生设置和 Hook | 结构与生命周期验证；模型真实执行尚未认证 |
-| **ZCode** | 按需启用的原生投影：Agent、Skill、MCP 和用户级 Hook | 当前客户端忽略项目级 Hook；模型真实执行尚未认证 |
-| **OpenClaw** | 保留现有非默认兼容投影 | 需要自身配置和宿主证据 |
-| **DSH / DeepSeek Harness** | 通过 `meta-kim dsh` 接入原生 Skill、独立 profile／项目 patch 和 MCP | 已做不调用模型的官方配置、Skill 和 MCP 探测；自定义原生 Agent、强制 Hook 与业务质量分别验收 |
-
-Qoder、Trae 保持 **Beta 兼容 adapter**。DSH 保留历史只读候选适配器，另增按需启用的原生接入；不因此扩张现有执行桥的运行时权限。ZCode 历史上的只读候选适配器与新增的按需投影分别保留。详情见[兼容目录](config/runtime-compatibility-catalog.json)、[Gemini 说明](canonical/skills/meta-theory/references/runtime-gemini.md)和 [ZCode 说明](canonical/skills/meta-theory/references/runtime-zcode.md)。
-
-依赖项目自己的安装目标由上游项目维护，不能据此宣称 Meta_Kim 已通过适配。Gemini 与 Codex 共存时使用宿主中立的项目 Skill，具体工具和路径由当前客户端决定。[Gemini Skill 官方说明](https://geminicli.com/docs/cli/skills/)和 [ZCode Hook 官方说明](https://zcode.z.ai/en/docs/hooks)给出了这些差异的依据。
+安装、能力包加载和实际任务分别验收。DSH 已有官方程序的无模型配置、Skill 与 MCP 探针；Gemini CLI、ZCode 已有投影和安装生命周期检查。模型的专业效果以实际任务产物评价。具体结果见[兼容性目录](config/runtime-compatibility-catalog.json)和[验证记录](docs/verification/dsh-professional-quality-20261111.md)。依赖项目自己的客户端支持由上游维护。
 
 ### DSH 快速开始
 
-安装当前 Meta_Kim 源码后执行：
+DSH 需要 **Node.js 24.9.0+**。本集成已对照 DSH `0.2.2-rc.1` 检查。
 
 ```sh
 node bin/meta-kim.mjs dsh install
@@ -116,59 +85,42 @@ node bin/meta-kim.mjs dsh check
 dsh --profile meta-kim
 ```
 
-DSH 本身要求 **Node >=24.9.0**，Meta_Kim 其他客户端的版本要求不变。本适配核对 DSH `0.2.2-rc.1`。加 `--service-package /path/to/kim-service-dsh`，可以接入 [Kim_Service 构建的完整专业 Skills](https://github.com/KimYx0207/Kim_Service/blob/main/docs/dsh.md)。同一入口支持 `update`、`check`、`uninstall`，保留用户文件和改动。[DSH 说明](canonical/skills/meta-theory/references/runtime-dsh.md)包含项目安装、完整方法读取、共享包保留和验证边界。
+添加 `--service-package /path/to/kim-service-dsh` 可带上 [Kim Service 构建的专业包](https://github.com/KimYx0207/Kim_Service/blob/main/docs/dsh.md)。同一入口支持 `update` 和 `uninstall`。[DSH 指南](canonical/skills/meta-theory/references/runtime-dsh.md) · [ZCode 指南](canonical/skills/meta-theory/references/runtime-zcode.md)。
 
-## 连续性和自我进化如何落地？
+## 小范围试，出问题只停相关任务
 
-每项专业输出都有通过条件、拒收条件、验证方法、所需证据和是否阻断，Meta_Kim 会将这些标准交到实际工作者手里。工作者自报“通过”仍待独立核验；关键证据缺失不能被其他通过项抵消。检查、实测和未测范围见[本轮验证记录](docs/verification/dsh-professional-quality-20261111.md)。
+默认 Hook 随任务推进给出提示，不再因为项目运行满七天就自动升级为阻断。
 
-系统设计与模块细节属于**同一份 PRD**，连接同一组任务和验收条件。一个模块变化，会沿实际依赖找出受影响工作；其他已完成产物可以在核对当前绑定后复用。
+准备好的单项工单可以直接开始一次受监督试运行。对已经接入监督的任务，同一方案和依据连续两次无效，会触发该任务的保险丝；独立任务继续。换用经过审阅的新方案后，先进行一次恢复试运行，记录效果再决定后续。权限、文件归属和破坏性操作仍按当前授权处理。
 
-持久化只读执行器按“宿主当前容量”和“计划容量”的较小值派工。独立任务同时执行，一项完成后可立即释放依赖并补位。未知容量默认串行，现有全局阶段屏障和写入权限继续有效。
+等你验收时，也只暂停真正依赖该决定的任务。下次继续，保留其他已完成成果。可复用方法的改进同样先试、再评价，然后把有效版本留下来。
 
-人工验收按实际依赖暂停：A 等人验收时，不依赖 A 的 B、C 可以继续。恢复后保留已完成成果，最终交付仍须通过每个必要关卡。Live 界面会把待验收与独立工作分别说明。
+<details>
+<summary>可选记忆服务</summary>
 
-依赖按实际能力选择。重复的流程提示整合进现有自有方法，浏览器、桌面控制等执行引擎保留各自接口。能力、Skill、Tool、MCP、Hook 的区别和分层说明见[架构与能力模型](docs/harness-architecture.md)。
-
-RSI 是可以评价的改进循环：实际经历 → 改进候选 → 评估 → 审查后提升。缺少质量观察时保持未评价，反思文字、分数或证据文件名不能替自己批准修改。实验指令变化会使旧实验记录失去复用资格，历史成绩不会自动证明新版本有效。
-
-当前源码导航帮助查找调用方和关联文件，没有 Graphify 也能工作。静态搜索没有找到引用，只能提示进一步核查；删除前还要看动态加载、配置、生成内容和外部入口。
-
-### 可选记忆：确认实际做到了什么
-
-如果启用了可选的 Memory 服务，可以检查默认本地健康地址：
+项目连续性使用持久化任务记录。如果同时启用了 Memory，可检查自己配置的服务地址，例如：
 
 ```bash
 curl -fsS --max-time 3 http://127.0.0.1:8000/api/health
 ```
 
-修改过地址时使用自己的配置。`.mcp.json` 中有配置、hook 已安装，均不代表记忆实际可用；不能仅凭 health check 就宣称写入、读取或跨会话召回成功，这些操作各自需要新鲜的实际回执。`npm run meta:test:mcp` 检查 Meta_Kim 自身的 MCP 服务约定，不验证这些外部 Memory 操作。Memory 是可选能力，也不替代项目已有的持久化任务记录。
+`.mcp.json` 配置、hook 安装、服务健康、写入、读取和跨会话召回分别检查。`npm run meta:test:mcp` 检查 Meta_Kim 自己的 MCP 服务；健康检查说明服务是否可访问。
 
-## 目录怎么找？
+</details>
 
-| 位置 | 用途 |
+## 继续了解与参与开发
+
+| 目录 | 用途 |
 | --- | --- |
-| `canonical/` | 治理 Agent、Skill、规则和客户端资源的源文件 |
-| `config/` | 约定、兼容声明和证据记录 |
-| `scripts/` · `src/` | 执行、校验、适配、存储和用户工具 |
-| `tests/` | 行为及回归检查；夹具注明其证据边界 |
-| 客户端生成目录 | 从 canonical 重建的本地投影 |
-| `.meta-kim/` | 私有任务状态、项目规划、证据和备份 |
+| `canonical/` | 共用的 Agent、Skill、规则和客户端资源 |
+| `config/` | 能力索引与机器协议 |
+| `scripts/` · `src/` | 安装、执行、存储和 Live |
+| `tests/` | 行为与回归检查 |
+| `.meta-kim/` | 本地任务状态、计划和备份 |
 
-完整方法与参考项目见[从意图到交付](canonical/skills/meta-theory/references/intent-to-delivery.md)，数据流见[项目、研究与 PRD](canonical/skills/meta-theory/references/project-research-prd.md)。参与开发先读 [AGENTS.md](AGENTS.md)。原有八阶段主流程继续作为治理主线。
+各客户端目录从共用源文件生成，由 `.gitignore` 保留在本地，不提交到 GitHub 源码。参与开发前请读 [AGENTS.md](AGENTS.md)。
 
-生成的 runtime projection 目录是本地输出，由 `.gitignore` 保护，不能作为 GitHub source 提交。
-
-维护者常用命令：
-
-```bash
-npm run meta:sync
-npm run meta:validate
-npm run meta:test:ci -- --suite core
-npm run meta:test:ci -- --suite governance
-```
-
-本地测试只能证明它实际覆盖的行为。客户端原生执行、模型质量和用户最终验收需要各自的证据。另见[原生 CLI 观察与隐私](docs/native-cli-observation.md)、[Live SDK](docs/live-sdk.md)、[Graphify 生命周期](docs/graphify-managed-lifecycle.md)及[变更记录](CHANGELOG.zh-CN.md)。
+[架构说明](docs/harness-architecture.md) · [意图到交付](canonical/skills/meta-theory/references/intent-to-delivery.md) · [Live SDK](docs/live-sdk.md) · [更新日志](CHANGELOG.zh-CN.md)
 
 ## 联系方式
 

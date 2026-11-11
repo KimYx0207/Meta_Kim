@@ -30,12 +30,27 @@ function launchesWindowsExecutable(script) {
   return assigned.some(name=>lines.some(line=>new RegExp(prefix+`["']?\\$(?:${name}|\\{${name}\\})["']?(?:\\s|$)`,"u").test(line)));
 }
 
+function nativeExecutableFormat(header) {
+  if (header.length < 4) return null;
+  const magic = header.subarray(0, 4).toString("hex");
+  if (magic === "7f454c46") return "elf";
+  if (["feedface", "cefaedfe", "feedfacf", "cffaedfe", "cafebabe", "bebafeca", "cafebabf", "bfbafeca"].includes(magic)) return "mach_o";
+  return null;
+}
+
 /** Inspect the file actually selected from PATH, not WSL environment claims. */
 export function runtimeCliProbeEligibility(file, { platform = process.platform, mountInfo } = {}) {
   const physical = realpathSync(file), header = executableHeader(physical);
   const pe = header.length >= 2 && header[0] === 0x4d && header[1] === 0x5a;
+  const nativeFormat = nativeExecutableFormat(header);
+  const compatibleNative = nativeFormat === "mach_o"
+    ? platform === "darwin"
+    : nativeFormat === "elf" && ["linux", "freebsd", "openbsd", "netbsd", "sunos"].includes(platform);
+  if (nativeFormat && !compatibleNative) return { eligible:false, reason:"native_executable_platform_mismatch", physical };
   if (platform !== "win32") {
-    if (pe || /\.(?:exe|com|cmd|bat|ps1)$/iu.test(physical)) return { eligible:false, reason:"windows_executable_on_posix", physical };
+    // Official Claude npm packages can name the Linux ELF payload claude.exe.
+    // Native format and platform take precedence over a Windows-looking name.
+    if (pe || (!compatibleNative && /\.(?:exe|com|cmd|bat|ps1)$/iu.test(physical))) return { eligible:false, reason:"windows_executable_on_posix", physical };
     if (header.subarray(0, 2).toString() === "#!") {
       const script = header.toString("utf8");
       if (launchesWindowsExecutable(script)) return { eligible:false, reason:"windows_launcher_on_posix", physical };

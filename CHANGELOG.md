@@ -2,38 +2,29 @@
 
 > [English](./CHANGELOG.md) · [简体中文](./CHANGELOG.zh-CN.md) · [日本語](./CHANGELOG.ja-JP.md) · [한국어](./CHANGELOG.ko-KR.md)
 
-This file is the reader-facing release history for Meta_Kim.
+User-facing changes for each release. Detailed test results live in the linked verification records.
 
-The changelog explains the user-facing problem or risk each release solved, what changed to solve it, and why the change matters. It intentionally avoids long internal task ledgers, low-signal backlog ids, and implementation trivia. For exact evidence, see the [testing record](https://github.com/KimYx0207/Meta_Kim/blob/7144fdec490625421c6e12405dc477107c620633/tests/release-records/verification-history.md), repository history and relevant PRs.
+## [3.10.0] - 2026-11-11
 
-## [Unreleased]
+### Smoother work, broader client integration
 
-- Complete DSH's required source configuration closure, including runtime/OS matrices, capability discovery and the pinned host contract. Skill-only installations retain the same required knowledge; private machine configuration stays excluded. Cross-repository checks use the current full Kim Service packages and their original resource bytes.
+- **Continue from a short request.** Project research, decisions and the two PRD views now carry through to specialist work. Workers receive the relevant module, selected decisions, interfaces and actual professional material.
+- **Keep independent work moving.** Ready read-only tasks run within the host's capacity. A failed branch or pending human review leaves independent work running; completed results and unanswered decisions survive a restart.
+- **Use a task-level fuse.** Default progressive Hooks no longer turn into hard blocks after seven days. Prepared single-task work can start a monitored trial. Two ineffective supervised attempts pause the affected task. A reviewed new approach gets a recovery trial, and read-only diagnosis remains available.
+- **Add DSH — DeepSeek Harness.** Install, update, check and remove native Skills, profiles/project setup and MCP through `meta-kim dsh`. Complete methods, configuration and resources load in bounded parts, including long JSON and code.
+- **Add Gemini CLI and ZCode integrations.** Optional native projections use their own Agent, Skill, setting and Hook formats. ZCode uses user-level Hooks. Repeated install/update checks now follow the actual managed package paths.
+- **Improve professional handoffs.** Kim Service's legitimate `Grep` and `Glob` declarations work. Output criteria and verification methods reach the worker. Large calculation inputs use asynchronous stdin, so they no longer block the host while waiting for the child.
+- **Make changes and learning traceable.** Current source navigation locates related files; two-level PRD revisions follow their task dependencies. RSI candidates keep measured results and reviewed promotion. Repeated default methods and owned obsolete copies are consolidated.
+- **Make the introduction readable.** Four language READMEs and diagrams now match their language. Compatibility details have one home, release notes focus on user changes, and contact/payment information is preserved.
+- **Run the complete verification sequence.** `verify-all` now runs configured sub-checks in order and reports the actual failing check and exit status. Command parsing no longer silently skips later checks.
+- **Recognize Claude on Linux correctly.** The official Claude client is no longer marked unavailable because its executable filename ends in `.exe`.
 
-### DSH integration and evidence-based professional delivery
+### Update
 
-- Keep large calculation inputs responsive with asynchronous stdin and explicit EOF. Preserve the ten-second deadline, a combined 4 MiB stdout/stderr limit, source/receipt checks and cleanup after the child closes. Real large-input and failure-boundary regressions run in the existing three-platform calculation job.
-- Add `meta-kim dsh install|update|check|uninstall`: an opt-in native Skills/profile or project patch, plus MCP from the existing immutable executable package. Canonical methods remain complete through lossless bounded parts. Existing install ownership, transactional updates and user edits stay protected.
-- Pin the official DSH interfaces and provide a repeatable no-model host probe for real configuration, Skill loading and MCP calls. These observations do not certify native task delegation, hard Hooks, custom-agent presets or business outcomes.
-- Carry each selected professional output's acceptance/rejection rules, verification method, evidence requirements and blocking behavior into actual worker context. Worker self-reports remain pending independent review; missing evidence never becomes a pass.
-- Align read-only Agent discovery with Kim_Service's legitimate `Grep` and `Glob` declarations. Update the durable-method regression inputs so it actually exercises completion, recovery and changed-design rejection without relaxing production gates.
+Run `git pull --ff-only`, then `node setup.mjs --update`. DSH users use `node bin/meta-kim.mjs dsh update`. Meta_Kim needs Node.js 22.13.0+; DSH needs Node.js 24.9.0+.
 
-### From short intent to coordinated delivery
+The [verification record](docs/verification/dsh-professional-quality-20261111.md) covers installation, source handoff and no-model DSH checks. Native model quality is evaluated per task. [Architecture and workflow](docs/harness-architecture.md). [Task-level trial and fuse verification](docs/verification/task-scoped-canary-20261111.md).
 
-- **Keep preparation continuous.** Once the host supplies its current understanding, read-only capability discovery can run while the design, research or user decisions are still pending. Pending preparation is validated as preparation; it cannot masquerade as a formal execution plan. Current answers, settled choices and review notifications survive the next handoff.
-- **Use two views of one PRD.** Software architecture exploration can precede module details. Delivery binds technology versions, constraints, module states/rules, actual task and acceptance coverage, and interface/state boundaries. Workers receive their relevant module, actual settled decision values and related contracts. Architecture, module and decision revisions invalidate the related dependency closure.
-- **Select professional methods with evidence.** Lexical similarity now recalls candidates. Current host reasoning selects a source-bound method; exact Thinking inventory choices remain the formal work-order path. Selected package knowledge is read, bounded, hashed and included in the actual worker context. Updated Kim_Service packages are versioned separately.
-- **Run independent read-only work concurrently.** The durable executor uses current host capacity bounded by the plan, refills slots as dependencies complete, and retains successful independent work when another branch fails. Coordinator/node leases protect commits; restart does not automatically replay a failed invocation. Scope aliases cannot hide a conflict. Global stage barriers and write boundaries remain unchanged.
-- **Make project changes easier to inspect.** Bounded source navigation observes current worktree bytes, related literal references and caller paths without requiring Graphify. Git status preserves renamed paths and unusual filenames. Partial scans, dynamic loading and external consumers remain explicit; no static-reference result authorizes deletion.
-- **Require measured RSI evidence.** Missing quality/recursive checks remain unevaluated instead of becoming automatic passes. Merge suggestions and none-with-reason records cannot conceal approval or pending mutations. Fitness comparison arms preserve stage order, bind instruction digests and reject changed definitions before rewriting prior experiment evidence.
-- **Add opt-in Gemini CLI and ZCode projections.** Native agent rendering, host-specific Hook protocols and settings use the existing installation/ownership flow. Codex/Gemini shared project skills are host-neutral. ZCode uses user-level Hooks because the current client ignores project Hooks. User settings and shared dependencies are preserved on update/removal. Structural and lifecycle checks do not establish native model execution; no new release or live certification is implied.
-- **Explain the product before its internals.** Four language READMEs now lead with a concrete task, the Meta_Kim/Kim_Service relationship, installation and evidence boundaries. An original architecture diagram replaces repeated explanations. Existing contact blocks, payment QR assets, license and attribution remain intact.
-
-- **Keep human acceptance local to its dependencies.** A current review can be presented while independent workers continue, including their later ready tasks. Pending Desktop questions survive repository restart without re-asking or repeating completed work. Multiple gates, revised materials and final joins retain their own acceptance boundaries; the Live view labels the recorded state and unfinished gates.
-- **Reduce duplicate defaults and separate responsibilities.** Repeated dependency methods are consolidated into the first-party catalog, optional packages remain explicit choices, and obsolete copies retire only after ownership and byte checks. Browser/desktop engines are discovered without execution. Design rules, source access and Live presentation now have focused layer owners; the architecture guide explains the capability/Skill/tool/MCP/Hook distinctions.
-- **Make repeated installation checks reliable.** Six-client scope checks cover the real generated paths. Read-only bootstrap checks reuse an installed execution path only after matching its immutable package and current source; changed or damaged packages still require attention. Lazy bootstrap includes the complete progress Hook dependency, large JSON responses drain before exit, and local tar archives with colons in their names extract as local files.
-
-- **Keep calculation handoffs complete and private.** API, MCP and command-line paths carry the current host assessment and explicit professional input mapping into the existing source-bound work order. Changed materials or method inputs cannot reuse an older binding. Public issue summaries retain machine codes and detail fingerprints; complete diagnostics and materials stay in the private worker handoff.
 
 ## [3.9.0] - 2026-11-04
 

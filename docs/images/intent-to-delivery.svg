@@ -1,21 +1,29 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="620" viewBox="0 0 1120 620" role="img" aria-labelledby="title desc">
-<title id="title">From intent to delivery with Meta_Kim and Kim Service</title><desc id="desc">Meta_Kim connects an initial goal, evidence and meaningful choices to one PRD with an architecture view and module view. Its dependency graph coordinates specialist work, review and verification. Kim Service supplies professional methods and knowledge. Reviewed lessons can improve future work. This is an architecture illustration, not a runtime screenshot.</desc>
-<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0 0L8 4L0 8" fill="none" stroke="#8c9bb4" stroke-width="1.2"/></marker><style>text{font-family:Inter,Arial,sans-serif}.h{fill:#f6f8fe;font-weight:700}.b{fill:#b9c7dc}.small{font-size:16px}.line{fill:none;stroke:#8c9bb4;stroke-width:2;marker-end:url(#arrow)}.card{fill:#15253f;stroke:#334b70;stroke-width:1.5}</style></defs>
-<rect width="1120" height="620" rx="24" fill="#091426"/>
-<text x="42" y="55" class="h" font-size="28">One idea. One shared plan. Evidence at every handoff.</text>
-<text x="42" y="84" class="b" font-size="17">META_KIM  /  coordination, continuity and verification</text>
-<rect x="40" y="118" width="214" height="98" rx="15" class="card"/><text x="60" y="151" class="h" font-size="21">Your intent</text><text x="60" y="178" class="b small">Outcome and constraints</text><text x="60" y="200" class="b small">Existing project context</text>
-<rect x="292" y="118" width="282" height="98" rx="15" class="card"/><text x="312" y="151" class="h" font-size="21">Evidence → choices</text><text x="312" y="178" class="b small">Research the open questions</text><text x="312" y="200" class="b small">Keep actual user decisions</text>
-<rect x="614" y="118" width="464" height="98" rx="15" fill="#242446" stroke="#7765c8" stroke-width="1.5"/><text x="634" y="151" class="h" font-size="21">One PRD, two views</text><text x="634" y="178" class="b small">1  System + technology baseline</text><text x="634" y="200" class="b small">2  Modules + interfaces + acceptance</text>
-<path d="M254 167H280" class="line"/><path d="M574 167H602" class="line"/><path d="M846 216V250H575V278" class="line"/><path d="M846 250V278" class="line"/>
-<rect x="40" y="270" width="350" height="214" rx="16" fill="#0e3034" stroke="#367c7f" stroke-width="1.5"/><text x="62" y="308" fill="#8be0d7" font-weight="700" font-size="23">KIM SERVICE</text><text x="62" y="339" class="h" font-size="19">Professional capability packages</text><text x="62" y="373" class="b small">Product + interaction methods</text><text x="62" y="400" class="b small">Frontend + backend knowledge</text><text x="62" y="427" class="b small">Inputs, examples and boundaries</text><text x="62" y="454" class="b small">Selected material, verified bytes</text>
-<rect x="460" y="290" width="230" height="82" rx="14" class="card"/><text x="480" y="322" class="h" font-size="20">Module A</text><text x="480" y="348" class="b small">Owner + method + scope</text>
-<rect x="730" y="290" width="230" height="82" rx="14" class="card"/><text x="750" y="322" class="h" font-size="20">Module B</text><text x="750" y="348" class="b small">Owner + method + scope</text>
-<path d="M390 337H448" class="line"/>
-<text x="460" y="525" class="b small">Ready work can overlap; dependencies wait.</text>
-<rect x="460" y="430" width="500" height="70" rx="14" fill="#1e2b42" stroke="#526989"/><text x="480" y="461" class="h" font-size="20">Review → verification → result</text><text x="480" y="484" class="b small">Outputs, observed checks and remaining gaps</text>
-<path d="M575 372V417" class="line"/><path d="M845 372V417" class="line"/>
-<path d="M960 465H1030V555H390" class="line"/>
-<text x="42" y="551" fill="#c0b1ff" font-size="20" font-weight="700">Reviewed lessons</text><text x="42" y="578" class="b small">Candidate → evaluate → approve → reuse</text>
-<text x="624" y="589" class="b" font-size="14">Architecture illustration · host capabilities and evidence remain explicit</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="1016" viewBox="0 0 760 1016" lang="en" xml:lang="en" role="img" aria-labelledby="title desc">
+<title id="title">From intent to delivery</title><desc id="desc">Meta_Kim turns a goal into research, choices, two PRD views and coordinated work. Kim Service supplies professional methods. Ready independent tasks run in parallel, then results are reviewed. This diagram explains the workflow.</desc>
+<defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M1 1L7 4.5L1 8" fill="none" stroke="#7996ba" stroke-width="1.5"/></marker><style>text{font-family:Inter,"Noto Sans CJK SC","Microsoft YaHei",Arial,sans-serif}.title{fill:#f4f7ff;font-weight:700}.body{fill:#bfcde2}.accent{fill:#8ce4d7;font-weight:700}.card{fill:#14233c;stroke:#344e70;stroke-width:1.5}.design{fill:#242140;stroke:#7d6bba;stroke-width:1.5}.methods{fill:#0f3035;stroke:#398b85;stroke-width:1.5}.result{fill:#192f4b;stroke:#5485b8;stroke-width:1.5}.line{fill:none;stroke:#7996ba;stroke-width:2;marker-end:url(#arrow)}</style></defs>
+<rect width="760" height="1016" rx="24" fill="#091426"/>
+<text x="40" y="47" class="accent" font-size="18">META_KIM  /  KIM SERVICE</text>
+<text x="40" y="91" class="title" font-size="30">A clear path from idea to result.</text>
+<rect x="40" y="122" width="680" height="92" rx="18" class="card"/>
+<text x="64" y="159" class="title" font-size="25">Your goal</text><text x="64" y="191" class="body" font-size="22">Outcome, constraints and project context</text>
+<path d="M380 215V240" class="line"/>
+<rect x="40" y="248" width="680" height="92" rx="18" class="card"/>
+<text x="64" y="285" class="title" font-size="25">Research and choose</text><text x="64" y="317" class="body" font-size="22">Find useful references. Compare practical options.</text>
+<path d="M380 341V366" class="line"/>
+<rect x="40" y="374" width="680" height="138" rx="18" class="design"/>
+<text x="64" y="412" class="title" font-size="25">One PRD, two levels</text>
+<path d="M380 430V489" stroke="#6c6091"/>
+<text x="64" y="450" class="title" font-size="22">1  System + technology</text><text x="64" y="482" class="body" font-size="20">Shared decisions</text>
+<text x="404" y="450" class="title" font-size="22">2  Modules + interfaces</text><text x="404" y="482" class="body" font-size="20">Acceptance criteria</text>
+<path d="M380 513V536" class="line"/>
+<rect x="40" y="544" width="680" height="86" rx="18" class="methods"/>
+<text x="64" y="578" class="accent" font-size="23">KIM SERVICE · professional methods</text><text x="64" y="607" class="body" font-size="22">Selected knowledge, tools and worked examples</text>
+<path d="M380 631V645H200V659" class="line"/><path d="M380 645H560V659" class="line"/>
+<rect x="40" y="667" width="320" height="112" rx="18" class="card"/><rect x="400" y="667" width="320" height="112" rx="18" class="card"/>
+<text x="64" y="701" class="title" font-size="25">Module A</text><text x="64" y="732" class="body" font-size="21">Owner + method</text><text x="64" y="761" class="body" font-size="21">Project material</text>
+<text x="424" y="701" class="title" font-size="25">Module B</text><text x="424" y="732" class="body" font-size="21">Owner + method</text><text x="424" y="761" class="body" font-size="21">Project material</text>
+<path d="M200 780V798H380V811" class="line"/><path d="M560 780V798H380" fill="none" stroke="#7996ba" stroke-width="2"/>
+<rect x="40" y="819" width="680" height="92" rx="18" class="result"/>
+<text x="64" y="856" class="title" font-size="25">Review, verify and deliver</text><text x="64" y="887" class="body" font-size="21">Check the result. Keep the decisions and next action.</text>
+<text x="40" y="953" class="accent" font-size="23">Continue and improve</text><text x="40" y="985" class="body" font-size="20">Ready tasks can run together; reviewed lessons are reused.</text>
 </svg>

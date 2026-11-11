@@ -3911,7 +3911,7 @@ describe("MCP memory cross-runtime hooks", () => {
       assert.match(source, /\.mcp\.json/);
       assert.match(source, /hook/);
       assert.match(source, /cross-session recall|跨会话召回/);
-      assert.match(source, /health checks alone|health check 就宣称/);
+      assert.match(source, /checked separately|分别检查/);
       assert.match(source, /meta:test:mcp/);
     }
   });

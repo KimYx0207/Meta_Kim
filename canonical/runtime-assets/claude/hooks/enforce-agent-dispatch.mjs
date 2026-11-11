@@ -19,57 +19,23 @@
  *      allow validation commands such as `npm run meta:check` and `node --check`.
  *      Commands not on the whitelist still fall through to existing checks.
  *
- * Two-gate disconnect (intentional contract — read carefully):
- *
- *   META_KIM_META_ENFORCEMENT_MODE        (meta-readonly gate)
- *     Default: "progressive" — warn for 7 days, then block
- *     Rationale: meta-agents existed before this contract was added,
- *                grace period lets teams migrate without breakage
- *
- *   META_KIM_CAPABILITY_GATE              (capability-first gate)
- *     Default: "progressive"
- *     Rationale: aligned with meta-readonly mode pattern for consistency;
- *                operators set =block to enforce immediately, =off to disable
- *
- * Override knobs (precedence order):
- *   META_KIM_HOOK_SKIP                  → skip hook entirely (debug)
- *   META_KIM_META_ENFORCEMENT_MODE     → meta-readonly gate mode
- *   META_KIM_META_ENFORCEMENT_GRACE_DAYS → meta-readonly grace days (default 7)
- *   META_KIM_CAPABILITY_GATE           → capability-first gate mode (warn|block|progressive|off)
- *   META_KIM_CAPABILITY_GATE_GRACE_DAYS → capability gate grace days (default 7)
- *   META_KIM_HOOK_RUNTIME              → optional override of runtime detection
+ * Progressive adoption:
+ *   Role-allocation reminders stay advisory by default. Run age never grants or
+ *   removes authority. The existing task-progress ledger is the outcome fuse:
+ *   two ineffective attempts on the same task/route/evidence basis pause that
+ *   task until a reviewed correction. Independent work and read-only diagnosis
+ *   remain available. No extra warning counter or whole-run circuit is created.
  *
  * Environment knobs:
- *   META_KIM_HOOK_SKIP
- *     Truthy ("1", "true", any non-empty non-"empty"/"0"/"false") -> skip hook.
+ *   META_KIM_HOOK_SKIP                  explicit debug bypass
+ *   META_KIM_META_ENFORCEMENT_MODE     progressive (default) | warn | block
+ *   META_KIM_CAPABILITY_GATE           progressive (default) | warn | block | off
  *
- *   META_KIM_META_ENFORCEMENT_MODE  (controls meta-* readonly enforcement)
- *     "warn"
- *         Log to stderr and allow the tool call. Use for soft rollout.
- *     "block"
- *         Deny outright when a meta-* caller attempts mutation. Final state.
- *     "progressive" (default)
- *         For the first META_KIM_META_ENFORCEMENT_GRACE_DAYS (default 7) days
- *         since the run started, behave as "warn"; afterwards behave as
- *         "block". Lets teams adopt the new contract without breakage.
- *
- *   META_KIM_META_ENFORCEMENT_GRACE_DAYS
- *     Integer day count for the progressive grace window. Default 7.
- *
- *   META_KIM_CAPABILITY_GATE  (controls capability-first gate on Agent dispatch)
- *     "warn"               — log to stderr and allow.
- *     "block"              — deny Agent dispatch in execution / review / meta_review
- *                            / verification / evolution when
- *                            fetchRecord.capabilitySearchPerformed !== true.
- *     "progressive" (default)
- *                          — For the first META_KIM_CAPABILITY_GATE_GRACE_DAYS
- *                            (default 7) days since the run started, behave as
- *                            "warn"; afterwards behave as "block". Mirrors the
- *                            meta-readonly progressive rollout.
- *     "off"                — skip the gate entirely (not recommended).
- *
- *   META_KIM_CAPABILITY_GATE_GRACE_DAYS
- *     Integer day count for the capability-gate progressive grace window. Default 7.
+ *   progressive / warn: advisory role-allocation notices; mandatory intent,
+ *   owner/loadout, permissions, task-result and dependency checks still apply.
+ *   block: explicitly enforce the role-allocation notice immediately.
+ *   off: skip the capability gate, retaining other host authorization controls.
+ *   Legacy *_GRACE_DAYS values no longer turn elapsed time into a deny.
  *
  *   META_KIM_HOOK_RUNTIME or --runtime claude|codex|cursor
  *     Override runtime detection for cross-runtime deny() output schema.
@@ -86,7 +52,7 @@ import process from "node:process";
 import { join, normalize } from "node:path";
 import { readJsonFromStdin, extractFilePath } from "./utils.mjs";
 import { publicTaskBinding } from "./governed-task-reference.mjs";
-import { taskProgressGoal, projectTaskProgress, taskProgressDependencyReadiness } from "./task-progress.mjs";
+import { TASK_PROGRESS_POLICY, taskProgressGoal, projectTaskProgress, taskProgressDependencyReadiness } from "./task-progress.mjs";
 import {
   isReadOnlyBash,
   classifyBashCommand,
@@ -932,13 +898,51 @@ function isExecutionDispatchIntent(input, metaName) {
   );
 }
 
-function checkThinkingIndependentLanes(state) {
+function taskReference(input) {
+  if (!input.taskPacketId && !input.publicTaskRef && typeof input.message === "string" && input.message.trim().startsWith("{")) {
+    try {
+      const envelope = JSON.parse(input.message);
+      if (envelope?.schemaVersion === "codex-native-worker-invocation-v0.2") return envelope;
+    } catch { /* Ordinary clear-text messages are not task bindings. */ }
+  }
+  return input;
+}
+
+function matchesTaskReference(reference, packet) {
+  return typeof packet?.taskPacketId === "string" && packet.taskPacketId.length > 0
+    && (reference.taskPacketId === packet.taskPacketId || reference.publicTaskRef === publicTaskBinding(packet.taskPacketId));
+}
+
+function checkThinkingIndependentLanes(state, input = toolInput) {
   const packets = Array.isArray(state?.workerTaskPackets)
     ? state.workerTaskPackets
     : [];
   const dispatchMode = state?.stageRuntimeControl?.dispatchMode;
   const fanoutClaimed = ["fan_out_ready", "fan_out_in_progress"].includes(dispatchMode);
   if (!fanoutClaimed && packets.length < 2) return { met: true, missing: [] };
+
+  // An inventory of two tasks is not a request to run them concurrently. A
+  // registered, task-bound single trial may start with ordinary owner/loadout
+  // evidence; parallel-only shard fields are irrelevant to that dispatch.
+  // Keep the full fan-out check for concurrent, unbound or explicitly parallel
+  // work. The existing observed-attempt ledger supplies the active-work facts.
+  const reference = taskReference(input);
+  const selected = packets.filter((packet) => matchesTaskReference(reference, packet));
+  if (!fanoutClaimed && selected.length === 1 && selected[0].progressPolicyId === TASK_PROGRESS_POLICY.id
+    && state.criticalRecord?.successCriteria) {
+    const packet = selected[0];
+    const goal = taskProgressGoal(state.criticalRecord);
+    const active = (state.taskProgressLedger?.observations || []).filter((entry) => entry.goalDigest === goal.goalDigest
+      && entry.started && !["progress", "ineffective", "unresolved"].includes(entry.classification));
+    const singleTrial = new Set(active.map((entry) => entry.attemptId)).size === 1 && active.every((entry) => entry.taskPacketId === packet.taskPacketId
+      && (entry.contextId || "initial") === (packet.progressContextId || "initial"));
+    const anotherWorkerActive = (state.workerLifecycle || []).some((worker) => worker.runId === state.runId
+      && worker.status === "active" && worker.taskPacketId !== packet.taskPacketId);
+    if (singleTrial && !anotherWorkerActive) {
+      const dependencies = taskProgressDependencyReadiness({ ...packet, progressDependencyBarrier: true }, packets, state.workerResultPackets || []);
+      return { met: dependencies.ready, missing: dependencies.blockedTaskIds.map((id) => `current prerequisite result for ${id}`) };
+    }
+  }
 
   const missing = [];
   if (state?.fetchRecord?.capabilitySearchPerformed !== true) {
@@ -1051,110 +1055,16 @@ function inferCallerIdentity() {
 }
 
 /**
- * Resolve a gate's effective mode when the raw value is "progressive".
- *
- * Shared by both the meta-readonly gate (META_KIM_META_ENFORCEMENT_MODE) and
- * the capability-first gate (META_KIM_CAPABILITY_GATE), so they apply the same
- * grace-window semantics:
- *
- *   - During the first `defaultGraceDays` days since the run started, return
- *     "warn" (soft rollout).
- *   - After the grace window expires, return "block" (final state).
- *   - If no run-start anchor is available, return "warn" conservatively.
- *
- * The grace-days value can be overridden via the env var named by
- * `graceDaysEnvVar`. Non-finite or negative overrides fall back to the
- * provided default.
- *
- * @param {string} modeRaw - Already-lowercased mode value (e.g. "progressive").
- *                           Callers should pass the raw env value normalized to
- *                           lowercase + trimmed.
- * @param {string} graceDaysEnvVar - Name of the env var holding the override
- *                                    grace-day count.
- * @param {number} defaultGraceDays - Default grace days when the env var is
- *                                    unset or invalid.
- * @param {object|null} state - Spine state (used to read run-start timestamps).
- * @returns {"warn" | "block"}
+ * Role-allocation policy is advisory unless the operator selects strict mode.
+ * Actual task failures are handled by the recorded task-progress fuse below,
+ * not by a run-age timer or the number of warnings a Hook happened to emit.
  */
-function resolveGracedMode(modeRaw, graceDaysEnvVar, defaultGraceDays, state) {
-  if (modeRaw === "warn") return "warn";
-  if (modeRaw === "block") return "block";
-
-  // progressive (or unknown) → time-bounded warn → block transition.
-  const graceDaysRaw = parseInt(
-    process.env[graceDaysEnvVar] || String(defaultGraceDays),
-    10,
-  );
-  const graceDays =
-    Number.isFinite(graceDaysRaw) && graceDaysRaw >= 0
-      ? graceDaysRaw
-      : defaultGraceDays;
-
-  const startedAt =
-    state?.runStartTimestamp || state?.triggeredAt || state?.startedAt || null;
-  if (!startedAt) {
-    // No anchor: be conservative and warn.
-    return "warn";
-  }
-  const startedMs = Date.parse(startedAt);
-  if (!Number.isFinite(startedMs)) {
-    process.stderr.write(
-      `\n⚠️  [Meta_Kim graced-mode] invalid runStartTimestamp ${JSON.stringify(startedAt)}; degrading to warn\n`,
-    );
-    return "warn";
-  }
-  const elapsedDays = (Date.now() - startedMs) / (1000 * 60 * 60 * 24);
-  return elapsedDays < graceDays ? "warn" : "block";
+function resolveAdvisoryMode(modeRaw) {
+  return modeRaw === "block" ? "block" : "warn";
 }
 
-function describeGracedMode(modeRaw, graceDaysEnvVar, defaultGraceDays, state) {
-  const effectiveMode = resolveGracedMode(modeRaw, graceDaysEnvVar, defaultGraceDays, state);
-  if (modeRaw === "warn" || modeRaw === "block" || modeRaw === "off") {
-    return `effective: "${effectiveMode}"; graceDaysRemaining: n/a`;
-  }
-
-  const graceDaysRaw = parseInt(
-    process.env[graceDaysEnvVar] || String(defaultGraceDays),
-    10,
-  );
-  const graceDays =
-    Number.isFinite(graceDaysRaw) && graceDaysRaw >= 0
-      ? graceDaysRaw
-      : defaultGraceDays;
-  const startedAt =
-    state?.runStartTimestamp || state?.triggeredAt || state?.startedAt || null;
-  if (!startedAt) {
-    return `effective: "${effectiveMode}"; graceDaysRemaining: unknown; graceDays: ${graceDays}; anchor: missing`;
-  }
-  const startedMs = Date.parse(startedAt);
-  if (!Number.isFinite(startedMs)) {
-    return `effective: "${effectiveMode}"; graceDaysRemaining: unknown; graceDays: ${graceDays}; anchor: invalid`;
-  }
-  const elapsedDays = (Date.now() - startedMs) / (1000 * 60 * 60 * 24);
-  const graceDaysRemaining = Math.max(0, Math.ceil(graceDays - elapsedDays));
-  return `effective: "${effectiveMode}"; graceDaysRemaining: ${graceDaysRemaining}; graceDays: ${graceDays}`;
-}
-
-/**
- * Decide which enforcement mode is active right now.
- *
- *   warn        -> log + allow
- *   block       -> deny
- *   progressive -> warn during grace window, block after
- *
- * Returns the resolved mode string: "warn" or "block".
- */
-function resolveEnforcementMode(state) {
-  const raw = (process.env.META_KIM_META_ENFORCEMENT_MODE || "progressive")
-    .toLowerCase()
-    .trim();
-
-  return resolveGracedMode(
-    raw,
-    "META_KIM_META_ENFORCEMENT_GRACE_DAYS",
-    7,
-    state,
-  );
+function resolveEnforcementMode() {
+  return resolveAdvisoryMode((process.env.META_KIM_META_ENFORCEMENT_MODE || "progressive").toLowerCase().trim());
 }
 
 /**
@@ -1338,17 +1248,16 @@ if (!state || !state.active) {
 
 // Agent dispatch tools: record dispatch + track dispatch chain.
 // Claude calls this capability `Agent`; Codex exposes it as `spawn_agent`.
-if (isExecutionTool(toolName) && state.criticalRecord?.successCriteria
+// A task fuse limits execution, never the reads needed to diagnose and repair
+// that task. Classify the complete shell command so a read followed by a write
+// cannot use this fast path.
+const readOnlyDiagnosis = isReadOnlyTool(toolName)
+  || READ_ONLY_CONTROL_PLANE_TOOLS.has(toolName)
+  || (toolName === "Bash" && isReadOnlyBash(toolInput?.command || ""));
+if (isExecutionTool(toolName) && !readOnlyDiagnosis && state.criticalRecord?.successCriteria
   && String(process.env.META_KIM_CAPABILITY_GATE || "progressive").toLowerCase() !== "off") {
-  let reference = toolInput;
-  if (!reference.taskPacketId && !reference.publicTaskRef && typeof toolInput.message === "string" && toolInput.message.trim().startsWith("{")) {
-    try {
-      const envelope = JSON.parse(toolInput.message);
-      if (envelope?.schemaVersion === "codex-native-worker-invocation-v0.2") reference = envelope;
-    } catch { /* Ordinary clear-text messages are not task bindings. */ }
-  }
-  const matches = (packet) => reference.taskPacketId === packet.taskPacketId
-    || reference.publicTaskRef === publicTaskBinding(packet.taskPacketId);
+  const reference = taskReference(toolInput);
+  const matches = (packet) => matchesTaskReference(reference, packet);
   const retired = (state.taskCorrectionHistory || []).some((entry) => matches(entry.previousPacket));
   if (retired) exitAfterDeny("Task progress correction: the referenced old work order has been replaced; inspect the current task reference before dispatch.");
   const packets = state.workerTaskPackets || [];
@@ -1468,27 +1377,13 @@ if (isAgentDispatchTool(toolName)) {
       }
       const performed = state?.fetchRecord?.capabilitySearchPerformed === true;
       if (!performed) {
-        // Resolve the effective mode. For "warn" / "block" this is a passthrough;
-        // for "progressive" (the default) this returns "warn" during the
-        // grace window and "block" afterwards, mirroring the meta-readonly gate.
-        const effectiveMode = resolveGracedMode(
-          capabilityGateModeRaw,
-          "META_KIM_CAPABILITY_GATE_GRACE_DAYS",
-          7,
-          state,
-        );
-        const graceStatus = describeGracedMode(
-          capabilityGateModeRaw,
-          "META_KIM_CAPABILITY_GATE_GRACE_DAYS",
-          7,
-          state,
-        );
+        const effectiveMode = resolveAdvisoryMode(capabilityGateModeRaw);
 
         const reason =
           `Capability-first violation: fetchRecord.capabilitySearchPerformed must be true ` +
           `before Agent dispatch in stage "${stage}". Search config/capability-index/ + ` +
           `canonical/agents/ first, then update spine state fetchRecord. ` +
-          `Capability gate mode: "${capabilityGateModeRaw}" (${graceStatus}; default is "progressive"). ` +
+          `Capability gate mode: "${capabilityGateModeRaw}" (effective: "${effectiveMode}"; no calendar-based escalation). ` +
           `Override with META_KIM_CAPABILITY_GATE=block (immediate), =warn (log only), ` +
           `or =off (disabled, not recommended).`;
 

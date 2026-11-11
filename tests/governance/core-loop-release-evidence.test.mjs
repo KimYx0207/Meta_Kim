@@ -336,15 +336,24 @@ test("docs PDR stays local-private and public fixtures avoid private paths", () 
 
 test("release verification path includes governance tests", () => {
   assert.match(packageJson.scripts["meta:verify:all"], /node scripts\/run-verify-all\.mjs/);
-  assert.match(verifyRunnerSource, /npm run meta:verify:governance:core/);
+  assert.deepEqual(STAGES.find(({ name }) => name === "meta:verify:governance:core").commands, [
+    { command: "npm", args: ["run", "meta:verify:governance:core"] },
+  ]);
   assert.match(packageJson.scripts["meta:verify:governance:core"], /npm run meta:test:governance/);
   assert.match(packageJson.scripts["meta:verify:governance"], /meta:open-source-boundary:validate/);
   assert.match(packageJson.scripts["meta:verify:governance"], /meta:test:integration/);
   assert.doesNotMatch(packageJson.scripts["meta:verify:governance:core"], /meta:open-source-boundary:validate/);
   assert.doesNotMatch(packageJson.scripts["meta:verify:governance:core"], /meta:test:integration/);
-  assert.match(verifyRunnerSource, /npm run meta:graphify:check/);
-  assert.match(verifyRunnerSource, /\["eval-meta-agents", "node scripts\/eval-meta-agents\.mjs"\]/);
-  assert.match(verifyRunnerSource, /npm run meta:acceptance:clean-room:require/);
+  assert.deepEqual(STAGES.find(({ name }) => name === "meta:graphify:verified-rebuild").commands, [
+    { command: "npm", args: ["run", "meta:graphify:verified-rebuild"] },
+    { command: "npm", args: ["run", "meta:graphify:check"] },
+  ]);
+  assert.deepEqual(STAGES.find(({ name }) => name === "eval-meta-agents").commands, [
+    { command: "node", args: ["scripts/eval-meta-agents.mjs"] },
+  ]);
+  assert.deepEqual(LIVE_CERTIFIED_STAGE.commands, [
+    { command: "npm", args: ["run", "meta:acceptance:clean-room:require"] },
+  ]);
   assert.doesNotMatch(
     packageJson.scripts["meta:verify:all:chain"],
     /npm run meta:acceptance:clean-room:require/,

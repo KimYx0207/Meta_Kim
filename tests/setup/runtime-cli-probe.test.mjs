@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -121,6 +121,29 @@ test("Windows resolves a real native console CLI before version invocation", {sk
   const {bin}=fixture(t);copyFileSync(process.execPath,path.join(bin,"meta-native-fixture.exe"));
   const result=probeRuntimeCli("meta-native-fixture",{env:envFor(bin)});
   assert.equal(result.version,process.version);
+});
+
+test("a POSIX CLI resolves and probes its real native payload even when npm names that payload .exe", {skip:!["linux","darwin"].includes(process.platform)}, t=>{
+  const {bin}=fixture(t),payload=path.join(bin,"native-payload.exe"),entry=path.join(bin,"meta-native-fixture");
+  copyFileSync(process.execPath,payload);chmodSync(payload,0o755);symlinkSync(payload,entry);
+  assert.equal(runtimeCliProbeEligibility(entry).eligible,true);
+  const result=probeRuntimeCli("meta-native-fixture",{env:envFor(bin),timeoutMs:8000});
+  assert.equal(result.status,"detected",JSON.stringify(result));
+  assert.equal(result.version,process.version);
+  assert.equal(result.executablePath,realpathSync(payload));
+});
+
+test("native binary format must match the requested platform before a version probe", t=>{
+  const {bin}=fixture(t),payload=path.join(bin,"payload.exe");
+  for(const [magic,platform] of [["7f454c46","linux"],["cffaedfe","darwin"],["cafebabe","darwin"]]) {
+    const bytes=Buffer.alloc(64);Buffer.from(magic,"hex").copy(bytes);writeFileSync(payload,bytes);
+    assert.equal(runtimeCliProbeEligibility(payload,{platform}).eligible,true);
+    for(const incompatible of ["linux","darwin","win32"].filter(value=>value!==platform)) {
+      assert.equal(runtimeCliProbeEligibility(payload,{platform:incompatible}).reason,"native_executable_platform_mismatch");
+    }
+  }
+  writeFileSync(payload,"unknown executable content");
+  assert.equal(runtimeCliProbeEligibility(payload,{platform:"linux"}).reason,"windows_executable_on_posix");
 });
 
 test("setup delegates only runtime version discovery to the bounded probe",()=>{

@@ -106,22 +106,22 @@ function assertDocsExplainBoundary() {
     {
       file: "README.md",
       pattern:
-        /Generated runtime projection directories are local outputs, gitignored, and not GitHub source\./,
+        /directories are generated locally.*excluded from GitHub source.*\.gitignore/,
     },
     {
       file: "README.zh-CN.md",
       pattern:
-        /生成的 runtime projection 目录是本地输出，由 `?\.gitignore`? 保护，不能作为 GitHub source 提交。/,
+        /客户端目录.*生成.*\.gitignore.*保留在本地.*不提交到 GitHub 源码/,
     },
     {
       file: "README.ja-JP.md",
       pattern:
-        /生成された runtime projection directory は local output で、`?\.gitignore`? により GitHub source には入りません。/,
+        /クライアント別ディレクトリ.*生成.*\.gitignore.*GitHub のソースから除外/,
     },
     {
       file: "README.ko-KR.md",
       pattern:
-        /생성된 runtime projection directory는 local output이며 `?\.gitignore`?로 보호되고 GitHub source에 들어가지 않습니다\./,
+        /클라이언트별 디렉터리.*생성.*\.gitignore.*GitHub 소스에서 제외/,
     },
   ];
 

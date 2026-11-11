@@ -2,41 +2,40 @@
 
 # 元 · Meta_Kim
 
-**短いアイデアから、追跡・検証できる成果へ。**
+**一つのアイデアから、引き継げる仕事と確かめられる成果へ。**
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja-JP.md) · [한국어](README.ko-KR.md)
 
-<a href="LICENSE"><img alt="Apache 2.0 license" src="https://img.shields.io/badge/license-Apache--2.0-green"/></a>
-
-<a href="config/runtime-compatibility-catalog.json"><img alt="Default: Claude Code and Codex; compatibility: OpenClaw and Cursor" src="https://img.shields.io/badge/default-Claude%20Code%20%7C%20Codex%20%2B%20compat--OpenClaw%20%7C%20Cursor-111827"/></a>
-<a href="config/runtime-compatibility-catalog.json"><img alt="Opt-in projections: Gemini CLI and ZCode" src="https://img.shields.io/badge/opt--in-Gemini%20CLI%20%7C%20ZCode-4F46E5"/></a>
+[![GitHub スター](https://img.shields.io/github/stars/KimYx0207/Meta_Kim?style=flat&label=%E3%82%B9%E3%82%BF%E3%83%BC)](https://github.com/KimYx0207/Meta_Kim/stargazers)
+[![ライセンス Apache 2.0](https://img.shields.io/badge/%E3%83%A9%E3%82%A4%E3%82%BB%E3%83%B3%E3%82%B9-Apache--2.0-green)](LICENSE)
 
 </div>
 
-## Meta_Kim とは
+## アイデアを、使える成果へ
 
-**曖昧な依頼を、判断・共通の計画・協調作業・確認できる成果につなげる AI アシスタント向け Harness です。** 普段のクライアントで目的を伝えると、現在のプロジェクトを調べ、必要な調査と専門能力を選び、レビューと検証まで作業を整理します。
+**Meta_Kim は、複数のファイル・専門分野・セッションにまたがる仕事を AI アシスタントと進めるためのフレームワークです。** いつものクライアントで目的を伝えると、プロジェクトを調べ、方法を比較し、作業を組み立てます。決定事項と完成済みの成果は次のセッションにも引き継ぎます。
 
-> 「スマートフォンで申し込めるイベント登録ツールがほしい。主催者は正確な参加者一覧を見たい。実現方法を比較して、選んだ案を実装・検証してほしい。」
+> 「スマートフォンで使えるイベント申込ツールを作りたい。まず方式を一緒に選び、申込・参加者一覧・エクスポートを実装して、実際に動かして確認してほしい。」
 
-![意図、調査、二つのPRDビュー、専門能力と検証の関係](docs/images/intent-to-delivery.svg)
+![目的、調査と判断、二段階の PRD、専門作業、成果の確認という流れ](docs/images/intent-to-delivery.ja-JP.svg)
 
-*アーキテクチャの説明図です。実際の並行実行は、ホスト能力・依存関係・権限に従います。*
+*二つのプロジェクトの連携図。依存条件を満たした独立作業は並行して進められます。*
 
-## 二つのプロジェクト
-
-| プロジェクト | 担当 |
+| 必要なこと | Meta_Kim が整理すること |
 | --- | --- |
-| **Meta_Kim** | 意図の理解、調査、判断、編成、レビュー、検証、会話をまたぐ継続 |
-| **[Kim Service](https://github.com/KimYx0207/Kim_Service)** | 専門 Agent・Skill・Hook・Tool、その方法、資料、例、入出力の境界 |
+| 方向を決める | 現状、参考資料、選択肢と推奨理由 |
+| 実装できる計画 | 一つの PRD：システム・技術の方針から、モジュール・インターフェース・受入条件へ |
+| 専門的に実行する | 担当者に合った方法、プロジェクト資料、成果基準 |
+| 中断後に続ける | 決定、成果、依存関係と次の作業 |
+| 進捗を見る | Live ボードのタスク、担当者、成果と確認結果 |
 
-PRD は一つです。最初にシステムと技術の基準を定め、その後モジュール、インターフェース、状態、受入条件を具体化します。専門 Agent には役職名だけでなく、選んだ方法と実際の資料を渡します。
+**[Kim Service](https://github.com/KimYx0207/Kim_Service) が専門的な方法を提供し、Meta_Kim が仕事全体を進行します。** ほかの能力パッケージも接続できます。成果を大きく変える判断は利用者へ、日常の実装判断は作業チームへ渡します。
 
-ユーザーに尋ねるのは、方向・範囲・費用・受入条件を変える未解決の選択です。内部の Agent 選びはホストが担います。有効な決定と完了記録を再利用し、前提・資料・受入条件が変わった範囲だけを再確認します。
+## 三つの手順で始める
 
-## インストール
+**Node.js 22.13.0+** と、設定済みの AI クライアントが必要です。現行版：**[v3.10.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.10.0)**。
 
-Node.js **22.13.0 以上**と、ご自身で設定したクライアントが必要です。
+**1. インストールしてクライアントを選びます。**
 
 ```bash
 git clone https://github.com/KimYx0207/Meta_Kim.git
@@ -45,9 +44,17 @@ npm install
 node setup.mjs
 ```
 
-利用するクライアントを選び、プロジェクトで目的を自然な言葉で伝えてください。既定はグローバルな能力の再利用です。グローバル Hook は `--with-global-hooks` で明示的に有効化します。既存設定は所有範囲を確認してマージします。
+標準では能力をグローバルに再利用します。専用設定が必要ならプロジェクト単位で導入し、グローバル Hook を使う場合は `--with-global-hooks` を指定します。既存の設定はマージされます。`npx --yes github:KimYx0207/Meta_Kim` からも開始できます。
 
-更新時は先にソースを取得します。
+**2. プロジェクトを開き、欲しい結果をそのまま伝えます。**
+
+コマンドや専門職の名前を覚える必要はありません。何を使えるようにするか、何を残すかを伝えてください。アシスタントは既存の資料を読み、計画を変える質問を確認します。
+
+**3. 進捗を見て、成果を使います。**
+
+現在のタスクの Live リンクを開くか、`node bin/meta-kim.mjs live` を実行します。ボードでタスク、担当者、依存関係と成果を確認できます。[中国語のデモデータを使った実際の Live 画面](docs/images/meta-kim-live-demo.png)。
+
+既存のクローンは次の手順で更新します。
 
 ```bash
 git pull --ff-only
@@ -55,23 +62,22 @@ node setup.mjs --update
 node setup.mjs --check
 ```
 
-進捗は現在のプロジェクトに対応する Live リンク、または `node bin/meta-kim.mjs live` で確認できます。
+## クライアント連携
 
-## クライアントの範囲
-
-| クライアント | 現在のソースの対応と限界 |
+| クライアント | 利用できる連携 |
 | --- | --- |
-| Codex / Claude Code | 主要投影と読み取り専用実行ブリッジ。実行可能性は現在のホストと証拠による |
-| Cursor / OpenClaw | 既存の非既定互換投影。各ホストの検証が必要 |
-| DSH / DeepSeek Harness | 選択式のネイティブ Skill、独立 profile／project patch と MCP。設定・Skill 読取・MCP の実観測と、モデル実行・強制 Hook の証明を区別 |
-| Gemini CLI | 選択式のネイティブ投影。構造・ライフサイクル検証とモデル実行は別 |
-| ZCode | 選択式のネイティブ投影。ユーザー単位の Hook を使用し、現行クライアントはプロジェクト Hook を無視 |
+| **Codex · Claude Code** | 主要連携：ネイティブ指示、Agent、Skill、設定と Hook |
+| **Cursor · OpenClaw** | 各クライアントの形式に合わせた任意の互換連携 |
+| **Gemini CLI** | 任意のネイティブ Agent、共有 Skill、設定と Hook |
+| **ZCode** | 任意の Agent、Skill、MCP とユーザー単位の Hook |
+| **DSH — DeepSeek Harness** | ネイティブ Skill、専用設定またはプロジェクト導入、MCP |
+| **Qoder · Trae** | Beta 互換アダプター |
 
-Qoder・Trae は **Beta** 互換 adapter のままです。DSH は旧 plan-only adapter を保ちつつ、別の選択式ネイティブ統合を追加します。既存 stage runner の権限は拡張しません。ZCode の旧 plan-only adapter と新投影は別々に扱います。依存プロジェクト側の install target は upstream project で管理され、Meta_Kim の実動作を保証しません。
-
-現在のリリースは [v3.9.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.9.0) です。[Unreleased](CHANGELOG.ja-JP.md) の追加はソース版の変更であり、新リリースの公開を意味しません。Gemini / ZCode のモデル実行は未認証です。
+導入、能力パッケージの読み込み、実際のタスクは個別に検証します。DSH は公式プログラムでモデルを呼ばずに設定・Skill・MCP を確認しています。Gemini CLI と ZCode は投影と導入ライフサイクルを検査しています。モデルの専門的な成果は実タスクで評価します。詳細は[互換性カタログ](config/runtime-compatibility-catalog.json)と[検証記録](docs/verification/dsh-professional-quality-20261111.md)を参照してください。依存プロジェクトの対応クライアントは各上流プロジェクトが管理します。
 
 ### DSH を使う
+
+DSH には **Node.js 24.9.0+** が必要です。連携は DSH `0.2.2-rc.1` に照らして確認しています。
 
 ```sh
 node bin/meta-kim.mjs dsh install
@@ -79,19 +85,34 @@ node bin/meta-kim.mjs dsh check
 dsh --profile meta-kim
 ```
 
-DSH は Node >=24.9.0 が必要です。確認対象は `0.2.2-rc.1`。他のクライアント要件は変わりません。`--service-package /path/to/kim-service-dsh` で Kim_Service の完全な専門 Skills を追加できます。同じ入口で update／check／uninstall を実行し、利用者のファイルや変更を保持します。[DSH の詳細](canonical/skills/meta-theory/references/runtime-dsh.md)を参照してください。
+`--service-package /path/to/kim-service-dsh` を追加すると、[Kim Service で構築した専門パッケージ](https://github.com/KimYx0207/Kim_Service/blob/main/docs/dsh.md)を読み込めます。同じ入口で `update` と `uninstall` も使えます。[DSH ガイド](canonical/skills/meta-theory/references/runtime-dsh.md) · [ZCode ガイド](canonical/skills/meta-theory/references/runtime-zcode.md)。
 
-## 継続と改善
+## 小さく試し、問題のある作業を切り離す
 
-専門出力には合格条件、拒否条件、検証方法、必要な証拠、停止条件を設定し、実際の作業者へ渡します。自己申告だけでは合格になりません。[検証記録](docs/verification/dsh-professional-quality-20261111.md)で観測範囲と未検証部分を確認できます。
+標準の Hook は進行中に助言します。プロジェクトの開始から七日が経過しただけでブロックに切り替わることはありません。
 
-依存関係が満たされた独立作業は、実際のホスト容量と計画上限の小さい方で進めます。容量不明時は一つずつ実行します。一部が失敗しても、独立した成功結果は保持します。現行の全体ステージ境界と書き込み権限は維持されます。
+準備済みの単独タスクでも監督付きの試行を開始できます。監督対象のタスクで、同じ方針と根拠による試行が二回続けて成果につながらなければ、そのタスクのヒューズが作動します。独立した作業は続きます。レビュー済みの新しい方針では回復試行を一回行い、結果を記録して次の利用を判断します。権限、ファイルの所有範囲、破壊的な操作は現在の承認に従います。
 
-RSI は、観察→改善候補→評価→レビュー後の昇格という流れです。評価の欠落は未評価として残し、候補が自分を承認することはありません。静的な参照検索だけで「不要」と決めず、削除前に設定・動的読込・外部利用を確認します。
+利用者の確認待ちも、その判断に依存する作業だけを止めます。再開時には独立した完成済みの成果を保持します。再利用する方法も、候補を試して評価し、有効な版を残します。
 
-`canonical/` が能力とルールの源、`config/` が契約と証拠、`scripts/` / `src/` が実装、`tests/` が検証です。クライアント用ディレクトリは生成物、`.meta-kim/` はローカル状態です。
+<details>
+<summary>任意のメモリサービス</summary>
 
-詳細は [English](README.md)、[意図から交付まで](canonical/skills/meta-theory/references/intent-to-delivery.md)、[互換カタログ](config/runtime-compatibility-catalog.json)、[AGENTS.md](AGENTS.md) を参照してください。検証済みという表現は、そのチェックが実際に確認した範囲に限ります。
+プロジェクトの継続には永続タスク記録を使います。Memory も有効にした場合は、設定したサービスのアドレスを確認できます。
+
+```bash
+curl -fsS --max-time 3 http://127.0.0.1:8000/api/health
+```
+
+`.mcp.json`、hook、サービスの稼働、書き込み、読み取り、セッション間の想起は個別に確認します。`npm run meta:test:mcp` は Meta_Kim 自身の MCP サーバーを検査します。
+
+</details>
+
+## 資料と開発参加
+
+`canonical/` は共通の Agent・Skill・ルール、`config/` は能力索引と契約、`scripts/` と `src/` は導入・実行・Live、`tests/` は動作確認、`.meta-kim/` はローカルのタスク記録です。クライアント別ディレクトリは共通ソースから生成し、`.gitignore` で GitHub のソースから除外します。
+
+[開発ガイド](AGENTS.md) · [構成](docs/harness-architecture.md) · [意図から成果へ](canonical/skills/meta-theory/references/intent-to-delivery.md) · [Live SDK](docs/live-sdk.md) · [変更履歴](CHANGELOG.ja-JP.md)
 
 ## 連絡先
 
