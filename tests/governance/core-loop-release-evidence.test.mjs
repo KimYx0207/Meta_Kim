@@ -20,6 +20,7 @@ import {
   computeVerificationClaims,
   LIVE_CERTIFIED_STAGE,
   packedProductProofComplete,
+  RELEASE_DEPENDENCY_PROBE_TARGETS,
   RELEASE_RUNTIME_TARGETS,
   resolveReleaseOperationTimeout,
   runAllRuntimeGlobalInstallUpdateProbe,
@@ -336,15 +337,24 @@ test("docs PDR stays local-private and public fixtures avoid private paths", () 
 
 test("release verification path includes governance tests", () => {
   assert.match(packageJson.scripts["meta:verify:all"], /node scripts\/run-verify-all\.mjs/);
-  assert.match(verifyRunnerSource, /npm run meta:verify:governance:core/);
+  assert.deepEqual(STAGES.find(({ name }) => name === "meta:verify:governance:core").commands, [
+    { command: "npm", args: ["run", "meta:verify:governance:core"] },
+  ]);
   assert.match(packageJson.scripts["meta:verify:governance:core"], /npm run meta:test:governance/);
   assert.match(packageJson.scripts["meta:verify:governance"], /meta:open-source-boundary:validate/);
   assert.match(packageJson.scripts["meta:verify:governance"], /meta:test:integration/);
   assert.doesNotMatch(packageJson.scripts["meta:verify:governance:core"], /meta:open-source-boundary:validate/);
   assert.doesNotMatch(packageJson.scripts["meta:verify:governance:core"], /meta:test:integration/);
-  assert.match(verifyRunnerSource, /npm run meta:graphify:check/);
-  assert.match(verifyRunnerSource, /\["eval-meta-agents", "node scripts\/eval-meta-agents\.mjs"\]/);
-  assert.match(verifyRunnerSource, /npm run meta:acceptance:clean-room:require/);
+  assert.deepEqual(STAGES.find(({ name }) => name === "meta:graphify:verified-rebuild").commands, [
+    { command: "npm", args: ["run", "meta:graphify:verified-rebuild"] },
+    { command: "npm", args: ["run", "meta:graphify:check"] },
+  ]);
+  assert.deepEqual(STAGES.find(({ name }) => name === "eval-meta-agents").commands, [
+    { command: "node", args: ["scripts/eval-meta-agents.mjs"] },
+  ]);
+  assert.deepEqual(LIVE_CERTIFIED_STAGE.commands, [
+    { command: "npm", args: ["run", "meta:acceptance:clean-room:require"] },
+  ]);
   assert.doesNotMatch(
     packageJson.scripts["meta:verify:all:chain"],
     /npm run meta:acceptance:clean-room:require/,
@@ -1385,7 +1395,7 @@ test("source snapshot binds HEAD tree diff state and package manifest and reject
   }
 });
 
-test("all-runtime release preflight performs real isolated install and update artifacts", () => {
+test("dependency preflight verifies its four declared targets while full-package proof still requires all six runtimes", () => {
   const tempRoot = mkdtempSync(path.join(os.tmpdir(), "meta-kim-release-probe-test-"));
   const installerScript = path.join(tempRoot, "fake-installer.mjs");
   try {
@@ -1395,8 +1405,11 @@ test("all-runtime release preflight performs real isolated install and update ar
       [
         'import { mkdirSync, writeFileSync } from "node:fs";',
         'import path from "node:path";',
-        `const runtimes = ${JSON.stringify(RELEASE_RUNTIME_TARGETS)};`,
-        'for (const runtime of runtimes) {',
+        'import assert from "node:assert/strict";',
+        `const declaredTargets = ${JSON.stringify(JSON.parse(readFileSync("config/skills.json", "utf8")).skills.find(({ id }) => id === "findskill").targets)};`,
+        'const requestedTargets = process.argv[process.argv.indexOf("--targets") + 1].split(",");',
+        'assert.ok(requestedTargets.every(runtime => declaredTargets.includes(runtime)), "dependency probe requested an undeclared runtime");',
+        'for (const runtime of declaredTargets.filter(runtime => requestedTargets.includes(runtime))) {',
         '  const home = process.env[`META_KIM_${runtime.toUpperCase()}_HOME`];',
         '  const target = path.join(home, "skills", "findskill");',
         '  mkdirSync(target, { recursive: true });',
@@ -1431,16 +1444,25 @@ test("all-runtime release preflight performs real isolated install and update ar
     });
     const proof = preflight.globalTargetProof;
     assert.equal(proof.status, "passed", proof.error);
-    assert.deepEqual(proof.targets, RELEASE_RUNTIME_TARGETS);
+    assert.deepEqual(RELEASE_DEPENDENCY_PROBE_TARGETS, ["claude", "codex", "openclaw", "cursor"]);
+    assert.deepEqual(proof.targets, RELEASE_DEPENDENCY_PROBE_TARGETS);
+    assert.equal(proof.coverage.kind, "declared_dependency_install_targets");
+    assert.equal(proof.coverage.skillId, "findskill");
+    assert.deepEqual(proof.coverage.excludedTargets, [
+      { runtime: "gemini", reasons: ["dependency_not_declared_for_runtime"] },
+      { runtime: "zcode", reasons: ["dependency_not_declared_for_runtime", "runtime_dependency_installer_unsupported"] },
+    ]);
+    assert.deepEqual(proof.coverage.fullPackageTargets, RELEASE_RUNTIME_TARGETS);
+    assert.equal(proof.coverage.fullPackageProofRequired, true);
     assert.deepEqual(proof.modes.map((mode) => mode.mode), ["install", "update"]);
     assert.equal(proof.modes.every((mode) => mode.status === "passed"), true);
     assert.equal(
       proof.modes.every(
-        (mode) => mode.artifactProof.length === RELEASE_RUNTIME_TARGETS.length,
+        (mode) => mode.artifactProof.length === RELEASE_DEPENDENCY_PROBE_TARGETS.length,
       ),
       true,
     );
-    assert.equal(proof.artifactProof.length, RELEASE_RUNTIME_TARGETS.length);
+    assert.equal(proof.artifactProof.length, RELEASE_DEPENDENCY_PROBE_TARGETS.length);
     assert.equal(proof.identicalArtifactHash, true);
     assert.equal(proof.sourcePolicy, "external_declared_dependency_no_local_fallback");
     assert.equal(preflight.packedUserProof.status, "passed");
@@ -1469,6 +1491,15 @@ test("all-runtime release preflight performs real isolated install and update ar
     );
     assert.equal(progress.at(-1).event, "release_preflight_complete");
     assert.equal(progress.at(-1).status, "passed");
+
+    const completedStages = STAGES.map(({ name }) => ({ name, status: "passed" }));
+    assert.equal(computeReleaseGrade({ results: completedStages, startIndex: 0, globalTargetProof: proof, packedUserProof: completePackedProductProof() }), true);
+    for (const missingRuntime of ["gemini", "zcode"]) {
+      const partialPackage = completePackedProductProof();
+      partialPackage.currentPackage.targets = partialPackage.currentPackage.targets.filter(runtime => runtime !== missingRuntime);
+      assert.equal(packedProductProofComplete(partialPackage), false, `${missingRuntime} remains required for the actual packed product`);
+      assert.equal(computeReleaseGrade({ results: completedStages, startIndex: 0, globalTargetProof: proof, packedUserProof: partialPackage }), false);
+    }
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }

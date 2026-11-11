@@ -1,5 +1,15 @@
 {
   "appliedTransitions": {
+    "canary-fuse-20261111:task-progress-rollout": {
+      "appliedAt": "2026-11-11T00:09:08.123Z",
+      "approvalDigest": "sha256:9d04d9abf623b5273dcdc16d5090729227b0b264bd9b4dd8880d4efede6f4764",
+      "candidateDigest": "sha256:3bb42707dce310a065de67c57d55572fbd9a4ea303fc3bbd8cc3124f64a11b6e",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "rollbackPlanDigest": "sha256:d063ff3022567bb06393c45bdcebd35927fbec1fe2addc84b2d8dedcd631c855",
+      "targetRef": "config/contracts/core-loop-contract.json",
+      "toStatus": "active"
+    },
     "dsh-display-name-20261110:canonical-spelling": {
       "appliedAt": "2026-11-10T23:01:18.142Z",
       "approvalDigest": "sha256:f619120a2231d5a05e65fa82e44cc9147cd9fa5bf7a7b7a40b728862f05e8720",
@@ -150,9 +160,9 @@
       "foundational": true,
       "kind": "rule",
       "lifecycle": {
-        "changedAt": "2026-11-10T12:05:13.346Z",
-        "lastTransitionId": "intent-to-delivery-20261110:reviewed-core-loop",
-        "reason": "Reviewed current full contract and parsed semantic diff from registered bytes. Only projectResearchPolicy, taskProgressPolicy and crossRuntimeBoundary.targets differ. Research retains existing intent/PRD authority; task progress has mutationAuthority none, preserves unrelated work and unknown outcome states; Gemini/ZCode join the format boundary without broadening the codex/claude P-117 execution evidence or claiming live verification. Eight-stage order, merge barriers, permission and writeback rules remain unchanged."
+        "changedAt": "2026-11-11T00:09:08.123Z",
+        "lastTransitionId": "canary-fuse-20261111:task-progress-rollout",
+        "reason": "Expose task-scoped canary and recovery status from existing observed attempts. Remove calendar-based escalation; preserve the two ineffective result threshold, one active attempt, dependency checks, original goal and authorization. No automatic external rollback or whole-run circuit."
       },
       "provenance": {
         "evidenceRefs": [
@@ -164,7 +174,7 @@
         ]
       },
       "replacementRefs": [],
-      "sourceDigest": "sha256:aa9ddfd6bca2a27c977c6a51547030ef4ab4e6d9b5dd66d3566cd7c5f59fa180",
+      "sourceDigest": "sha256:54de32df4c501eb2b0b903b9ac3b30ddbbb0527519e15e00cd77abebb2a8c5aa",
       "status": "active",
       "targetRef": "config/contracts/core-loop-contract.json"
     },
@@ -588,6 +598,39 @@
       "targetRef": "canonical/skills/meta-theory/SKILL.md",
       "toStatus": "active",
       "transitionId": "dsh-display-name-20261110:canonical-spelling"
+    },
+    {
+      "appliedAt": "2026-11-11T00:09:08.123Z",
+      "approvalDigest": "sha256:9d04d9abf623b5273dcdc16d5090729227b0b264bd9b4dd8880d4efede6f4764",
+      "candidateDigest": "sha256:3bb42707dce310a065de67c57d55572fbd9a4ea303fc3bbd8cc3124f64a11b6e",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "previousEntry": {
+        "executionClass": "execution_eligible",
+        "foundational": true,
+        "kind": "rule",
+        "lifecycle": {
+          "changedAt": "2026-11-10T12:05:13.346Z",
+          "lastTransitionId": "intent-to-delivery-20261110:reviewed-core-loop",
+          "reason": "Reviewed current full contract and parsed semantic diff from registered bytes. Only projectResearchPolicy, taskProgressPolicy and crossRuntimeBoundary.targets differ. Research retains existing intent/PRD authority; task progress has mutationAuthority none, preserves unrelated work and unknown outcome states; Gemini/ZCode join the format boundary without broadening the codex/claude P-117 execution evidence or claiming live verification. Eight-stage order, merge barriers, permission and writeback rules remain unchanged."
+        },
+        "provenance": {
+          "evidenceRefs": [
+            "AGENTS.md#Eight-Stage-Spine"
+          ],
+          "recordedAt": "2026-08-12T00:00:00.000Z",
+          "sourceRefs": [
+            "config/contracts/core-loop-contract.json"
+          ]
+        },
+        "replacementRefs": [],
+        "sourceDigest": "sha256:aa9ddfd6bca2a27c977c6a51547030ef4ab4e6d9b5dd66d3566cd7c5f59fa180",
+        "status": "active",
+        "targetRef": "config/contracts/core-loop-contract.json"
+      },
+      "targetRef": "config/contracts/core-loop-contract.json",
+      "toStatus": "active",
+      "transitionId": "canary-fuse-20261111:task-progress-rollout"
     }
   ],
   "policy": {
@@ -597,7 +640,7 @@
     "referenceOnlyPromotion": false,
     "retiredRecordsRemainTombstones": true
   },
-  "revision": 12,
+  "revision": 13,
   "schemaVersion": "knowledge-lifecycle-registry-v1",
-  "updatedAt": "2026-11-10T23:01:18.142Z"
+  "updatedAt": "2026-11-11T00:09:08.123Z"
 }

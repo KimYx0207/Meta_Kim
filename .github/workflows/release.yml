@@ -1,0 +1,54 @@
+name: Publish GitHub release
+
+# Creating release/vX.Y.Z requests publication of that already-merged commit.
+# Regular branches, pull requests and the tag created below never publish.
+on:
+  create:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: >-
+      github.repository == 'KimYx0207/Meta_Kim' &&
+      startsWith(github.ref, 'refs/heads/release/v') &&
+      (github.event_name == 'workflow_dispatch' || github.event.ref_type == 'branch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - name: Check publication source and completed main CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/publish-release.mjs prepare "$RUNNER_TEMP/release-assets"
+      - name: Download the package produced by the passing main CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CI_RUN_ID=$(node -p "require(process.env.RUNNER_TEMP + '/release-assets/verification.json').workflows.find(r => r.workflow.endsWith('/ci.yml')).id")
+          gh run download "$CI_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "meta-kim-$GITHUB_SHA" --dir "$RUNNER_TEMP/release-assets"
+      - name: Install the exact downloadable package and check its CLI
+        run: |
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          npm install --prefix "$RUNNER_TEMP/package-smoke" --ignore-scripts --no-audit --no-fund "$RUNNER_TEMP/release-assets/meta-kim-$PACKAGE_VERSION.tgz"
+          node .github/scripts/check-release-package.mjs "$RUNNER_TEMP/release-assets/meta-kim-$PACKAGE_VERSION.tgz" "$RUNNER_TEMP/package-smoke/node_modules/meta-kim" "$RUNNER_TEMP/release-assets/package-check.json"
+          git archive --format=zip --prefix="Meta_Kim-$PACKAGE_VERSION/" --output="$RUNNER_TEMP/release-assets/Meta_Kim-$PACKAGE_VERSION-source.zip" HEAD
+      - name: Publish the tag, packages and checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/publish-release.mjs publish "$RUNNER_TEMP/release-assets"

@@ -32,6 +32,7 @@
       "unresolved"
     ],
     "mutationAuthority": "none",
+    "rolloutRule": "Start with one in-flight attempt per logical task. Inspect exposes canary, open, recovery_trial or observed_progress from the existing result ledger; elapsed time and warning counts never open a circuit. A reviewed correction changes the affected route before another bounded trial. No automatic external rollback or new execution authority is implied.",
     "scope": "current goal, criterion, logical task and dependency context; only recorded attempts are supervised and historical records remain preserved",
     "identityRule": "Deduplicate stable attempt/result identities; timestamps, summaries and evidence-reference renames do not create attempts or change the evidence basis.",
     "correctionRule": "Persist a task-scoped Thinking correction after the second ineffective same-basis terminal attempt. Preserve independent work; reject the unchanged affected task until an explicitly reviewed replacement changes the substantive route or evidence contents under the original goal and authority.",

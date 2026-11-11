@@ -2,41 +2,40 @@
 
 # 元 · Meta_Kim
 
-**짧은 아이디어를 추적하고 검증할 수 있는 결과로.**
+**하나의 아이디어에서, 이어서 협업하고 확인할 수 있는 결과까지.**
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja-JP.md) · [한국어](README.ko-KR.md)
 
-<a href="LICENSE"><img alt="Apache 2.0 license" src="https://img.shields.io/badge/license-Apache--2.0-green"/></a>
-
-<a href="config/runtime-compatibility-catalog.json"><img alt="Default: Claude Code and Codex; compatibility: OpenClaw and Cursor" src="https://img.shields.io/badge/default-Claude%20Code%20%7C%20Codex%20%2B%20compat--OpenClaw%20%7C%20Cursor-111827"/></a>
-<a href="config/runtime-compatibility-catalog.json"><img alt="Opt-in projections: Gemini CLI and ZCode" src="https://img.shields.io/badge/opt--in-Gemini%20CLI%20%7C%20ZCode-4F46E5"/></a>
+[![GitHub 스타](https://img.shields.io/github/stars/KimYx0207/Meta_Kim?style=flat&label=%EC%8A%A4%ED%83%80)](https://github.com/KimYx0207/Meta_Kim/stargazers)
+[![라이선스 Apache 2.0](https://img.shields.io/badge/%EB%9D%BC%EC%9D%B4%EC%84%A0%EC%8A%A4-Apache--2.0-green)](LICENSE)
 
 </div>
 
-## Meta_Kim은 무엇인가요?
+## 아이디어를 실제 결과로 만들기
 
-**막연한 요청을 의사결정, 하나의 계획, 협업 작업, 확인할 수 있는 결과로 연결하는 AI 어시스턴트용 Harness입니다.** 사용하던 클라이언트에서 목표를 설명하면 현재 프로젝트를 살피고, 필요한 자료와 전문 역량을 찾아 검토와 검증까지 작업을 정리합니다.
+**Meta_Kim은 AI 어시스턴트가 여러 파일, 전문 분야, 세션에 걸친 일을 이어서 끝내도록 돕는 프레임워크입니다.** 평소 쓰는 클라이언트에서 목표를 말하면 프로젝트를 읽고, 방법을 비교하고, 작업을 나눕니다. 결정과 완료한 결과는 다음 세션에도 이어집니다.
 
-> “휴대전화에서 신청할 수 있는 행사 등록 도구가 필요해요. 운영자는 정확한 참가자 명단을 볼 수 있어야 해요. 방법을 비교한 다음 선택한 안을 구현하고 검증해 주세요.”
+> “휴대폰에서 쓸 수 있는 행사 신청 도구를 만들어 줘. 먼저 방식을 함께 정하고, 신청·참가자 목록·내보내기를 구현한 뒤 실제로 작동하는지 보여 줘.”
 
-![의도, 조사, 두 PRD 관점, 전문 역량과 검증의 관계](docs/images/intent-to-delivery.svg)
+![목표, 조사와 결정, 두 단계 PRD, 전문 작업, 결과 확인으로 이어지는 흐름](docs/images/intent-to-delivery.ko-KR.svg)
 
-*아키텍처 설명 그림입니다. 실제 병렬 실행은 현재 호스트의 기능, 작업 의존 관계와 권한에 따릅니다.*
+*두 프로젝트의 협업 구조입니다. 의존 조건을 충족한 독립 작업은 병렬로 진행할 수 있습니다.*
 
-## 두 프로젝트의 역할
-
-| 프로젝트 | 책임 |
+| 필요한 것 | Meta_Kim이 정리하는 것 |
 | --- | --- |
-| **Meta_Kim** | 의도 파악, 조사, 결정, 편성, 검토, 검증과 대화 간 연속성 |
-| **[Kim Service](https://github.com/KimYx0207/Kim_Service)** | 전문 Agent·Skill·Hook·Tool과 방법, 자료, 예제, 입출력 경계 |
+| 명확한 방향 | 프로젝트 현황, 참고 자료, 선택지와 추천 이유 |
+| 구현할 수 있는 계획 | 하나의 PRD: 시스템·기술 결정 후 모듈·인터페이스·인수 기준 |
+| 전문적인 실행 | 담당자에 맞는 방법, 프로젝트 자료와 결과 기준 |
+| 중단 후 이어가기 | 결정, 완료 결과, 의존 관계와 다음 작업 |
+| 눈에 보이는 진행 | Live 보드의 작업, 담당자, 결과물과 검사 결과 |
 
-PRD는 하나입니다. 먼저 시스템과 기술 기준을 정한 뒤 모듈, 인터페이스, 상태와 인수 조건을 구체화합니다. 전문 Agent에게 역할 이름뿐 아니라 선택한 방법과 실제 작업 자료를 전달합니다.
+**[Kim Service](https://github.com/KimYx0207/Kim_Service)가 전문 방법을 제공하고, Meta_Kim이 전체 작업을 조율합니다.** 다른 역량 패키지도 연결할 수 있습니다. 결과를 크게 바꾸는 선택은 사용자에게, 일상적인 구현 판단은 작업 팀에 맡깁니다.
 
-사용자가 선택하는 것은 방향, 범위, 비용이나 인수 기준을 바꾸는 미해결 사안입니다. 내부 Agent 선택은 호스트가 담당합니다. 유효한 결정과 완료 기록을 재사용하며, 전제·자료·인수 조건이 달라진 범위만 다시 확인합니다.
+## 세 단계로 시작하기
 
-## 설치
+**Node.js 22.13.0+**와 설정된 AI 클라이언트가 필요합니다. 현재 버전: **[v3.10.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.10.0)**.
 
-**Node.js 22.13.0 이상**과 사용자가 설정한 클라이언트가 필요합니다.
+**1. 설치하고 사용할 클라이언트를 고릅니다.**
 
 ```bash
 git clone https://github.com/KimYx0207/Meta_Kim.git
@@ -45,9 +44,17 @@ npm install
 node setup.mjs
 ```
 
-사용할 클라이언트를 선택하고 프로젝트에서 원하는 결과를 자연어로 말하세요. 기본 설치는 전역 역량을 재사용합니다. 전역 Hook은 `--with-global-hooks`로 명시적으로 활성화합니다. 기존 사용자 설정은 소유 범위를 확인해 병합합니다.
+기본 설치는 역량을 전역으로 재사용합니다. 전용 설정이 필요한 프로젝트는 프로젝트 설치를 선택하고, 전역 Hook은 `--with-global-hooks`로 추가합니다. 기존 사용자 설정은 병합됩니다. `npx --yes github:KimYx0207/Meta_Kim`으로 시작할 수도 있습니다.
 
-업데이트할 때는 소스를 먼저 가져옵니다.
+**2. 프로젝트를 열고 원하는 결과를 말합니다.**
+
+명령어나 기술 역할 이름을 외울 필요가 없습니다. 무엇이 작동해야 하고 무엇을 유지해야 하는지 알려 주세요. 어시스턴트는 기존 프로젝트 자료를 읽고 계획을 바꾸는 질문을 확인합니다.
+
+**3. 진행을 보고 결과를 사용합니다.**
+
+현재 작업의 Live 링크를 열거나 `node bin/meta-kim.mjs live`를 실행합니다. 보드에서 작업, 담당자, 의존 관계와 결과물을 확인합니다. [중국어 예제 데이터를 사용한 실제 Live 화면](docs/images/meta-kim-live-demo.png).
+
+기존 클론은 다음과 같이 업데이트합니다.
 
 ```bash
 git pull --ff-only
@@ -55,23 +62,22 @@ node setup.mjs --update
 node setup.mjs --check
 ```
 
-현재 프로젝트에 제공된 Live 링크 또는 `node bin/meta-kim.mjs live`에서 진행 상황을 확인할 수 있습니다.
+## 클라이언트 연동
 
-## 클라이언트 범위
-
-| 클라이언트 | 현재 소스의 통합과 한계 |
+| 클라이언트 | 제공되는 연동 |
 | --- | --- |
-| Codex / Claude Code | 주 대상 투영과 읽기 전용 실행 브리지. 실행 여부는 현재 호스트와 증거에 따름 |
-| Cursor / OpenClaw | 기존 비기본 호환 투영. 해당 호스트의 검증 필요 |
-| DSH / DeepSeek Harness | 선택형 네이티브 Skill, 독립 profile／project patch 및 MCP. 실제 설정·Skill 읽기·MCP 관측과 모델 실행·강제 Hook의 검증을 구분 |
-| Gemini CLI | 선택형 네이티브 투영. 구조·생명주기 검증과 모델 실행은 구분 |
-| ZCode | 선택형 네이티브 투영. 사용자 수준 Hook을 사용하며 현재 클라이언트는 프로젝트 Hook을 무시 |
+| **Codex · Claude Code** | 주요 연동: 네이티브 지침, Agent, Skill, 설정과 Hook |
+| **Cursor · OpenClaw** | 각 클라이언트 형식에 맞춘 선택형 호환 연동 |
+| **Gemini CLI** | 선택형 네이티브 Agent, 공유 Skill, 설정과 Hook |
+| **ZCode** | 선택형 Agent, Skill, MCP와 사용자 수준 Hook |
+| **DSH — DeepSeek Harness** | 네이티브 Skill, 전용 설정 또는 프로젝트 설치, MCP |
+| **Qoder · Trae** | Beta 호환 어댑터 |
 
-Qoder와 Trae는 **Beta** 호환 adapter로 유지됩니다. DSH는 기존 plan-only adapter를 유지하면서 별도의 선택형 네이티브 통합을 추가합니다. 기존 stage runner의 실행 권한은 확장하지 않습니다. ZCode의 이전 plan-only adapter와 새 투영은 별도로 다룹니다. 의존 프로젝트의 install target은 upstream project에서 관리하며 Meta_Kim의 실제 동작을 보증하지 않습니다.
-
-현재 릴리스는 [v3.9.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.9.0)입니다. [Unreleased](CHANGELOG.ko-KR.md)의 추가 사항은 소스 버전 변경이며 새 릴리스가 게시되었다는 뜻이 아닙니다. Gemini / ZCode의 실제 모델 실행은 인증되지 않았습니다.
+설치, 역량 패키지 로딩, 실제 작업은 각각 검증합니다. DSH는 공식 프로그램으로 모델을 호출하지 않고 설정·Skill·MCP를 확인합니다. Gemini CLI와 ZCode는 투영과 설치 생명주기 검사를 제공합니다. 모델의 전문 성과는 실제 작업 결과로 평가합니다. 자세한 내용은 [호환성 목록](config/runtime-compatibility-catalog.json)과 [검증 기록](docs/verification/dsh-professional-quality-20261111.md)을 보세요. 의존 프로젝트의 지원 클라이언트는 해당 상위 프로젝트가 관리합니다.
 
 ### DSH 사용하기
+
+DSH에는 **Node.js 24.9.0+**가 필요합니다. 연동은 DSH `0.2.2-rc.1`을 기준으로 확인했습니다.
 
 ```sh
 node bin/meta-kim.mjs dsh install
@@ -79,19 +85,34 @@ node bin/meta-kim.mjs dsh check
 dsh --profile meta-kim
 ```
 
-DSH는 Node >=24.9.0을 요구하며 검토 버전은 `0.2.2-rc.1`입니다. 다른 클라이언트의 요구 사항은 그대로입니다. `--service-package /path/to/kim-service-dsh`로 Kim_Service의 전체 전문 Skills를 추가할 수 있습니다. 같은 진입점에서 update／check／uninstall을 실행하며 사용자 파일과 수정 사항을 보존합니다. [DSH 상세 안내](canonical/skills/meta-theory/references/runtime-dsh.md)를 참고하세요.
+`--service-package /path/to/kim-service-dsh`를 추가하면 [Kim Service에서 만든 전문 패키지](https://github.com/KimYx0207/Kim_Service/blob/main/docs/dsh.md)를 포함합니다. 같은 진입점에서 `update`와 `uninstall`을 사용할 수 있습니다. [DSH 안내](canonical/skills/meta-theory/references/runtime-dsh.md) · [ZCode 안내](canonical/skills/meta-theory/references/runtime-zcode.md).
 
-## 연속성과 개선
+## 작게 시도하고, 문제가 생긴 작업을 분리하기
 
-전문 출력마다 통과·거절 조건, 검증 방법, 필요한 증거와 차단 조건을 실제 작업자에게 전달합니다. 작업자의 자체 통과 보고만으로 승인되지 않습니다. [검증 기록](docs/verification/dsh-professional-quality-20261111.md)에서 관측한 범위와 미검증 항목을 확인할 수 있습니다.
+기본 Hook은 작업 중에 안내합니다. 프로젝트가 시작된 지 칠 일이 지났다는 이유만으로 차단 모드로 바뀌지 않습니다.
 
-의존 조건이 충족된 독립 작업은 실제 호스트 용량과 계획 한도 중 작은 값에 맞춰 실행합니다. 용량이 불명확하면 하나씩 실행합니다. 일부 작업이 실패해도 독립적으로 성공한 결과는 유지합니다. 현재의 전체 단계 경계와 쓰기 권한은 유지합니다.
+준비된 단일 작업도 감독된 시험을 시작할 수 있습니다. 감독 대상 작업에서 같은 전략과 근거로 두 번 연속 성과를 내지 못하면 해당 작업의 퓨즈가 작동합니다. 독립 작업은 계속됩니다. 검토한 새 방식으로 바꾸면 복구 시험을 한 번 진행하고 결과를 기록한 뒤 다음 사용을 결정합니다. 권한, 파일 소유 범위와 파괴적 작업은 현재 승인에 따릅니다.
 
-RSI는 관찰→개선 후보→평가→검토 후 승격의 과정입니다. 평가가 없으면 미평가로 남기며 후보가 자신을 승인하지 않습니다. 정적 검색만으로 불필요한 파일을 확정하지 않고, 삭제 전에 설정·동적 로딩·외부 사용처를 확인합니다.
+사용자 확인 대기도 그 결정에 의존하는 작업만 멈춥니다. 다시 시작할 때 독립적으로 완료한 결과를 보존합니다. 재사용할 방법도 후보를 시험하고 평가한 뒤 효과가 있는 버전을 남깁니다.
 
-`canonical/`은 역량과 규칙의 원본, `config/`는 계약과 증거, `scripts/` / `src/`는 구현, `tests/`는 검증입니다. 클라이언트 디렉터리는 생성물이며 `.meta-kim/`은 로컬 상태입니다.
+<details>
+<summary>선택형 메모리 서비스</summary>
 
-자세한 내용은 [English](README.md), [의도에서 교부까지](canonical/skills/meta-theory/references/intent-to-delivery.md), [호환 카탈로그](config/runtime-compatibility-catalog.json), [AGENTS.md](AGENTS.md)를 확인하세요. 검증되었다는 표현은 해당 검사가 실제로 확인한 범위에만 적용됩니다.
+프로젝트의 연속성에는 영속 작업 기록을 사용합니다. Memory도 활성화했다면 설정한 서비스 주소를 확인할 수 있습니다.
+
+```bash
+curl -fsS --max-time 3 http://127.0.0.1:8000/api/health
+```
+
+`.mcp.json`, hook, 서비스 상태, 쓰기, 읽기, 세션 간 회상은 따로 확인합니다. `npm run meta:test:mcp`는 Meta_Kim 자체 MCP 서버를 검사합니다.
+
+</details>
+
+## 더 알아보고 기여하기
+
+`canonical/`에는 공통 Agent·Skill·규칙, `config/`에는 역량 목록과 계약, `scripts/`와 `src/`에는 설치·실행·Live, `tests/`에는 동작 검사, `.meta-kim/`에는 로컬 작업 기록이 있습니다. 클라이언트별 디렉터리는 공통 소스에서 생성하며 `.gitignore`로 GitHub 소스에서 제외합니다.
+
+[개발 안내](AGENTS.md) · [구조](docs/harness-architecture.md) · [의도에서 결과까지](canonical/skills/meta-theory/references/intent-to-delivery.md) · [Live SDK](docs/live-sdk.md) · [변경 기록](CHANGELOG.ko-KR.md)
 
 ## 연락처
 

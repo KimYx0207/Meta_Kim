@@ -40,6 +40,7 @@ import { resolveRuntimeProfilesFromManifest } from "./meta-kim-sync-config.mjs";
 import { packedProductProofComplete } from "./packed-product-proof.mjs";
 import { SMOKE_BEHAVIOR_STAGES } from "./verification-stage-manifest.mjs";
 import { buildIsolatedUserHomeEnv } from "./isolated-user-home-env.mjs";
+import { resolveCliInvocation } from "./runtime-cli-invocation.mjs";
 
 export { packedProductProofComplete } from "./packed-product-proof.mjs";
 
@@ -136,34 +137,46 @@ export function resolveReleaseOperationTimeout(operationName, environment = proc
   );
 }
 
+const npmCommand = (name, ...args) => ({ command: "npm", args: ["run", name, ...args] });
+const nodeCommand = (...args) => ({ command: "node", args });
+const displayCommands = (commands) => commands
+  .map(({ command, args }) => [command, ...args].join(" "))
+  .join(" && ");
+
 const STANDARD_STAGE_COMMANDS = Object.freeze([
-  ["discover:global", "npm run discover:global -- --check"],
-  ["meta:agents:migration-catalog:check", "npm run meta:agents:migration-catalog:check"],
+  ["discover:global", [npmCommand("discover:global", "--", "--check")]],
+  ["meta:agents:migration-catalog:check", [npmCommand("meta:agents:migration-catalog:check")]],
   [
     "meta:sync",
-    `npm run meta:sync -- --targets ${RELEASE_RUNTIME_TARGETS.join(",")}`,
+    [npmCommand("meta:sync", "--", "--targets", RELEASE_RUNTIME_TARGETS.join(","))],
   ],
   [
     "meta:check",
-    `npm run meta:check:runtimes -- --targets ${RELEASE_RUNTIME_TARGETS.join(",")} && npm run meta:check:sync-coverage && npm run meta:open-source-boundary:validate && npm run meta:validate`,
+    [
+      npmCommand("meta:check:runtimes", "--", "--targets", RELEASE_RUNTIME_TARGETS.join(",")),
+      npmCommand("meta:check:sync-coverage"),
+      npmCommand("meta:open-source-boundary:validate"),
+      npmCommand("meta:validate"),
+    ],
   ],
-  ["meta:verify:governance:core", "npm run meta:verify:governance:core"],
+  ["meta:verify:governance:core", [npmCommand("meta:verify:governance:core")]],
   [
     "meta:graphify:verified-rebuild",
-    "npm run meta:graphify:verified-rebuild && npm run meta:graphify:check",
+    [npmCommand("meta:graphify:verified-rebuild"), npmCommand("meta:graphify:check")],
   ],
-  ["meta:check:global:release", "npm run meta:check:global:release"],
-  ["eval-meta-agents", "node scripts/eval-meta-agents.mjs"],
-  ["meta:runtime:produce", "node scripts/run-runtime-capability-producers.mjs --status --require-fresh"],
-  ...SMOKE_BEHAVIOR_STAGES.map(({ name, cmd }) => [name, cmd]),
-  ["meta:test:process-guard", "npm run meta:test:process-guard"],
-  ["meta:test:setup", "npm run meta:test:setup"],
+  ["meta:check:global:release", [npmCommand("meta:check:global:release")]],
+  ["eval-meta-agents", [nodeCommand("scripts/eval-meta-agents.mjs")]],
+  ["meta:runtime:produce", [nodeCommand("scripts/run-runtime-capability-producers.mjs", "--status", "--require-fresh")]],
+  ...SMOKE_BEHAVIOR_STAGES.map(({ name }) => [name, [npmCommand(name)]]),
+  ["meta:test:process-guard", [npmCommand("meta:test:process-guard")]],
+  ["meta:test:setup", [npmCommand("meta:test:setup")]],
 ]);
 
 export function buildVerificationStages(environment = process.env) {
-  return STANDARD_STAGE_COMMANDS.map(([name, cmd]) => ({
+  return STANDARD_STAGE_COMMANDS.map(([name, commands]) => ({
     name,
-    cmd,
+    cmd: displayCommands(commands),
+    commands,
     timeoutMs: resolveReleaseStageTimeout(name, environment),
   }));
 }
@@ -175,9 +188,93 @@ export const STAGES = Object.freeze(
 export const LIVE_CERTIFIED_STAGE = Object.freeze({
   name: "meta:acceptance:clean-room:require",
   cmd: "npm run meta:acceptance:clean-room:require",
+  commands: [npmCommand("meta:acceptance:clean-room:require")],
   timeoutMs: resolveReleaseStageTimeout("meta:acceptance:clean-room:require"),
 });
+
+// A displayed `a && b` is not one npm invocation: npm treats && as an argv
+// value. Execute each declared command separately, preserving its arguments,
+// one shared stage budget, and the first unsuccessful result.
+export function runVerificationCommands(commands, timeoutMs, {
+  captureStdout = false,
+  environment = process.env,
+  cwd = process.cwd(),
+} = {}) {
+  const started = Date.now();
+  const records = [];
+  let stdout = "";
+  for (const spec of commands) {
+    const commandStarted = Date.now();
+    const remainingMs = timeoutMs - (commandStarted - started);
+    let result;
+    try {
+      const invocation = resolveCliInvocation(
+        spec.command === "node" ? process.execPath : spec.command,
+        spec.args,
+        { env: environment },
+      );
+      result = remainingMs <= 0
+        ? { status: null, signal: null, error: Object.assign(new Error("Stage timeout budget exhausted"), { code: "ETIMEDOUT" }) }
+        : spawnSync(invocation.command, invocation.args, {
+          cwd,
+          shell: false,
+          env: environment,
+          ...(captureStdout ? { encoding: "utf8", stdio: ["inherit", "pipe", "inherit"] } : { stdio: "inherit" }),
+          timeout: remainingMs,
+          windowsHide: true,
+        });
+    } catch (error) {
+      result = { status: null, signal: null, error };
+    }
+    const timedOut = result.error?.code === "ETIMEDOUT" || result.signal === "SIGTERM";
+    const exitCode = result.status ?? (timedOut ? null : 1);
+    const record = {
+      command: spec.command,
+      args: [...spec.args],
+      ok: exitCode === 0 && !timedOut && !result.error,
+      exitCode,
+      timedOut,
+      signal: result.signal ?? null,
+      error: result.error?.message ?? null,
+      durationMs: Date.now() - commandStarted,
+    };
+    records.push(record);
+    if (captureStdout) stdout += result.stdout ?? "";
+    if (!record.ok) return { ...record, stdout: captureStdout ? stdout : null, commands: records };
+  }
+  return { ok: true, exitCode: 0, timedOut: false, signal: null, error: null, stdout: captureStdout ? stdout : null, commands: records };
+}
 const RELEASE_PROBE_SKILL_ID = "findskill";
+const RELEASE_PROBE_SKILL = JSON.parse(
+  readFileSync(path.join(REPO_ROOT, "config", "skills.json"), "utf8"),
+).skills.find(({ id }) => id === RELEASE_PROBE_SKILL_ID);
+if (!RELEASE_PROBE_SKILL) throw new Error(`Release dependency probe is not declared: ${RELEASE_PROBE_SKILL_ID}`);
+
+export const RELEASE_DEPENDENCY_PROBE_TARGETS = Object.freeze(
+  RELEASE_RUNTIME_TARGETS.filter((runtimeId) =>
+    RELEASE_RUNTIME_PROFILES[runtimeId].activation.supportsGlobalDependencyInstall === true &&
+    (!RELEASE_PROBE_SKILL.targets || RELEASE_PROBE_SKILL.targets.includes(runtimeId)),
+  ),
+);
+if (RELEASE_DEPENDENCY_PROBE_TARGETS.length === 0) throw new Error("Release dependency probe has no supported declared target");
+
+const RELEASE_DEPENDENCY_PROBE_COVERAGE = Object.freeze({
+  kind: "declared_dependency_install_targets",
+  skillId: RELEASE_PROBE_SKILL_ID,
+  excludedTargets: RELEASE_RUNTIME_TARGETS
+    .filter((runtimeId) => !RELEASE_DEPENDENCY_PROBE_TARGETS.includes(runtimeId))
+    .map((runtimeId) => ({
+      runtime: runtimeId,
+      reasons: [
+        ...(RELEASE_PROBE_SKILL.targets && !RELEASE_PROBE_SKILL.targets.includes(runtimeId)
+          ? ["dependency_not_declared_for_runtime"] : []),
+        ...(RELEASE_RUNTIME_PROFILES[runtimeId].activation.supportsGlobalDependencyInstall !== true
+          ? ["runtime_dependency_installer_unsupported"] : []),
+      ],
+    })),
+  fullPackageTargets: [...RELEASE_RUNTIME_TARGETS],
+  fullPackageProofRequired: true,
+});
 const RELEASE_PROBE_MODE_OPERATION =
   "all-runtime-global-install-update-probe-mode";
 
@@ -356,7 +453,8 @@ export function runAllRuntimeGlobalInstallUpdateProbe({
   emitProgress(onProgress, {
     event: "all_runtime_probe_start",
     expectedDurationMs: modeTimeoutMs * 2,
-    targets: [...RELEASE_RUNTIME_TARGETS],
+    targets: [...RELEASE_DEPENDENCY_PROBE_TARGETS],
+    coverage: RELEASE_DEPENDENCY_PROBE_COVERAGE,
   });
   const isolatedHome = mkdtempSync(path.join(os.tmpdir(), "meta-kim-release-targets-"));
   const runtimeHomes = Object.fromEntries(
@@ -382,13 +480,13 @@ export function runAllRuntimeGlobalInstallUpdateProbe({
         event: "runtime_probe_mode_start",
         mode,
         expectedDurationMs: modeTimeoutMs,
-        targets: [...RELEASE_RUNTIME_TARGETS],
+        targets: [...RELEASE_DEPENDENCY_PROBE_TARGETS],
       });
       const commandArgs = [
         installerScript,
         ...(mode === "update" ? ["--update"] : []),
         "--targets",
-        RELEASE_RUNTIME_TARGETS.join(","),
+        RELEASE_DEPENDENCY_PROBE_TARGETS.join(","),
         "--skills",
         RELEASE_PROBE_SKILL_ID,
         "--skip-plugins",
@@ -414,7 +512,8 @@ export function runAllRuntimeGlobalInstallUpdateProbe({
       if (result.status !== 0 || result.error) {
         const failure = {
           status: "failed",
-          targets: [...RELEASE_RUNTIME_TARGETS],
+          targets: [...RELEASE_DEPENDENCY_PROBE_TARGETS],
+          coverage: RELEASE_DEPENDENCY_PROBE_COVERAGE,
           modes: commands,
           sourcePolicy: "external_declared_dependency_no_local_fallback",
           artifactProof: [],
@@ -436,7 +535,7 @@ export function runAllRuntimeGlobalInstallUpdateProbe({
         });
         return failure;
       }
-      commandRecord.artifactProof = RELEASE_RUNTIME_TARGETS.map((runtimeId) => {
+      commandRecord.artifactProof = RELEASE_DEPENDENCY_PROBE_TARGETS.map((runtimeId) => {
         const skillPath = installedProbeSkillPath(runtimeHomes, runtimeId);
         const content = readFileSync(skillPath);
         return {
@@ -457,7 +556,8 @@ export function runAllRuntimeGlobalInstallUpdateProbe({
     const artifactProof = commands.at(-1).artifactProof;
     const proof = {
       status: "passed",
-      targets: [...RELEASE_RUNTIME_TARGETS],
+      targets: [...RELEASE_DEPENDENCY_PROBE_TARGETS],
+      coverage: RELEASE_DEPENDENCY_PROBE_COVERAGE,
       modes: commands,
       sourcePolicy: "external_declared_dependency_no_local_fallback",
       artifactProof,
@@ -474,7 +574,8 @@ export function runAllRuntimeGlobalInstallUpdateProbe({
   } catch (error) {
     const failure = {
       status: "failed",
-      targets: [...RELEASE_RUNTIME_TARGETS],
+      targets: [...RELEASE_DEPENDENCY_PROBE_TARGETS],
+      coverage: RELEASE_DEPENDENCY_PROBE_COVERAGE,
       modes: commands,
       sourcePolicy: "external_declared_dependency_no_local_fallback",
       artifactProof: [],
@@ -521,7 +622,8 @@ export function runReleasePreflight({
   } catch (error) {
     const globalTargetProof = {
       status: "not_run_after_current_version_tag_collision",
-      targets: [...RELEASE_RUNTIME_TARGETS],
+      targets: [...RELEASE_DEPENDENCY_PROBE_TARGETS],
+      coverage: RELEASE_DEPENDENCY_PROBE_COVERAGE,
       modes: [],
       sourcePolicy: "external_declared_dependency_no_local_fallback",
       artifactProof: [],
@@ -665,20 +767,20 @@ function printReleasePreflightProgress(progress) {
   let message = null;
   if (progress.event === "release_preflight_start") {
     message =
-      `发布预检开始：将隔离验证四个运行时的安装和更新，预计最长约 ${expectedMinutes} 分钟；期间会持续显示进度。`;
+      `发布预检开始：验证依赖的声明目标，以及 ${progress.targets.length} 个运行时的完整候选包安装和更新，预计最长约 ${expectedMinutes} 分钟；期间会持续显示进度。`;
   } else if (progress.event === "all_runtime_probe_start") {
     message = "正在准备隔离运行时目录和依赖探针。";
   } else if (progress.event === "runtime_probe_mode_start") {
     message =
-      `开始四运行时${progress.mode === "install" ? "安装" : "更新"}探针（最长约 ${expectedMinutes} 分钟）。`;
+      `开始依赖${progress.mode === "install" ? "安装" : "更新"}探针（${progress.targets.length} 个声明目标，最长约 ${expectedMinutes} 分钟）。`;
   } else if (progress.event === "runtime_probe_mode_complete") {
     if (progress.status === "passed") {
       message =
-        `四运行时${progress.mode === "install" ? "安装" : "更新"}探针通过（${progress.artifactCount ?? 0} 个产物已核验）。`;
+        `依赖${progress.mode === "install" ? "安装" : "更新"}探针通过（${progress.artifactCount ?? 0} 个产物已核验）。`;
     } else {
       const detail = String(progress.error ?? "unknown error").trim().split(/\r?\n/u)[0];
       message =
-        `四运行时${progress.mode === "install" ? "安装" : "更新"}探针失败：${detail}\n` +
+        `依赖${progress.mode === "install" ? "安装" : "更新"}探针失败：${detail}\n` +
         `下一步：${progress.nextAction}`;
     }
   } else if (progress.event === "all_runtime_probe_complete" && progress.status === "failed") {
@@ -770,33 +872,9 @@ if (fromIdx >= 0) {
   startIndex = idx;
 }
 
-function parseStageCommand(cmd) {
-  const parts = cmd.trim().split(/\s+/);
-  if (parts[0] === "npm" && parts[1] === "run" && parts[2]) {
-    if (process.platform === "win32") {
-      return {
-        command: process.env.ComSpec || "cmd.exe",
-        args: ["/d", "/s", "/c", ["npm", "run", ...parts.slice(2)].join(" ")],
-      };
-    }
-    return { command: "npm", args: ["run", ...parts.slice(2)] };
-  }
-  if (parts[0] === "node" && parts[1]) {
-    return { command: process.execPath, args: parts.slice(1) };
-  }
-  if (process.platform === "win32") {
-    return {
-      command: process.env.ComSpec || "cmd.exe",
-      args: ["/d", "/s", "/c", cmd],
-    };
-  }
-  return { command: "sh", args: ["-lc", cmd] };
-}
-
-function runWithTimeout(cmd, timeoutMs, { captureStdout = false, environment: stageEnvironment = process.env } = {}) {
-  const { command, args: commandArgs } = parseStageCommand(cmd);
+function runWithTimeout(stage, { captureStdout = false, environment: stageEnvironment = process.env } = {}) {
   const environment = { ...stageEnvironment };
-  if (cmd.includes("meta:graphify:verified-rebuild")) {
+  if (stage.name === "meta:graphify:verified-rebuild") {
     const blockedEnvironmentKeys = new Set([
       "META_KIM_GRAPHIFY_BIN",
       "META_KIM_GRAPHIFY_BIN_ARGS",
@@ -814,23 +892,7 @@ function runWithTimeout(cmd, timeoutMs, { captureStdout = false, environment: st
       }
     }
   }
-  const result = spawnSync(command, commandArgs, {
-    cwd: process.cwd(),
-    shell: false,
-    env: environment,
-    ...(captureStdout ? { encoding: "utf8", stdio: ["inherit", "pipe", "inherit"] } : { stdio: "inherit" }),
-    timeout: timeoutMs,
-  });
-  const timedOut = result.error?.code === "ETIMEDOUT" || result.signal === "SIGTERM";
-  const exitCode = result.status ?? (timedOut ? null : 1);
-  return {
-    ok: exitCode === 0 && !timedOut && !result.error,
-    timedOut,
-    exitCode,
-    signal: result.signal ?? null,
-    error: result.error?.message ?? null,
-    stdout: captureStdout ? result.stdout ?? "" : null,
-  };
+  return runVerificationCommands(stage.commands, stage.timeoutMs, { captureStdout, environment });
 }
 
 const startedAt = new Date().toISOString();
@@ -847,7 +909,8 @@ const releasePreflight =
           ]),
           globalTargetProof: {
             status: "not_run_for_resumed_diagnostic",
-            targets: [...RELEASE_RUNTIME_TARGETS],
+            targets: [...RELEASE_DEPENDENCY_PROBE_TARGETS],
+            coverage: RELEASE_DEPENDENCY_PROBE_COVERAGE,
             modes: [],
             sourcePolicy: "external_declared_dependency_no_local_fallback",
             artifactProof: [],
@@ -876,7 +939,7 @@ for (let i = startIndex; !failedStage && i < selectedStages.length; i += 1) {
   const t0 = Date.now();
   console.log(`\n=== ${label} ===\n> ${stage.cmd}`);
   const stageEnvironment = verificationStageEnvironment(stage.name, { isolatedGlobalHome });
-  const result = runWithTimeout(stage.cmd, stage.timeoutMs, { captureStdout: stage.name === "meta:runtime:produce", environment: stageEnvironment.environment });
+  const result = runWithTimeout(stage, { captureStdout: stage.name === "meta:runtime:produce", environment: stageEnvironment.environment });
   const ms = Date.now() - t0;
   if (result.ok) {
     console.log(`\n✓ ${label} 通过 (${ms}ms)`);
@@ -893,6 +956,7 @@ for (let i = startIndex; !failedStage && i < selectedStages.length; i += 1) {
       durationMs: ms,
       exitCode: 0,
       timedOut: false,
+      commands: result.commands,
       ...(stageEnvironment.scope ? { environmentScope: stageEnvironment.scope } : {}),
       ...(controlledProducerEvidence ? { controlledProducerEvidence } : {}),
     });
@@ -911,6 +975,7 @@ for (let i = startIndex; !failedStage && i < selectedStages.length; i += 1) {
       timedOut: result.timedOut,
       signal: result.signal,
       error: result.error,
+      commands: result.commands,
       ...(stageEnvironment.scope ? { environmentScope: stageEnvironment.scope } : {}),
       resumeCommand: `node scripts/run-verify-all.mjs${liveCertifiedRequested ? " --live-certified" : ""} --from ${stage.name}`,
     });
@@ -947,7 +1012,7 @@ let report = {
     startIndex > 0
       ? `Resumed verification is diagnostic only; release-grade requires one report containing all ${STAGES.length} standard stages.`
       : globalTargetProof.status !== "passed"
-        ? "Release-grade requires successful isolated install and update artifacts for every declared global runtime target."
+        ? "Release-grade requires isolated install/update artifacts for every supported target declared by the probe dependency; full-package proof separately covers all declared runtimes."
       : !packedProductProofComplete(packedUserProof)
         ? "Release-grade requires the npm-packed public CLI to prove isolated fresh install/update plus canonical Agent projections, explicitly authorized global Hooks, portable Claude MCP registration, and packed-installed CLI MCP transport."
       : !sourceIntegrity.stable

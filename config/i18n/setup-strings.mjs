@@ -171,7 +171,7 @@ ${r ? `Raw error: ${r}` : ""}
     postInstallNotesIntro:
       "After installation, here is what is available and how each layer activates:",
     capabilityGateNotice:
-      "Capability gate default: progressive (warn for 7 days, then block). Set META_KIM_CAPABILITY_GATE=warn|block|off to override.",
+      "Capability gate: progressive. Task results drive the scoped fuse; elapsed days do not trigger blocking. META_KIM_CAPABILITY_GATE=block enables the strict advisory gate.",
     globalHooksOptInNotice:
       "Global hooks are opt-in: run node setup.mjs --with-global-hooks when you want Meta_Kim to update Claude/Codex/Cursor hook wiring.",
     postInstallNotesPlatformSync: "Platform capability sync:",
@@ -833,7 +833,7 @@ ${r ? `原始错误：${r}` : ""}
     postInstallNotesHeading: "安装后注意事项：",
     postInstallNotesIntro: "安装完成后，各层能力的使用方式如下：",
     capabilityGateNotice:
-      "Capability gate 默认是 progressive：前 7 天只警告，之后阻断。可设置 META_KIM_CAPABILITY_GATE=warn|block|off 覆盖。",
+      "能力检查默认 progressive：依据任务结果局部熔断，不按天数自动阻断。META_KIM_CAPABILITY_GATE=block 可启用严格检查。",
     globalHooksOptInNotice:
       "全局 hooks 默认不改写：需要 Meta_Kim 更新 Claude/Codex/Cursor hook 配置时，请显式运行 node setup.mjs --with-global-hooks。",
     postInstallNotesPlatformSync: "各平台能力同步情况：",
@@ -1472,7 +1472,7 @@ ${r ? `生エラー：${r}` : ""}
     postInstallNotesHeading: "インストール後の注意事項：",
     postInstallNotesIntro: "インストール完了後、各層の使い方は以下の通りです：",
     capabilityGateNotice:
-      "Capability gate の既定値は progressive です：7 日間は警告、その後はブロック。META_KIM_CAPABILITY_GATE=warn|block|off で変更できます。",
+      "能力チェックの既定値は progressive です。経過日数ではなく、タスクの結果に応じて対象だけを停止します。META_KIM_CAPABILITY_GATE=block で厳格モードを選べます。",
     globalHooksOptInNotice:
       "グローバル hooks は既定では変更しません。Meta_Kim で Claude/Codex/Cursor の hook 設定を更新する場合は node setup.mjs --with-global-hooks を明示してください。",
     postInstallNotesPlatformSync: "各プラットフォームの同期状況：",
@@ -2149,7 +2149,7 @@ ${r ? `원본 오류：${r}` : ""}
     postInstallNotesHeading: "설치 후 주의사항:",
     postInstallNotesIntro: "설치 완료 후 각 층의 사용 방식은 다음과 같습니다:",
     capabilityGateNotice:
-      "Capability gate 기본값은 progressive입니다: 7일간 경고 후 차단합니다. META_KIM_CAPABILITY_GATE=warn|block|off로 변경할 수 있습니다.",
+      "기능 점검 기본값은 progressive입니다. 경과 일수가 아니라 작업 결과에 따라 해당 작업만 중단합니다. META_KIM_CAPABILITY_GATE=block으로 엄격 모드를 선택할 수 있습니다.",
     globalHooksOptInNotice:
       "전역 hooks는 기본으로 변경하지 않습니다. Meta_Kim이 Claude/Codex/Cursor hook 설정을 업데이트해야 할 때 node setup.mjs --with-global-hooks를 명시적으로 실행하세요.",
     postInstallNotesPlatformSync: "각 플랫폼 동기화 현황:",

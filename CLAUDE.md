@@ -121,7 +121,7 @@ Hard rules:
 3. Fetch gathers evidence and capability facts that change route, risk, owner, scope, acceptance, or verification.
 4. Thinking chooses owners, lanes, dependencies, work orders, review owner, verification owner, and rollback path before mutation.
 5. Review checks Critical, Fetch, and Thinking readiness before output polish; it is not a late rescue stage for missing design.
-6. The PreToolUse hook `enforce-agent-dispatch.mjs` can block execution tools when spine state is active and no agent has been dispatched.
+6. The PreToolUse hook checks governed Agent dispatches and scoped task failures. Ordinary local commands and edits are available without a separate dispatch ceremony; read-only diagnosis remains available when a task fuse opens.
 7. If a hook blocks you, follow the dispatch protocol and return to the responsible stage. Do not work around it.
 8. A "simple task" is not an excuse to bypass governance when the task touches multiple files, multiple capabilities, or cross-runtime behavior.
 
@@ -170,7 +170,7 @@ Behavior:
 
 - **Active stages**: `execution`, `review`, `meta_review`, `verification`, `evolution`. The hook denies any `Agent` dispatch in these stages unless `fetchRecord.capabilitySearchPerformed === true` is present in spine state.
 - **Exempt stages**: `critical`, `fetch`, `thinking`. Discovery happens here, so the gate does not fire.
-- **Override env var**: `META_KIM_CAPABILITY_GATE`. Values: `progressive`, `block`, `warn` (stderr warning only), `off` (gate disabled). Default: `progressive` (warn for the grace window, then block); `block` restores immediate deny. Use `warn` or `off` only for debugging — production runs should keep `progressive` (or `block` for strict environments).
+- **Override env var**: `META_KIM_CAPABILITY_GATE`. Values: `progressive`, `block`, `warn` (stderr warning only), `off` (gate disabled). Default: `progressive` (advisory role notices, no calendar-based escalation); `block` explicitly enforces that advisory gate. Recorded ineffective results drive the task-scoped fuse, while a reviewed correction opens a bounded recovery trial. Read-only diagnosis and independent tasks continue. Legacy `*_GRACE_DAYS` values are ignored.
 - **Other env vars**: `META_KIM_HOOK_RUNTIME` (one of `claude` / `codex` / `cursor`) selects the deny payload schema when the same hook is projected to a different runtime.
 
 The same hook script is now projected to Codex (`.codex/hooks/`) and Cursor v1.7+ (`.cursor/hooks/`) via `sync-runtimes.mjs`. `AGENTS.md` is the current source for the cross-runtime mechanical-deny matrix, OpenClaw's declarative-only gap, and Gemini CLI/ZCode adapter boundaries. Native projection tests do not prove real host invocation or promote `projection_implemented` to `live_verified`.

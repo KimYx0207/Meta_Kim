@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="1016" viewBox="0 0 760 1016" lang="ko-KR" xml:lang="ko-KR" role="img" aria-labelledby="title desc">
+<title id="title">의도에서 결과까지</title><desc id="desc">Meta_Kim은 목표를 조사, 결정, 두 단계 PRD와 협업으로 연결합니다. Kim Service는 전문 방법을 제공합니다. 준비된 독립 작업을 병렬로 진행한 뒤 결과를 확인합니다. 작업 흐름을 설명하는 그림입니다.</desc>
+<defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M1 1L7 4.5L1 8" fill="none" stroke="#7996ba" stroke-width="1.5"/></marker><style>text{font-family:Inter,"Noto Sans CJK KR","Microsoft YaHei",Arial,sans-serif}.title{fill:#f4f7ff;font-weight:700}.body{fill:#bfcde2}.accent{fill:#8ce4d7;font-weight:700}.card{fill:#14233c;stroke:#344e70;stroke-width:1.5}.design{fill:#242140;stroke:#7d6bba;stroke-width:1.5}.methods{fill:#0f3035;stroke:#398b85;stroke-width:1.5}.result{fill:#192f4b;stroke:#5485b8;stroke-width:1.5}.line{fill:none;stroke:#7996ba;stroke-width:2;marker-end:url(#arrow)}</style></defs>
+<rect width="760" height="1016" rx="24" fill="#091426"/>
+<text x="40" y="47" class="accent" font-size="18">META_KIM  /  KIM SERVICE</text>
+<text x="40" y="91" class="title" font-size="30">하나의 아이디어에서, 쓸 수 있는 결과로.</text>
+<rect x="40" y="122" width="680" height="92" rx="18" class="card"/>
+<text x="64" y="159" class="title" font-size="25">당신의 목표</text><text x="64" y="191" class="body" font-size="22">원하는 결과, 조건, 기존 프로젝트</text>
+<path d="M380 215V240" class="line"/>
+<rect x="40" y="248" width="680" height="92" rx="18" class="card"/>
+<text x="64" y="285" class="title" font-size="25">조사하고 선택하기</text><text x="64" y="317" class="body" font-size="22">참고 자료를 찾고 방법을 비교해 결정</text>
+<path d="M380 341V366" class="line"/>
+<rect x="40" y="374" width="680" height="138" rx="18" class="design"/>
+<text x="64" y="412" class="title" font-size="25">하나의 PRD, 두 단계</text>
+<path d="M380 430V489" stroke="#6c6091"/>
+<text x="64" y="450" class="title" font-size="22">1  시스템과 기술 선택</text><text x="64" y="482" class="body" font-size="20">함께 쓰는 결정</text>
+<text x="404" y="450" class="title" font-size="22">2  모듈과 인터페이스</text><text x="404" y="482" class="body" font-size="20">구체적인 인수 기준</text>
+<path d="M380 513V536" class="line"/>
+<rect x="40" y="544" width="680" height="86" rx="18" class="methods"/>
+<text x="64" y="578" class="accent" font-size="23">KIM SERVICE · 전문 방법</text><text x="64" y="607" class="body" font-size="22">필요한 지식, 도구와 완성 예제를 연결</text>
+<path d="M380 631V645H200V659" class="line"/><path d="M380 645H560V659" class="line"/>
+<rect x="40" y="667" width="320" height="112" rx="18" class="card"/><rect x="400" y="667" width="320" height="112" rx="18" class="card"/>
+<text x="64" y="701" class="title" font-size="25">모듈 A</text><text x="64" y="732" class="body" font-size="21">담당자 + 방법</text><text x="64" y="761" class="body" font-size="21">프로젝트 자료</text>
+<text x="424" y="701" class="title" font-size="25">모듈 B</text><text x="424" y="732" class="body" font-size="21">담당자 + 방법</text><text x="424" y="761" class="body" font-size="21">프로젝트 자료</text>
+<path d="M200 780V798H380V811" class="line"/><path d="M560 780V798H380" fill="none" stroke="#7996ba" stroke-width="2"/>
+<rect x="40" y="819" width="680" height="92" rx="18" class="result"/>
+<text x="64" y="856" class="title" font-size="25">검토, 검증, 전달</text><text x="64" y="887" class="body" font-size="21">결과를 확인하고 결정과 다음 작업을 저장</text>
+<text x="40" y="953" class="accent" font-size="23">이어가고 개선하기</text><text x="40" y="985" class="body" font-size="20">준비된 작업은 병렬로, 검증한 경험은 다시 활용.</text>
+</svg>

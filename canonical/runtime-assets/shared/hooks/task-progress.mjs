@@ -145,6 +145,22 @@ export function projectTaskProgress(ledger, goalDigest, logicalTaskPacketId, con
   }
   const pendingCorrections = [...triggers.values()].filter((trigger) => !corrections.some((correction) => correction.triggerEventIds.includes(trigger.triggerEventId)));
   const attempts = observations.filter((entry) => terminal(entry.classification));
+  // Reuse the same observed-result authority for the canary/fuse display in
+  // checkpoint inspect and durable execution. No second counter, timer or
+  // automatic retry policy is introduced. A corrected route is a bounded trial
+  // until its own result evidence reports progress.
+  const correction = corrections.at(-1);
+  const currentBasis = correction ? observations.filter((entry) => entry.taskPacketId === correction.taskPacketId
+    && entry.routeDigest === correction.routeDigest && entry.evidenceBasisDigest === correction.evidenceBasisDigest) : observations;
+  const currentProgress = currentBasis.some((entry) => entry.classification === "progress");
+  const circuit = {
+    state: pendingCorrections.length ? "open" : currentProgress ? "observed_progress" : correction ? "recovery_trial" : "canary",
+    scope: "logical_task_and_dependency_context",
+    activeAttempts: new Set(observations.filter((entry) => entry.started && !lifecycleFinished(entry.classification)).map((entry) => entry.attemptId)).size,
+    maxActiveAttempts: 1,
+    ineffectiveAttemptLimit: TASK_PROGRESS_POLICY.sameBasisIneffectiveThreshold,
+    automaticRollback: false,
+  };
   return { policyId: TASK_PROGRESS_POLICY.id, units: TASK_PROGRESS_POLICY.units, logicalTaskPacketId, goalDigest,
     contextId, counterScope: "current_dependency_context", historyPreserved: true,
     terminalAttempts: new Set(attempts.map((entry) => entry.attemptId)).size,
@@ -154,7 +170,7 @@ export function projectTaskProgress(ledger, goalDigest, logicalTaskPacketId, con
     ignoredObservations: observations.filter((entry) => TASK_PROGRESS_POLICY.ignoredClassifications.includes(entry.classification)).length,
     sameBasisIneffectiveCount: Math.max(0, ...[...byCriterion.values()].map((entry) => entry.ineffectiveCount)),
     correctionsTriggered: triggers.size, correctionsResolved: corrections.length,
-    pendingCorrections, nextRequiredAction: pendingCorrections.length ? "return_to_thinking_for_this_task" : "continue_current_authorized_work",
+    pendingCorrections, circuit, nextRequiredAction: pendingCorrections.length ? "return_to_thinking_for_this_task" : "continue_current_authorized_work",
     evidenceLevel: "owner_reported", nativeInvocationVerified: false };
 }
 

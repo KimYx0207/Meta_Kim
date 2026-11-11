@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -62,6 +62,18 @@ test("default binding rejects actual Windows PE bytes on POSIX and Windows GUI e
   bytes.write("MZ");bytes.writeUInt32LE(64,60);bytes.write("PE\0\0",64);bytes.writeUInt16LE(2,64+24+68);writeFileSync(file,bytes);
   assert.throws(()=>record(f.root,file),process.platform==="win32"?/gui_executable/:/windows_executable_on_posix/);
   assert.equal(existsSync(f.inventory),false);
+});
+
+test("default POSIX binding records a native .exe payload using its actual version and file identity",{skip:!["linux","darwin"].includes(process.platform)},t=>{
+  const f=fixture(t),payload=path.join(f.bin,"codex.exe");
+  copyFileSync(process.execPath,payload);chmodSync(payload,0o755);
+  const result=record(f.root,payload);
+  assert.equal(result.bindings.codex.version,process.version);
+  assert.equal(result.bindings.codex.launchDescriptor.launcher.realpath,realpathSync(payload));
+  assert.equal(result.executionAuthority,false);
+  const loaded=loadSetupBoundRuntimeExecutable({projectRoot:f.root,runtime:"codex",pathResolver:()=>[payload]});
+  assert.equal(loaded.realpath,realpathSync(payload));
+  assert.equal(loaded.executionAuthority,false);
 });
 
 test("default POSIX binding never starts a Windows launcher or writes an available inventory",{skip:process.platform==="win32"},t=>{

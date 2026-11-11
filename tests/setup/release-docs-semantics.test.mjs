@@ -157,22 +157,15 @@ describe("release documentation semantics", () => {
       }
     }
 
-    assert.match(
-      readFileSync(path.join(root, "README.md"), "utf8"),
-      /Dependency-project install targets are handled by those upstream projects/,
-    );
-    assert.match(
-      readFileSync(path.join(root, "README.zh-CN.md"), "utf8"),
-      /依赖项目自己的安装目标由上游项目维护/,
-    );
-    assert.match(
-      readFileSync(path.join(root, "README.ja-JP.md"), "utf8"),
-      /依存プロジェクト側の install target は upstream project で管理され/,
-    );
-    assert.match(
-      readFileSync(path.join(root, "README.ko-KR.md"), "utf8"),
-      /의존 프로젝트의 install target은 upstream project에서 관리/,
-    );
+    const dependencyGuidance = [
+      /Dependency projects maintain their own client support/,
+      /依赖项目自己的客户端支持由上游维护/,
+      /依存プロジェクトの対応クライアントは各上流プロジェクトが管理/,
+      /의존 프로젝트의 지원 클라이언트는 해당 상위 프로젝트가 관리/,
+    ];
+    readmeFiles.forEach((file, index) => {
+      assert.match(readFileSync(path.join(root, file), "utf8"), dependencyGuidance[index], file);
+    });
   });
 
   test("public current docs distinguish native projections, compatibility and unverified execution", () => {
@@ -205,7 +198,9 @@ describe("release documentation semantics", () => {
 
       for (const client of ["Codex", "Claude Code", "Cursor", "Gemini CLI", "ZCode"]) assert.match(raw, new RegExp(client), `${file} missing requested client ${client}`);
       assert.match(raw, /config\/runtime-compatibility-catalog\.json/, file);
-      assert.match(raw, /Unreleased/, file);
+      const version = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).version;
+      assert.ok(raw.includes(`/releases/tag/v${version}`), `${file} must link the current release`);
+      assert.match(raw, /docs\/verification\/dsh-professional-quality-20261111\.md/, `${file} must link the observed verification scope`);
       for (const betaName of betaNames) {
         assert.match(raw, new RegExp(betaName), `${file} missing ${betaName}`);
       }
@@ -224,12 +219,12 @@ describe("release documentation semantics", () => {
       }
     }
 
-    assert.match(readFileSync(path.join(root, "README.md"), "utf8"), /Primary formal projections/);
+    assert.match(readFileSync(path.join(root, "README.md"), "utf8"), /Main integrations/);
     assert.match(readFileSync(path.join(root, "README.md"), "utf8"), /Beta compatibility adapters/);
-    assert.match(readFileSync(path.join(root, "README.md"), "utf8"), /Non-default compatibility projections/);
-    assert.match(readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /Primary 正式投影/);
-    assert.match(readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /Beta 兼容 adapter/);
-    assert.match(readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /非默认兼容投影/);
+    assert.match(readFileSync(path.join(root, "README.md"), "utf8"), /Optional compatibility integrations/);
+    assert.match(readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /主要集成/);
+    assert.match(readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /Beta 兼容适配器/);
+    assert.match(readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /可选兼容集成/);
     assert.match(readFileSync(path.join(root, "README.ja-JP.md"), "utf8"), /\bBeta\b/);
     assert.match(readFileSync(path.join(root, "README.ko-KR.md"), "utf8"), /\bBeta\b/);
   });
@@ -315,7 +310,7 @@ describe("release documentation semantics", () => {
     for (const file of readmeFiles) {
       const raw = readFileSync(path.join(root, file), "utf8");
 
-      assert.match(raw, /license-Apache--2\.0/);
+      assert.match(raw, /https:\/\/img\.shields\.io\/badge\/[^\s]+-Apache--2\.0/);
       assert.match(raw, /Apache License 2\.0/);
       assert.match(raw, /NOTICE/);
       assert.match(raw, /Meta_Kim by KimYx0207/);
