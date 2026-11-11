@@ -2,7 +2,7 @@
 
 # 元 · Meta_Kim
 
-**把一句想法，变成能继续、能协作、能验收的工作。**
+**把一个目标，变成清晰的计划、专业协作和可使用的成果。**
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja-JP.md) · [한국어](README.ko-KR.md)
 
@@ -11,31 +11,64 @@
 
 </div>
 
-## 从一句想法，做到实际交付
+## 把一件完整的事，交给 AI 接着做
 
-**Meta_Kim 帮你的 AI 助手把跨文件、跨专业、跨会话的事情做下去。** 你在常用客户端里说目标，它读取项目、研究方案、组织协作，并保存已经做出的决定和已经完成的成果。
+**Meta_Kim 在你常用的 AI 客户端里，把目标、项目资料、专业方法和工作进展连接起来。** 它帮助助手理解需求、选择方案、组织执行并检查结果。已经做出的决定和完成的工作留在项目中，下次打开还能接着推进。
 
-> “帮我做个手机上能用的活动报名工具。先帮我选方案，再把报名、名单和导出做出来，最后实际用一遍给我看。”
+### 哪些时候用得上
 
-![从用户目标、研究决策、两层 PRD 和专业协作，到检查后的交付](docs/images/intent-to-delivery.zh-CN.svg)
-
-*两个项目的协作方式。依赖已经满足的独立任务可以并行推进。*
-
-| 你需要什么 | Meta_Kim 帮你组织什么 |
+| 你的情况 | Meta_Kim 怎样组织这件事 |
 | --- | --- |
-| 想清楚方向 | 项目现状、有效参考、可选方案和推荐理由 |
-| 一份能开工的计划 | 一份 PRD：先定系统与技术，再细化模块、接口和验收 |
-| 专业的人做专业的事 | 为执行者配上方法、项目资料和交付标准 |
-| 中断后继续 | 保存决定、成果、依赖关系和下一步 |
-| 看得见进展 | Live 工作看板里的任务、负责人、产物和检查结果 |
+| 有一个工具或新功能的想法 | 比较可行方案，确定用户怎么用，再形成计划和实现任务 |
+| 已有产品需要改进 | 先看当前项目，找到相关体验和代码，再围绕问题修改、验证 |
+| 一件事涉及多个专业，或要分几次做完 | 给任务配上合适的方法和资料，理清依赖，中断后从已有成果继续 |
 
-**[Kim Service](https://github.com/KimYx0207/Kim_Service) 提供专业方法，Meta_Kim 管整件事怎么往前走。** 两者可以配合使用，也可以接入其他能力来源。真正影响产品结果的选择交给你，日常实现细节由执行团队处理。
+你用自己的话说清楚想得到什么，Meta_Kim 围绕这个结果安排工作。**[Kim Service](https://github.com/KimYx0207/Kim_Service) 为具体执行提供专业方法。** 两者可以配合使用，也可以结合客户端里已有的其他能力。
 
-## 三步开始
+## 最后会交到你手里什么
 
-需要 **Node.js 22.13.0+**，以及已配置好的 AI 客户端。当前版本：**[v3.10.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.10.0)**。
+以活动报名工具为例，你可以这样开始：
 
-**1. 安装，选择你使用的客户端。**
+> “帮我做个手机上能用的活动报名工具。先帮我选方案，再做出报名和名单导出，最后带我走一遍怎么用。”
+
+确定范围后，这句话会落到具体交付上。这个例子可以这样安排：
+
+| 要完成的事 | 你可以查看的交付物 |
+| --- | --- |
+| 选定方案 | 推荐方案、用户流程、相关参考和选择理由 |
+| 把产品想清楚 | 一份需求文档：先定系统和技术，再细化模块、接口和验收标准 |
+| 实现使用流程 | 报名、名单管理和导出任务，以及相关源码和资料 |
+| 检查实际结果 | 报名与导出的操作演示、检查记录和需要返修的具体问题 |
+| 下次接着做 | 已完成产物、已定选择、剩余任务和下一步 |
+
+小到一次局部修复，大到一个产品，都按实际工作需要展开计划。
+
+## 工作怎样往前走
+
+![从目标、研究和计划，到专业协作与交付检查](docs/images/intent-to-delivery.zh-CN.svg)
+
+1. **先弄清要得到什么。** 读取现有项目，只追问会改变结果的关键问题。
+2. **找到合适的做法。** 调查重要未知，比较有实际差异的方案，给出推荐理由。
+3. **让计划可以开工。** 明确任务、输入、负责人、依赖关系和完成标准。
+4. **组织执行与协作。** 把所需方法和资料交给具体任务，已就绪的独立工作可以一起推进。
+5. **检查、试用，再改进。** 对照目标审阅成果，吸收反馈，把有用的决定和结果留给下一轮。
+
+**Live 工作看板**把任务、负责人、依赖、产物和检查结果放在一起。中断后，可以根据保存的记录继续；某项任务需要换个做法时，下一步会留在记录里，独立工作继续推进。
+
+<details>
+<summary>展开查看 Live 演示界面（中文）</summary>
+
+![中文 Live 界面中的演示任务数据](docs/images/meta-kim-live-demo.png)
+
+*图中为中文 Live 界面，展示的是演示任务数据。*
+
+</details>
+
+## 从你的第一个项目开始
+
+需要 **Node.js 22.13.0+**，以及已配置好的 AI 客户端。当前版本：**[v3.10.1](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.10.1)**。
+
+### 1. 安装 Meta_Kim
 
 ```bash
 git clone https://github.com/KimYx0207/Meta_Kim.git
@@ -44,17 +77,29 @@ npm install
 node setup.mjs
 ```
 
-默认在全局复用能力；项目需要专门配置时，再选择项目安装。需要全局 Hook 时添加 `--with-global-hooks`，已有用户配置会合并保留。也可以通过 `npx --yes github:KimYx0207/Meta_Kim` 开始。
+跟随安装提示选择客户端和安装范围。全局安装便于多个项目复用能力；项目安装适合需要专门配置的项目。已有用户配置会合并保留。[查看安装选项](docs/technical-notes.zh-CN.md#安装选项)。
 
-**2. 打开项目，直接说想要的结果。**
+### 2. 打开项目，说明想要的结果
 
-不用背命令，也不用先报出技术角色。说清楚希望什么能用、哪些内容要保留。助手先读取项目中已有的信息，再问真正会改变方案的问题。
+在配置好的客户端里打开目标项目，像平时沟通一样提出需求：
 
-**3. 看进展，使用交付物。**
+> “帮我检查这个项目的注册流程，让手机上填写更顺手，保留现在的数据字段，改好后把流程和检查结果给我看。”
 
-打开当前任务的 Live 链接，或运行 `node bin/meta-kim.mjs live`。看板会把任务、负责人、依赖和产物串起来。[查看真实 Live 界面的中文示例](docs/images/meta-kim-live-demo.png)。
+助手先读取已有项目资料。真正影响产品结果的选择交给你，日常实现细节由执行团队处理。
 
-已有克隆仓库这样更新：
+### 3. 跟进进展，试用交付物
+
+打开当前任务的 Live 链接。也可以在 Meta_Kim 仓库目录中，为你的项目启动 Live：
+
+```bash
+node bin/meta-kim.mjs live --project-root "/path/to/your-project"
+```
+
+把示例路径换成你的项目目录。结合产物和检查记录验收，再告诉助手下一轮要改哪里。
+
+### 更新已有安装
+
+在 Meta_Kim 仓库目录中运行：
 
 ```bash
 git pull --ff-only
@@ -62,65 +107,31 @@ node setup.mjs --update
 node setup.mjs --check
 ```
 
-## 客户端接入
+## 选择你使用的客户端
 
-| 客户端 | 已提供的接入方式 |
+按自己的工作习惯选择即可。各接入方式使用对应客户端的配置和扩展格式。
+
+| 客户端 | 接入方式与入口 |
 | --- | --- |
-| **Codex · Claude Code** | 主要集成：原生指令、Agent、Skill、配置和 Hook |
-| **Cursor · OpenClaw** | 可选兼容集成，使用各自支持的配置格式 |
-| **Gemini CLI** | 可选原生 Agent、共享 Skill、设置和 Hook |
-| **ZCode** | 可选 Agent、Skill、MCP 和用户级 Hook |
-| **DSH — DeepSeek Harness** | 原生 Skill、独立配置或项目安装，以及 MCP |
-| **Qoder · Trae** | Beta 兼容适配器 |
+| **Codex · Claude Code** | Agent、Skill、指令和 Hook；安装时选择对应客户端 |
+| **Cursor** | Agent、Skill、项目规则和 Hook；安装时选择 Cursor |
+| **OpenClaw** | Skill、Agent 工作区和配置模板；安装时选择 OpenClaw |
+| **Gemini CLI** | Agent、共享 Skill、设置和 Hook；[接入指南](canonical/skills/meta-theory/references/runtime-gemini.md) |
+| **ZCode** | Agent、Skill、MCP 和用户级 Hook；[接入指南](canonical/skills/meta-theory/references/runtime-zcode.md) |
+| **DeepSeek Harness（DSH）** | Beta 接入：原生 Skill、独立配置或项目安装，以及 MCP；[接入指南](docs/technical-notes.zh-CN.md#deepseek-harness) |
+| **Qoder · Trae** | Beta 兼容适配器；[接入详情](config/runtime-compatibility-catalog.json) |
 
-安装、能力包加载和实际任务分别验收。DSH 已有官方程序的无模型配置、Skill 与 MCP 探针；Gemini CLI、ZCode 已有投影和安装生命周期检查。模型的专业效果以实际任务产物评价。具体结果见[兼容性目录](config/runtime-compatibility-catalog.json)和[验证记录](docs/verification/dsh-professional-quality-20261111.md)。依赖项目自己的客户端支持由上游维护。
+[兼容性目录](config/runtime-compatibility-catalog.json) · [安装与技术说明](docs/technical-notes.zh-CN.md)。依赖项目自己的客户端支持由上游维护。
 
-### DSH 快速开始
+## 按你接下来要做的事找文档
 
-DSH 需要 **Node.js 24.9.0+**。本集成已对照 DSH `0.2.2-rc.1` 检查。
-
-```sh
-node bin/meta-kim.mjs dsh install
-node bin/meta-kim.mjs dsh check
-dsh --profile meta-kim
-```
-
-添加 `--service-package /path/to/kim-service-dsh` 可带上 [Kim Service 构建的专业包](https://github.com/KimYx0207/Kim_Service/blob/main/docs/dsh.md)。同一入口支持 `update` 和 `uninstall`。[DSH 指南](canonical/skills/meta-theory/references/runtime-dsh.md) · [ZCode 指南](canonical/skills/meta-theory/references/runtime-zcode.md)。
-
-## 小范围试，出问题只停相关任务
-
-默认 Hook 随任务推进给出提示，不再因为项目运行满七天就自动升级为阻断。
-
-准备好的单项工单可以直接开始一次受监督试运行。对已经接入监督的任务，同一方案和依据连续两次无效，会触发该任务的保险丝；独立任务继续。换用经过审阅的新方案后，先进行一次恢复试运行，记录效果再决定后续。权限、文件归属和破坏性操作仍按当前授权处理。
-
-等你验收时，也只暂停真正依赖该决定的任务。下次继续，保留其他已完成成果。可复用方法的改进同样先试、再评价，然后把有效版本留下来。
-
-<details>
-<summary>可选记忆服务</summary>
-
-项目连续性使用持久化任务记录。如果同时启用了 Memory，可检查自己配置的服务地址，例如：
-
-```bash
-curl -fsS --max-time 3 http://127.0.0.1:8000/api/health
-```
-
-`.mcp.json` 配置、hook 安装、服务健康、写入、读取和跨会话召回分别检查。`npm run meta:test:mcp` 检查 Meta_Kim 自己的 MCP 服务；健康检查说明服务是否可访问。
-
-</details>
-
-## 继续了解与参与开发
-
-| 目录 | 用途 |
+| 你想了解 | 对应文档 |
 | --- | --- |
-| `canonical/` | 共用的 Agent、Skill、规则和客户端资源 |
-| `config/` | 能力索引与机器协议 |
-| `scripts/` · `src/` | 安装、执行、存储和 Live |
-| `tests/` | 行为与回归检查 |
-| `.meta-kim/` | 本地任务状态、计划和备份 |
-
-各客户端目录从共用源文件生成，由 `.gitignore` 保留在本地，不提交到 GitHub 源码。参与开发前请读 [AGENTS.md](AGENTS.md)。
-
-[架构说明](docs/harness-architecture.md) · [意图到交付](canonical/skills/meta-theory/references/intent-to-delivery.md) · [Live SDK](docs/live-sdk.md) · [更新日志](CHANGELOG.zh-CN.md)
+| 怎样选安装范围、启用 Hook 或配置可选服务 | [安装与技术说明](docs/technical-notes.zh-CN.md) |
+| 研究和需求怎样传到具体执行任务 | [从意图到交付](canonical/skills/meta-theory/references/intent-to-delivery.md) |
+| 怎样使用或扩展 Live 界面 | [Live SDK](docs/live-sdk.md) |
+| 项目怎样组织，如何参与开发 | [架构说明](docs/harness-architecture.md) · [开发指南](AGENTS.md) |
+| 每个版本给使用带来了什么变化 | [更新日志](CHANGELOG.zh-CN.md) |
 
 ## 联系方式
 

@@ -2,7 +2,7 @@
 
 # 元 · Meta_Kim
 
-**From one idea to coordinated, verifiable work.**
+**From an idea to a clear plan, coordinated work and a result you can use.**
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja-JP.md) · [한국어](README.ko-KR.md)
 
@@ -11,31 +11,64 @@
 
 </div>
 
-## Turn an idea into a finished piece of work
+## Give your AI assistant a whole job to carry through
 
-**Meta_Kim helps your AI assistant plan, coordinate and finish work across files, specialties and sessions.** Describe the outcome in your usual client. Meta_Kim gathers project context, compares useful approaches, organizes the work and keeps the decisions available for the next session.
+**Meta_Kim connects your goal, project context, specialist methods and progress records inside your AI client.** It helps the assistant understand the job, choose an approach, coordinate the work and check the result. Decisions and completed work stay with the project, ready for the next session.
 
-> “Build a mobile-friendly event registration tool. Help me choose an approach, keep the attendee list accurate, and show me that registration and export work.”
+### Where it helps
 
-![From your goal through research, a two-level PRD and specialist work to a checked result](docs/images/intent-to-delivery.svg)
-
-*How the two projects work together. Tasks with satisfied dependencies can proceed in parallel.*
-
-| What you need | What Meta_Kim organizes |
+| Your situation | How the work takes shape |
 | --- | --- |
-| A clear direction | Project facts, useful references, options and a recommendation |
-| A plan people can build | One PRD: system and technology choices, then modules, interfaces and acceptance |
-| Professional execution | Specialists with the relevant methods, project materials and output criteria |
-| Work that survives interruptions | Saved decisions, completed results, dependencies and the next action |
-| Visible progress | The Live task board, current owners, outputs and checks |
+| You have an idea for a tool or a new feature | Compare practical approaches, settle the user journey, then turn it into a plan and implementation tasks |
+| An existing product needs improvement | Read the current project, identify the affected experience and code, then make and check focused changes |
+| A project spans several specialties or sessions | Give each task the right methods and materials, track dependencies, and resume from saved results |
 
-**[Kim Service](https://github.com/KimYx0207/Kim_Service) supplies the professional methods; Meta_Kim coordinates the whole job.** Use them together or connect other capability sources. Product direction goes to you when a choice materially changes the outcome; routine implementation decisions stay with the working team.
+You describe the outcome in your own words. Meta_Kim organizes the work around it. **[Kim Service](https://github.com/KimYx0207/Kim_Service) adds professional methods for the people and tools doing that work.** You can use it alongside other capability sources already available in your client.
 
-## Start in three steps
+## What a delivery can look like
 
-Requires **Node.js 22.13.0+** and a configured AI client. Current release: **[v3.10.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.10.0)**.
+For an event registration tool, a first request might be:
 
-**1. Install and choose your clients.**
+> “Build a mobile-friendly event registration tool. Help me choose an approach, create registration and attendee export, then walk me through how to use it.”
+
+The agreed scope becomes a concrete handover. For this example:
+
+| Part of the job | Deliverable to inspect |
+| --- | --- |
+| Choose an approach | A recommendation with the user flow, relevant references and reasons for the choice |
+| Plan the product | One requirements document: system and technology choices, then modules, interfaces and acceptance criteria |
+| Build the experience | Registration, attendee management and export work divided into clear tasks, with the relevant source files and materials |
+| Check the result | A walkthrough of registration and export, recorded checks, and specific revisions where needed |
+| Pick it up later | Completed outputs, decisions, remaining tasks and the next action in the project record |
+
+The same process can support a small repair or a larger product. The plan grows with the work that needs doing.
+
+## How the work moves forward
+
+![From a goal through research, planning and specialist work to a checked delivery](docs/images/intent-to-delivery.svg)
+
+1. **Understand the outcome.** Read the project and clarify the few questions that change what should be built.
+2. **Find a workable approach.** Investigate the important unknowns, compare useful options and explain a recommendation.
+3. **Prepare the work.** Turn the chosen approach into tasks with inputs, owners, dependencies and clear completion criteria.
+4. **Build and coordinate.** Give each task the methods and materials it needs. Independent ready work can progress together.
+5. **Review, try and improve.** Check outputs against the goal, incorporate feedback and retain useful decisions and results for the next iteration.
+
+The **Live task board** brings tasks, owners, dependencies, outputs and checks into one view. When work is interrupted, saved records help the next session continue from the current state. If one task needs a new approach, its next step stays visible while independent work continues.
+
+<details>
+<summary>Preview the Live demo (Chinese interface)</summary>
+
+![Live task board in Chinese with demonstration task data](docs/images/meta-kim-live-demo.png)
+
+*This preview shows the Chinese interface with demonstration task data.*
+
+</details>
+
+## Start with your first project
+
+Requires **Node.js 22.13.0+** and a configured AI client. Current release: **[v3.10.1](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.10.1)**.
+
+### 1. Install Meta_Kim
 
 ```bash
 git clone https://github.com/KimYx0207/Meta_Kim.git
@@ -44,17 +77,29 @@ npm install
 node setup.mjs
 ```
 
-The default install reuses capabilities globally. Choose project setup when a project needs its own configuration; add `--with-global-hooks` when you want global Hooks. Existing user settings are merged. You can also start with `npx --yes github:KimYx0207/Meta_Kim`.
+Follow setup to select your clients and installation scope. Global setup lets you reuse the same capabilities across projects; project setup gives a project its own configuration. Existing user settings are merged. [Installation options](docs/technical-notes.md#installation-options).
 
-**2. Open your project and describe the outcome.**
+### 2. Open your project and describe the result
 
-You do not need to memorize commands or choose technical roles. Explain what should work and what you want to preserve. The assistant reads available project information and asks questions that change the plan.
+In your configured client, open the project you want to work on and give a practical request:
 
-**3. Follow the work and try the result.**
+> “Review this project's sign-up flow. Make it easier to use on a phone, preserve the current data fields, and show me the changed flow with its checks.”
 
-Open the current run's Live link or run `node bin/meta-kim.mjs live`. The board connects tasks, owners, dependencies and outputs. [View the real Live renderer with Chinese demo data](docs/images/meta-kim-live-demo.png).
+The assistant starts with the available project information. You make the choices that materially affect the product; routine implementation decisions stay with the working team.
 
-To update a clone:
+### 3. Follow progress and try the deliverable
+
+Open the current task's Live link. From the Meta_Kim checkout, you can also start Live for your project with:
+
+```bash
+node bin/meta-kim.mjs live --project-root "/path/to/your-project"
+```
+
+Replace the example path with your project directory. Use the outputs and checks to review the result, then give feedback on what should change next.
+
+### Keep an existing installation up to date
+
+Run these commands in your Meta_Kim checkout:
 
 ```bash
 git pull --ff-only
@@ -62,65 +107,31 @@ node setup.mjs --update
 node setup.mjs --check
 ```
 
-## Client integrations
+## Choose your client
 
-| Client | Available integration |
+Choose the client you already work in. Each integration uses that client's own configuration and extension formats.
+
+| Client | Integration and starting point |
 | --- | --- |
-| **Codex · Claude Code** | Main integrations: native instructions, Agents, Skills, configuration and Hooks |
-| **Cursor · OpenClaw** | Optional compatibility integrations using each client's supported formats |
-| **Gemini CLI** | Optional native Agents, shared Skills, settings and Hooks |
-| **ZCode** | Optional Agents, Skills, MCP and user-level Hooks |
-| **DSH — DeepSeek Harness** | Native Skills, an isolated profile or project setup, and MCP |
-| **Qoder · Trae** | Beta compatibility adapters |
+| **Codex · Claude Code** | Agents, Skills, instructions and Hooks; choose them during setup |
+| **Cursor** | Agents, Skills, project rules and Hooks; choose Cursor during setup |
+| **OpenClaw** | Skills, agent workspaces and a configuration template; choose OpenClaw during setup |
+| **Gemini CLI** | Agents, shared Skills, settings and Hooks; [client guide](canonical/skills/meta-theory/references/runtime-gemini.md) |
+| **ZCode** | Agents, Skills, MCP and user-level Hooks; [client guide](canonical/skills/meta-theory/references/runtime-zcode.md) |
+| **DeepSeek Harness (DSH)** | Beta integration with native Skills, profile/project setup and MCP; [client guide](docs/technical-notes.md#deepseek-harness) |
+| **Qoder · Trae** | Beta compatibility adapters; [integration details](config/runtime-compatibility-catalog.json) |
 
-Installation, package loading and task execution have separate test coverage. DSH has an official no-model configuration/Skill/MCP probe; Gemini CLI and ZCode have projection and lifecycle checks. Native model task quality is evaluated on the actual task. See the [compatibility catalog](config/runtime-compatibility-catalog.json) and [verification record](docs/verification/dsh-professional-quality-20261111.md) for details. Dependency projects maintain their own client support.
+[Compatibility catalog](config/runtime-compatibility-catalog.json) · [Installation and technical notes](docs/technical-notes.md). Dependency projects maintain their own client support.
 
-### DSH quick start
+## Find the next useful guide
 
-DSH requires **Node.js 24.9.0+**. The integration is checked against DSH `0.2.2-rc.1`.
-
-```sh
-node bin/meta-kim.mjs dsh install
-node bin/meta-kim.mjs dsh check
-dsh --profile meta-kim
-```
-
-Add `--service-package /path/to/kim-service-dsh` to include the professional packages built by [Kim Service](https://github.com/KimYx0207/Kim_Service/blob/main/docs/dsh.md). The same entry supports `update` and `uninstall`. [DSH guide](canonical/skills/meta-theory/references/runtime-dsh.md) · [ZCode guide](canonical/skills/meta-theory/references/runtime-zcode.md).
-
-## Keep work moving, contain repeated failures
-
-The default Hook mode gives guidance as work proceeds. It no longer switches to blocking merely because a project has been running for seven days.
-
-A prepared single-task work order can start a monitored trial. For supervised tasks, two ineffective attempts with the same strategy and evidence open a fuse for that task. Independent work continues. A reviewed change of approach gets a recovery trial, with its outcome recorded before wider reuse. Permissions, file ownership and destructive actions still follow the current authorization.
-
-Waiting for your review also affects only the tasks that depend on it. Completed independent work stays available when you resume. Reusable improvements follow the same practical idea: try a candidate, measure the result, then promote a version that has earned its place.
-
-<details>
-<summary>Optional memory service</summary>
-
-Project continuity uses durable run records. If you also enable Memory, check its configured endpoint, for example:
-
-```bash
-curl -fsS --max-time 3 http://127.0.0.1:8000/api/health
-```
-
-Memory configuration in `.mcp.json`, hook installation, service health, writes, reads and cross-session recall are checked separately. `npm run meta:test:mcp` checks Meta_Kim's own MCP server. Health checks alone report service availability.
-
-</details>
-
-## Explore and contribute
-
-| Location | Purpose |
+| You want to… | Read |
 | --- | --- |
-| `canonical/` | Shared Agents, Skills, rules and runtime assets |
-| `config/` | Capability indexes and machine-readable contracts |
-| `scripts/` · `src/` | Installation, execution, storage and Live |
-| `tests/` | Behavior and regression checks |
-| `.meta-kim/` | Local task state, planning and backups |
-
-Client-specific directories are generated locally from shared sources and excluded from GitHub source by `.gitignore`. Read [AGENTS.md](AGENTS.md) before contributing.
-
-[Architecture](docs/harness-architecture.md) · [Intent to delivery](canonical/skills/meta-theory/references/intent-to-delivery.md) · [Live SDK](docs/live-sdk.md) · [Changelog](CHANGELOG.md)
+| Choose installation scope, enable Hooks or configure an optional service | [Installation and technical notes](docs/technical-notes.md) |
+| Understand how research and requirements reach the people doing the work | [Intent to delivery](canonical/skills/meta-theory/references/intent-to-delivery.md) |
+| Work with the Live interface or extend its views | [Live SDK](docs/live-sdk.md) |
+| Understand the architecture or contribute | [Architecture](docs/harness-architecture.md) · [Contributor guide](AGENTS.md) |
+| See what changed in each version | [Changelog](CHANGELOG.md) |
 
 ## Contact
 

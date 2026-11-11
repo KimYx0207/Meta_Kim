@@ -4,15 +4,16 @@
 
 User-facing changes for each release. Detailed test results live in the linked verification records.
 
-## [3.10.1] - Unreleased candidate
+## [3.10.1] - 2026-11-12
 
-This section records a source candidate only; version 3.10.1 has not been formally released.
+### Pick up the work with a clear next step
 
-- **Resume interrupted work without repeating completed tasks.** Preserve finished results and keep failures with uncertain outcomes on the explicit recovery path.
-- **Show the next recovery step.** When a task needs correction, explain the reason and the next review or recovery action while independent work continues.
-- **Keep DSH decision guidance available.** Include the missing configuration that distinguishes material user decisions from changes to internal task assignments.
-- **Handle ordinary macOS paths correctly.** System aliases in parent directories no longer cause valid source snapshots to be rejected.
-- **Deliver requested professional examples in full.** Load optional design and financial-model examples when needed and carry their complete source material through the worker handoff. Equivalent selections keep the same recovery basis; actual resource or content changes are recorded distinctly.
+- **Continue from saved progress.** Resuming a task keeps completed results and their history, so the next session can focus on the work that remains.
+- **Turn a failed attempt into an actionable next step.** Task records explain what needs review or recovery. Independent work can continue, and uncertain outcomes stay attached to the task for reconciliation.
+- **Give specialists the examples they need.** Requested design and financial-model examples travel in full from planning to the execution handoff. Equivalent selections preserve continuity; a real change in the selected material gets a fresh review basis.
+- **Use ordinary macOS project paths.** Source analysis now handles system aliases in parent directories correctly, so valid project snapshots can be used.
+- **Keep decision guidance available in DSH.** The installed method package includes the configuration that separates meaningful product choices from internal task assignments.
+- **Start with the result you want.** The four language homepages now explain use cases, example deliverables, the working process and the first project in that order. Client-specific setup and operational details have linked guides, with DSH listed alongside the other client options.
 
 ## [3.10.0] - 2026-11-11
 

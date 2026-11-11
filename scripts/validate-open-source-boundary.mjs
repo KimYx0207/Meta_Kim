@@ -104,30 +104,42 @@ function assertTrackedFilesExcludeRuntimeProjections() {
 function assertDocsExplainBoundary() {
   const docs = [
     {
-      file: "README.md",
-      pattern:
-        /directories are generated locally.*excluded from GitHub source.*\.gitignore/,
+      readme: "README.md",
+      guide: "docs/technical-notes.md",
+      generationPattern: /directories.*generated locally.*npm run meta:sync/,
+      boundaryPattern:
+        /excluded from GitHub source.*kept local.*\.gitignore/,
     },
     {
-      file: "README.zh-CN.md",
-      pattern:
-        /客户端目录.*生成.*\.gitignore.*保留在本地.*不提交到 GitHub 源码/,
+      readme: "README.zh-CN.md",
+      guide: "docs/technical-notes.zh-CN.md",
+      generationPattern: /客户端目录.*npm run meta:sync.*在本地生成/,
+      boundaryPattern: /\.gitignore.*保留在本地.*不提交到 GitHub 源码/,
     },
     {
-      file: "README.ja-JP.md",
-      pattern:
-        /クライアント別ディレクトリ.*生成.*\.gitignore.*GitHub のソースから除外/,
+      readme: "README.ja-JP.md",
+      guide: "docs/technical-notes.ja-JP.md",
+      generationPattern: /クライアント別ディレクトリ.*npm run meta:sync.*ローカルに生成/,
+      boundaryPattern: /\.gitignore.*GitHub のソースから除外.*ローカルに保持/,
     },
     {
-      file: "README.ko-KR.md",
-      pattern:
-        /클라이언트별 디렉터리.*생성.*\.gitignore.*GitHub 소스에서 제외/,
+      readme: "README.ko-KR.md",
+      guide: "docs/technical-notes.ko-KR.md",
+      generationPattern: /클라이언트별 디렉터리.*npm run meta:sync.*로컬에 생성/,
+      boundaryPattern: /\.gitignore.*GitHub 소스에서 제외.*로컬에 유지/,
     },
   ];
 
-  for (const { file, pattern } of docs) {
-    const raw = readFileSync(repoPath(file), "utf8");
-    assert(pattern.test(raw), `${file} must explain generated runtime projections are not GitHub source.`);
+  for (const { readme, guide, generationPattern, boundaryPattern } of docs) {
+    const readmeRaw = readFileSync(repoPath(readme), "utf8");
+    const escapedGuide = guide.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const guideLink = new RegExp(`\\]\\((?:\\./)?${escapedGuide}(?:#[^\\s)]*)?\\)`);
+    assert(guideLink.test(readmeRaw), `${readme} must link to its localized technical guide ${guide}.`);
+
+    const raw = readFileSync(repoPath(guide), "utf8");
+    assert(raw.includes("`canonical/`") && raw.includes("`config/`"), `${guide} must identify the canonical source and configuration directories.`);
+    assert(generationPattern.test(raw), `${guide} must explain that runtime directories are generated locally by meta:sync.`);
+    assert(boundaryPattern.test(raw), `${guide} must explain that .gitignore keeps generated runtime projections local and out of GitHub source.`);
   }
 }
 

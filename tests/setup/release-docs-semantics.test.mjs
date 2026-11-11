@@ -16,6 +16,18 @@ describe("release documentation semantics", () => {
     "README.ja-JP.md",
     "README.ko-KR.md",
   ];
+  const technicalNotesFiles = readmeFiles.map(
+    (file) => `docs/${file.replace("README", "technical-notes")}`,
+  );
+
+  const assertLocalMarkdownLink = (raw, file, target) => {
+    assert.ok(raw.includes(`](${target})`), `${file} must link ${target}`);
+    assert.equal(
+      existsSync(path.resolve(root, path.dirname(file), target)),
+      true,
+      `${file} links a missing local reference: ${target}`,
+    );
+  };
 
   const currentChangelogSection = (raw) => {
     const nextReleaseIndex = raw.search(/\n## \[[^\]]+\] - \d{4}-\d{2}-\d{2}/);
@@ -56,7 +68,7 @@ describe("release documentation semantics", () => {
     }
   });
 
-  test("npm dry-run package manifest preserves the design PoC boundary", () => {
+  test("npm dry-run package manifest preserves runtime boundaries and localized public guidance", () => {
     const npmCli = resolveNpmCliJsPath();
     assert.equal(existsSync(npmCli), true, `npm CLI not found: ${npmCli}`);
 
@@ -83,6 +95,7 @@ describe("release documentation semantics", () => {
         "CHANGELOG.zh-CN.md",
         "CHANGELOG.ja-JP.md",
         "CHANGELOG.ko-KR.md",
+        ...technicalNotesFiles,
       ]) {
         assert.equal(packageFiles.has(requiredFile), true, `package missing ${requiredFile}`);
       }
@@ -139,7 +152,7 @@ describe("release documentation semantics", () => {
       /ECC는 추가로 .*native install target/,
     ];
 
-    for (const file of readmeFiles) {
+    for (const file of [...readmeFiles, ...technicalNotesFiles]) {
       const raw = readFileSync(path.join(root, file), "utf8");
 
       for (const pattern of forbiddenDependencyMatrixPatterns) {
@@ -163,13 +176,19 @@ describe("release documentation semantics", () => {
       /依存プロジェクトの対応クライアントは各上流プロジェクトが管理/,
       /의존 프로젝트의 지원 클라이언트는 해당 상위 프로젝트가 관리/,
     ];
-    readmeFiles.forEach((file, index) => {
+    technicalNotesFiles.forEach((file, index) => {
       assert.match(readFileSync(path.join(root, file), "utf8"), dependencyGuidance[index], file);
     });
   });
 
-  test("public current docs distinguish native projections, compatibility and unverified execution", () => {
-    const betaNames = ["ZCode", "DeepSeek Harness", "Qoder", "Trae"];
+  test("localized product overviews link truthful client tiers and technical verification guidance", () => {
+    const betaNames = ["DeepSeek Harness", "Qoder", "Trae"];
+    const taskResultScope = [
+      /Native task results and model quality[^.\n]*actual outputs/u,
+      /原生任务结果和模型专业效果[^。\n]*实际产物/u,
+      /ネイティブなタスク結果とモデルの専門的な品質[^。\n]*実際の成果物/u,
+      /네이티브 작업 결과와 모델의 전문적인 품질[^.\n]*실제 결과물/u,
+    ];
     const removedPublicCandidatePatterns = [
       /\bKiro\b/u,
       /Windsurf/u,
@@ -199,39 +218,54 @@ describe("release documentation semantics", () => {
       .match(/^## \[([^\]]+)\] - \d{4}-\d{2}-\d{2}/m)?.[1];
     assert.ok(releasedVersion, "The changelog must identify a dated release");
 
-    for (const file of readmeFiles) {
+    for (const [index, file] of readmeFiles.entries()) {
       const raw = readFileSync(path.join(root, file), "utf8");
+      const notesFile = technicalNotesFiles[index];
+      const notes = readFileSync(path.join(root, notesFile), "utf8");
 
-      for (const client of ["Codex", "Claude Code", "Cursor", "Gemini CLI", "ZCode"]) assert.match(raw, new RegExp(client), `${file} missing requested client ${client}`);
+      for (const client of ["Codex", "Claude Code", "Cursor", "OpenClaw", "Gemini CLI", "ZCode"]) assert.match(raw, new RegExp(client), `${file} missing requested client ${client}`);
       assert.match(raw, /config\/runtime-compatibility-catalog\.json/, file);
       assert.ok(raw.includes(`[v${releasedVersion}](https://github.com/KimYx0207/Meta_Kim/releases/tag/v${releasedVersion})`), `${file} must label and link the current released version`);
-      assert.match(raw, /docs\/verification\/dsh-professional-quality-20261111\.md/, `${file} must link the observed verification scope`);
-      for (const betaName of betaNames) {
-        assert.match(raw, new RegExp(betaName), `${file} missing ${betaName}`);
+      assertLocalMarkdownLink(raw, file, notesFile);
+      assertLocalMarkdownLink(notes, notesFile, `../${file}`);
+      for (const runtime of ["claude", "codex", "gemini", "zcode", "dsh"]) {
+        assertLocalMarkdownLink(notes, notesFile, `../canonical/skills/meta-theory/references/runtime-${runtime}.md`);
       }
-      assert.match(raw, /\bBeta\b/iu, `${file} missing Beta tier`);
+      for (const reference of [
+        "../config/runtime-compatibility-catalog.json",
+        "../AGENTS.md",
+        "verification/dsh-professional-quality-20261111.md",
+        "verification/task-scoped-canary-20261111.md",
+      ]) {
+        assertLocalMarkdownLink(notes, notesFile, reference);
+      }
+      assert.match(notes, taskResultScope[index], `${notesFile} must distinguish observed integration checks from actual task results`);
+      for (const operation of ["install", "check", "update", "uninstall"]) {
+        assert.ok(notes.includes(`node bin/meta-kim.mjs dsh ${operation}`), `${notesFile} must use the Meta_Kim CLI for DSH ${operation}`);
+      }
+      for (const betaName of betaNames) {
+        const clientRow = raw.split("\n").find((line) => /^\|/u.test(line) && line.includes(betaName));
+        assert.ok(clientRow, `${file} missing ${betaName} client guidance`);
+        assert.match(clientRow, /\bBeta\b/iu, `${file} must label ${betaName} as Beta`);
+        if (betaName === "Qoder" || betaName === "Trae") {
+          assert.match(clientRow, /compatibility|兼容|互換|호환/iu, `${file} must distinguish ${betaName} compatibility adapters`);
+        }
+      }
       assert.doesNotMatch(raw, /alt="Runtime"/, file);
       assert.doesNotMatch(raw, /runtime-Claude%20Code%20%7C%20Codex%20%7C%20OpenClaw%20%7C%20Cursor/, file);
 
-      for (const pattern of removedPublicCandidatePatterns) {
-        assert.doesNotMatch(raw, pattern, `${file} still publishes a research-only candidate`);
-      }
-      for (const pattern of overbroadMappingPatterns) {
-        assert.doesNotMatch(raw, pattern, `${file} has overbroad mapping claim`);
-      }
-      for (const pattern of staleFullSupportRows) {
-        assert.doesNotMatch(raw, pattern, `${file} overpromotes compatibility projection`);
+      for (const [documentFile, document] of [[file, raw], [notesFile, notes]]) {
+        for (const pattern of removedPublicCandidatePatterns) {
+          assert.doesNotMatch(document, pattern, `${documentFile} still publishes a research-only candidate`);
+        }
+        for (const pattern of overbroadMappingPatterns) {
+          assert.doesNotMatch(document, pattern, `${documentFile} has overbroad mapping claim`);
+        }
+        for (const pattern of staleFullSupportRows) {
+          assert.doesNotMatch(document, pattern, `${documentFile} overpromotes compatibility projection`);
+        }
       }
     }
-
-    assert.match(readFileSync(path.join(root, "README.md"), "utf8"), /Main integrations/);
-    assert.match(readFileSync(path.join(root, "README.md"), "utf8"), /Beta compatibility adapters/);
-    assert.match(readFileSync(path.join(root, "README.md"), "utf8"), /Optional compatibility integrations/);
-    assert.match(readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /主要集成/);
-    assert.match(readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /Beta 兼容适配器/);
-    assert.match(readFileSync(path.join(root, "README.zh-CN.md"), "utf8"), /可选兼容集成/);
-    assert.match(readFileSync(path.join(root, "README.ja-JP.md"), "utf8"), /\bBeta\b/);
-    assert.match(readFileSync(path.join(root, "README.ko-KR.md"), "utf8"), /\bBeta\b/);
   });
 
   test("change readiness checklist covers P1 and P2 release review lanes", () => {

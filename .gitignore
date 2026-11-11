@@ -118,7 +118,7 @@ lib/
 !canonical/runtime-assets/shared/lib/**
 
 # ========== Docs Privacy Boundary ==========
-# docs/ is local-private by default. Keep only README images public.
+# docs/ is local-private by default. Publish only the explicitly listed guides and images.
 docs/**
 !docs/
 !docs/live-sdk.md
@@ -126,6 +126,10 @@ docs/**
 !docs/graphify-managed-lifecycle.md
 !docs/harness-architecture.md
 !docs/dependency-baseline.md
+!docs/technical-notes.md
+!docs/technical-notes.zh-CN.md
+!docs/technical-notes.ja-JP.md
+!docs/technical-notes.ko-KR.md
 !docs/images/
 !docs/images/**
 !docs/verification/

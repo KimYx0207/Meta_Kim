@@ -1,29 +1,48 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="760" height="1016" viewBox="0 0 760 1016" lang="ko-KR" xml:lang="ko-KR" role="img" aria-labelledby="title desc">
-<title id="title">의도에서 결과까지</title><desc id="desc">Meta_Kim은 목표를 조사, 결정, 두 단계 PRD와 협업으로 연결합니다. Kim Service는 전문 방법을 제공합니다. 준비된 독립 작업을 병렬로 진행한 뒤 결과를 확인합니다. 작업 흐름을 설명하는 그림입니다.</desc>
-<defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M1 1L7 4.5L1 8" fill="none" stroke="#7996ba" stroke-width="1.5"/></marker><style>text{font-family:Inter,"Noto Sans CJK KR","Microsoft YaHei",Arial,sans-serif}.title{fill:#f4f7ff;font-weight:700}.body{fill:#bfcde2}.accent{fill:#8ce4d7;font-weight:700}.card{fill:#14233c;stroke:#344e70;stroke-width:1.5}.design{fill:#242140;stroke:#7d6bba;stroke-width:1.5}.methods{fill:#0f3035;stroke:#398b85;stroke-width:1.5}.result{fill:#192f4b;stroke:#5485b8;stroke-width:1.5}.line{fill:none;stroke:#7996ba;stroke-width:2;marker-end:url(#arrow)}</style></defs>
-<rect width="760" height="1016" rx="24" fill="#091426"/>
-<text x="40" y="47" class="accent" font-size="18">META_KIM  /  KIM SERVICE</text>
-<text x="40" y="91" class="title" font-size="30">하나의 아이디어에서, 쓸 수 있는 결과로.</text>
-<rect x="40" y="122" width="680" height="92" rx="18" class="card"/>
-<text x="64" y="159" class="title" font-size="25">당신의 목표</text><text x="64" y="191" class="body" font-size="22">원하는 결과, 조건, 기존 프로젝트</text>
-<path d="M380 215V240" class="line"/>
-<rect x="40" y="248" width="680" height="92" rx="18" class="card"/>
-<text x="64" y="285" class="title" font-size="25">조사하고 선택하기</text><text x="64" y="317" class="body" font-size="22">참고 자료를 찾고 방법을 비교해 결정</text>
-<path d="M380 341V366" class="line"/>
-<rect x="40" y="374" width="680" height="138" rx="18" class="design"/>
-<text x="64" y="412" class="title" font-size="25">하나의 PRD, 두 단계</text>
-<path d="M380 430V489" stroke="#6c6091"/>
-<text x="64" y="450" class="title" font-size="22">1  시스템과 기술 선택</text><text x="64" y="482" class="body" font-size="20">함께 쓰는 결정</text>
-<text x="404" y="450" class="title" font-size="22">2  모듈과 인터페이스</text><text x="404" y="482" class="body" font-size="20">구체적인 인수 기준</text>
-<path d="M380 513V536" class="line"/>
-<rect x="40" y="544" width="680" height="86" rx="18" class="methods"/>
-<text x="64" y="578" class="accent" font-size="23">KIM SERVICE · 전문 방법</text><text x="64" y="607" class="body" font-size="22">필요한 지식, 도구와 완성 예제를 연결</text>
-<path d="M380 631V645H200V659" class="line"/><path d="M380 645H560V659" class="line"/>
-<rect x="40" y="667" width="320" height="112" rx="18" class="card"/><rect x="400" y="667" width="320" height="112" rx="18" class="card"/>
-<text x="64" y="701" class="title" font-size="25">모듈 A</text><text x="64" y="732" class="body" font-size="21">담당자 + 방법</text><text x="64" y="761" class="body" font-size="21">프로젝트 자료</text>
-<text x="424" y="701" class="title" font-size="25">모듈 B</text><text x="424" y="732" class="body" font-size="21">담당자 + 방법</text><text x="424" y="761" class="body" font-size="21">프로젝트 자료</text>
-<path d="M200 780V798H380V811" class="line"/><path d="M560 780V798H380" fill="none" stroke="#7996ba" stroke-width="2"/>
-<rect x="40" y="819" width="680" height="92" rx="18" class="result"/>
-<text x="64" y="856" class="title" font-size="25">검토, 검증, 전달</text><text x="64" y="887" class="body" font-size="21">결과를 확인하고 결정과 다음 작업을 저장</text>
-<text x="40" y="953" class="accent" font-size="23">이어가고 개선하기</text><text x="40" y="985" class="body" font-size="20">준비된 작업은 병렬로, 검증한 경험은 다시 활용.</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="850" viewBox="0 0 1000 850" lang="ko-KR" xml:lang="ko-KR" role="img" aria-labelledby="title desc">
+<title id="title">한 줄의 아이디어를 전달할 수 있는 결과로.</title><desc id="desc">목표와 근거, 역할 분담과 결과를 하나의 흐름으로 잇습니다.</desc>
+<style>text{font-family:Noto Sans CJK KR,sans-serif} path{stroke-linecap:round;stroke-linejoin:round}</style>
+<rect x="0" y="0" width="1000" height="850" rx="26" fill="#f3f6fb" stroke="none"/>
+<text x="42" y="48" font-size="22" font-weight="750" fill="#245dd8">META_KIM</text>
+<text x="958" text-anchor="end" y="48" font-size="17" font-weight="500" fill="#5c6980">작업 흐름 설명도</text>
+<text x="42" y="108" font-size="39" font-weight="750" fill="#11243b">한 줄의 아이디어를 전달할 수 있는 결과로.</text>
+<text x="42" y="151" font-size="23" font-weight="400" fill="#435169">목표와 근거, 역할 분담과 결과를 하나의 흐름으로 잇습니다.</text>
+<rect x="42" y="194" width="436" height="232" rx="22" fill="#ffffff" stroke="#dce4ef"/>
+<rect x="66" y="218" width="44" height="42" rx="13" fill="#245dd8" stroke="none"/>
+<text x="88" text-anchor="middle" y="248" font-size="23" font-weight="750" fill="#fff">01</text>
+<text x="126" y="249" font-size="28" font-weight="700" fill="#11243b">목표 정리</text>
+<text x="66" y="298" font-size="24" font-weight="400" fill="#435169">해결할 문제를 정합니다.</text>
+<text x="66" y="334" font-size="24" font-weight="400" fill="#435169">완료 기준을 구체화합니다.</text>
+<rect x="58" y="357" width="404" height="54" rx="12" fill="#edf3fb" stroke="none"/>
+<text x="72" y="378" font-size="16" font-weight="600" fill="#245dd8">남기는 것</text>
+<text x="72" y="401" font-size="21" font-weight="650" fill="#223850">목표와 완료 기준</text>
+<rect x="520" y="194" width="436" height="232" rx="22" fill="#ffffff" stroke="#dce4ef"/>
+<rect x="544" y="218" width="44" height="42" rx="13" fill="#245dd8" stroke="none"/>
+<text x="566" text-anchor="middle" y="248" font-size="23" font-weight="750" fill="#fff">02</text>
+<text x="604" y="249" font-size="28" font-weight="700" fill="#11243b">조사와 선택</text>
+<text x="544" y="298" font-size="24" font-weight="400" fill="#435169">자료와 유사 사례를 찾습니다.</text>
+<text x="544" y="334" font-size="24" font-weight="400" fill="#435169">대안을 비교하고 결정합니다.</text>
+<rect x="536" y="357" width="404" height="54" rx="12" fill="#edf3fb" stroke="none"/>
+<text x="550" y="378" font-size="16" font-weight="600" fill="#245dd8">남기는 것</text>
+<text x="550" y="401" font-size="21" font-weight="650" fill="#223850">참고 자료와 결정 근거</text>
+<rect x="42" y="452" width="436" height="232" rx="22" fill="#ffffff" stroke="#dce4ef"/>
+<rect x="66" y="476" width="44" height="42" rx="13" fill="#245dd8" stroke="none"/>
+<text x="88" text-anchor="middle" y="506" font-size="23" font-weight="750" fill="#fff">03</text>
+<text x="126" y="507" font-size="28" font-weight="700" fill="#11243b">계획과 제작</text>
+<text x="66" y="556" font-size="24" font-weight="400" fill="#435169">전체 설계에서 모듈로 나눕니다.</text>
+<text x="66" y="592" font-size="24" font-weight="400" fill="#435169">의존성에 맞춰 병렬로 진행합니다.</text>
+<rect x="58" y="615" width="404" height="54" rx="12" fill="#edf3fb" stroke="none"/>
+<text x="72" y="636" font-size="16" font-weight="600" fill="#245dd8">남기는 것</text>
+<text x="72" y="659" font-size="21" font-weight="650" fill="#223850">작업 계획과 결과 파일</text>
+<rect x="520" y="452" width="436" height="232" rx="22" fill="#ffffff" stroke="#dce4ef"/>
+<rect x="544" y="476" width="44" height="42" rx="13" fill="#245dd8" stroke="none"/>
+<text x="566" text-anchor="middle" y="506" font-size="23" font-weight="750" fill="#fff">04</text>
+<text x="604" y="507" font-size="28" font-weight="700" fill="#11243b">검토와 전달</text>
+<text x="544" y="556" font-size="24" font-weight="400" fill="#435169">처음 목표에 맞춰 확인합니다.</text>
+<text x="544" y="592" font-size="24" font-weight="400" fill="#435169">다음에 할 일을 기록합니다.</text>
+<rect x="536" y="615" width="404" height="54" rx="12" fill="#edf3fb" stroke="none"/>
+<text x="550" y="636" font-size="16" font-weight="600" fill="#245dd8">남기는 것</text>
+<text x="550" y="659" font-size="21" font-weight="650" fill="#223850">검토한 결과와 인계 내용</text>
+<rect x="42" y="732" width="914" height="82" rx="18" fill="#102b43" stroke="none"/>
+<text x="66" y="767" font-size="27" font-weight="650" fill="#f5f9ff">완료한 작업을 보존하고 다음 단계부터 이어갑니다.</text>
+<text x="66" y="798" font-size="20" font-weight="400" fill="#c0d9ed">결정과 진행 기록을 다음 개선 작업에 활용합니다.</text>
 </svg>
