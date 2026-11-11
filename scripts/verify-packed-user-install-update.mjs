@@ -672,14 +672,15 @@ function resolvePackedCliPath(workspace) {
   return cliPath;
 }
 
-function packAndExtract({ sourceRoot, destinationRoot, environment, timeoutMs }) {
+export function packAndExtract({ sourceRoot, destinationRoot, environment, timeoutMs }) {
   const packDir = path.join(destinationRoot, "pack");
   const extractDir = path.join(destinationRoot, "extract");
   mkdirSync(packDir, { recursive: true });
   mkdirSync(extractDir, { recursive: true });
   const packed = requireSuccess(
     "npm pack",
-    runCli("npm", ["pack", "--json", "--pack-destination", packDir], {
+    // Lifecycle checks still execute; their output must not contaminate npm's JSON.
+    runCli("npm", ["pack", "--json", "--foreground-scripts=false", "--pack-destination", packDir], {
       cwd: sourceRoot,
       env: environment,
       timeoutMs,

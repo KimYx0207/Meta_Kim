@@ -53,6 +53,12 @@ The npm-packed product proof still requires every runtime in `config/sync.json`,
 
 The packed-report consumer now reads runtime coverage from that verified complete package proof, while continuing to require the dependency probe to pass. This keeps Gemini and ZCode package observations distinct from unsupported dependency-install claims. The six related release, isolation and acceptance files passed all 55 tests after this repair.
 
+## npm lifecycle output and packed acceptance
+
+The last complete verification attempt reached the real packed-user lane after both dependency install/update probes passed, then failed while parsing `npm pack --json`: the successful `prepack` source-pin check wrote a human-readable message to the same stdout. npm 11.9.0 reproduced this behavior with a minimal package. [npm's configuration documentation](https://docs.npmjs.com/cli/v11/using-npm/config/#foreground-scripts) specifies foreground lifecycle scripts by default for pack/publish.
+
+The candidate pack invocation now explicitly sets `--foreground-scripts=false`. It keeps lifecycle execution and strict JSON parsing. A real noisy-prepack fixture proves the prepack marker is written and the produced archive is extracted; a failing prepack returns a nonzero status and produces no accepted archive. The existing source-drift lifecycle test also uses strict JSON parsing after repair and resolves a symlinked checkout dependency directory before copying its offline fixture. All 40 tests in the packed-user acceptance file passed. The complete failed verification attempt remains failed; subsequent focused checks do not constitute one release-grade run or model-execution evidence.
+
 ## Source and deployment scope
 
 The changed Hook and shared task-progress implementation use their existing projection dependencies. No new package or Hook entrypoint was added. Runtime source hashes are refreshed through the existing maintainer command. The scope of native Hook enforcement remains the host's supported Hook surface; loading DSH Skills does not establish DSH Hook enforcement.

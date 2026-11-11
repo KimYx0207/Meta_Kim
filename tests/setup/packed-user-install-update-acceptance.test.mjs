@@ -9,6 +9,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -30,6 +31,7 @@ import {
   buildPackedCommandDiagnostics,
   collectNonPortablePackedReferences,
   durableMcpDefinitionMatches,
+  packAndExtract,
   referencedPersistentRuntimePaths,
   requirePackedCommandSuccess,
   runInstalledPublicCli,
@@ -178,6 +180,74 @@ test("packed user acceptance runs public install and update from an npm-packed c
   assert.match(acceptanceSource, /global-only CLI polluted ordinary cwd/u);
   assert.match(acceptanceSource, /second packed user update changed managed artifacts/u);
   assert.match(acceptanceSource, /global install manifest is missing required entries/u);
+});
+
+test("npm-packed candidate executes noisy prepack and rejects failed lifecycle checks", (t) => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "meta-kim-pack-lifecycle-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const sourceRoot = path.join(root, "source");
+  const home = path.join(root, "home");
+  mkdirSync(sourceRoot);
+  mkdirSync(home);
+  const marker = path.join(sourceRoot, "prepack-ran.txt");
+  writeFileSync(path.join(sourceRoot, "package.json"), JSON.stringify({
+    name: "meta-kim-pack-lifecycle-fixture",
+    version: "1.0.0",
+    files: ["bin.mjs"],
+    bin: { "meta-kim-pack-lifecycle-fixture": "bin.mjs" },
+    scripts: { prepack: "node prepack.mjs" },
+  }));
+  writeFileSync(path.join(sourceRoot, "bin.mjs"), "#!/usr/bin/env node\nconsole.log('packed fixture');\n");
+  writeFileSync(path.join(sourceRoot, "prepack.mjs"), [
+    "import { writeFileSync } from 'node:fs';",
+    "writeFileSync('prepack-ran.txt', process.env.META_FIXTURE_PREPACK_RESULT);",
+    "console.log('runtime capability noisy prepack fixture output');",
+    "process.exit(process.env.META_FIXTURE_PREPACK_RESULT === 'failure' ? 23 : 0);",
+    "",
+  ].join("\n"));
+  const environment = Object.fromEntries(
+    ["PATH", "Path", "PATHEXT", "SystemRoot", "SYSTEMROOT", "WINDIR", "ComSpec"]
+      .filter((key) => typeof process.env[key] === "string")
+      .map((key) => [key, process.env[key]]),
+  );
+  Object.assign(environment, {
+    HOME: home,
+    USERPROFILE: home,
+    TEMP: home,
+    TMP: home,
+    TMPDIR: home,
+    npm_config_cache: path.join(root, "cache"),
+    npm_config_userconfig: path.join(home, "user.npmrc"),
+    npm_config_globalconfig: path.join(home, "global.npmrc"),
+    npm_config_offline: "true",
+    npm_config_foreground_scripts: "true",
+    META_FIXTURE_PREPACK_RESULT: "success",
+  });
+  writeFileSync(environment.npm_config_userconfig, "");
+  writeFileSync(environment.npm_config_globalconfig, "");
+  const packed = packAndExtract({
+    sourceRoot,
+    destinationRoot: path.join(root, "success"),
+    environment,
+    timeoutMs: 30_000,
+  });
+  assert.equal(readFileSync(marker, "utf8"), "success", "prepack must execute rather than being skipped");
+  assert.equal(existsSync(packed.tarball), true);
+  assert.equal(
+    readFileSync(path.join(packed.workspace, "bin.mjs"), "utf8"),
+    readFileSync(path.join(sourceRoot, "bin.mjs"), "utf8"),
+    "strict JSON parsing reaches extraction of the actual packed candidate",
+  );
+  const failedDestination = path.join(root, "failure");
+  assert.throws(() => packAndExtract({
+    sourceRoot,
+    destinationRoot: failedDestination,
+    environment: { ...environment, META_FIXTURE_PREPACK_RESULT: "failure" },
+    timeoutMs: 30_000,
+  }), /npm pack failed:/u);
+  assert.equal(readFileSync(marker, "utf8"), "failure");
+  assert.deepEqual(readdirSync(path.join(failedDestination, "pack")), []);
+  assert.deepEqual(readdirSync(path.join(failedDestination, "extract")), []);
 });
 
 test("packed user acceptance help is read-only and does not start install/update lanes", () => {
@@ -1487,7 +1557,7 @@ test("source lifecycle prepack and installed public project install/update prese
   const staleLedger = readFileSync(sourceLedger, "utf8");
   const packDir = path.join(runtime.root, "pack");
   mkdirSync(packDir);
-  const packArgs = [npm, "pack", "--json", "--pack-destination", packDir, "--offline"];
+  const packArgs = [npm, "pack", "--json", "--foreground-scripts=false", "--pack-destination", packDir, "--offline"];
   const refused = runtime.run(packArgs, { env });
   assert.equal(refused.status, 1, refused.stderr || refused.stdout);
   assert.match(`${refused.stdout}\n${refused.stderr}`, /repo_projection pin\(s\) drifted/u);
@@ -1502,9 +1572,8 @@ test("source lifecycle prepack and installed public project install/update prese
   assert.equal(currentSource.status, 0, currentSource.stderr || currentSource.stdout);
   const packed = runtime.run(packArgs, { env });
   assert.equal(packed.status, 0, packed.stderr || packed.stdout);
-  const metadata = packed.stdout.match(/\[\s*\{[\s\S]*\}\s*\]\s*$/u);
-  assert.ok(metadata, "npm pack returns real candidate metadata");
-  assert.deepEqual(JSON.parse(metadata[0])[0].files.map((entry) => entry.path).sort(), packageFiles);
+  const metadata = JSON.parse(packed.stdout);
+  assert.deepEqual(metadata[0].files.map((entry) => entry.path).sort(), packageFiles);
   const archives = readdirSync(packDir).filter((name) => name.endsWith(".tgz"));
   assert.equal(archives.length, 1);
 
@@ -1513,7 +1582,7 @@ test("source lifecycle prepack and installed public project install/update prese
   // no dependency, lockfile, cache or tool is added to the user's environment.
   const prefix = path.join(runtime.root, "prefix");
   mkdirSync(prefix);
-  const dependencyTree = path.resolve("node_modules");
+  const dependencyTree = realpathSync("node_modules");
   cpSync(dependencyTree, path.join(prefix, "node_modules"), { recursive: true });
   const manifest = JSON.parse(readFileSync(path.join(runtime.repoRoot, "package.json"), "utf8"));
   writeFileSync(path.join(prefix, "package.json"), JSON.stringify({ name: "packed-lifecycle-fixture", private: true, dependencies: manifest.dependencies }));
