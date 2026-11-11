@@ -310,6 +310,7 @@ function completePackedUserProof(packageSha256) {
 
 function writePackedObservationReport(project, {
   reportedPackedProductProofComplete = true,
+  dependencyTargets = PACKED_USER_TARGETS,
   mutateProof = () => {},
   suffix = "packed-observation",
 } = {}) {
@@ -325,7 +326,7 @@ function writePackedObservationReport(project, {
     runtimeVersions: { codex: "codex-test-1.0.0" },
     releasePreflight: {
       packedUserProof: proof,
-      globalTargetProof: { status: "passed", targets: [...PACKED_USER_TARGETS] },
+      globalTargetProof: { status: "passed", targets: [...dependencyTargets] },
     },
   };
   const report = { ...withoutHash, attemptRecordHash: sha(JSON.stringify(withoutHash)) };
@@ -377,6 +378,7 @@ test("external packed observation reader recomputes complete target truth withou
     projectRoot: acceptedProject.root,
     reportPath: writePackedObservationReport(acceptedProject, {
       reportedPackedProductProofComplete: false,
+      dependencyTargets: ["claude", "codex", "openclaw", "cursor"],
       suffix: "false-summary-complete-proof",
     }),
     sourceKind: "packed_update_global_readback",
@@ -393,6 +395,8 @@ test("external packed observation reader recomputes complete target truth withou
   for (const [label, mutateProof] of [
     ["missing-targets", (proof) => { delete proof.currentPackage.targets; }],
     ["one-target", (proof) => { proof.currentPackage.targets = [PACKED_USER_TARGETS[0]]; }],
+    ["missing-gemini", (proof) => { proof.currentPackage.targets = PACKED_USER_TARGETS.filter(runtime => runtime !== "gemini"); }],
+    ["missing-zcode", (proof) => { proof.currentPackage.targets = PACKED_USER_TARGETS.filter(runtime => runtime !== "zcode"); }],
     ["missing-packed-uninstall", (proof) => { delete proof.currentPackage.packedUninstall; }],
     ["missing-installed-cli-recovery", (proof) => {
       delete proof.currentPackage.packedUninstall.publicCliAfterFailedUninstall;

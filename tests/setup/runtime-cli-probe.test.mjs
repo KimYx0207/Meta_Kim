@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -50,12 +50,13 @@ test("a native CLI mentioning Windows executables only in a comment still report
 
 test("the shared version executor kills a real started hanging CLI at its explicit budget", t=>{
   const {bin,root}=fixture(t),marker=path.join(root,"actually-started");
-  const cli=nodeCli(bin,"meta-hanging-fixture",`require('node:fs').writeFileSync(${JSON.stringify(marker)},'started');setInterval(()=>{},1000);\n`);
+  // One directory creation records startup without a kill between file open and write.
+  const cli=nodeCli(bin,"meta-hanging-fixture",`setInterval(()=>{},1000);require('node:fs').mkdirSync(${JSON.stringify(marker)});\n`);
   const descriptor=process.platform==="win32"?resolveWindowsCliLaunchDescriptor(cli):{launcher:cli,argsPrefix:[]};
   const started=Date.now(),result=runRuntimeCliVersion(descriptor.launcher,[...descriptor.argsPrefix,"--version"],descriptor,{timeoutMs:1500});
   assert.equal(result.status,null);assert.equal(result.error?.code,"ETIMEDOUT");
   assert.ok(Date.now()-started<5000,"The real child must be terminated within a bounded interval");
-  assert.equal(readFileSync(marker,"utf8"),"started");
+  assert.ok(statSync(marker).isDirectory(),"The real child must schedule its hang before recording startup");
 });
 
 test("the overall probe deadline also bounds PATH location plus a hanging version command",t=>{

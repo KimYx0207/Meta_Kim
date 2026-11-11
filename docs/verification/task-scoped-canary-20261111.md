@@ -45,6 +45,14 @@ Preparing the isolated installation reproduced another unnecessary rejection. Th
 
 The three affected CLI-probe and executable-binding files passed 30 tests with five platform skips and no failures (35 tests). They include a real native executable copied to an `.exe` payload, PATH discovery through a launcher, actual version execution and inventory readback. Installation and version-probe evidence does not certify model task performance. The official installation method and version check were verified against [Claude Code setup documentation](https://code.claude.com/docs/en/setup).
 
+## Dependency probe coverage
+
+The complete release command exposed a separate mismatch after the real dependency installer exited successfully: the preflight required six `findskill` copies, while that dependency declares only Claude Code, Codex, OpenClaw and Cursor in `config/skills.json`. The installer correctly skipped undeclared targets. The probe now intersects that declaration with the runtime installer's supported targets and records the included targets, excluded targets and reasons. It does not expand the dependency's support claims.
+
+The npm-packed product proof still requires every runtime in `config/sync.json`, including Gemini CLI and ZCode. A regression verifies that the four-target dependency can pass its own install/update probe, while removing either Gemini or ZCode from the complete package proof still rejects release-grade verification. The first proxy-environment failure and the subsequent coverage failure remain recorded as separate unsuccessful verification attempts; neither is relabeled as success.
+
+The packed-report consumer now reads runtime coverage from that verified complete package proof, while continuing to require the dependency probe to pass. This keeps Gemini and ZCode package observations distinct from unsupported dependency-install claims. The six related release, isolation and acceptance files passed all 55 tests after this repair.
+
 ## Source and deployment scope
 
 The changed Hook and shared task-progress implementation use their existing projection dependencies. No new package or Hook entrypoint was added. Runtime source hashes are refreshed through the existing maintainer command. The scope of native Hook enforcement remains the host's supported Hook surface; loading DSH Skills does not establish DSH Hook enforcement.

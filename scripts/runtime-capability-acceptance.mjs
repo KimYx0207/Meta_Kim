@@ -440,7 +440,7 @@ function validatePackedReport(report, runtime, capability) {
     report.releaseGrade !== true ||
     !packedProductProofComplete(proof) ||
     globalProof?.status !== "passed" ||
-    !globalProof.targets?.map(normalizeRuntimeCapabilityRuntimeId).includes(normalizeRuntimeCapabilityRuntimeId(runtime))
+    !proof.currentPackage.targets.map(normalizeRuntimeCapabilityRuntimeId).includes(normalizeRuntimeCapabilityRuntimeId(runtime))
   ) {
     throw new Error("packed update/global readback report is not release-grade and runtime-complete");
   }
