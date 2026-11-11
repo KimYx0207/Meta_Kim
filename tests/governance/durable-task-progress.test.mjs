@@ -18,7 +18,7 @@ const digest = (value) => createHash("sha256").update(JSON.stringify(value)).dig
 const businessEvents = (context) => context.kernel.getEvents(context.runId).filter((event) => !event.eventType.startsWith("RunCoordinator"));
 
 /** Temporary kernel and discovery-only contract; no CLI, model, Graph or user data. */
-async function fixture(t, taskIds = ["a"], { criterionIds = ["report"] } = {}) {
+async function fixture(t, taskIds = ["a"], { criterionIds = ["report"], optionalKnowledge = false } = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-durable-progress-"));
   let context;
   t.after(async () => { context?.kernel?.close(); await fs.rm(root, { recursive: true, force: true }); });
@@ -35,7 +35,17 @@ async function fixture(t, taskIds = ["a"], { criterionIds = ["report"] } = {}) {
   const contract = { schemaVersion: 1, id: "progress-reviewer", componentType: "agent", componentVersion: "0.1.0", entrypoint: "AGENT.md", capabilities: [capability] };
   await fs.writeFile(path.join(componentRoot, "AGENT.md"), "---\nname: progress-reviewer\ndescription: Read-only progress report\ntools: Read\n---\nCompare the supplied material only. Discovery fixture, not native invocation.\n");
   await fs.writeFile(path.join(componentRoot, "capability.json"), stableJson(contract));
+  if (optionalKnowledge) {
+    await fs.writeFile(path.join(componentRoot, "baseline.md"), "Default report guidance\n");
+    await fs.writeFile(path.join(componentRoot, "example.md"), "Additional bounded report example\n");
+    await fs.writeFile(path.join(componentRoot, "second-example.md"), "Second bounded report example\n");
+  }
   await fs.writeFile(path.join(componentRoot, "method.json"), stableJson({ schemaVersion: 1, roleId: "progress-reviewer", protocol: "host-bound-task-method-v1",
+    ...(optionalKnowledge ? { knowledgeAssets: [
+      { id: "progress-baseline", path: "baseline.md", appliesTo: ["always"], sourceRefs: ["fixture:progress-baseline"] },
+      { id: "progress-example", path: "example.md", appliesTo: ["when an additional worked example is needed"], sourceRefs: ["fixture:progress-example"] },
+      { id: "progress-second-example", path: "second-example.md", appliesTo: ["when a second worked example is needed"], sourceRefs: ["fixture:progress-second-example"] },
+    ] } : {}),
     steps: ["Read supplied material"], acceptance: ["Return the bounded report"], automaticInvocation: false, finalAcceptance: "caller_only" }));
   await fs.writeFile(path.join(componentRoot, "check.mjs"), 'throw new Error("Discovery must not execute validation");\n');
   const component = { id: contract.id, componentType: "agent", componentVersion: "0.1.0", path: componentPath, entrypoint: "AGENT.md",
@@ -134,6 +144,64 @@ test("durable task progress closes a failed invocation without counting semantic
   assert.notEqual(restored.reason, "prior_attempt_requires_explicit_recovery");
   assert.equal(context.invoked, 1, "Completed recovery is retained without duplicate invocation");
   assert.equal(restored.taskProgress.tasks[0].unresolvedAttempts, 1);
+});
+
+test("explicit knowledge changes execution evidence while legacy recovery keeps its original basis", async (t) => {
+  const taskIds = ["a-legacy", "a-empty", "a-redundant", "a-selected", "a-reordered", "a-subset", "a-changed-content"];
+  const context = await fixture(t, taskIds, { optionalKnowledge: true });
+  context.packets[1].methodKnowledgeAssetIds = [];
+  context.packets[2].methodKnowledgeAssetIds = ["progress-baseline"];
+  context.packets[3].methodKnowledgeAssetIds = ["progress-example", "progress-second-example"];
+  context.packets[4].methodKnowledgeAssetIds = ["progress-second-example", "progress-example"];
+  context.packets[5].methodKnowledgeAssetIds = ["progress-example"];
+  context.packets[6].methodKnowledgeAssetIds = ["progress-example"];
+  const invokedTasks = [];
+  context.host.adapterRegistry.invoke = async (_adapterId, request) => {
+    context.invoked += 1; invokedTasks.push(request.packet.taskPacketId);
+    throw new Error("synthetic_transport_failure");
+  };
+  context.host.authorize = async ({ taskPacket }) => taskPacket?.taskPacketId === "a-changed-content"
+    ? { status: "waiting", reason: "fixture_before_resource_revision" } : { status: "ready" };
+  assert.equal((await context.advance()).reason, "fixture_before_resource_revision");
+  const running = () => businessEvents(context).filter(event => event.eventType === "TaskProgressObserved" && event.payload.observation.classification === "running");
+  const legacy = running().find(event => event.payload.observation.taskPacketId === "a-legacy").payload.observation;
+  context.packets[0].methodKnowledgeAssetIds = ["progress-example"];
+  assert.equal((await context.advance()).reason, "fixture_before_resource_revision");
+  assert.deepEqual(invokedTasks, taskIds.slice(0, -1), "Independent tasks may continue, but the failed task is not replayed");
+  const observed = id => running().find(event => event.payload.observation.taskPacketId === id).payload.observation;
+  for (const id of ["a-empty", "a-redundant"]) {
+    assert.equal(observed(id).evidenceBasisDigest, legacy.evidenceBasisDigest, "Empty or already-default selections retain the historical basis");
+  }
+  const selected = observed("a-selected");
+  assert.equal(observed("a-reordered").evidenceBasisDigest, selected.evidenceBasisDigest, "Reordering an effective resource set cannot fabricate new evidence");
+  assert.notEqual(observed("a-subset").evidenceBasisDigest, selected.evidenceBasisDigest, "A different effective resource set changes the evidence");
+  delete context.packets[0].methodKnowledgeAssetIds;
+  const recovery = claim(context, context.packets[0]);
+  fixtureObservation(context, context.packets[0], recovery, "running");
+  const recovered = running().find(event => event.payload.observation.attemptId === recovery.attemptId).payload.observation;
+  assert.equal(recovered.evidenceBasisDigest, legacy.evidenceBasisDigest, "Existing observations without the field retain the exact original basis");
+  const artifact = await completeFixture(context, context.packets[0], recovery);
+  const resumed = await context.advance({ outcomeReview: await reviewed(context, context.packets[0], artifact, "fail", "fixture:legacy-recovery-review") });
+  assert.equal(resumed.reason, "fixture_before_resource_revision", "The unchanged pending task still needs its source revision");
+  assert.equal(context.invoked, taskIds.length - 1);
+  assert.equal(selected.routeDigest, legacy.routeDigest, "The professional method and source stay the same");
+  assert.notEqual(selected.evidenceBasisDigest, legacy.evidenceBasisDigest, "The actual next invocation records the newly selected source knowledge as changed evidence");
+  const sourceRoot = context.env.META_KIM_KIM_SERVICE_ROOT;
+  const componentRoot = path.join(sourceRoot, "agents/progress-reviewer");
+  await fs.writeFile(path.join(componentRoot, "example.md"), "Revised example with additional recovery guidance\n");
+  const indexPath = path.join(sourceRoot, "generated/capabilities.json");
+  const index = JSON.parse(await fs.readFile(indexPath, "utf8"));
+  const contentSha256 = await componentHash(componentRoot);
+  index.components[0].contentSha256 = contentSha256;
+  index.capabilities[0].componentContentSha256 = contentSha256;
+  await fs.writeFile(indexPath, stableJson(index));
+  context.packets[6].ownerContract = { ...context.packets[6].ownerContract, componentContentSha256: contentSha256 };
+  context.host.authorize = async () => ({ status: "ready" });
+  await context.advance();
+  assert.deepEqual(invokedTasks, taskIds);
+  assert.equal(observed("a-changed-content").routeDigest, observed("a-subset").routeDigest);
+  assert.notEqual(observed("a-changed-content").evidenceBasisDigest, observed("a-subset").evidenceBasisDigest,
+    "The same resource IDs with verified changed contents have different execution evidence");
 });
 
 test("durable task progress reconciles a failed attempt after restart without replay inflation", async (t) => {

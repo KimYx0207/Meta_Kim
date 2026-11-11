@@ -22,15 +22,23 @@ const pathIdentity = candidate => process.platform === "win32" ? candidate.toLow
 function plainRoot(value) {
   const resolved = path.resolve(value);
   const stats = lstatSync(resolved);
-  if (!stats.isDirectory() || stats.isSymbolicLink() || pathIdentity(realpathSync.native(resolved)) !== pathIdentity(resolved)) {
+  if (!stats.isDirectory() || stats.isSymbolicLink()) {
     throw new Error("Graphify snapshot root must be a plain directory");
   }
-  return resolved;
+  // Parent aliases (for example macOS /var -> /private/var) do not make the
+  // root itself a link. Bind all later boundary checks to its canonical path.
+  const canonical = realpathSync.native(resolved);
+  const canonicalStats = lstatSync(canonical);
+  if (!canonicalStats.isDirectory() || canonicalStats.isSymbolicLink()
+    || canonicalStats.dev !== stats.dev || canonicalStats.ino !== stats.ino) {
+    throw new Error("Graphify snapshot root must be a plain directory");
+  }
+  return canonical;
 }
 
 /** Validate every source component before a snapshot reader touches its bytes. */
 export function resolvePlainGraphifySourceFile(repoRoot, repositoryFile) {
-  const sourceRoot = path.resolve(repoRoot);
+  const sourceRoot = plainRoot(repoRoot);
   const segments = repositoryFile.split("/");
   if (segments.some(segment => !segment || segment === "." || segment === ".." || segment === ".git")) {
     throw new Error("repository snapshot path escaped isolated worktree");

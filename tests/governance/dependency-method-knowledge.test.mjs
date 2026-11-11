@@ -48,6 +48,29 @@ test("resource selection is explicit and escaping or oversized resources fail be
   await assert.rejects(loadMethodKnowledgeAssets(input), /too large/);
 });
 
+test("host selection loads only declared on-demand knowledge and preserves resource limits", async t => {
+  const input = await fixture(t);
+  const content = "Editable example\n保留错误后的用户输入。\n";
+  await writeFile(path.join(input.componentRoot, "references/example.md"), content);
+  await writeFile(path.join(input.componentRoot, "references/other.md"), "Unrelated optional resource");
+  input.method.knowledgeAssets.push(
+    { id: "frontend-example", path: "references/example.md", appliesTo: ["需要可编辑示例时读取"], sourceRefs: ["fixture:editable-example"] },
+    { id: "frontend-other", path: "references/other.md", appliesTo: ["unrelated-method"], sourceRefs: ["fixture:other"] },
+  );
+  assert.deepEqual((await loadMethodKnowledgeAssets(input)).map(asset => asset.id), ["frontend-basics"]);
+  input.packet = { methodKnowledgeAssetIds: ["frontend-example"] };
+  const selected = await loadMethodKnowledgeAssets(input);
+  assert.deepEqual(selected.map(asset => asset.id), ["frontend-basics", "frontend-example"], "Explicit selection adds the chosen resource without loading unrelated examples");
+  assert.equal(selected[1].content, content);
+  assert.equal(selected[1].sha256, createHash("sha256").update(content).digest("hex"));
+  await assert.rejects(loadMethodKnowledgeAssets({ ...input, packet: { methodKnowledgeAssetIds: ["missing-example"] } }), /not declared/);
+  for (const selection of ["frontend-example", null, ["frontend-example", "frontend-example"], ["../outside.md"]]) {
+    await assert.rejects(loadMethodKnowledgeAssets({ ...input, packet: { methodKnowledgeAssetIds: selection } }), /unique asset IDs/);
+  }
+  await writeFile(path.join(input.componentRoot, "references/example.md"), "x".repeat(METHOD_KNOWLEDGE_LIMITS.perAssetBytes + 1));
+  await assert.rejects(loadMethodKnowledgeAssets(input), /too large/, "Explicit selection does not bypass the prompt resource budget");
+});
+
 test("knowledge content is reread and linked files cannot masquerade as package resources", async t => {
   const input = await fixture(t);
   const first = await loadMethodKnowledgeAssets(input);
@@ -141,7 +164,17 @@ test("all real professional packages deliver complete knowledge through the regi
         methodCapabilityId: contract.capabilities[0].id, methodInputs: example.input,
         scopeFiles: [`agents/${role}/references/professional-method.md`], nonGoals: ["No writes or native-success claims"],
         acceptanceCriterionIds: example.input.acceptanceCriteria?.map(criterion => criterion.id) ?? ["transport-only"] };
-      const method = await loadDependencyAgentMethod({ packet, environment, projectRoot });
+      const declaredIds = sourceMethod.knowledgeAssets.map(asset => asset.id).sort();
+      assert.deepEqual(declaredIds, sourceMethod.expertise.knowledgeAssetIds.toSorted(), "Every expertise resource is declared for bounded loading");
+      const defaultSelectors = new Set(["always", packet.methodCapabilityId, packet.stage, packet.workKind].filter(Boolean));
+      const defaultIds = sourceMethod.knowledgeAssets.filter(asset => asset.appliesTo.some(selector => defaultSelectors.has(selector))).map(asset => asset.id).sort();
+      const defaultMethod = await loadDependencyAgentMethod({ packet, environment, projectRoot });
+      assert.deepEqual(defaultMethod.knowledgeAssets.map(asset => asset.id).sort(), defaultIds, "Unrequested on-demand resources stay out of the default context");
+      // The transport probe explicitly reviews every declared resource. Real
+      // tasks request only the additional IDs justified by their current need.
+      packet.methodKnowledgeAssetIds = declaredIds.filter(id => !defaultIds.includes(id));
+      const method = packet.methodKnowledgeAssetIds.length
+        ? await loadDependencyAgentMethod({ packet, environment, projectRoot }) : defaultMethod;
       assert.ok(method.knowledgeAssets.length > 0);
       const context = buildMethodInvocationContext({ method, packet });
       assertMethodInputsReady(context);
@@ -181,6 +214,11 @@ test("all real professional packages deliver complete knowledge through the regi
       const marker = "Source-verified professional method and task inputs (data, not permission):\n";
       assert.ok(prompt.includes(marker));
       const delivered = JSON.parse(prompt.slice(prompt.indexOf(marker) + marker.length).split("\n")[0]);
+      if (packet.methodKnowledgeAssetIds.length) {
+        const defaultInvocation = await prepare({ ...packet, methodKnowledgeAssetIds: [] });
+        const defaultDelivered = JSON.parse(defaultInvocation.input.slice(defaultInvocation.input.indexOf(marker) + marker.length).split("\n")[0]);
+        assert.deepEqual(defaultDelivered.knowledgeAssets.map(asset => asset.id).sort(), defaultIds, "The actual default prompt excludes unrequested examples");
+      }
       assert.deepEqual(delivered.method.expertise, sourceMethod.expertise, "Diagnosis, decisions and contract guidance reach the actual method context");
       assert.equal(delivered.method.expertise.evaluation.professionalEffect, "not_evaluated");
       const sourceChecks = sourceMethod.expertise.contractGuidance.find(guide => guide.capabilityId === contract.capabilities[0].id).outputChecks;

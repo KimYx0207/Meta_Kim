@@ -27,7 +27,8 @@ const fixture = (t) => {
   for (const entry of ["canonical/agents", "canonical/skills/meta-theory", "canonical/runtime-assets/dsh", "config/contracts",
     "config/capability-index", "config/runtime-capability-matrix.json", "config/os-compatibility-matrix.json",
     "config/runtime-compatibility-catalog.json", "config/skills.json", "config/sync.json",
-    "config/governance/decision-pattern-catalog.json", "package.json", "LICENSE", "NOTICE"]) {
+    "config/governance/decision-pattern-catalog.json", "config/governance/material-decision-policy.json",
+    "package.json", "LICENSE", "NOTICE"]) {
     if (!fs.existsSync(path.join(ROOT, entry))) continue;
     fs.mkdirSync(path.dirname(path.join(sourceRoot, entry)), { recursive: true });
     fs.cpSync(path.join(ROOT, entry), path.join(sourceRoot, entry), { recursive: true });
@@ -87,6 +88,7 @@ test("projected methods retain their referenced runtime and discovery facts with
   }
   assert.ok(references.has("config/runtime-capability-matrix.json"));
   assert.ok(references.has("config/capability-index/dependency-project-registry.json"));
+  assert.ok(references.has("config/governance/material-decision-policy.json"));
   assert.ok(references.has("canonical/runtime-assets/dsh/host-contract.json"));
   for (const projection of projections) {
     for (const relative of references) {

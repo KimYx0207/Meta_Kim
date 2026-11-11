@@ -21,6 +21,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { classifyMetaTheoryEntry } from "./meta-theory-entry-classifier.mjs";
+import { canonicalMethodKnowledgeSelection } from "../src/infrastructure/capabilities/dependency-method-knowledge.mjs";
 import { normalizeOsTarget } from "./runtime-operating-system.mjs";
 import { renderPreparationNotice } from "./governed-execution/preparation-notice.mjs";
 import { inspectTrustedPath, withSafeManagedFileLock } from "./safe-managed-file-operations.mjs";
@@ -11499,6 +11500,7 @@ function synchronizeHostWorkOrder({ draft, packet }) {
     acceptanceCriterionIds: packet.acceptanceCriterionIds, verifySteps: packet.verifySteps,
     capabilityNeed: packet.capabilityNeed, capabilityRequirements: packet.capabilityRequirements,
     methodCapabilityId: packet.methodCapabilityId ?? null, methodInputs: packet.methodInputs ?? null,
+    ...(packet.methodKnowledgeAssetIds !== undefined ? { methodKnowledgeAssetIds: structuredClone(packet.methodKnowledgeAssetIds) } : {}),
     scopeFiles: packet.scopeFiles, shardScope: packet.shardScope, dependsOn: packet.dependsOn,
     dependencyEvidence: packet.dependencyEvidence, safetyEvidence: packet.safetyEvidence, mutationPolicy: packet.mutationPolicy,
     workspaceIsolation: packet.workspaceIsolation, externalWritePolicy: packet.externalWritePolicy, collisionPolicy: packet.collisionPolicy,
@@ -11518,6 +11520,7 @@ function synchronizeHostWorkOrder({ draft, packet }) {
         verifySteps: packet.verifySteps, verification: packet.verifySteps, verificationOwner: packet.handoffTarget };
       message.methodCapabilityId = packet.methodCapabilityId ?? null;
       message.methodInputs = packet.methodInputs ?? null;
+      if (packet.methodKnowledgeAssetIds !== undefined) message.methodKnowledgeAssetIds = structuredClone(packet.methodKnowledgeAssetIds);
       message.coordination = { ...message.coordination, dependsOn: packet.dependsOn, shardScope: packet.shardScope,
         dependencyEvidence: packet.dependencyEvidence, safetyEvidence: packet.safetyEvidence, mutationPolicy: packet.mutationPolicy,
         workspaceIsolation: packet.workspaceIsolation, externalWritePolicy: packet.externalWritePolicy, collisionPolicy: packet.collisionPolicy };
@@ -11618,7 +11621,8 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
         dependsOn: request.dependsOn.map((id) => runId + "-thinking-" + id),
         workOrderReadiness: draft.safetyEvidence.status === "proven" ? "ready" : "incomplete",
         handoffContract: { ...template.handoffContract, ...(request.handoffContract ?? {}), handoffTo: template.handoffTarget },
-        ...(request.methodCapabilityId ? { methodCapabilityId: request.methodCapabilityId, methodInputs: request.methodInputs ?? null } : {}) };
+        ...(request.methodCapabilityId ? { methodCapabilityId: request.methodCapabilityId, methodInputs: request.methodInputs ?? null } : {}),
+        ...(request.methodKnowledgeAssetIds !== undefined ? { methodKnowledgeAssetIds: structuredClone(request.methodKnowledgeAssetIds) } : {}) };
       records.push({ request, selectedRoute, draft, template, packet });
       providerList.push(...providerListFromRoute(selectedRoute));
     }
@@ -11642,7 +11646,9 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
         if (design.readiness !== "structure_ready_not_reviewed") record.planningBlockers.push("current_design_not_ready");
         if (packet && (productDesignDigest([...packet.capabilityNeed].sort()) !== productDesignDigest([...previous.capabilityNeed].sort()) ||
             (packet.methodCapabilityId ?? null) !== (previous.methodCapabilityId ?? null) ||
-            productDesignDigest(packet.methodInputs ?? null) !== productDesignDigest(previous.methodInputs ?? null))) {
+            productDesignDigest(packet.methodInputs ?? null) !== productDesignDigest(previous.methodInputs ?? null) ||
+            productDesignDigest(canonicalMethodKnowledgeSelection(packet.methodKnowledgeAssetIds)) !==
+              productDesignDigest(canonicalMethodKnowledgeSelection(previous.methodKnowledgeAssetIds)))) {
           record.planningBlockers.push("design_thinking_capability_or_method_binding_conflict:" + record.request.roleInstanceId);
         }
         // The design may add content, but must not replace checked filesystem
@@ -11651,6 +11657,7 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
         record.packet = { ...finalPacket, scopeFiles: previous.scopeFiles, shardScope: previous.shardScope,
           capabilityNeed: previous.capabilityNeed, capabilityRequirements: previous.capabilityRequirements,
           methodCapabilityId: previous.methodCapabilityId, methodInputs: previous.methodInputs,
+          ...(previous.methodKnowledgeAssetIds !== undefined ? { methodKnowledgeAssetIds: structuredClone(previous.methodKnowledgeAssetIds) } : {}),
           acceptanceCriteria: [...new Set([...(record.template.acceptanceCriteria ?? []), ...finalPacket.verifySteps.map((step) => step.verify)])] };
       }
     }
@@ -11776,7 +11783,8 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
       return { ...packet, taskDesignAssessment: { ...assessment, blockedOnlyByDesign: !assessment.ready && packet.workOrderReadiness === "ready" },
         ...(assessment.ready ? {} : { workOrderReadiness: "incomplete", finalizationGate: "blocked_before_host_handoff" }) };
     });
-  if (hostWorkOrderRecords.some(({ request }) => request.effectClass === "local_write")) {
+  if (hostWorkOrderRecords.some(({ request }) => request.effectClass === "local_write") ||
+      workerTaskPackets.some(packet => packet.methodKnowledgeAssetIds !== undefined)) {
     for (const record of hostWorkOrderRecords) {
       const finalPacket = workerTaskPackets.find((packet) => packet.roleInstanceId === record.request.roleInstanceId);
       if (finalPacket) synchronizeHostWorkOrder({ ...record, packet: finalPacket });

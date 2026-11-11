@@ -2,11 +2,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
-  existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync,
+  existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { materializeGraphifyWorktreeSnapshot } from "../../scripts/graphify-worktree-snapshot.mjs";
+import {
+  materializeGraphifyWorktreeSnapshot, resolvePlainGraphifySourceFile,
+} from "../../scripts/graphify-worktree-snapshot.mjs";
 
 function git(cwd, args) {
   const result = spawnSync("git", args, { cwd, encoding: "utf8" });
@@ -90,6 +92,70 @@ test("isolated snapshots handle tracked file-to-directory and directory-to-file 
 
   assert.deepEqual(bytes(workspace), sourceBefore);
   assert.deepEqual(bytes(source), sourceBefore);
+});
+
+test("isolated snapshots accept plain roots beneath a parent directory alias", t => {
+  const { source, workspace, temp } = fixture(t);
+  const alias = path.join(temp, "parent-alias");
+  symlinkSync(temp, alias, "junction");
+  writeFileSync(path.join(source, "kept.txt"), "current source through parent alias\n");
+  writeFileSync(path.join(source, "new asset.bin"), Buffer.from([0xff, 0, 13, 10]));
+  const sourceBefore = bytes(source);
+  const sourceIndexBefore = readFileSync(path.join(source, ".git", "index"));
+  const metadataBefore = readFileSync(path.join(workspace, ".git"));
+
+  materializeGraphifyWorktreeSnapshot(snapshot(path.join(alias, "source")), path.join(alias, "isolated"));
+
+  assert.deepEqual(bytes(workspace), sourceBefore);
+  assert.deepEqual(bytes(source), sourceBefore);
+  assert.deepEqual(readFileSync(path.join(source, ".git", "index")), sourceIndexBefore);
+  assert.deepEqual(readFileSync(path.join(workspace, ".git")), metadataBefore);
+});
+
+test("the public source resolver canonicalizes a parent alias without accepting internal links", t => {
+  const { source, temp } = fixture(t);
+  const alias = path.join(temp, "parent-alias");
+  symlinkSync(temp, alias, "junction");
+  const aliasedSource = path.join(alias, "source");
+
+  assert.equal(resolvePlainGraphifySourceFile(aliasedSource, "kept.txt"), realpathSync.native(path.join(source, "kept.txt")));
+  symlinkSync(source, path.join(source, "linked-directory"), "junction");
+  assert.throws(() => resolvePlainGraphifySourceFile(aliasedSource, "linked-directory/kept.txt"), /non-plain/u);
+  assert.throws(() => resolvePlainGraphifySourceFile(aliasedSource, "../isolated/kept.txt"), /escaped/u);
+});
+
+test("parent aliases cannot hide overlapping source and destination roots", t => {
+  const { source, workspace, temp } = fixture(t);
+  const alias = path.join(temp, "parent-alias");
+  symlinkSync(temp, alias, "junction");
+  const aliasedSource = path.join(alias, "source");
+  const sourceBefore = bytes(source);
+  const targetBefore = bytes(workspace);
+
+  assert.throws(() => materializeGraphifyWorktreeSnapshot(snapshot(source), aliasedSource), /overlap/u);
+  assert.throws(() => materializeGraphifyWorktreeSnapshot(snapshot(aliasedSource), source), /overlap/u);
+  assert.deepEqual(bytes(source), sourceBefore);
+  assert.deepEqual(bytes(workspace), targetBefore);
+});
+
+test("a source or destination root that is itself a link is rejected before mutation", t => {
+  const { source, workspace, temp } = fixture(t);
+  const sourceLink = path.join(temp, "source-link");
+  const workspaceLink = path.join(temp, "workspace-link");
+  symlinkSync(source, sourceLink, "junction");
+  symlinkSync(workspace, workspaceLink, "junction");
+  const sourceBefore = bytes(source);
+  const targetBefore = bytes(workspace);
+  const sourceIndexBefore = readFileSync(path.join(source, ".git", "index"));
+  const metadataBefore = readFileSync(path.join(workspace, ".git"));
+
+  assert.throws(() => materializeGraphifyWorktreeSnapshot({ repoRoot: sourceLink, repositoryFiles: ["kept.txt"] }, workspace), /plain directory/u);
+  assert.throws(() => materializeGraphifyWorktreeSnapshot(snapshot(source), workspaceLink), /plain directory/u);
+  assert.throws(() => resolvePlainGraphifySourceFile(sourceLink, "kept.txt"), /non-plain|plain directory/u);
+  assert.deepEqual(bytes(source), sourceBefore);
+  assert.deepEqual(bytes(workspace), targetBefore);
+  assert.deepEqual(readFileSync(path.join(source, ".git", "index")), sourceIndexBefore);
+  assert.deepEqual(readFileSync(path.join(workspace, ".git")), metadataBefore);
 });
 
 test("isolated snapshots reject ignored ancestor symlinks before clearing the worktree", t => {

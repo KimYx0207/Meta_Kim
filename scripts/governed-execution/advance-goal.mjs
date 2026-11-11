@@ -4,6 +4,7 @@ import path from "node:path";
 import { selectMaximalSafeReadySet, stageLaneNodeId } from "./stage-dag.mjs";
 import { buildReadOnlyWorkerPrompt, readObservedMachineResult } from "./stage-runner-bridge.mjs";
 import { loadDependencyAgentMethod } from "../dependency-agent-discovery.mjs";
+import { additionalMethodKnowledgeEvidence } from "../../src/infrastructure/capabilities/dependency-method-knowledge.mjs";
 import { evaluateTaskOutcome } from "../../src/domain/governance/task-outcome.mjs";
 import { inspectTrustedPath, executeSafeManagedFileTransaction, normalizeManagedRelPath } from "../safe-managed-file-operations.mjs";
 import { restoreHumanMilestoneDeclarations, resolveHumanMilestoneReviews, hasNativeHumanMilestoneTransport } from "./plan-challenge-host-continuation.mjs";
@@ -439,11 +440,13 @@ export async function advanceGovernedGoal({
       const execute = async () => {
         try {
           const dispatched = structuredClone(packet);
+          const additionalKnowledge = additionalMethodKnowledgeEvidence(method, dispatched);
           const progressPacket = { taskPacketId: packet.taskPacketId, logicalTaskPacketId: packet.logicalTaskPacketId || packet.taskPacketId,
             ownerAgent: packet.ownerAgent, weapon: host.adapterId, capabilityId: method.capabilityId, methodCapabilityId: method.capabilityId,
             strategyRef: { id: method.sourceRef, ref: method.sourceRef, sha256: method.methodSha256 || method.contentDigest }, acceptanceCriterionIds: packet.acceptanceCriterionIds || [] };
           const basisEvidence = [{ ref: method.sourceRef, sha256: method.contentDigest },
             { ref: `kernel:${runId}:${claim.attemptId}:method-input`, sha256: digest({ methodInputs: dispatched.methodInputs ?? null,
+              ...(additionalKnowledge.length ? { methodKnowledgeAssets: additionalKnowledge } : {}),
               upstream: upstream.map((item) => item.outputSha256) }) }];
           for (const criterionId of progressPacket.acceptanceCriterionIds) appendTaskProgress({ attemptId: claim.attemptId, criterionId,
             classification: "running", basisEvidence, evidenceRefs: [`kernel:${runId}:${claim.attemptId}`] }, progressPacket);

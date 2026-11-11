@@ -17,6 +17,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { enrichMetaKimGraph } from "../../scripts/graphify-enrichment.mjs";
 import { applyGraphNodeIdentityProof } from "../../scripts/graphify-node-identity.mjs";
+import { classifyMetaTheoryEntry } from "../../canonical/runtime-assets/shared/hooks/entry-classifier.mjs";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -39,6 +40,7 @@ function assertActivationHandoffWithoutExecution(result, projectRoot) {
   assert.equal(existsSync(path.join(stateDir, "post-copy-init.json")), false);
   assert.equal(existsSync(path.join(stateDir, "project-bootstrap.json")), false);
   assert.equal(existsSync(path.join(stateDir, "live-view-requests")), false);
+  return state;
 }
 
 function writeFakeExecutable(dir, name, source) {
@@ -497,8 +499,11 @@ console.log("forced rebuild ok");
     assert.match(src, /stdio: "ignore"/);
     assert.match(src, /META_KIM_POST_COPY_AUTO === "off"/);
     assert.match(src, /catch \{\s*\/\/ Post-copy auto-init is opportunistic/s);
-    assert.match(src, /critical_fetch_thinking_review_requested/);
-    assert.match(src, /natural_language_durable_work/);
+    assert.match(src, /import \{ classifyMetaTheoryEntry \} from "\.\/entry-classifier\.mjs"/u);
+    assert.match(src, /function classifyPromptActivation\(promptText\) \{\s*const classification = classifyMetaTheoryEntry\(promptText\);/u);
+    assert.match(src, /triggered: classification\.governedEntry/u);
+    assert.match(src, /taskClassification: classification\.taskClassification/u);
+    assert.match(src, /triggerReason: classification\.triggerReason/u);
     assert.match(claudeSettings, /"UserPromptSubmit"/);
     assert.match(claudeSettings, /activate-meta-theory-spine\.mjs/);
     assert.doesNotMatch(src, /projectBootstrapProbe/);
@@ -612,6 +617,8 @@ console.log("forced rebuild ok");
   test("bootstrap probe off still allows prompt-entry spine activation", () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-probe-off-spine-"));
     const globalStateDir = mkdtempSync(path.join(os.tmpdir(), "meta-kim-probe-off-state-"));
+    const prompt = "critical and fetch thinking and review 帮我修复项目入口，完成后实机测试、提交、推送、发布新版本";
+    const classification = classifyMetaTheoryEntry(prompt);
     try {
       // Mark tempDir a project root so prompt-entry spine activation writes
       // spine-state here (probe-off must not suppress legitimate activation).
@@ -624,8 +631,7 @@ console.log("forced rebuild ok");
         cwd: tempDir,
         input: JSON.stringify({
           hook_event_name: "UserPromptSubmit",
-          prompt:
-            "critical and fetch thinking and review 帮我修复项目入口，完成后实机测试、提交、推送、发布新版本",
+          prompt,
         }),
         encoding: "utf8",
         timeout: 120_000,
@@ -640,7 +646,10 @@ console.log("forced rebuild ok");
       });
 
       assert.equal(result.status, 0, result.stderr || result.stdout);
-      assertActivationHandoffWithoutExecution(result, tempDir);
+      const state = assertActivationHandoffWithoutExecution(result, tempDir);
+      assert.equal(classification.governedEntry, true);
+      assert.equal(state.taskClassification, classification.taskClassification);
+      assert.equal(state.triggerReason, classification.triggerReason);
       assert.deepEqual(readdirSync(globalStateDir), [], "probe-off activation must leave global automation state untouched");
       assert.equal(existsSync(path.join(tempDir, ".meta-kim", "state", "default", "spine", "spine-state.json")), true);
     } finally {

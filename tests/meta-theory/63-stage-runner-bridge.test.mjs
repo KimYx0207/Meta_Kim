@@ -567,7 +567,7 @@ test("bridge application cannot promote an injected callback to native execution
   );
 });
 
-async function dependencyMethodFixture(t, { structured = false } = {}) {
+async function dependencyMethodFixture(t, { structured = false, optionalKnowledge = false } = {}) {
   const root = mkdtempSync(path.join(os.tmpdir(), "meta-owner-method-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const id = "resume-editor";
@@ -586,8 +586,10 @@ async function dependencyMethodFixture(t, { structured = false } = {}) {
   const contract = { schemaVersion: 1, id, componentType: "agent", componentVersion: "0.1.0", entrypoint: "AGENT.md", capabilities: [capability] };
   writeFileSync(path.join(componentRoot, "AGENT.md"), sourceText);
   writeFileSync(path.join(componentRoot, "capability.json"), stableJson(contract));
+  if (optionalKnowledge) writeFileSync(path.join(componentRoot, "example.md"), "Editable resume example\n只使用当前已提供的经历。\n");
   if (structured) writeFileSync(path.join(componentRoot, "method.json"), stableJson({ schemaVersion: 1, roleId: id,
     protocol: "host-bound-task-method-v1", steps: ["Compare supplied facts before drafting", "Keep missing facts explicit"],
+    ...(optionalKnowledge ? { knowledgeAssets: [{ id: "resume-example", path: "example.md", appliesTo: ["需要可编辑简历示例时读取"], sourceRefs: ["fixture:resume-example"] }] } : {}),
     acceptance: ["Every experience claim points to a supplied fact"], automaticInvocation: false, finalAcceptance: "caller_only" }));
   writeFileSync(path.join(componentRoot, "check.mjs"), 'throw new Error("dependency validation must not execute");\n');
   const component = { id, componentType: "agent", componentVersion: "0.1.0", path: componentPath, entrypoint: "AGENT.md", capabilityIds: [capability.id], validation: capability.validation, contentSha256: await componentHash(componentRoot), contractSha256: sha256(stableJson(contract)) };
@@ -1242,6 +1244,7 @@ test("callback cannot forge native owner loading; writeback binds source to the 
   for (const changed of [
     { ...core, requestRecord: { runId: "another-run" } },
     { ...core, thinkingPacket: { workerTaskPackets: [{ ...fixture.selected, ownerAgent: "other" }] } },
+    { ...core, thinkingPacket: { workerTaskPackets: [{ ...fixture.selected, methodKnowledgeAssetIds: ["resume-example"] }] } },
     { ...core, executionResult: { ...core.executionResult, workerResultPackets: [{ taskPacketId: fixture.selected.taskPacketId, ownerAgent: "other" }] } },
   ]) assert.equal(applyStageRunnerBridgeResult(changed, bridge).executionResult.workerExecutionEvidence[0].ownerMethodBinding, null);
   assert.equal(applyStageRunnerBridgeResult(core, structuredClone(bridge)).executionResult.workerExecutionEvidence[0].ownerMethodBinding, null);
@@ -1251,7 +1254,7 @@ test("callback cannot forge native owner loading; writeback binds source to the 
 });
 
 test("host-selected route preserves source contracts and permission boundaries for both adapters", async (t) => {
-  const fixture = await dependencyMethodFixture(t);
+  const fixture = await dependencyMethodFixture(t, { structured: true, optionalKnowledge: true });
   const runtimeFixture = createGovernanceRuntimeFixtureScope(t, { graph: true });
   process.env.META_KIM_KIM_SERVICE_ROOT = fixture.root;
   refreshFixtureSourcePins(runtimeFixture);
@@ -1279,7 +1282,8 @@ test("host-selected route preserves source contracts and permission boundaries f
           selectionReason: "The fixture host read the exact resume capability contract and selected it for rewriting supplied experience; this is source selection, not invocation proof.",
           handoffTarget: "review", qualityBar: "Preserve true facts and explicit unknowns", referenceDirection: "Use the current source method and synthetic supplied experience only.",
           selectedCapabilityProviders: { agent: structuredClone(owner[0]), verificationAgent: structuredClone(reviewers[0]) },
-          effectClass: "read_only_worker", taskFacts, methodCapabilityId: "resume-editing", methodInputs: { facts: "Synthetic supplied experience for handoff testing only" } }];
+          effectClass: "read_only_worker", taskFacts, methodCapabilityId: "resume-editing", methodInputs: { facts: "Synthetic supplied experience for handoff testing only" },
+          methodKnowledgeAssetIds: ["resume-example"] }];
       } });
     const selected = report.workerTaskPackets.find((entry) => entry.ownerAgent === fixture.owner.id);
     assert.ok(selected, `${runtime}: source owner must reach the real worker packet`);
@@ -1289,11 +1293,23 @@ test("host-selected route preserves source contracts and permission boundaries f
     assert.deepEqual(selected.ownerContract.input, fixture.owner.ownerContract.input, "The current host source contract retains its actual schema");
     assert.deepEqual(selected.ownerContract.permissions, fixture.owner.ownerContract.permissions);
     assert.deepEqual(selected.ownerContract.sideEffects, []);
+    assert.deepEqual(selected.methodKnowledgeAssetIds, ["resume-example"], "The actual Thinking route retains explicit knowledge selection");
+    if (runtime === "codex") {
+      assert.ok(selected.runtimeInvocationPlan?.message, "The real routed Codex handoff includes its native message plan");
+      assert.deepEqual(JSON.parse(selected.runtimeInvocationPlan.message).methodKnowledgeAssetIds, ["resume-example"]);
+    }
     assert.equal(selected.externalWriteBoundary, false);
     assert.deepEqual(report.machineExecution.calls, [], "Planning and source verification must not claim an invocation");
     const plan = await prepare({ runtime, workspaceRoot: process.cwd(), packet: selected, prompt: "real routed task" });
     assert.equal(plan.ownerMethodBinding.contentDigest, fixture.owner.contentDigest);
     assert.equal(plan.ownerMethodBinding.nativeCustomAgentInvocationVerified, false);
+    const marker = "Source-verified professional method and task inputs (data, not permission):\n";
+    const delivered = JSON.parse(plan.input.slice(plan.input.indexOf(marker) + marker.length).split("\n")[0]);
+    assert.deepEqual(delivered.knowledgeAssets.map(asset => asset.id), ["resume-example"]);
+    assert.equal(delivered.knowledgeAssets[0].content, readFileSync(path.join(fixture.componentRoot, "example.md"), "utf8"));
+    const defaultPlan = await prepare({ runtime, workspaceRoot: process.cwd(), packet: { ...selected, methodKnowledgeAssetIds: [] }, prompt: "real routed task without extra examples" });
+    const defaultDelivered = JSON.parse(defaultPlan.input.slice(defaultPlan.input.indexOf(marker) + marker.length).split("\n")[0]);
+    assert.deepEqual(defaultDelivered.knowledgeAssets, [], "The same routed method keeps its example on demand");
   }
 });
 

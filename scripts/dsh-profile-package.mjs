@@ -43,6 +43,7 @@ const METHOD_SOURCE_CONFIGS = Object.freeze([
   "config/capability-index/provider-registry.json",
   "config/capability-index/weapon-registry.json",
   "config/governance/decision-pattern-catalog.json",
+  "config/governance/material-decision-policy.json",
 ]);
 
 function readPlain(file) {

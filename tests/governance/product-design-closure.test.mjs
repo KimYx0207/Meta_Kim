@@ -11,6 +11,7 @@ import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runti
 import { fixtureCritical, fixtureReadWorkOrder, refreshFixtureSourcePins, runWithFixtureHostThinking, observeFixturePlanChoice } from "../helpers/host-reasoning-fixture.mjs";
 import { readOnlyFixtureTaskFacts } from "../helpers/task-design-facts.mjs";
 import { intentDialogueDigest } from "../../scripts/governed-execution/intent-dialogue.mjs";
+import { canonicalMethodKnowledgeSelection } from "../../src/infrastructure/capabilities/dependency-method-knowledge.mjs";
 
 const task = "Run meta-theory: inspect package.json and produce a durable report of the exact package name. Do not modify source files.";
 const goal = buildTaskGoalContract({ task });
@@ -76,11 +77,22 @@ test("artifact consumers require a real direct or transitive producer dependency
 });
 
 test("design retains full task and method inputs without permission or self-certified invocation", () => {
-  const design = normalizeProductDesign({ input: designInput(), dialogue, goalContract: goal });
+  const input = designInput();
+  input.taskSlices[0].methodKnowledgeAssetIds = ["package-report-example"];
+  const design = normalizeProductDesign({ input, dialogue, goalContract: goal });
   const [worker] = projectDesignWorkerTasks({ design, runId: "run", templates: [{ ownerAgent: "discovered-review", workOrderReadiness: "ready", mutationPolicy: "read_only", finalizationGate: "host_action_required" }] });
   assert.equal(worker.coreProblem, task);
   assert.deepEqual(worker.scopeFiles, ["package.json"]);
   assert.deepEqual(worker.methodInputs, { currentSystem: "Existing package metadata" });
+  assert.deepEqual(worker.methodKnowledgeAssetIds, ["package-report-example"]);
+  assert.deepEqual(canonicalMethodKnowledgeSelection(undefined), canonicalMethodKnowledgeSelection([]), "Default resource choices agree across Thinking and design");
+  assert.deepEqual(canonicalMethodKnowledgeSelection(["second-example", "first-example"]), canonicalMethodKnowledgeSelection(["first-example", "second-example"]), "Selection order cannot create a method binding conflict");
+  assert.equal(canonicalMethodKnowledgeSelection(null), null, "Invalid selections remain invalid for loader validation");
+  assert.deepEqual(canonicalMethodKnowledgeSelection(["first-example", "first-example"]), ["first-example", "first-example"], "Normalization cannot hide duplicate requests");
+  const changed = structuredClone(input);
+  changed.taskSlices[0].methodKnowledgeAssetIds = [];
+  assert.notEqual(normalizeProductDesign({ input: changed, dialogue, goalContract: goal }).designDigest, design.designDigest,
+    "Changing selected resources changes the existing design binding");
   assert.equal(worker.designBinding.designDigest, design.designDigest);
   assert.equal(worker.workOrderReadiness, "ready");
   assert.equal(design.nativeInvocationVerified, false);

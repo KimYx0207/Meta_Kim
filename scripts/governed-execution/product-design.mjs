@@ -289,6 +289,7 @@ export function projectDesignWorkerTasks({ design, runId, templates, research = 
             file === edge.from || file === edge.to || edge.from.startsWith(file + "/") || edge.to.startsWith(file + "/"))) } } : {}),
         limitations: projectContext.limitations } } : {}),
       methodInputs: structuredClone(slice.methodInputs ?? null), ...(slice.methodCapabilityId ? { methodCapabilityId: slice.methodCapabilityId } : {}),
+      ...(slice.methodKnowledgeAssetIds !== undefined ? { methodKnowledgeAssetIds: structuredClone(slice.methodKnowledgeAssetIds) } : {}),
       designTask: { completionDemo: slice.completionDemo, inputRefs: slice.inputRefs, deliverables: slice.deliverables, journeyRefs: slice.journeyRefs ?? [], decisionRefs: slice.decisionRefs ?? [], dependencyReasons: slice.dependencyReasons ?? [] },
       artifactFlowRefs: [...(slice.artifactFlowRefs ?? [])], artifactFlow: design.artifactFlow.filter((flow) => flow.producerTaskId === slice.id || flow.consumerTaskIds.includes(slice.id)),
       workOrderReadiness: ready ? "ready" : "incomplete", finalizationGate: ready ? packet.finalizationGate : "blocked_before_host_handoff" };
