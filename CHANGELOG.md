@@ -4,6 +4,16 @@
 
 User-facing changes for each release. Detailed test results live in the linked verification records.
 
+## [3.10.1] - Unreleased candidate
+
+This section records a source candidate only; version 3.10.1 has not been formally released.
+
+- **Resume interrupted work without repeating completed tasks.** Preserve finished results and keep failures with uncertain outcomes on the explicit recovery path.
+- **Show the next recovery step.** When a task needs correction, explain the reason and the next review or recovery action while independent work continues.
+- **Keep DSH decision guidance available.** Include the missing configuration that distinguishes material user decisions from changes to internal task assignments.
+- **Handle ordinary macOS paths correctly.** System aliases in parent directories no longer cause valid source snapshots to be rejected.
+- **Deliver requested professional examples in full.** Load optional design and financial-model examples when needed and carry their complete source material through the worker handoff. Equivalent selections keep the same recovery basis; actual resource or content changes are recorded distinctly.
+
 ## [3.10.0] - 2026-11-11
 
 ### Smoother work, broader client integration

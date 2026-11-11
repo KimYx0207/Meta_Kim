@@ -193,13 +193,18 @@ describe("release documentation semantics", () => {
       /\*\*Cursor\*\*\s*\|\s*완전 지원/,
     ];
 
+    // The package may be an unreleased source candidate. Current-release links
+    // follow the latest dated release entry, not that candidate version.
+    const releasedVersion = readFileSync(path.join(root, "CHANGELOG.md"), "utf8")
+      .match(/^## \[([^\]]+)\] - \d{4}-\d{2}-\d{2}/m)?.[1];
+    assert.ok(releasedVersion, "The changelog must identify a dated release");
+
     for (const file of readmeFiles) {
       const raw = readFileSync(path.join(root, file), "utf8");
 
       for (const client of ["Codex", "Claude Code", "Cursor", "Gemini CLI", "ZCode"]) assert.match(raw, new RegExp(client), `${file} missing requested client ${client}`);
       assert.match(raw, /config\/runtime-compatibility-catalog\.json/, file);
-      const version = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).version;
-      assert.ok(raw.includes(`/releases/tag/v${version}`), `${file} must link the current release`);
+      assert.ok(raw.includes(`[v${releasedVersion}](https://github.com/KimYx0207/Meta_Kim/releases/tag/v${releasedVersion})`), `${file} must label and link the current released version`);
       assert.match(raw, /docs\/verification\/dsh-professional-quality-20261111\.md/, `${file} must link the observed verification scope`);
       for (const betaName of betaNames) {
         assert.match(raw, new RegExp(betaName), `${file} missing ${betaName}`);
