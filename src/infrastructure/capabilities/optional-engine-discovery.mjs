@@ -2,6 +2,24 @@ import { constants, promises as fs } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
 
+/** Version compatibility alone never proves host registration, permission or execution. */
+export function qualifyOptionalEngineInterfaces(interfaces, observedVersion = null) {
+  const version = typeof observedVersion === "string" && /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u.test(observedVersion)
+    ? observedVersion.split(".").map(Number) : null;
+  return interfaces.map(entry => {
+    const minimum = entry.versionRequirement?.minimum ?? null;
+    let versionStatus = minimum ? "unverified" : "not_required";
+    if (minimum && version) {
+      if (!/^\d+\.\d+\.\d+$/u.test(minimum)) throw new Error("Invalid optional engine minimum version");
+      const required = minimum.split(".").map(Number);
+      const difference = version.map((value, index) => value - required[index]).find(value => value !== 0) ?? 0;
+      versionStatus = difference >= 0 ? "compatible" : "incompatible";
+    }
+    return { type: entry.type, transport: entry.transport, minimumVersion: minimum, observedVersion,
+      versionStatus, hostVerified: false, routeEligible: false };
+  });
+}
+
 /** Locate only explicitly registered commands. Never execute PATH contents. */
 export async function discoverOptionalEngines({ projects = [], environment = process.env,
   platform = process.platform } = {}) {
@@ -40,6 +58,7 @@ export async function discoverOptionalEngines({ projects = [], environment = pro
     records.push({
       id: project.id, command: discovery.command, capabilityType: project.capabilityType,
       interfaces: structuredClone(project.interfaces ?? []),
+      interfaceQualification: qualifyOptionalEngineInterfaces(project.interfaces ?? []),
       description: project.capabilityCard?.oneLine ?? project.name,
       available: Boolean(executable), executablePath: executable,
       availability: executable ? "executable_present" : "not_located_on_allowed_path",
@@ -64,6 +83,7 @@ export function optionalEngineCommand(record, platformId, platformName) {
     metadata: { name: record.id, description: record.description,
       providerKind: "optional_upstream_engine", capabilityType: record.capabilityType,
       interfaces: record.interfaces, transport: "local_process", command: record.command,
+      interfaceQualification: record.interfaceQualification, version: record.version,
       permissionStatus: "unknown", observationKind: "path_presence_only",
       invocationState: "not_invoked", liveVerified: false },
   };

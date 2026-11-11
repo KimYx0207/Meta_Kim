@@ -122,5 +122,26 @@
         "global": "~/.<runtime> inside distro"
       }
     }
-  ]
+  ],
+  "hostDetection": {
+    "nodePlatformAliases": {
+      "darwin": "macos",
+      "win32": "windows",
+      "linux": "linux"
+    },
+    "targetAliases": {
+      "darwin": "macos",
+      "osx": "macos",
+      "mac": "macos",
+      "win32": "windows",
+      "win": "windows"
+    },
+    "wsl2KernelPattern": "wsl2",
+    "unknownHost": "unknown",
+    "precedence": [
+      "explicit_target",
+      "META_KIM_OS",
+      "observed_node_platform"
+    ]
+  }
 }

@@ -5,7 +5,6 @@ import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync,
-  copyFileSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -31,6 +30,7 @@ import {
   resolveGraphifyExecutable,
   runPythonModule,
 } from "./graphify-runtime.mjs";
+import { GRAPHIFY_PACKAGE, reconcileGraphifyPackage } from "./graphify-package-install.mjs";
 import { enrichMetaKimGraph } from "./graphify-enrichment.mjs";
 import {
   graphifyOutputNormalizationValues,
@@ -60,6 +60,11 @@ import {
 import { homedir } from "node:os";
 import { sanitizeGraphifyWindowsHooks } from "./graphify-hook-sanitize.mjs";
 import { renameWithTransientRetry } from "./transient-rename.mjs";
+import {
+  materializeGraphifyWorktreeSnapshot,
+  resolvePlainGraphifySourceFile,
+  sanitizedGraphifyGitEnvironment as sanitizedGitEnvironment,
+} from "./graphify-worktree-snapshot.mjs";
 
 const command = process.argv[2] || "check";
 const GRAPHIFY_MIGRATION_STATE_SCHEMA = "meta-kim-graphify-migration-state-v2";
@@ -391,14 +396,6 @@ function isContained(root, candidate) {
   return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== "..");
 }
 
-function sanitizedGitEnvironment(environment = process.env) {
-  const clean = { ...environment };
-  for (const key of Object.keys(clean)) {
-    if (key.toUpperCase().startsWith("GIT_")) delete clean[key];
-  }
-  return clean;
-}
-
 function gitText(cwd, args) {
   const result = spawnSync("git", args, {
     cwd,
@@ -452,6 +449,12 @@ function readRepositoryContext(cwd) {
   if (filesRaw == null) return null;
   const deletedFilesRaw = gitText(topLevel, ["ls-files", "--deleted", "-z"]);
   if (deletedFilesRaw == null) return null;
+  const indexRaw = gitText(topLevel, ["ls-files", "--stage", "-z"]);
+  if (indexRaw == null) return null;
+  const indexedPlainFiles = new Set(indexRaw.split("\0").flatMap(entry => {
+    const match = entry.match(/^100(?:644|755) [a-f0-9]+ [0-3]\t([\s\S]+)$/u);
+    return match ? [match[1].replaceAll("\\", "/")] : [];
+  }));
   const deletedFiles = new Set(
     deletedFilesRaw
       .split("\0")
@@ -463,6 +466,10 @@ function readRepositoryContext(cwd) {
     .filter((value) => value.length > 0)
     .map((value) => value.replaceAll("\\", "/"))
     .filter((value) => !deletedFiles.has(value))
+    // Git --deleted does not report a tracked blob replaced by a directory.
+    // The old blob is absent; its current children arrive through --others.
+    // Symlinks and gitlinks remain in the inventory for the plain-file guard.
+    .filter((value) => !indexedPlainFiles.has(value) || !lstatSync(path.join(topLevel, ...value.split("/"))).isDirectory())
     .filter((value) => !isKnownUntrackedGraphifyAttributes(topLevel, value));
   return {
     repoRoot: topLevel,
@@ -481,11 +488,7 @@ function repositoryStateDigest(repoRoot, repositoryFiles) {
   for (const repositoryFile of [...repositoryFiles].sort((left, right) =>
     left < right ? -1 : left > right ? 1 : 0
   )) {
-    const target = path.join(repoRoot, ...repositoryFile.split("/"));
-    const stats = lstatSync(target);
-    if (!stats.isFile() || stats.isSymbolicLink()) {
-      throw new Error("repository inventory contains a non-plain file");
-    }
+    const target = resolvePlainGraphifySourceFile(repoRoot, repositoryFile);
     digest.update(repositoryFile);
     digest.update("\0");
     digest.update(sha256(readFileSync(target)));
@@ -1289,22 +1292,7 @@ function runVerifiedLocalGraphifyUpdate(
     }
     worktreeAdded = true;
 
-    for (const repositoryFile of repository.repositoryFiles) {
-      const source = path.join(
-        repository.repoRoot,
-        ...repositoryFile.split("/"),
-      );
-      const target = path.join(workspace, ...repositoryFile.split("/"));
-      const sourceStats = lstatSync(source);
-      if (!sourceStats.isFile() || sourceStats.isSymbolicLink()) {
-        throw new Error("repository snapshot contains a non-plain file");
-      }
-      if (!isContained(workspace, target)) {
-        throw new Error("repository snapshot path escaped isolated worktree");
-      }
-      mkdirSync(path.dirname(target), { recursive: true });
-      copyFileSync(source, target);
-    }
+    materializeGraphifyWorktreeSnapshot(repository, workspace);
 
     const isolatedOutput = path.join(workspace, "graphify-out");
     if (existsSync(isolatedOutput)) {
@@ -1953,19 +1941,18 @@ function installGraphify({ upgrade = false } = {}) {
 
   console.log(`Using ${formatPythonLauncher(python)} (${python.versionText})`);
 
-  const pipArgs = ["-m", "pip", "install"];
-  if (upgrade) {
-    pipArgs.push("--upgrade");
-  }
-  pipArgs.push(managed?.config ? "graphifyy==0.9.56" : "graphifyy");
-
-  const pipResult = runPythonModule(python, pipArgs, undefined, {
-    stdio: "inherit",
+  const packageResult = reconcileGraphifyPackage(python, {
+    inUpdateMode: upgrade,
+    onAction: () => console.log(`Installing ${GRAPHIFY_PACKAGE}`),
   });
-  if (pipResult.status !== 0) {
-    process.exitCode = pipResult.status || 1;
+  if (!packageResult.ok) {
+    fail(`Graphify package verification failed: ${packageResult.code}`);
+    const detail = readProcessText(packageResult.processResult);
+    if (detail) console.error(detail);
+    process.exitCode = packageResult.processResult?.status || 1;
     return;
   }
+  console.log(`Graphify package ${packageResult.version} verified.`);
 
   const installResult = runPythonModule(
     python,

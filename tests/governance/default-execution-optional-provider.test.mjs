@@ -3,17 +3,20 @@ import { rmSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { createGovernanceRuntimeFixture } from "../helpers/governance-runtime-fixture.mjs";
+import { FIXTURE_DIAGNOSTIC_PROVIDERS } from "../helpers/host-reasoning-fixture.mjs";
 
 test("default evidence validates available and unavailable optional providers without gating native fanout", (t) => {
   const fixture = createGovernanceRuntimeFixture(t);
+  const diagnosticEnvironment = { ...fixture.env,
+    META_KIM_DIAGNOSTIC_PROVIDERS: JSON.stringify(FIXTURE_DIAGNOSTIC_PROVIDERS) };
   const validate = () => {
-    const result = fixture.run(["scripts/validate-default-governed-execution-evidence.mjs"]);
+    const result = fixture.run(["scripts/validate-default-governed-execution-evidence.mjs"], { env: diagnosticEnvironment });
     assert.equal(result.status, 0, result.stderr || result.stdout);
     return JSON.parse(result.stdout);
   };
   const available = validate();
   const validateProductExperience = () => {
-    const result = fixture.run(["scripts/validate-product-experience-core-goals.mjs"]);
+    const result = fixture.run(["scripts/validate-product-experience-core-goals.mjs"], { env: diagnosticEnvironment });
     assert.equal(result.status, 0, result.stderr || result.stdout);
     return JSON.parse(result.stdout);
   };

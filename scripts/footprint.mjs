@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { ENTRY_CLASSIFIER_HOOK_FILES } from "./runtime-hook-mapping.mjs";
 /**
  * Meta_Kim footprint scanner — shows everything Meta_Kim has written to the
  * current system, grouped by category A..I. Drives both `npm run meta:status`
@@ -83,6 +84,7 @@ function isGlobalMetaKimHookCommand(command) {
   );
 }
 const REPO_HOOK_FILES = new Set([
+  ...ENTRY_CLASSIFIER_HOOK_FILES,
   "activate-meta-theory-spine.mjs",
   "bash-readonly-whitelist.mjs",
   "enforce-agent-dispatch.mjs",

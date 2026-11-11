@@ -185,7 +185,7 @@ function jsonResponse(response, statusCode, value) {
   response.end(body);
 }
 
-function deliverableResponse(response, value) {
+function deliverableResponse(response, value, { download = false } = {}) {
   const escape = (text) => String(text).replace(/[&<>"']/gu, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));
   securityHeaders(response);
   response.statusCode = 200;
@@ -193,6 +193,15 @@ function deliverableResponse(response, value) {
   response.setHeader("cache-control", "no-store");
   if (value.kind !== "external" && /^sha256:[a-f0-9]{64}$/u.test(value.contentVersion || "")) response.setHeader("x-meta-kim-content-version", value.contentVersion);
   response.setHeader("cross-origin-resource-policy", "same-origin");
+  if (download && value.kind !== "external") {
+    const bytes = value.bytes ?? Buffer.from(value.text, "utf8");
+    response.setHeader("content-type", "application/octet-stream");
+    response.setHeader("content-disposition", `attachment; filename="result.txt"; filename*=UTF-8''${encodeURIComponent(value.filename || "result.txt").replace(/['()*]/gu, (character) => "%" + character.charCodeAt(0).toString(16).toUpperCase())}`);
+    response.setHeader("content-security-policy", "sandbox; default-src 'none'; frame-ancestors 'none'");
+    response.setHeader("content-length", bytes.length);
+    response.end(bytes);
+    return;
+  }
   response.setHeader("content-security-policy", value.kind === "external"
     ? "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     : "sandbox; default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'; navigate-to 'none'; frame-ancestors 'none'");
@@ -946,8 +955,9 @@ export function createLiveControlRoomServer(options = {}) {
     if (parsed.pathname === "/api/deliverable") {
       const runId = parsed.searchParams.get("runId");
       const deliverableId = parsed.searchParams.get("deliverableId");
-      if (!runId || !isLiveRunId(runId) || !/^deliverable:[a-f0-9]{24}$/u.test(deliverableId || "") ||
-        [...parsed.searchParams.keys()].some((key) => !["projectId", "runId", "deliverableId"].includes(key))) {
+      const download = parsed.searchParams.get("download");
+      if ((download !== null && download !== "1") || !runId || !isLiveRunId(runId) || !/^deliverable:[a-f0-9]{24}$/u.test(deliverableId || "") ||
+        [...parsed.searchParams.keys()].some((key) => !["projectId", "runId", "deliverableId", "download"].includes(key))) {
         jsonResponse(response, 400, safeError("invalid_deliverable_reference"));
         return;
       }
@@ -956,7 +966,8 @@ export function createLiveControlRoomServer(options = {}) {
         const value = selection.service && typeof selection.service.getDeliverable === "function"
           ? await selection.service.getDeliverable(runId, deliverableId) : null;
         if (!value || selection.invalidProject || selection.invalidRun) jsonResponse(response, 404, safeError("deliverable_unavailable"));
-        else deliverableResponse(response, value);
+        else if (download && value.kind === "external") jsonResponse(response, 400, safeError("external_download_unavailable"));
+        else deliverableResponse(response, value, { download: download === "1" });
       } catch { jsonResponse(response, 404, safeError("deliverable_unavailable")); }
       return;
     }

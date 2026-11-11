@@ -3,12 +3,15 @@ import path from "node:path";
 import { inspectTrustedPath } from "./safe-managed-file-operations.mjs";
 
 const HASH_RE = /^[a-f0-9]{64}$/iu;
+const DEFAULT_SUPPORTED_TARGETS = Object.freeze(JSON.parse(
+  readFileSync(new URL("../config/sync.json", import.meta.url), "utf8"),
+).supportedTargets);
 
 export function resolveExistingManagedProjectCandidates(
   candidates,
   {
     manifestRelPath = ".meta-kim/state/default/project-bootstrap.json",
-    supportedTargets = ["claude", "codex", "cursor", "openclaw"],
+    supportedTargets = DEFAULT_SUPPORTED_TARGETS,
   } = {},
 ) {
   const deployments = [];

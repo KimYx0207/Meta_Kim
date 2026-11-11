@@ -142,6 +142,10 @@ const APPROVED_DECISION_CLOSURE = [
 // Explicitly reviewed additions to the existing M3 package boundary.
 // Keep this list independent of package.json so accidental widening fails.
 const APPROVED_HARNESS_ADDITIONS = [
+  "src/application/decision/route-candidate-options.mjs",
+  "src/application/governance/task-design-dispatch.mjs",
+  "src/application/runtime/operating-system.mjs",
+  "src/data/repositories/live-deliverable-repository.mjs",
   "src/adapters/codex/desktop-decision-host-adapter.mjs",
   "src/application/live/live-deliverables.mjs",
   "src/application/live/live-graph-readability.mjs",

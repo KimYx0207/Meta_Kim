@@ -100,6 +100,16 @@
       "targetRef": "canonical/skills/meta-theory/SKILL.md",
       "toStatus": "active"
     },
+    "material-choice-20261112:reviewed-core-loop-binding": {
+      "appliedAt": "2026-11-11T18:58:03.366Z",
+      "approvalDigest": "sha256:7988ece02a9a5d43b4754ee90f20511ae7f44b341c5893a5b5386f93aa857750",
+      "candidateDigest": "sha256:3a550293f8511d5d4e446c5c3d323fdd1f453385c1fa2147ad2d613aa16393f7",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "rollbackPlanDigest": "sha256:c22645e09a1cdb388deae93319b08800c0cf063d2775b125ce0107d5edcf4830",
+      "targetRef": "config/contracts/core-loop-contract.json",
+      "toStatus": "active"
+    },
     "publish-both-20261021:reviewed-meta-theory-skill": {
       "appliedAt": "2026-10-21T14:08:10.970Z",
       "approvalDigest": "sha256:25450021a3af89b61b47573cac68c321901624018146f3dadb65a53e649e0d5a",
@@ -160,9 +170,9 @@
       "foundational": true,
       "kind": "rule",
       "lifecycle": {
-        "changedAt": "2026-11-11T00:09:08.123Z",
-        "lastTransitionId": "canary-fuse-20261111:task-progress-rollout",
-        "reason": "Expose task-scoped canary and recovery status from existing observed attempts. Remove calendar-based escalation; preserve the two ineffective result threshold, one active attempt, dependency checks, original goal and authorization. No automatic external rollback or whole-run circuit."
+        "changedAt": "2026-11-11T18:58:03.366Z",
+        "lastTransitionId": "material-choice-20261112:reviewed-core-loop-binding",
+        "reason": "Current-session source review by /root and /root/openclaw_routing_fix compared the exact registered HEAD bytes and full current contract. The parsed delta contains only the Thinking choicePolicyRef and userChoiceWhen: reference the shared material-decision policy and ask only for an unresolved, evidenced material user impact while reusing existing direction and authorization. Internal owner/loadout differences alone do not create a user decision. Execution permission, destructive/external-write boundaries, stage order, verification and public-ready evidence requirements are unchanged. This source binding records the present local review; it is not user-performed review or native execution proof."
       },
       "provenance": {
         "evidenceRefs": [
@@ -174,7 +184,7 @@
         ]
       },
       "replacementRefs": [],
-      "sourceDigest": "sha256:54de32df4c501eb2b0b903b9ac3b30ddbbb0527519e15e00cd77abebb2a8c5aa",
+      "sourceDigest": "sha256:9b181778f2e641d2af91dd84c68ac2e9985bf3b4459bc188c89e863e72988b2a",
       "status": "active",
       "targetRef": "config/contracts/core-loop-contract.json"
     },
@@ -631,6 +641,39 @@
       "targetRef": "config/contracts/core-loop-contract.json",
       "toStatus": "active",
       "transitionId": "canary-fuse-20261111:task-progress-rollout"
+    },
+    {
+      "appliedAt": "2026-11-11T18:58:03.366Z",
+      "approvalDigest": "sha256:7988ece02a9a5d43b4754ee90f20511ae7f44b341c5893a5b5386f93aa857750",
+      "candidateDigest": "sha256:3a550293f8511d5d4e446c5c3d323fdd1f453385c1fa2147ad2d613aa16393f7",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "previousEntry": {
+        "executionClass": "execution_eligible",
+        "foundational": true,
+        "kind": "rule",
+        "lifecycle": {
+          "changedAt": "2026-11-11T00:09:08.123Z",
+          "lastTransitionId": "canary-fuse-20261111:task-progress-rollout",
+          "reason": "Expose task-scoped canary and recovery status from existing observed attempts. Remove calendar-based escalation; preserve the two ineffective result threshold, one active attempt, dependency checks, original goal and authorization. No automatic external rollback or whole-run circuit."
+        },
+        "provenance": {
+          "evidenceRefs": [
+            "AGENTS.md#Eight-Stage-Spine"
+          ],
+          "recordedAt": "2026-08-12T00:00:00.000Z",
+          "sourceRefs": [
+            "config/contracts/core-loop-contract.json"
+          ]
+        },
+        "replacementRefs": [],
+        "sourceDigest": "sha256:54de32df4c501eb2b0b903b9ac3b30ddbbb0527519e15e00cd77abebb2a8c5aa",
+        "status": "active",
+        "targetRef": "config/contracts/core-loop-contract.json"
+      },
+      "targetRef": "config/contracts/core-loop-contract.json",
+      "toStatus": "active",
+      "transitionId": "material-choice-20261112:reviewed-core-loop-binding"
     }
   ],
   "policy": {
@@ -640,7 +683,7 @@
     "referenceOnlyPromotion": false,
     "retiredRecordsRemainTombstones": true
   },
-  "revision": 13,
+  "revision": 14,
   "schemaVersion": "knowledge-lifecycle-registry-v1",
-  "updatedAt": "2026-11-11T00:09:08.123Z"
+  "updatedAt": "2026-11-11T18:58:03.366Z"
 }

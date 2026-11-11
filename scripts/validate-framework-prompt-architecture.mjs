@@ -8,6 +8,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { runMetaTheoryGovernedExecution } from "./run-meta-theory-governed-execution.mjs";
+import { runDiagnosticReadPlan } from "./diagnostic-host-protocol.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(scriptDir, "..");
@@ -270,16 +271,17 @@ async function main() {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-prompt-architecture-"));
   let governedExecutionStatus = "unknown";
   try {
-    const report = await runMetaTheoryGovernedExecution({
+    const report = await runDiagnosticReadPlan(runMetaTheoryGovernedExecution, {
       task: [
         "一个 framework prompt 需要通过 Claude Code 和 Codex 主链路。",
         "不能覆盖 planning-with-files，只能迭代更新。",
         "需要保留 findskill、hookprompt、skill-creator 这类抽象能力触发边界。",
       ].join("\n"),
       runId: "validate-framework-prompt-architecture",
+      projectRoot: REPO_ROOT,
       stateDir: tempDir,
       dbPath: path.join(tempDir, "runs.sqlite"),
-    });
+    }, [path.relative(REPO_ROOT, CONTRACT_PATH)]);
     validateDefaultRunStatus(report);
     validateDefaultArtifact(report, contract);
     governedExecutionStatus = report.status;

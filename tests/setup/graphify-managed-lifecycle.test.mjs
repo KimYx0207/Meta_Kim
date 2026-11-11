@@ -1,10 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { GRAPHIFY_PACKAGE, GRAPHIFY_VERSION } from "../../scripts/graphify-package-install.mjs";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const cli = path.join(root, "scripts", "graphify-cli.mjs");
@@ -52,7 +53,7 @@ const fs = require("fs");
 const path = require("path");
 const args = process.argv.slice(2);
 fs.appendFileSync(path.join(process.cwd(), ".graphify-cli-calls.log"), args.join(" ") + "\\n");
-if (args.join(" ") === "--version") { console.log("graphify 0.9.56"); process.exit(0); }
+if (args.join(" ") === "--version") { console.log(${JSON.stringify(`graphify ${GRAPHIFY_VERSION}`)}); process.exit(0); }
 if (args.join(" ") === "claude install") process.exit(0);
 if (args.join(" ") === "hook install") {
   const hooks = path.join(process.cwd(), ".git", "hooks");
@@ -69,12 +70,14 @@ process.exit(0);
   chmodSync(bin, 0o755);
 }
 
-function writeFakePython(bin, graphifyBin) {
+function writeFakePython(bin, graphifyBin, { initialVersion = GRAPHIFY_VERSION, installedVersion = GRAPHIFY_VERSION } = {}) {
+  writeFileSync(`${bin}.version`, initialVersion ?? "");
   writeFileSync(bin, `#!/usr/bin/env node
 const fs = require("fs");
 const path = require("path");
 const { spawnSync } = require("child_process");
 const args = process.argv.slice(2);
+fs.appendFileSync(process.argv[1] + ".calls.jsonl", JSON.stringify(args) + "\\n");
 function repoFromArgs() { return args[args.indexOf("--repo") + 1] || process.cwd(); }
 function gitDir(repo) { return spawnSync("git", ["-C", repo, "rev-parse", "--git-dir"], { encoding: "utf8" }).stdout.trim(); }
 function manager(command) {
@@ -107,10 +110,15 @@ function manager(command) {
 }
 if (args.join(" ") === "--version") { console.log("Python 3.12.0"); process.exit(0); }
 if (args.join(" ") === "-m pip --version") { console.log("pip 24.0"); process.exit(0); }
-if (args.join(" ") === "-m pip show graphifyy") { console.log("Name: graphifyy\\nVersion: 0.9.56"); process.exit(0); }
+if (args.join(" ") === "-m pip show graphifyy") {
+  const version = fs.readFileSync(process.argv[1] + ".version", "utf8");
+  if (!version) process.exit(1);
+  console.log("Name: graphifyy\\nVersion: " + version); process.exit(0);
+}
 if (args[0] === "-c") { console.log(${JSON.stringify(graphifyBin)}); process.exit(0); }
 if (args[0] === "-m" && args[1] === "pip" && args[2] === "install") {
   fs.appendFileSync(path.join(process.cwd(), ".pip-install-calls.log"), args.slice(2).join(" ") + "\\n");
+  fs.writeFileSync(process.argv[1] + ".version", ${JSON.stringify(installedVersion)});
   process.exit(0);
 }
 if (args[0] === "-m" && args[1] === "graphify") {
@@ -119,10 +127,91 @@ if (args[0] === "-m" && args[1] === "graphify") {
   process.exit(result.status ?? 1);
 }
 if (args[0]?.endsWith("graphify-managed.py")) manager(args[1]);
+if (args[0]?.endsWith(".test.py")) process.exit(0);
 process.exit(1);
 `);
   chmodSync(bin, 0o755);
 }
+
+function installFixture(t, { managed = false, initialVersion = null, installedVersion = GRAPHIFY_VERSION } = {}) {
+  const tmp = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "meta-kim-graphify-install-")));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  const binDir = path.join(tmp, "bin");
+  mkdirSync(binDir);
+  const repo = initRepo(tmp);
+  const graphifyBin = path.join(binDir, "graphify");
+  const pythonBin = path.join(binDir, "python3");
+  writeFakeGraphify(graphifyBin);
+  writeFakePython(pythonBin, graphifyBin, { initialVersion, installedVersion });
+  if (managed) {
+    mkdirSync(path.join(repo, ".git", "graphify"));
+    writeFileSync(path.join(repo, ".git", "graphify", "config.json"), JSON.stringify({ python: pythonBin, repo }));
+  }
+  const env = { ...process.env, PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+    META_KIM_GRAPHIFY_BIN: graphifyBin, META_KIM_GRAPHIFY_PYTHON: pythonBin };
+  return { tmp, repo, pythonBin, env,
+    calls: () => readFileSync(`${pythonBin}.calls.jsonl`, "utf8").trim().split(/\r?\n/u).map(line => JSON.parse(line)),
+    run: command => spawnSync(process.execPath, [cli, command], { cwd: repo, env, encoding: "utf8", timeout: 10_000 }),
+  };
+}
+
+for (const managed of [false, true]) {
+  for (const command of ["install", "update"]) {
+    test(`public Graphify ${command} uses the shared pin and verifies actual ${managed ? "managed" : "ordinary"} Python`, { skip: process.platform === "win32" }, t => {
+      const fixture = installFixture(t, { managed });
+      const result = fixture.run(command);
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+      const calls = fixture.calls();
+      const installs = calls.filter(args => args[0] === "-m" && args[1] === "pip" && args[2] === "install");
+      assert.deepEqual(installs, [["-m", "pip", "install", ...(command === "update" ? ["--upgrade"] : []), GRAPHIFY_PACKAGE]]);
+      const showIndices = calls.flatMap((args, index) => args.join(" ") === "-m pip show graphifyy" ? [index] : []);
+      const installIndex = calls.indexOf(installs[0]);
+      assert.equal(showIndices.length, 2, "installation requires actual package readback before and after pip");
+      assert.ok(showIndices[0] < installIndex && installIndex < showIndices[1]);
+      assert.equal(readFileSync(`${fixture.pythonBin}.version`, "utf8"), GRAPHIFY_VERSION);
+      const hookIndex = calls.findIndex(args => args.join(" ") === "-m graphify hook install");
+      assert.ok(hookIndex > showIndices[1], "hook installation must wait for verified package bytes/version");
+    });
+  }
+
+  test(`public Graphify install reuses an exact ${managed ? "managed" : "ordinary"} package without pip`, { skip: process.platform === "win32" }, t => {
+    const fixture = installFixture(t, { managed, initialVersion: GRAPHIFY_VERSION });
+    const result = fixture.run("install");
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(fixture.calls().some(args => args[1] === "pip" && args[2] === "install"), false);
+    assert.ok(fixture.calls().some(args => args.join(" ") === "-m pip show graphifyy"));
+  });
+
+  test(`public Graphify install rejects a wrong ${managed ? "managed" : "ordinary"} post-install version before hooks`, { skip: process.platform === "win32" }, t => {
+    const fixture = installFixture(t, { managed, installedVersion: "0.0.0" });
+    const result = fixture.run("install");
+    assert.notEqual(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stderr, /graphify_package_version_mismatch/u);
+    assert.equal(fixture.calls().some(args => args[0] === "-m" && args[1] === "graphify"), false,
+      "pip exit zero alone must not install native integrations");
+  });
+}
+
+test("managed Python test runner follows a changed shared baseline instead of silently skipping it", { skip: process.platform === "win32" }, t => {
+  const baseline = JSON.parse(readFileSync(path.join(root, "config", "dependency-baseline.json"), "utf8"));
+  const [major, minor, patch] = baseline.graphify.version.split(".").map(Number);
+  baseline.graphify.version = `${major}.${minor}.${patch + 1}`;
+  const fixture = installFixture(t, { initialVersion: baseline.graphify.version });
+  const copiedRoot = path.join(fixture.tmp, "runner");
+  mkdirSync(path.join(copiedRoot, "scripts"), { recursive: true });
+  mkdirSync(path.join(copiedRoot, "config"));
+  for (const name of ["run-graphify-managed-tests.mjs", "graphify-runtime.mjs", "graphify-package-install.mjs", "dependency-baseline.mjs"]) {
+    copyFileSync(path.join(root, "scripts", name), path.join(copiedRoot, "scripts", name));
+  }
+  writeFileSync(path.join(copiedRoot, "config", "dependency-baseline.json"), JSON.stringify(baseline));
+  const result = spawnSync(process.execPath, [path.join(copiedRoot, "scripts", "run-graphify-managed-tests.mjs")], {
+    cwd: fixture.repo, env: fixture.env, encoding: "utf8", timeout: 10_000,
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.doesNotMatch(result.stdout, /SKIP/u, "the current exact baseline must execute the managed tests");
+  const launched = fixture.calls().filter(args => args[0]?.endsWith(".test.py")).map(args => path.basename(args[0]));
+  assert.deepEqual(launched, ["graphify-managed-safety.test.py", "graphify-managed.test.py", "graphify-managed-producer.test.py"]);
+});
 
 test("graphify-cli exposes managed commands and routes rebuild through existing managed config", { skip: process.platform === "win32" }, () => {
   const tmp = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), "meta-kim-managed-cli-")));
@@ -133,7 +222,7 @@ test("graphify-cli exposes managed commands and routes rebuild through existing 
   const graphifyBin = path.join(binDir, "graphify");
   const pythonBin = path.join(binDir, "python3");
   writeFakeGraphify(graphifyBin);
-  writeFakePython(pythonBin, graphifyBin);
+  writeFakePython(pythonBin, graphifyBin, { initialVersion: null });
   mkdirSync(path.join(repo, ".git", "graphify"), { recursive: true });
   writeFileSync(
     path.join(repo, ".git", "graphify", "config.json"),
@@ -149,7 +238,7 @@ test("graphify-cli exposes managed commands and routes rebuild through existing 
     };
     const installCommand = spawnSync(process.execPath, [cli, "install"], { cwd: repo, env, encoding: "utf8" });
     assert.equal(installCommand.status, 0, installCommand.stderr || installCommand.stdout);
-    assert.match(readFileSync(path.join(repo, ".pip-install-calls.log"), "utf8"), /graphifyy==0\.9\.56/);
+    assert.match(readFileSync(path.join(repo, ".pip-install-calls.log"), "utf8"), new RegExp(escapeRegExp(GRAPHIFY_PACKAGE)));
 
     const install = spawnSync(process.execPath, [cli, "managed-install"], { cwd: repo, env, encoding: "utf8" });
     assert.equal(install.status, 0, install.stderr || install.stdout);
@@ -203,7 +292,8 @@ test("setup source preserves existing managed config after native hook install a
   assert.ok(rawUpdate > finalRun, "raw update must stay only as the unmanaged fallback branch");
   assert.match(src, /function readManagedGraphConfig\(targetDir\)/);
   assert.match(src, /let managedGraphConfig = readManagedGraphConfig\(graphifyDir\);[\s\S]*?let python = managedGraphConfig/);
-  assert.match(src, /const graphifyPackage = managedGraphConfig \? "graphifyy==0\.9\.56" : "graphifyy"/);
+  assert.match(src, /reconcileGraphifyPackage\(python, \{/);
+  assert.doesNotMatch(src, /managedGraphConfig \? "graphifyy/);
   assert.doesNotMatch(src, /managedConfig\.manager \?\? sourceManager/);
   assert.match(src, /function runManagedGraphLifecycle\(targetDir, action, managedConfig\)/);
 });

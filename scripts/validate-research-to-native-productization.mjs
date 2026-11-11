@@ -9,6 +9,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { getReportLabels } from "./meta-kim-i18n.mjs";
 import { runMetaTheoryGovernedExecution } from "./run-meta-theory-governed-execution.mjs";
+import { runDiagnosticReadPlan } from "./diagnostic-host-protocol.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(scriptDir, "..");
@@ -325,7 +326,7 @@ async function main() {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-research-native-"));
   let governedExecutionStatus = "unknown";
   try {
-    const report = await runMetaTheoryGovernedExecution({
+    const report = await runDiagnosticReadPlan(runMetaTheoryGovernedExecution, {
       task: [
         "同一套 PRD review standard 需要 skill。",
         "长期 test coverage owner 需要 agent。",
@@ -333,9 +334,10 @@ async function main() {
         "内部知识库需要 MCP provider 边界。",
       ].join("\n"),
       runId: "validate-research-to-native-productization",
+      projectRoot: REPO_ROOT,
       stateDir: tempDir,
       dbPath: path.join(tempDir, "runs.sqlite"),
-    });
+    }, [path.relative(REPO_ROOT, CONTRACT_PATH)]);
     validateDefaultRunStatus(report);
     validateDefaultArtifact(report, frameworkPromptContract);
     governedExecutionStatus = report.status;

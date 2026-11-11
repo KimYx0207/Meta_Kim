@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { ENTRY_CLASSIFIER_HOOK_FILES } from "./runtime-hook-mapping.mjs";
 /**
  * Meta_Kim uninstaller — reverses what sync-runtimes / sync-global-meta-theory
  * / setup.mjs have written. Dry-run by default; `--yes` actually deletes.
@@ -1169,6 +1170,7 @@ function isRetiredHookCommand(command) {
 }
 
 const REPO_HOOK_FILES = new Set([
+  ...ENTRY_CLASSIFIER_HOOK_FILES,
   "activate-meta-theory-spine.mjs",
   "bash-readonly-whitelist.mjs",
   "enforce-agent-dispatch.mjs",

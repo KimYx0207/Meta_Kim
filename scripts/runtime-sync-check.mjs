@@ -1,3 +1,4 @@
+import { ENTRY_CLASSIFIER_HOOK_FILES } from "./runtime-hook-mapping.mjs";
 export const META_AGENTS = [
   "meta-artisan",
   "meta-chrysalis",
@@ -30,6 +31,7 @@ export const OPENCLAW_WORKSPACE_MD = [
 ];
 
 export const SHARED_HOOK_FILES = [
+  ...ENTRY_CLASSIFIER_HOOK_FILES,
   "skip-reminder.mjs",
   "activate-meta-theory-spine.mjs",
   "bash-readonly-whitelist.mjs",

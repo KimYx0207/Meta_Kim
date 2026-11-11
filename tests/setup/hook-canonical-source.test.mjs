@@ -166,6 +166,9 @@ test("cross-runtime hook core has one canonical owner", () => {
     "governed-task-reference.mjs",
     "task-progress.mjs",
     "governed-host-checkpoint.mjs",
+    "entry-classification-lexicon.json",
+    "entry-classifier-core.mjs",
+    "entry-classifier.mjs",
     "activate-meta-theory-spine.mjs",
     "planning-continuity.mjs",
   ]);

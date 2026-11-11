@@ -1,3 +1,4 @@
+import { ENTRY_CLASSIFIER_HOOK_FILES } from "./runtime-hook-mapping.mjs";
 /**
  * Meta_Kim 跨平台能力发现器 v2
  *
@@ -2290,6 +2291,7 @@ export async function updateGlobalCapabilityInventory({
 // ========== 输出格式 ==========
 
 const META_KIM_HOOK_FILE_NAMES = new Set([
+  ...ENTRY_CLASSIFIER_HOOK_FILES,
   "activate-meta-theory-spine.mjs",
   "bash-readonly-whitelist.mjs",
   "block-dangerous-bash.mjs",

@@ -175,6 +175,16 @@
             "type": "string",
             "description": "npm package used when installMethod is upstreamCli"
           },
+          "upstreamHookPolicy": {
+            "type": "string",
+            "enum": ["disabled", "enabled"],
+            "description": "ECC hooks are disabled by default; enabling requires this explicit installer policy."
+          },
+          "upstreamHookPolicyByTarget": {
+            "type": "object",
+            "additionalProperties": { "type": "string", "enum": ["disabled", "enabled"] },
+            "description": "Optional per-runtime override for the ECC hook policy."
+          },
           "upstreamProfile": {
             "type": "string",
             "description": "profile passed to the upstream installer when installMethod is upstreamCli"

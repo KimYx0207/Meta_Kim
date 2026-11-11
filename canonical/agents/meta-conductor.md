@@ -66,17 +66,19 @@ trigger: "Multi-step tasks, Type C execution, rhythm optimization, or when workf
 
 Conductor manages the `choiceSurfaceState` field lifecycle as part of pre-decision option framing:
 
+Use `config/governance/material-decision-policy.json` for the choice boundary. Choosing a different owner, model, provider or loadout alone is internal dispatch. Ask only when current evidence leaves an unresolved material difference in the user outcome or its constraints; reuse settled direction and existing authorization.
+
 | State | Transition Trigger | Allowed Content | Forbidden Content |
 |-------|-------------------|-----------------|-------------------|
 | `not_allowed` | Default before Critical | None | Any popup/card/question |
-| `critical_clarification_allowed` | During Critical when the user's expression fails the intent completeness framework and the missing answer changes route, scope, risk, acceptance, owner, permission, or non-goal | Blocking Critical clarification only | Execution options, implementation choices |
-| `execution_confirmation_allowed` | After Fetch + Thinking complete, before Execution | Single consolidated execution confirmation | New discovery questions |
+| `critical_clarification_allowed` | During Critical when the user's expression fails the intent completeness framework and the missing answer changes the user-visible result, scope, risk, acceptance, permission, or non-goal | Blocking Critical clarification only | Execution options, implementation choices |
+| `execution_confirmation_allowed` | After Fetch + Thinking when an evidenced material user choice remains unresolved | One current material choice | New discovery questions or repeated approval of an authorized path |
 | `completed` | After user answers or valid skip recorded | None | Repeat confirmations |
 
 **Transition Rules**:
 1. Initialize `choiceSurfaceState = "not_allowed"` when spine state is created
 2. Set to `critical_clarification_allowed` only when `intentFrameAssessment` marks a missing or conflicting dimension as execution-changing
-3. Set to `execution_confirmation_allowed` only after both `fetchRecord.capabilitySearchPerformed = true` AND `preDecisionOptionFrame` exists
+3. Set to `execution_confirmation_allowed` only after both `fetchRecord.capabilitySearchPerformed = true` AND `preDecisionOptionFrame` exists, and an evidenced material user choice is still unresolved
 4. Set to `completed` after user responds via native question tool OR `solutionChoiceState` records a valid skip (`trivial`/`no_branching_choice`/`auto-proceed`)
 5. If the active runtime is Codex or Claude Code, Conductor must use that runtime's primary native choice surface named by its runtime reference for the allowed state; missing, empty, rejected, or stripped native UI blocks or returns to the responsible stage and must not be treated as a chat-card fallback
 6. For compatibility runtimes only, a verified conversation fallback may keep the run inspectable; it does not change the Codex / Claude Code no-downgrade rule
@@ -288,7 +290,7 @@ Conductor must also brief the evidence owner with the Deep Research Requirement:
 - `reviewOwner`
 - `verificationOwner`
 
-Rule: Conductor validates evidence lanes, builds the pre-decision option frame, waits for user choice unless skip is allowed (`trivial`, `no_branching_choice`, or explicit auto-proceed), then finalizes the dispatch envelope. Read-only/queryBypass is a safety and path-classification boundary, not a choice-surface skip reason when route-changing options exist. No evidence packet, option frame, or post-choice envelope means no execution.
+Rule: Conductor validates evidence lanes, builds the pre-decision option frame, asks only for an unresolved material user choice under the shared decision policy, records the applicable skip (`trivial`, `no_branching_choice`, or explicit auto-proceed) otherwise, then finalizes the dispatch envelope. Read-only/queryBypass is a safety and path-classification boundary, not a choice-surface skip reason when route-changing options exist. No evidence packet, option frame, or post-choice envelope means no execution.
 
 ### B. Standard Task Board Fields
 

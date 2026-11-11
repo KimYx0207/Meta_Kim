@@ -5,6 +5,11 @@ import path from "node:path";
 import { taskOutcomeDigest } from "../../src/domain/governance/task-outcome.mjs";
 import { intentDialogueDigest } from "../../scripts/governed-execution/intent-dialogue.mjs";
 
+/** Explicit disposable fixture sources; production diagnostics use Service contracts. */
+export const FIXTURE_DIAGNOSTIC_PROVIDERS = Object.freeze({
+  runtime: "codex", agent: { id: "backend" }, verificationAgent: { id: "review" }, skill: { id: "get-context" },
+});
+
 /** Explicit test-host judgment, never production inference or an approval receipt. */
 export function fixtureCritical({ task, outcome = task, intentDigest = null, successCriteria, blockingUnknowns = [], nonGoals = [] }) {
   assert.ok(successCriteria?.length, "Each fixture must declare its own observable success criteria");

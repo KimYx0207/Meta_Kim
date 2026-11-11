@@ -6,7 +6,7 @@ import {
   classifyMetaTheoryEntry,
   validateEntryLexicon,
 } from "../../scripts/meta-theory-entry-classifier.mjs";
-import lexicon from "../../config/governance/entry-classification-lexicon.json" with { type: "json" };
+import lexicon from "../../canonical/runtime-assets/shared/hooks/entry-classification-lexicon.json" with { type: "json" };
 
 describe("47 - Meta-theory entry classifier", () => {
   test("entry lexicon enforces the complete bounded four-language schema", () => {
@@ -53,6 +53,64 @@ describe("47 - Meta-theory entry classifier", () => {
     assert.equal(result.triggerReason, "natural_language_durable_work");
     assert.equal(result.signals.durableOutputIntent, true);
     assert.equal("shouldAskBeforeFetch" in result, false);
+  });
+
+  test("explicit engineering repairs enter governance without requiring a product rebuild", () => {
+    for (const prompt of [
+      "修复高并发平台超时，保留已认可产品",
+      "修复合并排序超时，保留完整产品",
+      "请修复平台超时，不要重新开发产品",
+      "保留现有平台并修复接口超时，不要重新开发产品。",
+      "Please repair the timeout, preserve the approved product.",
+      "Can you repair the timeout?",
+      "Can you repair the platform timeout and preserve the current product?",
+    ]) {
+      const result = classifyMetaTheoryEntry(prompt);
+      assert.equal(result.governedEntry, true, prompt);
+      assert.equal(result.path, "standard_path", prompt);
+      assert.equal(result.signals.productBuildIntent, false, prompt);
+    }
+  });
+
+  test("engineering repair advice and explicit denials remain read-only requests", () => {
+    for (const prompt of [
+      "为什么高并发平台会超时？",
+      "如何修复高并发平台超时？",
+      "如何修复 API 超时？",
+      "请问如何修复 API 超时？",
+      "How do I fix API timeouts?",
+      "How can I repair a timeout?",
+      "How do I fix and test the API?",
+      "Why does the app time out and how should I repair it?",
+      "Why does the app time out? How should I repair it?",
+      "How do I fix API timeouts, and how should I verify the result?",
+      "What does it mean to repair a timeout?",
+      "不要修复高并发平台超时，保留完整产品",
+      "Do not repair the slow API.",
+      "不要修复这个太慢的接口",
+      "不要修复平台太慢的问题，只解释原因。",
+      "Do not fix the slow API; just explain the cause.",
+      "不需要修复 API 超时，只解释原因。",
+      "No need to repair the API, just explain why it times out.",
+      "无需修复接口，说明原因即可。",
+      "不必修复接口，说明原因即可。",
+      "不要修复 API，也不要修改文件。",
+    ]) {
+      const result = classifyMetaTheoryEntry(prompt);
+      assert.equal(result.governedEntry, false, prompt);
+      assert.equal(result.path, "fast_path", prompt);
+      assert.equal(result.signals.productBuildIntent, false, prompt);
+    }
+  });
+
+  test("engineering advice keeps a later explicit repair request", () => {
+    for (const prompt of [
+      "为什么平台超时？请修复现有 API",
+      "如何修复接口然后请修改配置文件",
+      "How do I fix the API? Then please repair the timeout.",
+      "Do not repair the API, then please repair the timeout.",
+      "无需修复旧接口，但请修复新接口的超时。",
+    ]) assert.equal(classifyMetaTheoryEntry(prompt).governedEntry, true, prompt);
   });
 
   test("onboarding and recovery improvement requests enter the governed standard path", () => {

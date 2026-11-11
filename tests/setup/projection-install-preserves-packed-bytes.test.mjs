@@ -7,6 +7,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { projectionInstallArgs } from "../../scripts/global-projection-package-store.mjs";
+import { prepareReviewedNpmBundle } from "../../scripts/npm-dependency-baseline.mjs";
 
 /**
  * The projection store verifies the installed bundle against `npm pack` truth
@@ -62,7 +63,7 @@ test("the projection install argument list preserves the packed bytes npm would 
   const root = await mkdtemp(path.join(os.tmpdir(), "meta-kim-projection-bytes-"));
   t.after(() => rm(root, { recursive: true, force: true }));
 
-  const { archivePath } = await packCrlfFixture(root);
+  const { packageRoot, archivePath } = await packCrlfFixture(root);
   const packedBinBytes = Buffer.from(CRLF_SHEBANG_SOURCE, "utf8");
   assert.equal(crlfPairs(packedBinBytes), 2, "the fixture must actually ship CRLF line endings");
 
@@ -99,4 +100,21 @@ test("the projection install argument list preserves the packed bytes npm would 
   // generated. Nothing in the projection reads them, and a future change that
   // starts depending on them should fail here first.
   assert.equal(existsSync(path.join(guardedPrefix, "node_modules", ".bin")), false);
+
+  // The reviewed path installs from a root lock with npm ci. Exercise its real
+  // extraction too: adding a root lock must not re-enable bin-links rewriting.
+  const reviewedPrefix = path.join(root, "reviewed");
+  await mkdir(reviewedPrefix);
+  const manifest = JSON.parse(await readFile(path.join(packageRoot, "package.json"), "utf8"));
+  const baseline = { packageRoot, lock: { packages: { "": { name: manifest.name, version: manifest.version, bin: manifest.bin } } } };
+  prepareReviewedNpmBundle(reviewedPrefix, manifest, archivePath, baseline);
+  const freshArgs = projectionInstallArgs(reviewedPrefix, archivePath, { reviewedLock: true });
+  assert.equal(freshArgs[0], "ci");
+  assert.equal(freshArgs.includes(archivePath), false, "root-lock installation must not re-resolve an added tarball");
+  installWith(freshArgs, root);
+  assert.equal((await installedBin(reviewedPrefix)).compare(packedBinBytes), 0);
+  assert.equal(existsSync(path.join(reviewedPrefix, "node_modules", ".bin")), false);
+  prepareReviewedNpmBundle(reviewedPrefix, manifest, archivePath, baseline);
+  installWith(projectionInstallArgs(reviewedPrefix, archivePath, { reviewedLock: true, preserveDependencies: true }), root);
+  assert.equal((await installedBin(reviewedPrefix)).compare(packedBinBytes), 0);
 });

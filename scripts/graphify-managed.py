@@ -25,6 +25,12 @@ import uuid
 
 SCRIPT = Path(__file__).resolve()
 PRODUCER = SCRIPT.with_name("graphify-managed-producer.py")
+BASELINE = SCRIPT.with_name("dependency-baseline.json")
+if not BASELINE.is_file():
+    BASELINE = SCRIPT.parent.parent / "config" / "dependency-baseline.json"
+GRAPHIFY_VERSION = json.loads(BASELINE.read_text())["graphify"]["version"]
+if BASELINE.is_symlink() or not re.fullmatch(r"\d+\.\d+\.\d+", GRAPHIFY_VERSION):
+    raise RuntimeError("Managed Graphify requires a plain exact-version dependency baseline")
 EVENTS = ("post-commit", "post-checkout", "post-merge", "post-rewrite")
 LOG_BYTES, LOG_BACKUPS, AST_BYTES, AST_DAYS = 2 * 1024**2, 3, 1024**3, 30
 CORE = ("graph.json", "GRAPH_REPORT.md", ".graphify_analysis.json", ".graphify_labels.json",
@@ -266,7 +272,7 @@ def install(repo, state):
 
 def install_locked(repo, state):
     from importlib.metadata import version
-    if version("graphifyy") != "0.9.56":
+    if version("graphifyy") != GRAPHIFY_VERSION:
         raise RuntimeError("Validate the producer adapter before wiring a different Graphify version")
     if not PRODUCER.is_file():
         raise RuntimeError("Managed Graphify producer is missing from the installed package")
@@ -289,11 +295,11 @@ def install_locked(repo, state):
         raise RuntimeError("Managed Graphify runtime must not be a symlink")
     manager = runtime / SCRIPT.name
     # Hooks must survive removal of an npx cache or an installer checkout.
-    # Serialize the two fixed runtime files against every active producer.
+    # Serialize the fixed runtime files and shared version baseline against every active producer.
     with (state / "worker.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         runtime.mkdir(exist_ok=True)
-        for source in (SCRIPT, PRODUCER):
+        for source in (SCRIPT, PRODUCER, BASELINE):
             destination = runtime / source.name
             if destination.is_symlink():
                 raise RuntimeError("Managed Graphify runtime script must not be a symlink")
@@ -309,7 +315,7 @@ def install_locked(repo, state):
                 temporary.unlink(missing_ok=True)
     write_json(state / "config.json", {
         "schema": 1, "owner": "Meta_Kim", "repo": str(repo), "python": sys.executable,
-        "manager": str(manager), "producer": str(runtime / PRODUCER.name), "alias": alias_command(manager), "graphifyVersion": "0.9.56",
+        "manager": str(manager), "producer": str(runtime / PRODUCER.name), "alias": alias_command(manager), "graphifyVersion": GRAPHIFY_VERSION,
         "current": "graphify-out", "events": EVENTS, "previousCopies": 1,
         "logBytes": LOG_BYTES, "logBackups": LOG_BACKUPS, "astCacheBytes": AST_BYTES,
         "astCacheDays": AST_DAYS, "modelCalls": False,
@@ -347,6 +353,7 @@ def status(repo, state):
                            env=clean_environment(), capture_output=True, text=True).stdout.strip()
     runtime_ready = (bool(config) and manager.is_file() and not manager.is_symlink()
                      and Path(config["producer"]).is_file() and not Path(config["producer"]).is_symlink()
+                     and manager.with_name(BASELINE.name).is_file() and not manager.with_name(BASELINE.name).is_symlink()
                      and not manager.parent.is_symlink())
     return {"installed": bool(config), "hooks": hooks, "aliasReady": alias == alias_command(manager),
             "wiringReady": runtime_ready and all(hooks.values()) and alias == alias_command(manager),

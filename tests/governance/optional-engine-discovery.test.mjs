@@ -3,11 +3,33 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { discoverOptionalEngines, optionalEngineCommand } from "../../src/infrastructure/capabilities/optional-engine-discovery.mjs";
+import { discoverOptionalEngines, optionalEngineCommand, qualifyOptionalEngineInterfaces } from "../../src/infrastructure/capabilities/optional-engine-discovery.mjs";
 import { buildGlobalCapabilityInventory } from "../../scripts/discover-global-capabilities.mjs";
 import { searchCapabilities } from "../../scripts/search-capabilities.mjs";
 
 const registry = JSON.parse(readFileSync(new URL("../../config/capability-index/dependency-project-registry.json", import.meta.url)));
+
+test("native desktop MCP records its version condition without granting execution from documentation or PATH", async (t) => {
+  const { bin } = fixture(t);
+  const file = path.join(bin, "agent-desktop");
+  writeFileSync(file, "#!/bin/sh\nexit 99\n"); chmodSync(file, 0o755);
+  const project = registry.projects.find(entry => entry.id === "agent-desktop");
+  const mcp = project.interfaces.find(entry => entry.type === "mcp");
+  assert.deepEqual([mcp.transport, mcp.command, mcp.args], ["stdio", "agent-desktop", ["mcp"]]);
+  assert.equal(mcp.versionRequirement.minimum, "1.2.0");
+  for (const [version, expected] of [[null, "unverified"], ["1.1.9", "incompatible"], ["1.2.0", "compatible"], ["1.3.0", "compatible"], ["1.2.0-beta", "unverified"]]) {
+    const result = qualifyOptionalEngineInterfaces([mcp], version)[0];
+    assert.equal(result.versionStatus, expected);
+    assert.equal(result.hostVerified, false); assert.equal(result.routeEligible, false);
+  }
+  const [record] = await discoverOptionalEngines({ projects: [project], environment: { PATH: bin }, platform: "linux" });
+  assert.equal(record.available, true); assert.equal(record.version, null);
+  assert.equal(record.interfaceQualification.find(entry => entry.type === "mcp").versionStatus, "unverified");
+  assert.equal(record.liveVerified, false); assert.equal(record.routeEligible, false);
+  const command = optionalEngineCommand(record, "codex", "Codex");
+  assert.equal(command.executionBlock, true);
+  assert.deepEqual(command.metadata.interfaceQualification, record.interfaceQualification);
+});
 function fixture(t) {
   const root = mkdtempSync(path.join(os.tmpdir(), "meta-engine-presence-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));

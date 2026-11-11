@@ -25,7 +25,7 @@ test("material branches are evaluated against policy dimensions", () => {
   });
   assert.equal(result.required, true);
   assert.equal(result.choicePolicy, "must_ask");
-  assert.deepEqual(result.matchedPolicyDimensions, ["owner", "dependency", "acceptance"]);
+  assert.deepEqual(result.matchedPolicyDimensions, ["dependency", "acceptance"]);
   assert.equal(result.nativeSurface.surface, "request_user_input");
 });
 
@@ -54,4 +54,20 @@ test("a dimension hint without a material branch does not create filler question
   });
   assert.equal(result.required, false);
   assert.equal(result.choicePolicy, "no_choice_needed");
+});
+
+
+test("internal owner and loadout alternatives cannot manufacture a user decision", () => {
+  for (const routeChangingDimensions of [["owner"], ["verification owner"], ["model", "provider", "loadout"]]) {
+    // Even an old policy's prose cannot revive an internal-only question.
+    const stalePolicy = { ...policy, choiceRequiredWhen: [...policy.choiceRequiredWhen, "choice changes owner or verification owner"] };
+    const result = evaluateChoiceRequirement(stalePolicy, { runtime: "codex", stage: "Thinking",
+      routeChangingDimensions, materialBranch: true, decisionCardOptionCount: 2 });
+    assert.equal(result.required, false);
+    assert.deepEqual(result.matchedPolicyDimensions, []);
+  }
+  const material = evaluateChoiceRequirement(policy, { runtime: "codex", stage: "Thinking",
+    routeChangingDimensions: ["owner", "risk_or_cost"], materialBranch: true, decisionCardOptionCount: 2 });
+  assert.equal(material.required, true);
+  assert.deepEqual(material.matchedPolicyDimensions, ["risk_or_cost"]);
 });

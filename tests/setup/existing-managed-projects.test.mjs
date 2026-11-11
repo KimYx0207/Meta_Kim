@@ -1,10 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { resolveExistingManagedProjectCandidates } from "../../scripts/existing-managed-projects.mjs";
 import { buildI18N } from "../../config/i18n/setup-strings.mjs";
+import { createProjectionPackageBoundary, STABLE_PROJECT_DEPLOYMENTS_ENV } from "../../src/infrastructure/installer/projection-package-boundary.mjs";
+
+const declaredTargets = JSON.parse(readFileSync(new URL("../../config/sync.json", import.meta.url), "utf8")).supportedTargets;
 
 function tempDir(prefix) {
   return mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -82,4 +85,35 @@ test("all four locales explain rejected targets and the repair action", () => {
   }
   assert.match(locales.en.globalManagedProjectRefreshInfo(2), /This operation/);
   assert.doesNotMatch(locales.en.globalManagedProjectRefreshInfo(2), /This update/);
+});
+
+test("existing project refresh accepts every declared target and respects an explicit narrower scope", t => {
+  const root = tempDir("meta-kim-managed-all-targets-");
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeManifest(root, declaredTargets);
+  const candidate = { targetDir: root, source: "current_working_directory" };
+  assert.deepEqual(resolveExistingManagedProjectCandidates([candidate]), {
+    deployments: [{ ...candidate, activeTargets: declaredTargets }], rejected: [],
+  });
+  const restricted = resolveExistingManagedProjectCandidates([candidate], { supportedTargets: ["claude", "codex"] });
+  assert.equal(restricted.deployments.length, 0);
+  assert.equal(restricted.rejected[0].reason, "invalid_active_targets");
+});
+
+test("stable package handoff keeps all declared project targets and rejects a changed manifest", t => {
+  const root = tempDir("meta-kim-managed-handoff-");
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeManifest(root, declaredTargets);
+  const boundary = createProjectionPackageBoundary({
+    packageRoot: path.resolve(import.meta.dirname, "../.."), callerCwd: root, homeRoot: root,
+    env: { [STABLE_PROJECT_DEPLOYMENTS_ENV]: JSON.stringify([{ targetDir: root, activeTargets: declaredTargets }]) },
+    managedProjectManifestRelPath: ".meta-kim/state/default/project-bootstrap.json",
+    normalizeTargets: targets => [...new Set(targets ?? [])],
+  });
+  const authority = { packageRoot: path.join(root, "stable-package") };
+  const resolution = boundary.readStableProjectDeploymentHandoff(authority);
+  assert.equal(resolution.deployments.length, 1);
+  assert.deepEqual(resolution.deployments[0].activeTargets, declaredTargets);
+  writeManifest(root, ["claude"]);
+  assert.throws(() => boundary.readStableProjectDeploymentHandoff(authority), /targets changed before execution/u);
 });

@@ -1,0 +1,403 @@
+/** Pure application policy for every Meta_Kim entry surface.
+ * Vocabulary is supplied as data; this module performs no IO or host action.
+ * It is shipped with Hook projections so installed runtimes use the same policy.
+ */
+const REQUIRED_LEXICON_CATEGORIES = Object.freeze([
+  "action",
+  "durableOutput",
+  "subjectiveQuality",
+  "fileOrMutationObject",
+  "productBuildObject",
+  "projectUnderstanding",
+]);
+const REQUIRED_LEXICON_LANGUAGES = Object.freeze(["en", "zh", "ja", "ko"]);
+const MAX_TERMS_PER_LANGUAGE = 128;
+const MAX_TERM_LENGTH = 80;
+
+export function validateEntryLexicon(lexicon) {
+  if (lexicon?.schemaVersion !== 1 || !lexicon.categories || typeof lexicon.categories !== "object") {
+    throw new Error("Unsupported entry classification lexicon");
+  }
+  const categoryNames = Object.keys(lexicon.categories).sort();
+  if (categoryNames.join("|") !== [...REQUIRED_LEXICON_CATEGORIES].sort().join("|")) {
+    throw new Error(`Entry lexicon must define exactly: ${REQUIRED_LEXICON_CATEGORIES.join(", ")}`);
+  }
+  for (const categoryName of REQUIRED_LEXICON_CATEGORIES) {
+    const category = lexicon.categories[categoryName];
+    const languageNames = Object.keys(category ?? {}).sort();
+    if (languageNames.join("|") !== [...REQUIRED_LEXICON_LANGUAGES].sort().join("|")) {
+      throw new Error(`${categoryName} must define exactly en, zh, ja, and ko string arrays`);
+    }
+    for (const language of REQUIRED_LEXICON_LANGUAGES) {
+      const terms = category[language];
+      if (!Array.isArray(terms) || terms.length === 0 || terms.length > MAX_TERMS_PER_LANGUAGE) {
+        throw new Error(`${categoryName}.${language} must contain 1-${MAX_TERMS_PER_LANGUAGE} terms`);
+      }
+      const normalized = terms.map((term) => {
+        if (
+          typeof term !== "string" ||
+          !term.trim() ||
+          term !== term.trim() ||
+          term.length > MAX_TERM_LENGTH
+        ) {
+          throw new Error(`${categoryName}.${language} contains an invalid term`);
+        }
+        return term.trim();
+      });
+      if (new Set(normalized).size !== normalized.length) {
+        throw new Error(`${categoryName}.${language} contains duplicate terms`);
+      }
+    }
+  }
+  return lexicon;
+}
+
+/** Compile one validated vocabulary snapshot into reusable entry decisions. */
+export function createEntryClassifier(lexicon) {
+  const ENTRY_LEXICON = validateEntryLexicon(structuredClone(lexicon));
+  function escapeRegex(value) {
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function createLexiconMatcher(categoryName) {
+    const category = ENTRY_LEXICON.categories[categoryName];
+    if (!category) throw new Error(`Missing entry lexicon category: ${categoryName}`);
+    const english = category.en.map(escapeRegex).join("|");
+    const substringTerms = ["zh", "ja", "ko"]
+      .flatMap((language) => category[language])
+      .map(escapeRegex)
+      .join("|");
+    const alternatives = [];
+    if (english) alternatives.push(`(?:^|[^A-Za-z0-9_])(?:${english})(?=$|[^A-Za-z0-9_])`);
+    if (substringTerms) alternatives.push(`(?:${substringTerms})`);
+    if (alternatives.length === 0) throw new Error(`Empty entry lexicon matcher: ${categoryName}`);
+    return new RegExp(alternatives.join("|"), "iu");
+  }
+
+  const EXPLICIT_META_THEORY_RE =
+    /(?:^|\b)(?:\/?meta-theory|meta theory|run meta theory|execute meta theory)(?:\b|$)|元理论/iu;
+
+  const ACTION_RE = createLexiconMatcher("action");
+
+  const DURABLE_OUTPUT_RE = createLexiconMatcher("durableOutput");
+
+  const PURE_QUERY_RE =
+    /^(?:what|why|how|when|where|who|is|are|can|could|should)\b|^(?:什么|为什么|怎么|如何|是否|能否|可以|介绍|解释|说明)/iu;
+  const DEFINITION_QUERY_RE = /^what\s+(?:does|do)\s+(?:it\s+mean\s+to\s+[^,.?!;，。？！；\r\n]+|[^,.?!;，。？！；\r\n]+\s+mean)[.?？]?\s*$/iu;
+  function isDefinitionQuery(text) {
+    if (DEFINITION_QUERY_RE.test(text)
+      && !/\b(?:and|then)\s+(?:please\b|(?:can|could|would)\s+you\b)|(?:请|帮我|然后|并且)/iu.test(text)) return true;
+    // A named action can be the subject of an explanation. Preserve a later
+    // imperative clause ("explain this design, then redesign the page") as work.
+    const clauses = affirmativeRequestClauses(text);
+    const explanationPrefix = /^(?:(?:(?:please|can you|could you|would you)\s+)*(?:explain|describe)\b|(?:请|请帮我|帮我)?(?:解释|说明)(?:一下|下)?(?:如何|怎么|为什么|什么|这个|这段|此))/iu;
+    const advicePrefix = /^(?:why\b|how\b|(?:请问\s*)?(?:为什么|为何|如何|怎么))/iu;
+    const isEngineeringAdviceClause = clause => advicePrefix.test(clause)
+      && (ENGINEERING_REPAIR_RE.test(clause) || ENGINEERING_REPAIR_OBJECT_RE.test(clause));
+    const engineeringAdvice = isEngineeringAdviceClause(clauses[0] ?? "");
+    if (!explanationPrefix.test(clauses[0] ?? "") && !engineeringAdvice) return false;
+    const isWorkClause = clause => (ACTION_RE.test(clause) && !advicePrefix.test(clause)) || EXPLICIT_META_THEORY_RE.test(clause);
+    const subsequentWork = clauses.slice(1).some(isWorkClause);
+    if (!subsequentWork) return true;
+    // "Explain how to export and save" is one procedural explanation. An
+    // explicit new sentence, sequencing word or request restarts the work scope.
+    const proceduralExplanation = engineeringAdvice || /^(?:(?:please|can you|could you|would you)\s+)*(?:explain|describe)\s+how\b/iu.test(text);
+    const explicitFollowup = /\b(?:then|but|and\s+(?:please|can you|could you|would you))\b|(?:然后|并且|但是)(?:请|帮我)/iu.test(text)
+      || text.split(/[,.!?;，。！？；\r\n]+/u).slice(1)
+        .some(clause => affirmativeRequestClauses(clause).some(isWorkClause));
+    return proceduralExplanation && !explicitFollowup;
+  }
+
+  const CHINESE_QUERY_WORD_RE = /(?:什么|为什么|怎么|如何|是否|能否|可以吗|吗|介绍|解释|说明)/u;
+
+  const SUBJECTIVE_QUALITY_RE = createLexiconMatcher("subjectiveQuality");
+
+  const FILE_OR_MUTATION_RE = createLexiconMatcher("fileOrMutationObject");
+
+  const PRODUCT_BUILD_OBJECT_RE = createLexiconMatcher("productBuildObject");
+
+  const ENGINEERING_REPAIR_RE = /\b(?:fix|repair|debug|patch|refactor|troubleshoot)\b|(?:修复|排查|纠错|修好|重构|修正|수정|고치)/iu;
+  const ENGINEERING_REPAIR_OBJECT_RE = /\b(?:code|api|database|test|timeout|crash|bug|error|ui|backend|frontend|software|app|system)\b|(?:代码|测试|超时|崩溃|缺陷|报错|接口|数据库|前端|后端|页面|软件|系统|タイムアウト|バグ|エラー|不具合|오류|버그|타임아웃|코드)/iu;
+  const PRODUCT_CONSTRUCTION_RE = /\b(?:build|create|develop|implement|launch|ship|make)\b|(?:新建|新做|新增|做个|做一个|搭建|开发|打造|构建|从头做|实现(?:一个|新)|作る|作成|開発|만들|개발|구축)/iu;
+
+  function affirmativeRequestClauses(prompt) {
+    return String(prompt ?? "").split(/[,.!?;，。！？；\r\n]+|\b(?:and|then|but|while)\b|(?:并且|同时|然后|但是)|并(?=(?:请|帮我|先|再|继续|把|将|新建|新做|新增|做|搭建|开发|打造|构建|实现|修复|排查|纠错|修好|重构|优化|验证|测试|检查|审查|生成|更新|保留|保持|禁止|不要|不得|只用|仅用))/iu)
+      .map((clause) => clause.trim()).filter(Boolean)
+      .filter((clause) => !/^(?:(?:please|also|请|务必|也)\s*)*(?:keep\b|preserve\b|without\b|do\s+not\b|don't\b|must\s+not\b|no\s+need\s+to\b|保留|保持|禁止|不要|不得|不需要|无需|不必|不重做|不新建|不改变|不改动|只用|仅用|零新增成本)/iu.test(clause));
+  }
+
+  /** An explicit repair of existing engineering behavior, independent of guardrails. */
+  function hasEngineeringRepairIntent(prompt) {
+    return affirmativeRequestClauses(prompt).some((clause) => ENGINEERING_REPAIR_RE.test(clause)
+      && ENGINEERING_REPAIR_OBJECT_RE.test(clause));
+  }
+
+  /** Bind a product object to an affirmative request in the same clause. */
+  function hasProductBuildIntent(prompt) {
+    return affirmativeRequestClauses(prompt).some((clause) => (ACTION_RE.test(clause) || PRODUCT_CONSTRUCTION_RE.test(clause))
+      && PRODUCT_BUILD_OBJECT_RE.test(clause)
+      && (!hasEngineeringRepairIntent(clause) || PRODUCT_CONSTRUCTION_RE.test(clause)));
+  }
+
+  const PROJECT_UNDERSTANDING_RE = createLexiconMatcher("projectUnderstanding");
+
+  const PARALLEL_AGENT_RE =
+    /\b(?:parallel|subagents?|agent team|multi-agent|fan[- ]?out|delegate|spawn|review\s*\+\s*fix\s*\+\s*verify)\b|(?:并行|子智能体|子\s*agent|多个\s*agent|多智能体|编排|分工|派发|噼里啪啦)/iu;
+
+  const STRUCTURED_GOVERNANCE_CHAIN_RE =
+    /critical(?:\s+thinking)?(?:\s*(?:->|=>|→|,|，|、|;|；|and)?\s+)fetch(?:\s*(?:->|=>|→|,|，|、|;|；|and)?\s+)(?:deep\s+)?thinking(?:\s*(?:->|=>|→|,|，|、|;|；|and)?\s+)review|critical\s+and\s+fetch\s+thinking\s+and\s+review/iu;
+
+  const COMPLEXITY_COMPLAINT_RE =
+    /\b(?:too slow|slow|serial|not using agents?|missing agents?|no agents?|keeps?\s+creating|always\s+creates?)\b|(?:太慢|慢|不用\s*agent|没用\s*agent|没有\s*agent|没看到.*agent|串行|不会判断.*复杂|做的.*差|(?:codex|meta[_ -]?kim|metakim|系统|它|他).{0,16}(?:一直|反复|不断|重复|老是|总是|好像).{0,16}(?:自己)?(?:创建|新建)|(?:一直|反复|不断|重复|老是|总是).{0,16}(?:自己)?(?:创建|新建))/iu;
+
+  const MULTI_LANE_WORD_RE =
+    /\b(?:review|fix|verify|test|release|sync|hook|security|frontend|backend|database|api|docs|research|runtime|mcp|tool|agent|skill)\b|(?:审查|修复|验证|测试|发布|同步|钩子|安全|前端|后端|数据库|接口|文档|调研|运行时|工具|智能体|技能)/giu;
+
+  const HIGH_RISK_DECISION_RE =
+    /\b(?:deploy|publish|release|production|auth|permission|security|delete|remove|payment|credential|secret|database|migration)\b|(?:发布(?!器|助手|工具|平台|系统)|上线|生产|权限|安全|删除|支付|凭证|密钥|数据库|迁移)/iu;
+
+  const DESTRUCTIVE_OR_PRODUCTION_RE =
+    /\b(?:delete|remove|drop|truncate|wipe|purge)\b|\b(?:deploy|publish|release)\b(?=.{0,40}\b(?:production|prod|live)\b)|\bproduction\b(?=.{0,40}\b(?:database|deploy|release|environment)\b)|(?:删除|清空|销毁|移除).{0,24}(?:生产|数据库|数据|文件|资源)|(?:发布|部署).{0,16}(?:上线|生产环境)|(?:发布上线|部署上线|上线生产|生产环境)/iu;
+  const DIRECT_DESTRUCTIVE_REQUEST_RE = /^(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:help\s+me\s+)?(?:delete|remove|drop|truncate|wipe|purge|deploy|publish|release)\b|^(?:请帮我|能否帮我|可以帮我|可否帮我)(?:先|直接)?(?:删除|清空|销毁|移除|发布|部署)/iu;
+
+  /** Classify a request clause, never infer permission to perform its effects. */
+  function hasDestructiveExecutionIntent(text) {
+    return affirmativeRequestClauses(text).some((clause) => DESTRUCTIVE_OR_PRODUCTION_RE.test(clause)
+      && (!PURE_QUERY_RE.test(clause) || DIRECT_DESTRUCTIVE_REQUEST_RE.test(clause)));
+  }
+
+  function normalizePrompt(prompt) {
+    return String(prompt ?? "").trim();
+  }
+
+  function hasQuestionOnlyShape(text) {
+    if (!PURE_QUERY_RE.test(text) && !CHINESE_QUERY_WORD_RE.test(text)) return false;
+    // A verb named inside a complete definition question is its subject, not an
+    // instruction to execute. A following sentence or clause still routes work.
+    if (isDefinitionQuery(text)) return true;
+    if (ACTION_RE.test(text) && DURABLE_OUTPUT_RE.test(text)) return false;
+    if (FILE_OR_MUTATION_RE.test(text) && ACTION_RE.test(text)) return false;
+    return true;
+  }
+
+  function countDistinctMatches(text, regex) {
+    return new Set([...String(text ?? "").matchAll(regex)].map((match) => match[0].toLowerCase())).size;
+  }
+
+  function buildEntrySignals(text, context) {
+    const lineCount = normalizePrompt(text).split(/\n+/u).filter(Boolean).length;
+    const delimitedSegmentCount = normalizePrompt(text)
+      .split(/[，,、；;]+/u)
+      .filter((item) => item.trim()).length;
+    const routeChangingDimensionSignals = [];
+    if (context.subjectiveQuality) routeChangingDimensionSignals.push("quality_or_acceptance");
+    if (context.fileOrMutationIntent || context.productBuildIntent) {
+      routeChangingDimensionSignals.push("scope");
+    }
+    if (HIGH_RISK_DECISION_RE.test(text)) routeChangingDimensionSignals.push("risk_or_permission");
+
+    return {
+      explicitMetaTheory: context.explicitMetaTheory,
+      governedMetaTrigger: context.governedMetaTrigger,
+      actionIntent: context.actionIntent,
+      durableOutputIntent: context.durableOutputIntent,
+      fileOrMutationIntent: context.fileOrMutationIntent,
+      productBuildIntent: context.productBuildIntent,
+      projectUnderstandingIntent: context.projectUnderstandingIntent,
+      pureQueryShape: context.pureQuery,
+      subjectiveQualitySignal: context.subjectiveQuality,
+      highRiskTermSignal: HIGH_RISK_DECISION_RE.test(text),
+      destructiveOrProductionTermSignal: DESTRUCTIVE_OR_PRODUCTION_RE.test(text),
+      destructiveOrProductionIntent: context.destructiveOrProductionIntent === true,
+      queryPreambleSignal: PURE_QUERY_RE.test(text) || CHINESE_QUERY_WORD_RE.test(text),
+      directParallelRequest: context.directParallelAgentRequest,
+      structuredGovernanceChainRequest: context.structuredGovernanceChainRequest,
+      serialOrSlowRouteComplaint: context.serialAgentRouteComplaint,
+      routeChangingDimensionSignals,
+      parallelismHints: {
+        lineCount,
+        delimitedSegmentCount,
+        distinctCapabilityTermCount: countDistinctMatches(text, MULTI_LANE_WORD_RE),
+        reviewFixVerifyPattern: /review\s*\+\s*fix\s*\+\s*verify|审查.*修复.*验证|修复.*测试.*发布/iu.test(text),
+      },
+    };
+  }
+
+  function withEntrySignals(base, text, context) {
+    return {
+      ...base,
+      signals: buildEntrySignals(text, context),
+    };
+  }
+
+  function classifyMetaTheoryEntry(prompt) {
+    const text = normalizePrompt(prompt);
+    const lower = text.toLowerCase();
+    const clauses = affirmativeRequestClauses(text);
+    const explicitMetaTheory = clauses.some(clause => EXPLICIT_META_THEORY_RE.test(clause));
+    const subjectiveQuality = SUBJECTIVE_QUALITY_RE.test(text);
+    const actionIntent = affirmativeRequestClauses(text).some(clause => ACTION_RE.test(clause)) && !isDefinitionQuery(text);
+    const durableOutputIntent = DURABLE_OUTPUT_RE.test(text);
+    const fileOrMutationIntent = FILE_OR_MUTATION_RE.test(text);
+    const productBuildIntent = actionIntent && hasProductBuildIntent(text);
+    const engineeringRepairIntent = actionIntent && hasEngineeringRepairIntent(text);
+    const projectUnderstandingIntent = clauses.some(clause => PROJECT_UNDERSTANDING_RE.test(clause));
+    const pureQuery = hasQuestionOnlyShape(text);
+    const directParallelAgentRequest = clauses.some(clause => PARALLEL_AGENT_RE.test(clause));
+    const structuredGovernanceChainRequest = STRUCTURED_GOVERNANCE_CHAIN_RE.test(text);
+    const serialAgentRouteComplaint = clauses.some(clause => COMPLEXITY_COMPLAINT_RE.test(clause));
+    const destructiveOrProductionIntent = hasDestructiveExecutionIntent(text);
+    const governedMetaTrigger =
+      explicitMetaTheory ||
+      structuredGovernanceChainRequest ||
+      directParallelAgentRequest ||
+      serialAgentRouteComplaint ||
+      destructiveOrProductionIntent ||
+      (subjectiveQuality && actionIntent) ||
+      (actionIntent && (durableOutputIntent || fileOrMutationIntent || productBuildIntent || engineeringRepairIntent)) ||
+      projectUnderstandingIntent;
+    const fanoutContext = {
+      explicitMetaTheory,
+      governedMetaTrigger,
+      productBuildIntent,
+      durableOutputIntent,
+      fileOrMutationIntent,
+      subjectiveQuality,
+      actionIntent,
+      projectUnderstandingIntent,
+      pureQuery,
+      directParallelAgentRequest,
+      structuredGovernanceChainRequest,
+      serialAgentRouteComplaint,
+      destructiveOrProductionIntent,
+    };
+
+    if (!text) {
+      return withEntrySignals({
+        governedEntry: false,
+        path: "fast_path",
+        taskClassification: "empty_input",
+        triggerReason: "empty_input",
+        confidence: 1,
+      }, text, fanoutContext);
+    }
+
+    if (explicitMetaTheory) {
+      return withEntrySignals({
+        governedEntry: true,
+        path: "regulated_path",
+        taskClassification: "meta_theory_explicit",
+        triggerReason: "explicit_meta_theory",
+        confidence: 1,
+      }, text, fanoutContext);
+    }
+
+    // A complete definition mentions work; it does not authorize that work.
+    // Apply this before topic/parallel hints can turn its subject into a task.
+    if (isDefinitionQuery(text)) {
+      return withEntrySignals({
+        governedEntry: false,
+        path: "fast_path",
+        taskClassification: "pure_query",
+        triggerReason: "pure_query",
+        confidence: 0.9,
+      }, text, fanoutContext);
+    }
+
+    if (directParallelAgentRequest || serialAgentRouteComplaint) {
+      return withEntrySignals({
+        governedEntry: true,
+        path: "standard_path",
+        taskClassification: "meta_theory_auto",
+        triggerReason: directParallelAgentRequest
+          ? "direct_parallel_dispatch_request"
+          : "serial_agent_route_complaint",
+        confidence: directParallelAgentRequest ? 0.9 : 0.82,
+      }, text, fanoutContext);
+    }
+
+    if (destructiveOrProductionIntent) {
+      return withEntrySignals({
+        governedEntry: true,
+        path: "standard_path",
+        taskClassification: "meta_theory_auto",
+        triggerReason: "high_risk_execution_intent",
+        confidence: 0.94,
+      }, text, fanoutContext);
+    }
+
+    if (subjectiveQuality && actionIntent) {
+      return withEntrySignals({
+        governedEntry: true,
+        path: "standard_path",
+        taskClassification: "meta_theory_auto",
+        triggerReason: "subjective_quality_ambiguous",
+        confidence: 0.9,
+      }, text, fanoutContext);
+    }
+
+    if (structuredGovernanceChainRequest) {
+      return withEntrySignals({
+        governedEntry: true,
+        path: "standard_path",
+        taskClassification: "meta_theory_auto",
+        triggerReason: "critical_fetch_thinking_review_requested",
+        confidence: 0.9,
+      }, text, fanoutContext);
+    }
+
+    if (actionIntent && (durableOutputIntent || fileOrMutationIntent || productBuildIntent || engineeringRepairIntent)) {
+      return withEntrySignals({
+        governedEntry: true,
+        path: "standard_path",
+        taskClassification: "meta_theory_auto",
+        triggerReason: productBuildIntent
+            ? "natural_language_product_build"
+            : durableOutputIntent
+          ? "natural_language_durable_work"
+            : "natural_language_execution_work",
+        confidence: productBuildIntent && !durableOutputIntent ? 0.82 : 0.86,
+      }, text, fanoutContext);
+    }
+
+    if (projectUnderstandingIntent) {
+      return withEntrySignals({
+        governedEntry: true,
+        path: "standard_path",
+        taskClassification: "meta_theory_auto",
+        triggerReason: "project_understanding_requires_fetch",
+        confidence: 0.84,
+      }, text, fanoutContext);
+    }
+
+    if (pureQuery) {
+      return withEntrySignals({
+        governedEntry: false,
+        path: "fast_path",
+        taskClassification: "pure_query",
+        triggerReason: "pure_query",
+        confidence: 0.84,
+      }, text, fanoutContext);
+    }
+
+    if (lower.includes("?") || text.includes("？")) {
+      return withEntrySignals({
+        governedEntry: false,
+        path: "fast_path",
+        taskClassification: "read_only_question",
+        triggerReason: "read_only_question",
+        confidence: 0.7,
+      }, text, fanoutContext);
+    }
+
+    return withEntrySignals({
+      governedEntry: false,
+      path: "fast_path",
+      taskClassification: "unclassified_low_signal",
+      triggerReason: "no_governance_trigger",
+      confidence: 0.55,
+    }, text, fanoutContext);
+  }
+
+  return Object.freeze({ classifyMetaTheoryEntry, hasEngineeringRepairIntent, hasProductBuildIntent });
+}

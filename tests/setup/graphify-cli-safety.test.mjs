@@ -395,6 +395,54 @@ test("graphify repository snapshots treat tracked working-tree deletions as abse
   }
 });
 
+test("graphify repository snapshots accept an unstaged tracked file becoming a directory", () => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), "meta-kim-graphify-file-to-directory-"));
+  try {
+    const repo = initRepo(temp, "repo");
+    const bin = fakePythonBin(temp);
+    writeValidArtifacts(repo);
+    rmSync(path.join(repo, "tracked.txt"));
+    mkdirSync(path.join(repo, "tracked.txt"));
+    writeFileSync(path.join(repo, "tracked.txt", "new.txt"), "current nested file\n");
+
+    const result = runCheck(repo, bin);
+    assert.notEqual(result.status, 0, "old graph identity must remain stale");
+    assert.match(result.stderr, /node identity is not release-safe/u);
+    assert.doesNotMatch(result.stderr, /non-plain file|EISDIR|ENOENT|lstat/u);
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("graphify check rejects ignored ancestor symlinks even when outside bytes match the graph", () => {
+  const temp = mkdtempSync(path.join(os.tmpdir(), "meta-kim-graphify-parent-link-"));
+  try {
+    const repo = initRepo(temp, "repo");
+    const bin = fakePythonBin(temp);
+    const sentinel = "same bytes, outside fixture\n";
+    mkdirSync(path.join(repo, "dir"));
+    writeFileSync(path.join(repo, "dir", "file.txt"), sentinel);
+    writeFileSync(path.join(repo, ".gitignore"), "graphify-out/\ndir\n");
+    git(repo, ["add", ".gitignore"]);
+    git(repo, ["add", "--force", "dir/file.txt"]);
+    git(repo, ["commit", "-m", "seed ignored tracked parent"]);
+    writeValidArtifacts(repo);
+    const outside = path.join(temp, "outside");
+    mkdirSync(outside);
+    writeFileSync(path.join(outside, "file.txt"), sentinel);
+    rmSync(path.join(repo, "dir"), { recursive: true });
+    symlinkSync(outside, path.join(repo, "dir"), "junction");
+
+    const result = runCheck(repo, bin);
+    assert.notEqual(result.status, 0, "a matching hash cannot authorize an outside file through its parent link");
+    assert.match(result.stderr, /non-plain/u);
+    assert.doesNotMatch(result.stdout + result.stderr, /same bytes, outside fixture/u);
+    assert.equal(readFileSync(path.join(outside, "file.txt"), "utf8"), sentinel);
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
 test("graphify check rejects private local paths in the report without echoing them", () => {
   const temp = mkdtempSync(path.join(os.tmpdir(), "meta-kim-graphify-report-private-"));
   try {

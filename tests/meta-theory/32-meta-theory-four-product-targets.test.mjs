@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { runDiagnosticReadPlan } from "../../scripts/diagnostic-host-protocol.mjs";
-import { refreshFixtureSourcePins } from "../helpers/host-reasoning-fixture.mjs";
+import { FIXTURE_DIAGNOSTIC_PROVIDERS, refreshFixtureSourcePins } from "../helpers/host-reasoning-fixture.mjs";
 import { createGovernanceRuntimeFixture, createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
 import {
   assertOptionalPlaybookContract,
@@ -43,7 +43,7 @@ const scopedPlanTask = "Run meta-theory. In parallel inspect package.json; revie
 const boundedScopes = ["package.json", "AGENTS.md", "README.md", "config/contracts/workflow-contract.json"];
 function runBoundedRead(options) {
   assert.equal(options.task, scopedPlanTask, "This fixture supplies a plan only for its declared bounded read task");
-  return runDiagnosticReadPlan(runMetaTheoryGovernedExecution, options, boundedScopes);
+  return runDiagnosticReadPlan(runMetaTheoryGovernedExecution, { ...options, diagnosticProviders: FIXTURE_DIAGNOSTIC_PROVIDERS }, boundedScopes);
 }
 function selectProductCandidateRoute(task) {
   const result = runtimeFixture.run(["scripts/select-execution-route.mjs", "--task", task, "--runtime", "codex", "--os", "windows"]);
@@ -900,6 +900,7 @@ describe("32 — Meta-theory three product goals and support gates", () => {
       const branch = process.argv[1];
       const stateDir = path.join(process.cwd(), "tmp", branch);
       const report = await runDiagnosticReadPlan(runMetaTheoryGovernedExecution, {
+        diagnosticProviders: ${JSON.stringify(FIXTURE_DIAGNOSTIC_PROVIDERS)},
         task: ${JSON.stringify(scopedPlanTask)}, runId: "optional-provider-fixture", stateDir,
         dbPath: path.join(stateDir, "runs.sqlite"),
       }, ["package.json", "AGENTS.md", "README.md", "config/contracts/workflow-contract.json"]);
@@ -958,7 +959,8 @@ describe("32 — Meta-theory three product goals and support gates", () => {
     assert.equal(withoutOwners.status, 0, withoutOwners.stderr || withoutOwners.stdout);
     const missingOwners = fixture.run(["--input-type=module", "--eval", childSource, "execution-owners-absent"]);
     assert.notEqual(missingOwners.status, 0);
-    assert.match(missingOwners.stderr, /Diagnostic capability unavailable: agents backend, analysis/);
+    assert.match(missingOwners.stderr, /Diagnostic environment unavailable: current codex agents source backend was not discovered/);
+    assert.match(missingOwners.stderr, /DIAGNOSTIC_ENVIRONMENT_UNAVAILABLE/);
     assert.equal(missingOwners.stdout.trim(), "", "Missing execution owners must not produce a completed diagnostic report");
   });
 
@@ -966,7 +968,8 @@ describe("32 — Meta-theory three product goals and support gates", () => {
     const result = spawnSync(
       process.execPath,
       ["scripts/validate-product-experience-core-goals.mjs"],
-      { encoding: "utf8", timeout: 120_000 }
+      { encoding: "utf8", timeout: 120_000,
+        env: { ...process.env, META_KIM_DIAGNOSTIC_PROVIDERS: JSON.stringify(FIXTURE_DIAGNOSTIC_PROVIDERS) } }
     );
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const output = JSON.parse(result.stdout);

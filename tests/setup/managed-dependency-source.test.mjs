@@ -75,6 +75,34 @@ test("managed source makes agents and skills discoverable without a project over
   assert.equal(result.privateCopied, false); assert.equal(result.gitCopied, false);
 });
 
+test("managed sources record actual checkout revision and preserve the previous source on revision failure", async t => {
+  const f = await fixture(t);
+  fs.rmSync(path.join(f.source, ".git"), { recursive: true, force: true });
+  const git = args => {
+    const result = spawnSync("git", ["-C", f.source, ...args], { encoding: "utf8", env: { ...process.env, HOME: f.home, USERPROFILE: f.home } });
+    assert.equal(result.status, 0, result.stderr); return result.stdout.trim();
+  };
+  git(["init", "--quiet"]); git(["config", "user.name", "Fixture"]); git(["config", "user.email", "fixture@example.invalid"]);
+  git(["config", "core.hooksPath", path.join(f.temporary, "no-hooks")]); git(["add", "."]); git(["commit", "--quiet", "-m", "reviewed fixture"]);
+  const commit = git(["rev-parse", "HEAD"]);
+  const result = child(f, `
+    import { materializeManagedServiceSource, readManagedServiceSource } from ${JSON.stringify(moduleUrl("scripts/managed-dependency-source.mjs"))};
+    const sourceRoot=${JSON.stringify(f.source)};
+    const local=await materializeManagedServiceSource({sourceRoot,metaKimVersion:'fixture'});
+    const localRevision=readManagedServiceSource().revision;
+    const revision={schemaVersion:1,selection:'reviewed_commit',repository:'fixture/Kim_Service',commit:${JSON.stringify(commit)}};
+    const reviewed=await materializeManagedServiceSource({sourceRoot,metaKimVersion:'fixture',sourceRevision:revision});
+    let error; try {await materializeManagedServiceSource({sourceRoot,metaKimVersion:'fixture',sourceRevision:{...revision,commit:'0'.repeat(40)}});}catch(e){error=e.message;}
+    const current=readManagedServiceSource();
+    console.log(JSON.stringify({localRevision,distinct:reviewed!==local,current:current.revision,kept:current.value===reviewed,error}));
+  `);
+  assert.equal(result.localRevision.selection, "local_override");
+  assert.equal(result.localRevision.commit, null);
+  assert.equal(result.distinct, true); assert.equal(result.kept, true);
+  assert.equal(result.current.commit, commit); assert.equal(result.current.selection, "reviewed_commit");
+  assert.match(result.error, /differs from the checkout/);
+});
+
 test("explicit missing roots override the installed source; drifted managed bytes never fall back", async t => {
   const f = await fixture(t);
   const result = child(f, `

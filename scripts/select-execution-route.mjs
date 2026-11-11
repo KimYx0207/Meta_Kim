@@ -6,6 +6,8 @@ import path from "node:path";
 import { GOVERNANCE_OWNERS, OS_TARGETS, RUNTIMES, annotateCrossScopeAgentCollisions, classifyTaskShape, exists, readJson, repoPath, scoreRoute, stateDir, supportScore, toPosix } from "./governance-lib.mjs";
 import { CAPABILITY_GAP_DECISION_CONTRACT, decideCapabilityGap } from "./capability-gap-mvp.mjs";
 import { classifyMetaTheoryEntry } from "./meta-theory-entry-classifier.mjs";
+import { runtimeOperatingSystem } from "./runtime-operating-system.mjs";
+import { selectRuntimeAgentEvidence } from "./runtime-agent-evidence.mjs";
 import { loadRuntimeProfiles, resolveRuntimeProjection } from "./meta-kim-sync-config.mjs";
 import {
   evaluateChoiceRequirement,
@@ -111,7 +113,7 @@ const localToolRequestRaw = argValue("--local-tool-request-json", null);
 const localToolRequest = localToolRequestRaw ? JSON.parse(localToolRequestRaw) : null;
 if (intentDeliveryStrategy != null && !["fast_usable", "long_term_extensible"].includes(intentDeliveryStrategy)) throw new TypeError("Unknown intent delivery strategy");
 const runtimeArg = argValue("--runtime", "auto");
-const osArg = argValue("--os", "auto");
+const osArg = argValue("--os", null);
 const requestedOwnerSourceKey = argValue("--owner-source", null);
 const requestedOwnerSourceRef = argValue("--owner-source-ref", null);
 const requestedOwnerContentDigest = String(
@@ -123,7 +125,8 @@ const rejectedCodexHostToolSchemaRaw =
   process.env.META_KIM_CODEX_HOST_TOOL_SCHEMA ??
   null;
 const runtime = runtimeArg === "auto" ? "codex" : runtimeArg;
-const osTarget = osArg === "auto" ? "windows" : osArg;
+const operatingSystem = runtimeOperatingSystem(osArg);
+const { targetOs: osTarget, hostOs } = operatingSystem;
 const taskShape = classifyTaskShape(task);
 const taskText = String(task ?? "").toLowerCase();
 const entryClassification = classifyMetaTheoryEntry(task);
@@ -1060,7 +1063,7 @@ const methodContractOwners = methodCapabilityId ? dependencyAgentDiscovery.agent
     // discovery reads files and verifies their contract/component hashes.
     const requestedSource = path.resolve(dependencyProjectRoot, explorationMethod.sourceRef);
     const discoveredSource = path.resolve(dependencyProjectRoot, agent.sourceRef);
-    return osTarget === "windows" ? requestedSource.toLowerCase() === discoveredSource.toLowerCase() : requestedSource === discoveredSource;
+    return hostOs === "windows" ? requestedSource.toLowerCase() === discoveredSource.toLowerCase() : requestedSource === discoveredSource;
   }) : [];
 const currentMethodOperation = professionalMethodDemand || requirementsContext ? inspectCurrentMethodOperation(requirementsContext
   ? actionTask : [actionTask, ...methodContext.capabilityNeed].join("\n")) : null;
@@ -1456,7 +1459,7 @@ const ownerDiscoveryPacket = {
   ],
   governanceStages,
   repoCanonicalAgents: repoCanonicalAgents.slice(0, 20),
-  projectRuntimeAgents: projectRuntimeAgentCandidates.slice(0, 80),
+  projectRuntimeAgents: selectRuntimeAgentEvidence(projectRuntimeAgentCandidates, 80),
   localGlobalAgents: localGlobalAgents.slice(0, 30),
   dependencyAgentDiscovery: {
     sources: dependencyAgentDiscovery.sources,
@@ -1939,6 +1942,7 @@ if (fetchOnly || hostWorkOrder) {
   const identify = (provider) => ({ ...provider,
     inventoryRef: "sha256:" + createHash("sha256").update(stableJson(provider)).digest("hex") });
   const fetchPacket = { stage: "Fetch", capabilityDiscovery: { inventoryDigest,
+    context: { runtime, os: osTarget, hostOs },
     agents: agents.map(identify), providers: providers.map(identify),
     searchLog: ownerDiscoveryPacket.capabilityDiscoverySearchLog },
     claimBoundary: "Current discovered source records only; no semantic fit, native invocation or execution authorization." };
@@ -1967,7 +1971,7 @@ if (fetchOnly || hostWorkOrder) {
   for (const method of requirementsContext?.methods ?? []) {
     const requestedSource = typeof method.sourceRef === "string" ? path.resolve(dependencyProjectRoot, method.sourceRef) : null;
     const actualSource = owner?.sourceRef ? path.resolve(dependencyProjectRoot, owner.sourceRef) : null;
-    const sameSource = requestedSource && actualSource && (osTarget === "windows"
+    const sameSource = requestedSource && actualSource && (hostOs === "windows"
       ? requestedSource.toLowerCase() === actualSource.toLowerCase() : requestedSource === actualSource);
     if (owner?.source !== "dependency_agent_contract" || !sameSource ||
         hostWorkOrder.methodCapabilityId !== method.methodCapabilityId) blockers.push("explicit_material_method_source_conflicts_with_selected_contract");
@@ -4516,7 +4520,7 @@ const output = {
     : [],
   candidateFoundationalCapabilities,
   runtimeFilterResult: { requested: runtimeArg, applied: runtime, unsupported: !RUNTIMES.includes(runtime) },
-  osFilterResult: { requested: osArg, applied: osTarget, unsupported: !OS_TARGETS.includes(osTarget) },
+  osFilterResult: { requested: operatingSystem.requested, applied: osTarget, host: hostOs, source: operatingSystem.source, unsupported: !OS_TARGETS.includes(osTarget) },
   rankedRoutes,
   recommendedRoute,
   decisionExperiencePlan: recommendedRoute?.decisionExperiencePlan ?? null,
@@ -4617,6 +4621,7 @@ function retainSelectedProviderEvidence(raw, selectedIds) {
     ...raw,
     ownerDiscoveryPacket: {
       ...raw.ownerDiscoveryPacket,
+      projectRuntimeAgents: selectRuntimeAgentEvidence(projectRuntimeAgentCandidates, 80, selectedIds),
       repoCanonicalCapabilityProviders: boundedSelectedProviderEvidence(repoCanonicalCapabilityProviders, selectedIds, 60),
       projectRuntimeCapabilityProviders: selectProjectRuntimeCapabilityEvidence(projectRuntimeCapabilityProviders, 80, selectedIds),
       localGlobalCapabilityProviders: boundedSelectedProviderEvidence(localGlobalCapabilityProvidersAll, selectedIds, 120),
@@ -4757,7 +4762,7 @@ function compactOwnerDiscoveryPacket(packet, selectedIds) {
     governanceStages: packet.governanceStages,
     evidenceRefs: (packet.evidenceRefs ?? []).slice(0, 80),
     repoCanonicalAgents: compactProviderCollection(packet.repoCanonicalAgents ?? [], 20),
-    projectRuntimeAgents: compactProviderCollection(packet.projectRuntimeAgents ?? [], 30),
+    projectRuntimeAgents: compactProviderCollection(selectRuntimeAgentEvidence(packet.projectRuntimeAgents ?? [], 30, selectedIds), 30),
     localGlobalAgents: compactProviderCollection(packet.localGlobalAgents ?? [], 30),
     dependencyAgentDiscovery: packet.dependencyAgentDiscovery ? {
       sources: packet.dependencyAgentDiscovery.sources,
@@ -4803,7 +4808,7 @@ function compactOwnerDiscoveryPacket(packet, selectedIds) {
     ),
     inventoryCounts: {
       repoCanonicalAgents: countPacketArray(packet, "repoCanonicalAgents"),
-      projectRuntimeAgents: countPacketArray(packet, "projectRuntimeAgents"),
+      projectRuntimeAgents: projectRuntimeAgentCandidates.length,
       localGlobalAgents: countPacketArray(packet, "localGlobalAgents"),
       repoCanonicalSkillProviders: countPacketArray(packet, "repoCanonicalSkillProviders"),
       projectRuntimeSkillProviders: countPacketArray(packet, "projectRuntimeSkillProviders"),

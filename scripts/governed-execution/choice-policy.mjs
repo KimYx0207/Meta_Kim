@@ -1,3 +1,6 @@
+import materialPolicy from "../../config/governance/material-decision-policy.json" with { type: "json" };
+const internalOnlyDimensions = new Set(materialPolicy.internalOnlyDimensions);
+
 const RUNTIME_ALIASES = Object.freeze({
   claude: "claude_code",
   claude_code: "claude_code",
@@ -65,7 +68,7 @@ export function evaluateChoiceRequirement(policy, {
     routeChangingDimensions.map(normalizeDimension).filter(Boolean),
   )];
   const matchedDimensions = normalizedDimensions.filter((dimension) =>
-    enabledDimensions.includes(dimension),
+    !internalOnlyDimensions.has(dimension) && enabledDimensions.includes(dimension),
   );
   const forceRiskChoice =
     (highRiskOperation || destructiveOrProductionOperation) &&

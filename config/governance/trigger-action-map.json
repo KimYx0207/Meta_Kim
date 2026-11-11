@@ -5,7 +5,7 @@
       "id": "clarify_intent",
       "triggerCondition": ["user goal is fuzzy", "success criteria missing", "execution would choose the wrong route"],
       "triggerSignal": ["ambiguous scope", "missing target state", "missing acceptance"],
-      "threshold": "intent clarity score < 90 and missing answer changes route/scope/risk/acceptance/owner/permission/non-goal",
+      "threshold": "intent clarity score < 90 and missing answer changes user-visible result/scope/risk/acceptance/permission/non-goal",
       "governanceOwner": "meta-warden",
       "whenResponsible": "Before Fetch if intent incompleteness changes the run shape.",
       "whatToDo": ["read available context first", "ask only outcome-branching questions", "record intentPacket"],

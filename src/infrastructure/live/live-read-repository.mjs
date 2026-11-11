@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { lstat, readFile, realpath, readdir } from "node:fs/promises";
 import path from "node:path";
+import { LIVE_MAX_JSON_BYTES, LIVE_RUN_ID_PATTERN, isLiveRunId, isPathInside, normalizeLiveRunId } from "../../domain/live/live-read-contract.mjs";
+export { LIVE_MAX_JSON_BYTES, LIVE_RUN_ID_PATTERN, isLiveRunId, normalizeLiveRunId } from "../../domain/live/live-read-contract.mjs";
 
 /**
  * The Live sidecar deliberately has no persistence dependency. This repository
@@ -8,22 +10,8 @@ import path from "node:path";
  */
 
 export const LIVE_DEFAULT_PROFILE = "default";
-export const LIVE_MAX_JSON_BYTES = 8 * 1024 * 1024;
 export const LIVE_MAX_COMPACT_JSON_BYTES = 256 * 1024;
-// Keep this aligned with the governed runner's canonical filename-safe run-id
-// contract. A `meta-` prefix is conventional, not required for explicit ids.
-export const LIVE_RUN_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 export const LIVE_PROFILE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/u;
-
-function isPathInside(parent, target) {
-  const relative = path.relative(path.resolve(parent), path.resolve(target));
-  return (
-    relative === "" ||
-    (!relative.startsWith(`..${path.sep}`) &&
-      relative !== ".." &&
-      !path.isAbsolute(relative))
-  );
-}
 
 async function readPathInfo(targetPath) {
   try {
@@ -110,14 +98,6 @@ export async function resolveLiveProjectRoot({
 export function sanitizeLiveProfile(value = LIVE_DEFAULT_PROFILE) {
   const profile = typeof value === "string" && value.trim() ? value.trim() : LIVE_DEFAULT_PROFILE;
   return LIVE_PROFILE_PATTERN.test(profile) ? profile : LIVE_DEFAULT_PROFILE;
-}
-
-export function isLiveRunId(value) {
-  return typeof value === "string" && LIVE_RUN_ID_PATTERN.test(value);
-}
-
-export function normalizeLiveRunId(value) {
-  return isLiveRunId(value) ? value : null;
 }
 
 function digest(value) {

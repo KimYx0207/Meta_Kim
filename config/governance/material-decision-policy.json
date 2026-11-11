@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "materialDimensions": [
+    "result",
+    "risk",
+    "cost",
+    "scope",
+    "permission",
+    "compatibility",
+    "longTermImpact",
+    "publicReadyAcceptance"
+  ],
+  "internalOnlyDimensions": [
+    "owner",
+    "model",
+    "provider",
+    "loadout"
+  ],
+  "rule": "Ask only for unresolved, evidenced alternatives that materially change the user outcome or its constraints. Internal owner/model/loadout substitutions alone do not create a user decision."
+}

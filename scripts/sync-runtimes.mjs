@@ -1,3 +1,4 @@
+import { ENTRY_CLASSIFIER_HOOK_FILES } from "./runtime-hook-mapping.mjs";
 import { promises as fs } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -1457,6 +1458,7 @@ const GLOBAL_META_KIM_HOOK_PACKAGE_FILES = new Set([
   "governed-task-reference.mjs",
   "task-progress.mjs",
   "governed-host-checkpoint.mjs",
+  ...ENTRY_CLASSIFIER_HOOK_FILES,
   "activate-meta-theory-spine.mjs",
   "planning-continuity.mjs",
   "bash-readonly-whitelist.mjs",
@@ -3133,6 +3135,7 @@ const CLAUDE_PROJECT_HOOK_FILES = new Set([
   "governed-task-reference.mjs",
   "task-progress.mjs",
   "governed-host-checkpoint.mjs",
+  ...ENTRY_CLASSIFIER_HOOK_FILES,
   "activate-meta-theory-spine.mjs",
   "planning-continuity.mjs",
   "bash-readonly-whitelist.mjs",
@@ -3167,6 +3170,7 @@ const CODEX_PROJECT_HOOK_FILES = new Set([
   "governed-task-reference.mjs",
   "task-progress.mjs",
   "governed-host-checkpoint.mjs",
+  ...ENTRY_CLASSIFIER_HOOK_FILES,
   "activate-meta-theory-spine.mjs",
   "bash-readonly-whitelist.mjs",
   "codex_hook_adapter.py",
@@ -3203,6 +3207,7 @@ const CODEX_ACTIVE_PROJECT_HOOK_FILES = new Set([
   "governed-task-reference.mjs",
   "task-progress.mjs",
   "governed-host-checkpoint.mjs",
+  ...ENTRY_CLASSIFIER_HOOK_FILES,
   "activate-meta-theory-spine.mjs",
   "planning-continuity.mjs",
   "bash-readonly-whitelist.mjs",
@@ -3231,6 +3236,7 @@ const CURSOR_PROJECT_HOOK_FILES = new Set([
   "governed-task-reference.mjs",
   "task-progress.mjs",
   "governed-host-checkpoint.mjs",
+  ...ENTRY_CLASSIFIER_HOOK_FILES,
   "activate-meta-theory-spine.mjs",
   "bash-readonly-whitelist.mjs",
   "enforce-agent-dispatch.mjs",
@@ -3260,6 +3266,7 @@ const CURSOR_ACTIVE_PROJECT_HOOK_FILES = new Set([
   "governed-task-reference.mjs",
   "task-progress.mjs",
   "governed-host-checkpoint.mjs",
+  ...ENTRY_CLASSIFIER_HOOK_FILES,
   "activate-meta-theory-spine.mjs",
   "bash-readonly-whitelist.mjs",
   "enforce-agent-dispatch.mjs",
@@ -4127,6 +4134,7 @@ Examples:
         "governed-task-reference.mjs",
         "task-progress.mjs",
         "governed-host-checkpoint.mjs",
+        ...ENTRY_CLASSIFIER_HOOK_FILES,
       ]) {
         const sourcePath = await canonicalGlobalHookSource(hookName, "codex");
         if (!sourcePath) {
@@ -4424,6 +4432,7 @@ Examples:
         "governed-task-reference.mjs",
         "task-progress.mjs",
         "governed-host-checkpoint.mjs",
+        ...ENTRY_CLASSIFIER_HOOK_FILES,
       ]) {
         const sourcePath = await canonicalGlobalHookSource(hookName, "cursor");
         if (!sourcePath) {

@@ -1525,7 +1525,7 @@
         "uri": "https://github.com/vercel-labs/agent-desktop",
         "localPath": null,
         "inspectionStatus": "verified_official_documentation",
-        "lastInspectedAt": "2026-11-10"
+        "lastInspectedAt": "2026-11-11"
       },
       "capabilityType": "computer_use",
       "interfaces": [
@@ -1535,12 +1535,25 @@
           "command": "agent-desktop"
         },
         {
+          "type": "mcp",
+          "transport": "stdio",
+          "command": "agent-desktop",
+          "args": [
+            "mcp"
+          ],
+          "versionRequirement": {
+            "minimum": "1.2.0",
+            "verification": "requires_host_version_probe"
+          },
+          "sourceRef": "https://github.com/vercel-labs/agent-desktop/tree/v1.2.0"
+        },
+        {
           "type": "c_library",
           "transport": "in_process"
         }
       ],
       "capabilityCard": {
-        "oneLine": "Desktop control through OS accessibility snapshots and element references; no embedded model.",
+        "oneLine": "Desktop control through upstream CLI, native stdio MCP (version 1.2.0 or later), or C library; no embedded model.",
         "taskShapes": [
           "computer_use"
         ],
@@ -1552,7 +1565,8 @@
           "requires": [
             "task-scoped goal and permission boundary",
             "installed engine and actual native host tool",
-            "fresh snapshot before interaction"
+            "fresh snapshot before interaction",
+            "for native MCP: actual agent-desktop version 1.2.0 or later, host registration and a successful task-scoped probe"
           ]
         },
         "outputContract": {
@@ -1577,6 +1591,7 @@
         "verificationMethod": "node --test tests/governance/optional-engine-discovery.test.mjs",
         "verificationMethods": [
           "node --test tests/governance/optional-engine-discovery.test.mjs",
+          "agent-desktop --version",
           "agent-desktop status"
         ],
         "risk": [
@@ -1617,7 +1632,7 @@
       "supportEvidence": {
         "source": "https://github.com/vercel-labs/agent-desktop",
         "confidence": "verified_docs",
-        "lastVerifiedAt": "2026-11-10",
+        "lastVerifiedAt": "2026-11-11",
         "verificationCommand": null,
         "liveVerified": false
       },

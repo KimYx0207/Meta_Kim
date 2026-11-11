@@ -9,9 +9,9 @@ import {
   readProcessText,
   runPythonModule,
 } from "./graphify-runtime.mjs";
+import { GRAPHIFY_VERSION as REQUIRED_GRAPHIFY_VERSION } from "./graphify-package-install.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const REQUIRED_GRAPHIFY_VERSION = "0.9.56";
 if (process.platform === "win32") {
   console.log("SKIP graphify managed Python tests: managed lifecycle requires macOS/Linux.");
   process.exit(0);
@@ -54,7 +54,7 @@ if (!python) {
 
 const pipShow = runPythonModule(python, ["-m", "pip", "show", "graphifyy"]);
 if (pipShow.status !== 0) {
-  console.log("SKIP graphify managed Python tests: optional graphifyy 0.9.56 is unavailable.");
+  console.log(`SKIP graphify managed Python tests: optional graphifyy ${REQUIRED_GRAPHIFY_VERSION} is unavailable.`);
   process.exit(0);
 }
 

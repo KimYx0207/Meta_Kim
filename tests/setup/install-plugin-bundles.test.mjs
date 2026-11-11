@@ -121,7 +121,7 @@ describe("installPluginBundlesForNonClaudeRuntimes (dry-run e2e)", () => {
     const { status, out } = runDryRun();
     assert.equal(status, 0);
     const plain = stripAnsi(out);
-    assert.match(plain, /npx --yes --package ecc-universal@latest ecc install --profile core --target codex/);
+    assert.match(plain, /npx --yes --package ecc-universal@2\.2\.3 ecc install --profile core --target codex --no-hooks/);
     assert.match(
       plain,
       /preserve existing .*\.codex.*config\.toml before ECC upstream installer, reject upstream MCP\/project\/root config, and restore only the user snapshot plus Meta_Kim native controls/,
@@ -136,7 +136,7 @@ describe("installPluginBundlesForNonClaudeRuntimes (dry-run e2e)", () => {
     );
     assert.match(
       plain,
-      /ecc: project-local installer skipped during global update; run from each cursor project root: npx --yes --package ecc-universal@latest ecc install --profile core --target cursor/,
+      /ecc: project-local installer skipped during global update; run from each cursor project root: npx --yes --package ecc-universal@2\.2\.3 ecc install --profile core --target cursor --no-hooks/,
     );
     assert.doesNotMatch(
       plain,
@@ -154,7 +154,7 @@ describe("installPluginBundlesForNonClaudeRuntimes (dry-run e2e)", () => {
     const plain = stripAnsi(out);
     assert.match(
       plain,
-      /npx --yes --package ecc-universal@latest ecc install --profile core --target opencode/,
+      /npx --yes --package ecc-universal@2\.2\.3 ecc install --profile core --target opencode --no-hooks/,
     );
   });
 
@@ -175,7 +175,7 @@ describe("installPluginBundlesForNonClaudeRuntimes (dry-run e2e)", () => {
     const plain = stripAnsi(out);
     assert.match(
       plain,
-      /ecc: project-local installer skipped during global update; run from each zed project root: npx --yes --package ecc-universal@latest ecc install --profile core --target zed/,
+      /ecc: project-local installer skipped during global update; run from each zed project root: npx --yes --package ecc-universal@2\.2\.3 ecc install --profile core --target zed --no-hooks/,
     );
     assert.doesNotMatch(plain, /undefined/);
     assert.doesNotMatch(plain, /skill-creator/);

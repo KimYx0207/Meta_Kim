@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { ENTRY_CLASSIFIER_HOOK_FILES } from "./scripts/runtime-hook-mapping.mjs";
 /**
  * Meta_Kim interactive setup (i18n)
  *
@@ -24,6 +25,7 @@
  *   META_KIM_PROMPT_PROXY=1
  */
 
+import { reconcileGraphifyPackage } from "./scripts/graphify-package-install.mjs";
 import { execSync, spawnSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -1134,6 +1136,7 @@ const GLOBAL_HOOK_PACKAGE_FILES_LIST = [
   "governed-task-reference.mjs",
   "task-progress.mjs",
   "governed-host-checkpoint.mjs",
+  ...ENTRY_CLASSIFIER_HOOK_FILES,
   "activate-meta-theory-spine.mjs",
   "bash-readonly-whitelist.mjs",
   "block-dangerous-bash.mjs",
@@ -1229,6 +1232,7 @@ const PROJECT_HOOK_SOURCE_CANDIDATES = {
     "governed-task-reference.mjs",
     "task-progress.mjs",
     "governed-host-checkpoint.mjs",
+    ...ENTRY_CLASSIFIER_HOOK_FILES,
     "activate-meta-theory-spine.mjs",
     "bash-readonly-whitelist.mjs",
     "enforce-agent-dispatch.mjs",
@@ -1254,6 +1258,7 @@ const PROJECT_HOOK_SOURCE_CANDIDATES = {
     "governed-task-reference.mjs",
     "task-progress.mjs",
     "governed-host-checkpoint.mjs",
+    ...ENTRY_CLASSIFIER_HOOK_FILES,
     "activate-meta-theory-spine.mjs",
     "bash-readonly-whitelist.mjs",
     "enforce-agent-dispatch.mjs",
@@ -3766,6 +3771,7 @@ const PROJECT_HOOK_FILE_WHITELIST_BY_PLATFORM = {
     "governed-task-reference.mjs",
     "task-progress.mjs",
     "governed-host-checkpoint.mjs",
+    ...ENTRY_CLASSIFIER_HOOK_FILES,
     "activate-meta-theory-spine.mjs",
     "bash-readonly-whitelist.mjs",
     "block-dangerous-bash.mjs",
@@ -3796,6 +3802,7 @@ const PROJECT_HOOK_FILE_WHITELIST_BY_PLATFORM = {
     "governed-task-reference.mjs",
     "task-progress.mjs",
     "governed-host-checkpoint.mjs",
+    ...ENTRY_CLASSIFIER_HOOK_FILES,
     "activate-meta-theory-spine.mjs",
     "bash-readonly-whitelist.mjs",
     "codex_hook_adapter.py",
@@ -3839,6 +3846,7 @@ const PROJECT_HOOK_FILE_WHITELIST_BY_PLATFORM = {
     "governed-task-reference.mjs",
     "task-progress.mjs",
     "governed-host-checkpoint.mjs",
+    ...ENTRY_CLASSIFIER_HOOK_FILES,
     "activate-meta-theory-spine.mjs",
     "bash-readonly-whitelist.mjs",
     "enforce-agent-dispatch.mjs",
@@ -6257,55 +6265,20 @@ async function installPythonTools(
     python = await downloadAndInstallPython();
     if (!python) return false;
   }
-  const graphifyPackage = managedGraphConfig ? "graphifyy==0.9.56" : "graphifyy";
-
-  // Check if graphify already installed via pip show (more reliable than --version)
-  const pipShow = runPythonModule(python, ["-m", "pip", "show", "graphifyy"]);
-  if (pipShow.status === 0) {
-    const version =
-      extractPipShowVersion(readProcessText(pipShow)) ?? "unknown";
-    if (inUpdateMode || (managedGraphConfig && version !== "0.9.56")) {
-      // Upgrade in update mode or repair the managed producer pin.
-      info(t.graphifyUpgrading);
-      const upgradeResult = runPythonModule(
-        python,
-        ["-m", "pip", "install", "--upgrade", graphifyPackage],
-        undefined,
-        { stdio: "pipe" },
-      );
-      if (upgradeResult.status !== 0) {
-        const stderr = readProcessText(upgradeResult);
-        warn(t.graphifyUpgradeFailed);
-        if (stderr) {
-          console.log(`${C.dim}${t.pipErrorDetail(stderr)}${C.reset}`);
-        }
-        return false;
-      }
-      const newVersion =
-        extractPipShowVersion(readProcessText(upgradeResult)) ?? version;
-      ok(t.graphifyUpgraded(newVersion));
-    } else {
-      ok(t.graphifyAlreadyInstalled(version));
-    }
-  } else {
-    // Install graphify
-    info(t.graphifyInstalling);
-    const installResult = runPythonModule(
-      python,
-      ["-m", "pip", "install", graphifyPackage],
-      undefined,
-      { stdio: "pipe" },
-    );
-    if (installResult.status !== 0) {
-      const stderr = readProcessText(installResult);
-      warn(t.graphifyInstallFailed);
-      if (stderr) {
-        console.log(`${C.dim}${t.pipErrorDetail(stderr)}${C.reset}`);
-      }
-      return false;
-    }
-    ok(t.graphifyInstalled);
+  const graphifyPackageResult = reconcileGraphifyPackage(python, {
+    inUpdateMode,
+    onAction: (action) => info(action === "install" ? t.graphifyInstalling : t.graphifyUpgrading),
+  });
+  if (!graphifyPackageResult.ok) {
+    warn(graphifyPackageResult.action === "install" ? t.graphifyInstallFailed : t.graphifyUpgradeFailed);
+    info(graphifyPackageResult.code);
+    const detail = readProcessText(graphifyPackageResult.processResult);
+    if (detail) console.log(`${C.dim}${t.pipErrorDetail(detail)}${C.reset}`);
+    return false;
   }
+  ok(graphifyPackageResult.action === "reuse"
+    ? t.graphifyAlreadyInstalled(graphifyPackageResult.version)
+    : graphifyPackageResult.action === "install" ? t.graphifyInstalled : t.graphifyUpgraded(graphifyPackageResult.version));
 
   // Ensure networkx >= 3.4 for louvain_communities(max_level) compatibility
   ensureNetworkxCompatibility(python);

@@ -9,7 +9,9 @@ import { readCurrentTaskFacts, selectTaskDesignRoute, mergeTaskSafetyFacts, requ
 import { routeCandidateOptions } from "../../scripts/governed-execution/intent-dialogue.mjs";
 import { buildRunnerStageDagPacket } from "../../scripts/run-meta-theory-governed-execution.mjs";
 import { runStageRunnerBridge } from "../../scripts/governed-execution/stage-runner-bridge.mjs";
+import { refreshFixtureSourcePins, fixtureCritical, fixtureReadWorkOrder, runWithFixtureHostThinking } from "../helpers/host-reasoning-fixture.mjs";
 import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
+import { readOnlyFixtureTaskFacts } from "../helpers/task-design-facts.mjs";
 
 const task = "Rename a local constant while preserving behavior";
 function inferred(request = task, count = 1) {
@@ -47,6 +49,23 @@ test("four dimensions separately select bounded change, focused probe and integr
   assert.equal(evaluateGovernanceRequirements(facts({ operationalRisk: "sensitive" })).governanceRequirements.permission.required, true);
 });
 
+test("unknown dimensions remain independent of a focused or integrated route", () => {
+  const dimensions = ["uncertainty", "coupling", "operationalRisk", "verification"];
+  for (const dimension of dimensions) {
+    for (const trigger of [{ uncertainty: "focused_unknown" }, { coupling: "shared_state" }, { verification: "needs_probe" }]) {
+      if (Object.hasOwn(trigger, dimension)) continue;
+      const current = facts({ ...trigger, [dimension]: "unknown" });
+      const readiness = verifyTaskDesignReadiness({ todayTask: task, taskFactsSubject: task, taskFacts: current,
+        designBinding: { designId: "current" }, researchEvidence: ["evidence:local-source"],
+        handoffTarget: "reviewer", verifySteps: [{ id: "verify", step: "Inspect the result", verify: "Matches the criterion" }] });
+      assert.equal(readiness.ready, false, JSON.stringify(current.design));
+      assert.deepEqual(readiness.unknownDimensions, [dimension]);
+      assert.ok(readiness.gaps.includes("current_subtask_facts_required"));
+      assert.equal(selectTaskDesignRoute(readCurrentTaskFacts(current, task)).assessmentRequired, true);
+    }
+  }
+});
+
 test("bound false cannot erase observed permissions; task/hash/version/malformed facts cannot become authority", () => {
   const request = "Change production permission enforcement";
   const current = facts({}, request); current.security.permission = false;
@@ -80,6 +99,14 @@ test("facts inheritance expires when the same task's intent or research decision
 test("provider/model scores do not become product questions; material outcome evidence can", () => {
   const models = ["model-a", "model-b"].map(id => ({ id, owner: id, weapon: id, score: 76, expectedResult: "The same report" }));
   assert.deepEqual(routeCandidateOptions({ rankedRoutes: models, decisionCard: { options: models } }), []);
+  const ownerOnly = models.map(option => ({ ...option, materialDimensions: ["owner", "loadout"], evidenceRefs: ["evidence:equivalent-outcome"] }));
+  assert.deepEqual(routeCandidateOptions({ decisionCard: { options: ownerOnly } }), []);
+  const riskOptions = models.map((option, index) => ({ ...option, materialDimensions: ["risk"],
+    expectedResult: index ? "Retain a recoverable local copy" : "Replace the current external copy", evidenceRefs: ["evidence:reviewed-effect"] }));
+  const selected = routeCandidateOptions({ decisionCard: { options: riskOptions } });
+  assert.equal(selected.length, 2);
+  assert.deepEqual(selected[0].evidenceRefs, ["evidence:reviewed-effect"]);
+  assert.deepEqual(routeCandidateOptions({ decisionCard: { options: riskOptions.map(option => ({ ...option, evidenceRefs: [] })) } }), []);
   assert.equal(routeCandidateOptions({ decisionCard: { options: models.map((option, index) => ({ ...option,
     materialDimensions: ["scope"], evidenceRefs: ["conversation:delivery-scope"], expectedResult: index ? "Whole book" : "One chapter" })) } }).length, 2);
 });
@@ -125,6 +152,10 @@ test("mixed actual ready-set invokes independent ready work and leaves design ga
     shardScope: [id], nonGoals: ["No writes"], dependsOn, executionMode: "primary_execution", mutationPolicy: "read_only", workspaceIsolation: "shared_read_only", externalWriteBoundary: false,
     todayTask: id, taskFacts: facts(design, id), taskFactsSubject: id });
   const packets = [make("clear"), make("shared", { coupling: "shared_state" }), make("dependent", {}, ["shared"]),
+    { ...make("unknown-researched", { uncertainty: "focused_unknown", operationalRisk: "unknown" }), researchEvidence: ["evidence:local-source"] },
+    { ...make("unknown-designed", { coupling: "shared_state", operationalRisk: "unknown" }), designBinding: { designId: "current" } },
+    make("unknown-dependent", {}, ["unknown-researched"]),
+    { ...make("bounded-diagnostic"), output: "Read the named source to assess the implementation task's unknown risk; make no change" },
     { ...make("sensitive", { operationalRisk: "sensitive" }), handoffTarget: "security-owner", verifySteps: [{ id: "safety", step: "Check safety", verify: "Permission boundary unchanged" }] }];
   const dag = buildRunnerStageDagPacket(packets, { runtimeCapacity: 4 });
   const calls = [];
@@ -134,15 +165,17 @@ test("mixed actual ready-set invokes independent ready work and leaves design ga
       const at = new Date().toISOString();
       return { status: "pass", runtime: "codex", exitCode: 0, startedAt: at, endedAt: at, durationMs: 1, outputText: "bounded observation", outputSha256: "a".repeat(64), rawOutputSha256: "b".repeat(64), hostEventCount: 1, toolEventCount: 0, stderrTail: "" };
     } });
-  assert.deepEqual(calls.sort(), ["clear", "sensitive"]);
+  assert.deepEqual(calls.sort(), ["bounded-diagnostic", "clear", "sensitive"]);
   assert.notEqual(result.status, "pass");
   assert.equal(result.executionProjection.invocationTruth.nativeRuntimeInvoked, false);
   assert.ok(JSON.stringify(result).includes("current_subtask_integrated_design_required"));
+  assert.ok(JSON.stringify(result).includes("current_subtask_facts_required"));
   assert.equal(result.workerResults.some(worker => worker.taskPacketId === "dependent" && worker.status === "completed"), false);
 });
 
 test("ordinary entry consumes bound facts before any execution dispatch or complete design request", async t => {
   const fixture = createGovernanceRuntimeFixtureScope(t);
+  refreshFixtureSourcePins(fixture);
   const { runMetaTheoryGovernedExecution } = await fixture.import("scripts/run-meta-theory-governed-execution.mjs");
   const criticalInput = { taskHash: taskOutcomeDigest(task), intentDigest: null, realIntent: task, evidenceRefs: ["fixture:request"], blockingUnknowns: [], nonGoals: [], successCriteria: ["The constant is renamed without behavior changes"] };
   const invoke = (id, governanceTaskFacts, extra = {}) => runMetaTheoryGovernedExecution({ task, runId: id, criticalInput, governanceTaskFacts,
@@ -150,6 +183,10 @@ test("ordinary entry consumes bound facts before any execution dispatch or compl
   const unknown = await invoke("design-unknown", null);
   assert.equal(unknown.hostInvocationRequestPacket.nextAction.action, "assess_current_task_design_facts");
   assert.deepEqual(unknown.workerTaskPackets, []);
+  const compound = await invoke("design-unknown-probe", facts({ uncertainty: "focused_unknown", operationalRisk: "unknown" }));
+  assert.equal(compound.hostInvocationRequestPacket.nextAction.action, "assess_current_task_design_facts");
+  assert.deepEqual(compound.taskDesignRoutePacket.unknownDimensions, ["operationalRisk"]);
+  assert.deepEqual(compound.workerTaskPackets, []);
   const probe = await invoke("design-probe", facts({ uncertainty: "focused_unknown" }));
   assert.equal(probe.hostInvocationRequestPacket.nextAction.stage, "Fetch");
   assert.equal(probe.taskDesignRoutePacket.designRequired, false);
@@ -178,4 +215,33 @@ test("ordinary entry consumes bound facts before any execution dispatch or compl
   assert.equal(cliArtifact.taskDesignRoutePacket.route, "targeted_change");
   assert.equal(cliArtifact.hostInvocationRequestPacket.nextAction.stage, "Thinking");
   await assert.rejects(invoke("design-wrong-task", facts({}, "unrelated task")), /another task/);
+});
+
+test("ordinary host handoff retains assessed diagnosis while the parent implementation risk stays unknown", async t => {
+  const fixture = createGovernanceRuntimeFixtureScope(t);
+  refreshFixtureSourcePins(fixture);
+  const { runMetaTheoryGovernedExecution } = await fixture.import("scripts/run-meta-theory-governed-execution.mjs");
+  const request = "Inspect the package file to establish implementation risk before making changes";
+  const diagnostic = "Read the scripts in package.json without changing any files";
+  const criticalInput = fixtureCritical({ task: request, successCriteria: [{ id: "risk-evidence",
+    condition: "Report current source evidence about the affected package scripts", evidenceRequired: "Current package.json inspection" }] });
+  const governanceTaskFacts = readOnlyFixtureTaskFacts(request, { operationalRisk: "unknown" });
+  const invoke = (id, diagnosticFacts) => runWithFixtureHostThinking(runMetaTheoryGovernedExecution, {
+    task: request, runId: id, projectRoot: fixture.repoRoot, runtime: "codex", projectCapabilityMutationMode: "read_only",
+    stateDir: path.join(fixture.root, id), artifactDir: path.join(fixture.root, id + "-artifacts"), dbPath: path.join(fixture.root, id + ".sqlite"),
+  }, { criticalInput, governanceTaskFacts,
+    workOrders: preparation => [fixtureReadWorkOrder(preparation, { id: "bounded-diagnosis", todayTask: diagnostic,
+      output: "Observed source evidence, with no implementation changes", criterionIds: ["risk-evidence"], taskFacts: diagnosticFacts })] });
+  const ready = await invoke("assessed-diagnosis", readOnlyFixtureTaskFacts(diagnostic));
+  assert.equal(ready.preparation, undefined);
+  assert.deepEqual(ready.taskDesignRoutePacket.unknownDimensions, ["operationalRisk"]);
+  assert.equal(ready.workerTaskPackets.length, 1);
+  assert.equal(ready.workerTaskPackets[0].taskDesignAssessment.ready, true);
+  assert.equal(ready.workerTaskPackets[0].workOrderReadiness, "ready");
+  assert.equal(ready.coreLoop.executionResult.actualWorkerExecution, false);
+  const unresolved = await invoke("unassessed-diagnosis", readOnlyFixtureTaskFacts(diagnostic, { operationalRisk: "unknown" }));
+  assert.equal(unresolved.workerTaskPackets[0].taskDesignAssessment.ready, false);
+  assert.equal(unresolved.workerTaskPackets[0].workOrderReadiness, "incomplete");
+  assert.ok(unresolved.workerTaskPackets[0].taskDesignAssessment.gaps.includes("current_subtask_facts_required"));
+  assert.equal(unresolved.coreLoop.executionResult.actualWorkerExecution, false);
 });

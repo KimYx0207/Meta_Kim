@@ -111,7 +111,7 @@ describe("Clarity Gate unified execution confirmation", async () => {
 
   test("templates enforce outcome-branching choices and product-readable dimensions", () => {
     const combined = `${decisionTemplate}\n${batchTemplate}`;
-    assert.match(combined, /Ask only questions whose answer changes execution, scope, risk, owner, or acceptance/);
+    assert.match(combined, /Ask only questions whose answer changes the user-visible result, scope, risk, cost, permission, or acceptance/);
     assert.match(combined, /Do not add filler questions or filler options to satisfy a count/);
     assert.match(combined, /Expected result/);
     assert.match(combined, /non-technical users/);
@@ -549,7 +549,7 @@ describe("Clarity Gate unified execution confirmation", async () => {
     assert.match(combined, /test a popup|interactive box|popup_test_request/i);
     assert.match(combined, /Critical[\s\S]*Fetch[\s\S]*Thinking/);
     assert.match(combined, /intent frame/i);
-    assert.match(combined, /changes route, scope, risk, acceptance, owner, permission, or non-goal/i);
+    assert.match(combined, /changes the user-visible result, scope, risk, acceptance, permission, or non-goal/i);
     assert.match(combined, /must not present execution options/i);
     assert.match(combined, /contentEvidencePacket[\s\S]*preDecisionOptionFrame/);
     assert.match(combined, /No candidate paths means no execution confirmation/i);

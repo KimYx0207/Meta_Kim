@@ -1,6 +1,6 @@
 {
   "name": "meta-kim",
-  "version": "3.10.0",
+  "version": "3.10.1",
   "description": "General agent governance for evidence-backed decisions, capability discovery, orchestration and outcome verification across domains, with primary Claude Code/Codex projections and opt-in compatibility adapters.",
   "private": true,
   "type": "module",
@@ -262,9 +262,14 @@
     "src/domain/runtime/runtime-health-projection.mjs",
     "src/domain/shared/canonical-digest.mjs",
     "src/domain/live/live-continuation-command.mjs",
+    "src/domain/live/live-read-contract.mjs",
     "src/domain/live/live-share-artifact.mjs",
     "src/domain/presentation/read-only-run-projection-schema.mjs",
     "src/domain/presentation/read-only-run-projection-surfaces.mjs",
+    "src/application/decision/route-candidate-options.mjs",
+    "src/application/governance/task-design-dispatch.mjs",
+    "src/application/runtime/operating-system.mjs",
+    "src/data/repositories/live-deliverable-repository.mjs",
     "src/application/presentation/build-read-only-run-projection-surfaces.mjs",
     "src/application/live/build-live-share-artifact.mjs",
     "src/application/live/live-acceptance-fixture-loader.mjs",
@@ -369,7 +374,9 @@
     "src/application/live/live-human-gate-projection.mjs",
     "src/infrastructure/capabilities/optional-engine-discovery.mjs",
     "src/infrastructure/installer/retired-dependency-copies.mjs",
-    "docs/harness-architecture.md"
+    "docs/harness-architecture.md",
+    "docs/dependency-baseline.md",
+    "npm-shrinkwrap.json"
   ],
   "author": "KimYx0207",
   "license": "Apache-2.0",

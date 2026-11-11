@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
-import { refreshFixtureSourcePins } from "../helpers/host-reasoning-fixture.mjs";
+import { FIXTURE_DIAGNOSTIC_PROVIDERS, refreshFixtureSourcePins } from "../helpers/host-reasoning-fixture.mjs";
 import { runDiagnosticReadPlan } from "../../scripts/diagnostic-host-protocol.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -216,6 +216,7 @@ test("generated card plans mark choice cards as adapter-required, not native-tri
   const runId = "choice-surface-trigger-test";
   try {
     await runDiagnosticReadPlan(runMetaTheoryGovernedExecution, {
+      diagnosticProviders: FIXTURE_DIAGNOSTIC_PROVIDERS,
       task: "Run meta-theory to inspect package.json and retain source-bound findings without changing files.",
       runId, stateDir: tempDir, dbPath: path.join(tempDir, "runs.sqlite"), projectRoot: fixture.repoRoot,
     }, ["package.json"]);

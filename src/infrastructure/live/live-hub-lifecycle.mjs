@@ -67,6 +67,7 @@ const INSTANCE_ID_PATTERN = /^[a-f0-9-]{16,64}$/u;
  * tests/live/live-package-closure.test.mjs.
  */
 export const LIVE_HUB_RUNTIME_IDENTITY_PATHS = Object.freeze([
+  "config/live-deliverables.json",
   "canonical/runtime-assets/shared/hooks/governed-task-reference.mjs",
   "canonical/runtime-assets/shared/hooks/conversation-binding.mjs",
   "canonical/runtime-assets/shared/hooks/spine-state.mjs",
@@ -76,6 +77,7 @@ export const LIVE_HUB_RUNTIME_IDENTITY_PATHS = Object.freeze([
   "scripts/project-registry.mjs",
   "scripts/release-state-hardening.mjs",
   "src/domain/live/live-continuation-command.mjs",
+  "src/domain/live/live-read-contract.mjs",
   "src/domain/live/live-share-artifact.mjs",
   "src/domain/shared/canonical-digest.mjs",
   "src/application/live/build-live-share-artifact.mjs",
@@ -109,6 +111,7 @@ export const LIVE_HUB_RUNTIME_IDENTITY_PATHS = Object.freeze([
   "src/application/live/prepare-live-projection-record.mjs",
   "src/data/sqlite/runtime.mjs",
   "src/data/sqlite/transaction.mjs",
+  "src/data/repositories/live-deliverable-repository.mjs",
   "src/infrastructure/live/live-continuation-command-store.mjs",
   "src/infrastructure/live/live-control-room-server.mjs",
   "src/infrastructure/live/live-hub-lifecycle.mjs",

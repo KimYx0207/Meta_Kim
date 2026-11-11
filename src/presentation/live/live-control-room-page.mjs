@@ -5020,6 +5020,11 @@ const CLIENT_SCRIPT = String.raw`(() => {
       row.append(link, makeElement("span", "panel-note", item.availability === "available"
         ? currentLanguage === "zh" ? "有产出内容 · 仍需核对结果" : "Output present · review still needed"
         : currentLanguage === "zh" ? "已声明路径 · 打开时核对是否可用" : "Declared reference · availability checked when opened"));
+      if (item.kind !== "external") {
+        const download = makeElement("a", "live-deliverable-download", currentLanguage === "zh" ? "下载文件" : "Download file");
+        download.href = deliverableOpenHref(item) + "&download=1";
+        row.append(download);
+      }
       parent?.append(row);
     }
     if (!deliverables.length) parent?.append(makeElement("p", "panel-empty", currentLanguage === "zh"

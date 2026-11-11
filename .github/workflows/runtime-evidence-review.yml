@@ -17,9 +17,12 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+      - name: Read the shared dependency baseline
+        id: dependency-baseline
+        run: node scripts/dependency-baseline.mjs --github-output
       - uses: actions/setup-node@v7
         with:
-          node-version: 22.13.0
+          node-version: ${{ steps.dependency-baseline.outputs.node-regression }}
       - name: Check current evidence and warn seven days before review expiry
         run: node scripts/check-runtime-evidence-review.mjs
       - name: Test evidence gates, explicit review renewal, and MCP resource boundaries

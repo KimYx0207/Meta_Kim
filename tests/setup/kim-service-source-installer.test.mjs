@@ -131,13 +131,23 @@ function legacyBackup(target) {
   return path.join(root, name);
 }
 function mockRemoteSource(ctx, source) {
+  const baseline = JSON.parse(readFileSync(path.join(repoRoot, "config/dependency-baseline.json"), "utf8"));
   const worker = path.join(ctx.root, "mock-git-worker.mjs");
-  put(worker, `import {cpSync,mkdirSync} from 'node:fs'; const args=JSON.parse(process.argv[2]); if(args[0]==='clone'){mkdirSync(args.at(-1),{recursive:true});cpSync(${JSON.stringify(source)},args.at(-1),{recursive:true});}`);
+  put(worker, `import {cpSync,mkdirSync} from 'node:fs'; const args=JSON.parse(process.argv[2]);
+const operation=args[0]==='-C'?args[2]:args[0], target=args[0]==='-C'?args[1]:args.at(-1);
+if(operation==='init')mkdirSync(target,{recursive:true});
+if(['clone','fetch'].includes(operation)){mkdirSync(target,{recursive:true});cpSync(${JSON.stringify(source)},target,{recursive:true});}
+if(operation==='rev-parse')process.stdout.write(${JSON.stringify(baseline.kimService.commit)}+'\\n');`);
   const hook = path.join(ctx.root, "mock-git.mjs");
   put(hook, `import cp from 'node:child_process';import {syncBuiltinESMExports} from 'node:module';
-for(const key of ['spawn','spawnSync']){const original=cp[key];cp[key]=function(command,args,options){if(/(?:^|[\\\\/])git(?:\\.exe)?$/i.test(String(command))&&['clone','sparse-checkout'].includes(args?.[0]))return original.call(this,process.execPath,[${JSON.stringify(worker)},JSON.stringify(args)],options);return original.apply(this,arguments);};}syncBuiltinESMExports();`);
+for(const key of ['spawn','spawnSync','execFileSync']){const original=cp[key];cp[key]=function(command,args,options){
+const operation=args?.[0]==='-C'?args[2]:args?.[0];
+const reviewedSource=args?.[0]==='-C'&&String(args[1]).includes('meta-kim-service-source-');
+if(/(?:^|[\\\\/])git(?:\\.exe)?$/i.test(String(command))&&(['clone','sparse-checkout','init'].includes(operation)||(reviewedSource&&['remote','fetch','checkout','rev-parse','status'].includes(operation))))return original.call(this,process.execPath,[${JSON.stringify(worker)},JSON.stringify(args)],options);
+return original.apply(this,arguments);};}syncBuiltinESMExports();`);
   ctx.env.NODE_OPTIONS += ` --import=${new URL(`file:///${hook.replaceAll("\\", "/")}`).href}`;
 }
+
 function verifyInstallable(ctx, source) {
   for (const [id, subdir] of installSpecs) {
     const skillSpec=manifest.skills.find(item=>item.id===id);

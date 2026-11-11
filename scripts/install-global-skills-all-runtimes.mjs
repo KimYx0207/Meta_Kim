@@ -67,6 +67,7 @@ import {
 } from "./install-skill-sanitizer.mjs";
 import { fileURLToPath } from "node:url";
 import { materializeManagedServiceSource, readManagedServiceSource } from "./managed-dependency-source.mjs";
+import { checkoutReviewedServiceSource, reusableManagedServiceSource } from "./managed-service-checkout.mjs";
 import {
   parseSkillsArg,
   resolveTargetContext,
@@ -89,6 +90,7 @@ import {
   loadMetaKimConfig,
 } from "./meta-kim-config-loader.mjs";
 import { checkedPath, componentHash } from "./dependency-agent-discovery.mjs";
+import { upstreamCliTargetMode, upstreamCliArgsForTarget } from "./upstream-cli-install-plan.mjs";
 
 // ── ANSI colors (matching setup.mjs) ─────────────────────────────────
 
@@ -2662,38 +2664,6 @@ async function cleanupNativePluginSkillFallback(runtimeHome, runtimeId, spec) {
   }
 }
 
-const ECC_HOME_INSTALL_TARGETS = new Set(["codex", "opencode", "qwen"]);
-const ECC_PROJECT_INSTALL_TARGETS = new Set([
-  "cursor",
-  "zed",
-  "gemini",
-  "codebuddy",
-  "antigravity",
-  "joycode",
-]);
-
-function upstreamCliTargetMode(runtimeId) {
-  if (ECC_HOME_INSTALL_TARGETS.has(runtimeId)) return "home";
-  if (ECC_PROJECT_INSTALL_TARGETS.has(runtimeId)) return "project";
-  return null;
-}
-
-function upstreamCliArgsForTarget(spec, runtimeId) {
-  const pkg = spec.upstreamPackage || `${spec.id}@latest`;
-  const profile = spec.upstreamProfile || "core";
-  return [
-    "--yes",
-    "--package",
-    pkg,
-    "ecc",
-    "install",
-    "--profile",
-    profile,
-    "--target",
-    runtimeId,
-  ];
-}
-
 function formatNpxCommand(args) {
   return `npx ${args.join(" ")}`;
 }
@@ -4304,15 +4274,15 @@ async function prepareManagedServiceSource(activeTargets) {
     && activeTargets.some(runtime => !spec.targets || spec.targets.includes(runtime)));
   if (!selected.length) return;
   const declared = selected.find(spec => spec.localRepoPath)?.localRepoPath;
-  let root = !declared && !updateMode ? readManagedServiceSource()?.value : null;
+  const installed = !declared && !updateMode ? readManagedServiceSource() : null;
+  let root = reusableManagedServiceSource(installed, selected[0].repoFullName);
   if (!root) {
     const temporary = declared ? null : await fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-service-source-"));
     try {
-      if (temporary) await runGitAsync(["clone", "--depth", "1", selected[0].repo, temporary], {
-        skillLabel: "Kim_Service professional capability source", cloneProgress: { skillId: "kim-service", rootPath: temporary },
-      });
+      const sourceRevision = temporary ? await checkoutReviewedServiceSource({ directory: temporary,
+        repositoryUrl: selected[0].repo, repository: selected[0].repoFullName, runGit: runGitAsync }) : null;
       root = await materializeManagedServiceSource({ sourceRoot: declared ?? temporary,
-        metaKimVersion: JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8")).version });
+        metaKimVersion: JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8")).version, sourceRevision });
     } finally {
       if (temporary) await fs.rm(temporary, { recursive: true, force: true });
     }

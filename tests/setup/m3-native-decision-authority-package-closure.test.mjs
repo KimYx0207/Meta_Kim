@@ -122,6 +122,10 @@ const LIVE_SOURCE_FILES = [
 // Explicitly reviewed additions to the existing M3 package boundary.
 // Keep this list independent of package.json so accidental widening fails.
 const APPROVED_HARNESS_ADDITIONS = [
+  "src/application/decision/route-candidate-options.mjs",
+  "src/application/governance/task-design-dispatch.mjs",
+  "src/application/runtime/operating-system.mjs",
+  "src/data/repositories/live-deliverable-repository.mjs",
   "src/adapters/codex/desktop-decision-host-adapter.mjs",
   "src/application/live/live-deliverables.mjs",
   "src/application/live/live-graph-readability.mjs",
@@ -237,4 +241,28 @@ test("both native adapters and the authority resolve only to files in the packed
       );
     }
   }
+});
+
+
+test("entry, task design, decision and OS adapters have a closed npm package import graph", () => {
+  const files = packageFileSet();
+  const pending = ["scripts/meta-theory-entry-classifier.mjs", "scripts/governed-execution/task-design-dispatch.mjs",
+    "scripts/governed-execution/intent-dialogue.mjs", "scripts/governed-execution/choice-policy.mjs",
+    "scripts/runtime-operating-system.mjs", "scripts/governance-lib.mjs"];
+  const visited = new Set();
+  while (pending.length) {
+    const importer = pending.pop();
+    if (visited.has(importer)) continue;
+    visited.add(importer);
+    assert.ok(files.has(importer), `packed package is missing ${importer}`);
+    if (!importer.endsWith(".mjs")) continue;
+    const source = readFileSync(path.join(REPO_ROOT, importer), "utf8");
+    for (const [, specifier] of source.matchAll(/\bfrom\s+["'](\.[^"']+)["']/gu)) {
+      const dependency = resolvePackageRelativeImport(importer, specifier);
+      assert.ok(files.has(dependency), `${importer} import ${specifier} is missing from npm pack`);
+      pending.push(dependency);
+    }
+  }
+  assert.ok(visited.has("canonical/runtime-assets/shared/hooks/entry-classification-lexicon.json"));
+  assert.ok(visited.has("config/governance/material-decision-policy.json"));
 });

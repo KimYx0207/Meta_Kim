@@ -3,7 +3,7 @@ import test from "node:test";
 import { projectWorkflowWorkerResults } from "../../scripts/governed-execution/worker-result-projection.mjs";
 import path from "node:path";
 import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
-import { refreshFixtureSourcePins } from "../helpers/host-reasoning-fixture.mjs";
+import { FIXTURE_DIAGNOSTIC_PROVIDERS, refreshFixtureSourcePins } from "../helpers/host-reasoning-fixture.mjs";
 import { runDiagnosticReadPlan } from "../../scripts/diagnostic-host-protocol.mjs";
 import { buildLiveCompactProjection, buildLiveSnapshot } from "../../src/application/live/live-control-room-service.mjs";
 
@@ -24,6 +24,7 @@ test("real routed workflow construction keeps task identity and preserves observ
   const { runMetaTheoryGovernedExecution, buildWorkflowContractPackets } = await fixture.import("scripts/run-meta-theory-governed-execution.mjs");
   const out = path.join(fixture.root, "result-projection");
   const report = await runDiagnosticReadPlan(runMetaTheoryGovernedExecution, { task: "Run meta-theory: inspect package.json and report the exact package name and version. Do not modify files.",
+    diagnosticProviders: FIXTURE_DIAGNOSTIC_PROVIDERS,
     runId: "worker-projection-integration", stateDir: out, artifactDir: out, dbPath: path.join(out, "runs.sqlite"),
     projectRoot: fixture.repoRoot, projectCapabilityMutationMode: "read_only" }, ["package.json"]);
   const coreLoop = structuredClone(report.coreLoop);
@@ -47,4 +48,41 @@ test("real routed workflow construction keeps task identity and preserves observ
   assert.ok(snapshot.deliverables.some((item) => item.kind === "text"), "actual constructed output must reach the public opening surface");
   observed.runId = "another-run";
   assert.equal(construct().workerResultPackets.find((result) => result.taskPacketId === selected.taskPacketId).status, "planned_not_executed");
+});
+
+test("discovery Review checks the bound Fetch inventory without requiring unrelated selected tools", async (t) => {
+  const fixture = createGovernanceRuntimeFixtureScope(t, { graph: true });
+  refreshFixtureSourcePins(fixture);
+  const { runMetaTheoryGovernedExecution, hasBoundMultiTypeCapabilityInventory } = await fixture.import("scripts/run-meta-theory-governed-execution.mjs");
+  const out = path.join(fixture.root, "discovery-review");
+  const report = await runDiagnosticReadPlan(runMetaTheoryGovernedExecution, {
+    task: "Inspect package.json and report its name without editing files.",
+    diagnosticProviders: FIXTURE_DIAGNOSTIC_PROVIDERS,
+    runId: "discovery-review", stateDir: out, artifactDir: out, dbPath: path.join(out, "runs.sqlite"),
+    projectRoot: fixture.repoRoot, projectCapabilityMutationMode: "read_only",
+  }, ["package.json"]);
+  const route = report.selectedExecutionRoute;
+  assert.equal(Object.values(route.recommendedRoute.selectedCapabilityProviders)
+    .some(provider => ["mcpServers", "mcpTools"].includes(provider.type)), false);
+  assert.equal(report.coreLoop.reviewPacket.protocolCompliance.capabilityDiscoveryChecked, true,
+    "Review must inspect discovered capabilities even when the read-only loadout does not select MCP");
+  const binding = { fetchPacket: route.fetchPacket,
+    expectedInventoryDigest: report.coreLoop.thinkingPacket.inventoryDigest,
+    runtime: route.runtime, osTarget: route.os };
+  assert.equal(hasBoundMultiTypeCapabilityInventory(binding), true);
+  for (const types of [["skills"], ["runtimeTools", "commands"], ["mcpServers", "mcpTools"]]) {
+    // Negative controls derive from this run's real discovered records only.
+    const incomplete = structuredClone(binding);
+    incomplete.fetchPacket.capabilityDiscovery.providers = incomplete.fetchPacket.capabilityDiscovery.providers
+      .filter(provider => !types.includes(provider.type));
+    assert.equal(hasBoundMultiTypeCapabilityInventory(incomplete), false, `missing ${types.join("/")} must fail`);
+  }
+  for (const changes of [{ expectedInventoryDigest: null }, { expectedInventoryDigest: "0".repeat(64) },
+    { fetchPacket: null }, { runtime: "other-runtime" }, { osTarget: "other-os" }]) {
+    assert.equal(hasBoundMultiTypeCapabilityInventory({ ...binding, ...changes }), false);
+  }
+  assert.equal(report.status, "partial");
+  assert.equal(report.executionResult.actualWorkerExecution, false);
+  assert.equal(route.recommendedRoute.nativeInvocationVerified, false);
+  assert.equal(report.publicReadyDecision.publicReady, false);
 });

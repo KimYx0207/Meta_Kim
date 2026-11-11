@@ -103,6 +103,13 @@ export const HOOKPROMPT_PLATFORM_SUPPORT = {
 
 // Cross-runtime hook core. These files have exactly one canonical owner under
 // shared/hooks; runtime sync must never prefer a same-named runtime copy.
+// One dependency declaration is reused by project/global install, ownership and cleanup.
+export const ENTRY_CLASSIFIER_HOOK_FILES = Object.freeze([
+  "entry-classification-lexicon.json",
+  "entry-classifier-core.mjs",
+  "entry-classifier.mjs",
+]);
+
 export const SHARED_RUNTIME_HOOK_FILES = Object.freeze([
   "project-root.mjs",
   "utils.mjs",
@@ -114,6 +121,7 @@ export const SHARED_RUNTIME_HOOK_FILES = Object.freeze([
   "governed-task-reference.mjs",
   "task-progress.mjs",
   "governed-host-checkpoint.mjs",
+  ...ENTRY_CLASSIFIER_HOOK_FILES,
   "activate-meta-theory-spine.mjs",
   "planning-continuity.mjs",
 ]);
@@ -210,6 +218,7 @@ export const PROJECT_META_KIM_HOOK_FILES = new Set([
   "governed-task-reference.mjs",
   "task-progress.mjs",
   "governed-host-checkpoint.mjs",
+  ...ENTRY_CLASSIFIER_HOOK_FILES,
   "activate-meta-theory-spine.mjs",
   "bash-readonly-whitelist.mjs",
   "block-dangerous-bash.mjs",

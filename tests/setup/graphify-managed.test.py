@@ -99,7 +99,7 @@ class ManagedGraphifyTests(unittest.TestCase):
         self.write_minimal_native_graph()
         package = self.base / "ephemeral-package"
         package.mkdir()
-        for source in (SCRIPT, managed.PRODUCER):
+        for source in (SCRIPT, managed.PRODUCER, managed.BASELINE):
             shutil.copy2(source, package / source.name)
         subprocess.run([sys.executable, str(package / SCRIPT.name), "install", "--repo", str(self.repo)],
                        env=self.env, cwd=self.repo, capture_output=True, check=True)

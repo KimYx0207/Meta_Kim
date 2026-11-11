@@ -322,6 +322,7 @@
       },
       "decisionResponsibilities": {
         "responsibilityRef": "route_design_and_owner_selection",
+        "choicePolicyRef": "config/governance/material-decision-policy.json",
         "decisionQuestion": "Which owner, weapon, dependency, runtime, OS, lane shape, and verification path best serves the intent?",
         "informationToCollect": [
           "candidate routes",
@@ -337,7 +338,7 @@
           "workerTaskPackets",
           "review and verification owner"
         ],
-        "userChoiceWhen": "Ask before Execution when candidate routes differ in scope, cost, risk, owner, acceptance, or persistence."
+        "userChoiceWhen": "Ask before Execution only when an unresolved, evidenced alternative materially changes the user-visible result, scope, cost, risk, permission, compatibility, acceptance, or persistence. Owner and loadout differences alone are internal selections; reuse existing user direction and authorization."
       }
     },
     {

@@ -1,0 +1,6 @@
+{
+  "runtime": "codex",
+  "agent": { "id": "kim-service:source-evidence-analyst" },
+  "verificationAgent": { "id": "kim-service:delivery-verifier" },
+  "skill": { "id": "meta-theory" }
+}

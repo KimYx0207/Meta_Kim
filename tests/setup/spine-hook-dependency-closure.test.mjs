@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { SHARED_RUNTIME_HOOK_FILES } from "../../scripts/runtime-hook-mapping.mjs";
+import { SHARED_RUNTIME_HOOK_FILES, ENTRY_CLASSIFIER_HOOK_FILES } from "../../scripts/runtime-hook-mapping.mjs";
 
 /**
  * The hook file lists that drive projection are hand-maintained and duplicated
@@ -41,7 +41,7 @@ function hookSourcePaths() {
   const sources = new Map();
   for (const dir of HOOK_SOURCE_DIRS) {
     for (const name of readdirSync(dir)) {
-      if (name.endsWith(".mjs") && !sources.has(name)) sources.set(name, path.join(dir, name));
+      if (/\.(?:mjs|json)$/u.test(name) && !sources.has(name)) sources.set(name, path.join(dir, name));
     }
   }
   return sources;
@@ -53,7 +53,7 @@ function localImports(filePath) {
   const source = readFileSync(filePath, "utf8")
     .replace(/\/\*[\s\S]*?\*\//gu, "")
     .replace(/^\s*\/\/[^\n]*$/gmu, "");
-  const matches = source.matchAll(/from "\.\/([A-Za-z0-9._-]+\.mjs)"/gu);
+  const matches = source.matchAll(/from "\.\/([A-Za-z0-9._-]+\.(?:mjs|json))"/gu);
   const self = path.basename(filePath);
   return [...new Set([...matches].map((match) => match[1]))].filter((name) => name !== self);
 }
@@ -77,11 +77,12 @@ function dependencyClosure(entrypoint) {
 // A projected hook list is any array literal of bare string filenames, whether
 // it is a plain array, a `new Set([...])`, or a `for (const x of [...])` loop.
 function hookFileListLiterals(source) {
+  source = source.replaceAll("...ENTRY_CLASSIFIER_HOOK_FILES", ENTRY_CLASSIFIER_HOOK_FILES.map(name => JSON.stringify(name)).join(", "));
   const literals = [];
   for (const match of source.matchAll(/\[[^[\]{}()]*?\]/gsu)) {
     const body = match[0].slice(1, -1);
     if (!body.includes(".mjs")) continue;
-    const names = [...body.matchAll(/"([A-Za-z0-9._-]+\.(?:mjs|py|sh|ps1))"/gu)].map((entry) => entry[1]);
+    const names = [...body.matchAll(/"([A-Za-z0-9._-]+\.(?:mjs|json|py|sh|ps1))"/gu)].map((entry) => entry[1]);
     if (names.length === 0) continue;
     const residue = body
       .replace(/"[^"]*"/gu, "")

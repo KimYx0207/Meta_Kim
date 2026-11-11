@@ -90,7 +90,7 @@ For primary native runtimes, batch rendering must still preserve structured pane
 
 ## When Not to Use
 
-- A question would not change the deliverable, owner, scope, risk, or acceptance
+- A question would not change the deliverable, scope, risk, cost, permission, or acceptance
 - A safe default is clear from Critical, Fetch, and Thinking evidence
 - The batch exists only to make the interaction look comprehensive
 
@@ -107,7 +107,7 @@ This template binds `user-interaction-and-i18n`, `governance-orchestration`, `ru
 
 ## Fail
 
-- The batch includes filler questions, filler options, or choices that do not change execution, scope, risk, owner, or acceptance.
+- The batch includes filler questions, filler options, or choices that do not change the user-visible result, scope, risk, cost, permission, or acceptance.
 - It hides linear dependencies inside a single parallel batch.
 - It invents renderer-specific schemas in the canonical template.
 

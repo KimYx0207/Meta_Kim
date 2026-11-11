@@ -351,23 +351,5 @@ export function bindIntentToWorkerTasks({ workerTaskPackets, routeResult, dialog
   });
 }
 
-export function routeCandidateOptions(routeResult) {
-  const card = routeResult?.decisionCard;
-  const options = (card?.options ?? []).filter(option =>
-    option.source?.startsWith("recommendedRoute.subjectiveUiCapabilityAmplification.decisionCheckpoints.") ||
-    (Array.isArray(option.materialDimensions) && option.materialDimensions.some(dimension =>
-      ["result", "scope", "cost", "permission", "compatibility", "publicReadyAcceptance"].includes(dimension)) &&
-      refs(option.evidenceRefs) && typeof option.expectedResult === "string" && option.expectedResult.trim()));
-  if (options.length < 2) return [];
-  return options.map((option) => ({
-    optionId: option.id, whatChanges: option.bestFor ?? option.weapon ?? option.id,
-    problemSolved: option.benefit ?? "Uses capabilities discovered for the current task.",
-    expectedResult: option.expectedResult ?? "Deliver the user outcome through this bounded route.",
-    advantages: [option.benefit ?? option.verificationMethod ?? "Evidence-backed capability fit"],
-    disadvantages: [option.cost ?? "Cost and duration require task-specific evidence."],
-    evidenceRefs: ["selectedExecutionRoute.rankedRoutes", "selectedExecutionRoute.ownerDiscoveryPacket"],
-    decisionImpact: option.risk ?? "Changes the selected owner, provider loadout and verification path.",
-    candidateOwners: [option.owner ?? routeResult?.recommendedRoute?.owner].filter(Boolean),
-    candidateTaskShape: "task_bound_route",
-  }));
-}
+// Compatibility export; option selection has one application owner.
+export { routeCandidateOptions } from "../../src/application/decision/route-candidate-options.mjs";

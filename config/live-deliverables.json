@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "textFormats": {
+    ".txt": "text",
+    ".md": "markdown",
+    ".html": "html",
+    ".htm": "html",
+    ".json": "text",
+    ".csv": "text"
+  }
+}

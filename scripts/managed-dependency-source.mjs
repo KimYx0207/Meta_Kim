@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { promises as fs, existsSync, lstatSync, realpathSync } from "node:fs";
+import { promises as fs, existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { directoryClosureSync, readManifest, openRecorder, CATEGORIES } from "./install-manifest.mjs";
@@ -9,6 +10,7 @@ import { checkedPath, componentHash, stableJson, sha256 } from "../src/infrastru
 
 const PURPOSE = "kim-service-dependency-source";
 const SOURCE = "install-global-skills-all-runtimes";
+const REVISION_FILE = "source-revision.json";
 const storeRelative = ".meta-kim/runtime/dependency-projects/kim-service";
 const equalPath = (left, right) => process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
 
@@ -36,7 +38,9 @@ export function readManagedServiceSource({ home = os.homedir() } = {}) {
   const closure = directoryClosureSync(entry.path);
   assert(closure && closure.sha256 === entry.directoryClosureSha256 && closure.entryCount === entry.directoryClosureEntryCount,
     "Managed Service source differs from its installation receipt");
-  return { value: entry.path, source: "install-manifest.json#kim-service-dependency-source" };
+  const revisionPath = path.join(entry.path, REVISION_FILE);
+  const revision = existsSync(revisionPath) ? JSON.parse(readFileSync(revisionPath, "utf8")) : null;
+  return { value: entry.path, source: "install-manifest.json#kim-service-dependency-source", revision };
 }
 
 /** Explicit declarations keep precedence, including invalid/empty declarations. */
@@ -106,9 +110,18 @@ async function verifyComponents(root, index) {
 }
 
 /** Materialize indexed component closures, never private checkout files or .git. */
-export async function materializeManagedServiceSource({ sourceRoot, home = os.homedir(), metaKimVersion }) {
+export async function materializeManagedServiceSource({ sourceRoot, home = os.homedir(), metaKimVersion, sourceRevision = null }) {
   assert((await fs.lstat(sourceRoot)).isDirectory() && !(await fs.lstat(sourceRoot)).isSymbolicLink(), "Service source must be a plain directory");
   const source = await fs.realpath(sourceRoot);
+  const revision = sourceRevision ?? { schemaVersion: 1, selection: "local_override", repository: null, commit: null };
+  if (sourceRevision) {
+    assert(revision.schemaVersion === 1 && revision.selection === "reviewed_commit"
+      && typeof revision.repository === "string" && /^[a-f0-9]{40}$/u.test(revision.commit), "Invalid Service source revision");
+    const head = execFileSync("git", ["-C", source, "rev-parse", "HEAD"], { encoding: "utf8", windowsHide: true }).trim();
+    assert.equal(head, revision.commit, "Service source revision differs from the checkout");
+    const changes = execFileSync("git", ["-C", source, "status", "--porcelain", "--untracked-files=all"], { encoding: "utf8", windowsHide: true }).trim();
+    assert.equal(changes, "", "Reviewed Service checkout has local changes; use an explicit local source instead");
+  }
   assert(inspectTrustedPath(source, "generated/capabilities.json"), "Unsafe Service capability index path");
   const indexBytes = await fs.readFile(path.join(source, "generated/capabilities.json"));
   const index = JSON.parse(indexBytes.toString("utf8"));
@@ -141,6 +154,7 @@ export async function materializeManagedServiceSource({ sourceRoot, home = os.ho
       }
       await fs.mkdir(path.join(staged, "generated"));
       await fs.writeFile(path.join(staged, "generated/capabilities.json"), indexBytes);
+      await fs.writeFile(path.join(staged, REVISION_FILE), `${JSON.stringify(revision, null, 2)}\n`);
       for (const relative of ["VERSION", "LICENSE", "NOTICE", "catalog.json"]) {
         if (existsSync(path.join(source, relative))) await copyPlain(path.join(source, relative), path.join(staged, relative));
       }

@@ -14,7 +14,6 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
-  copyFileSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -72,6 +71,9 @@ import {
   renderCurrentWindowsMcpMemoryStartupVbsBytes,
   resolveMcpMemoryBootArtifactDescriptors,
 } from "./mcp-memory-boot-artifacts.mjs";
+import { writePackedServiceFixture } from "./packed-service-fixture.mjs";
+import { requirePackedRuntimePrerequisites, requirePackedRuntimeObservationPrerequisites } from "./packed-runtime-prerequisites.mjs";
+import { PACKED_REUSE_REVIEWER, runPackedGlobalReusePlanning } from "./packed-global-reuse-acceptance.mjs";
 
 export { PACKED_USER_TARGETS } from "./packed-user-targets.mjs";
 
@@ -707,10 +709,10 @@ export function packAndExtract({ sourceRoot, destinationRoot, environment, timeo
   };
 }
 
-function isolatedEnvironment(baseEnvironment, roots) {
+export function isolatedEnvironment(baseEnvironment, roots) {
   const allowed = [
     "PATH", "Path", "PATHEXT", "SystemRoot", "SYSTEMROOT", "WINDIR", "ComSpec",
-    "LANG", "LC_ALL", "TERM", "NODE_EXTRA_CA_CERTS", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+    "LANG", "LC_ALL", "TERM", "NODE_EXTRA_CA_CERTS", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "META_KIM_GIT_PROXY",
   ];
   const env = Object.fromEntries(
     allowed
@@ -742,7 +744,7 @@ function isolatedEnvironment(baseEnvironment, roots) {
   return isolated;
 }
 
-function makeIsolatedRoots(root, name) {
+export function makeIsolatedRoots(root, name) {
   const laneRoot = path.join(root, name);
   const userHome = path.join(laneRoot, "user-home");
   const runtimeHomes = Object.fromEntries(
@@ -769,19 +771,7 @@ function makeIsolatedRoots(root, name) {
   for (const directory of Object.values(roots).filter((value) => typeof value === "string")) {
     mkdirSync(directory, { recursive: true });
   }
-  const findskillFixture = path.join(roots.localDependencyRoot, "Kim_Service");
-  mkdirSync(path.join(findskillFixture, ".git"), { recursive: true });
-  for (const platformDir of ["skills/find-skill"]) {
-    mkdirSync(path.join(findskillFixture, platformDir), { recursive: true });
-    writeFileSync(
-      path.join(findskillFixture, platformDir, "SKILL.md"),
-      "---\nname: find-skill\ndescription: Deterministic first-party packed acceptance fixture.\n---\n\n# Findskill\n",
-      "utf8",
-    );
-    writeFileSync(path.join(findskillFixture, platformDir, "capability.json"), JSON.stringify({ schemaVersion: 1, id: "find-skill", componentType: "skill", entrypoint: "SKILL.md" }), "utf8");
-  }
-  mkdirSync(path.join(findskillFixture, "generated"), { recursive: true });
-  writeFileSync(path.join(findskillFixture, "generated/capabilities.json"), JSON.stringify({ schemaVersion: 1, components: [{ id: "find-skill", componentType: "skill", path: "skills/find-skill" }] }), "utf8");
+  writePackedServiceFixture(roots.localDependencyRoot);
   writeFileSync(path.join(roots.ordinaryCwd, "user-owned.txt"), "user-owned\n", "utf8");
   return roots;
 }
@@ -1276,7 +1266,7 @@ export function copyRuntimeCapabilityObservationSnapshot({ sourceProjectRoot, ta
     projectRoot: sourceProjectRoot,
     profile,
   });
-  assertExactStandardRuntimeObservationSet(effective.overlayStatus.applied);
+  requirePackedRuntimeObservationPrerequisites(effective);
   const store = loadRuntimeCapabilityAcceptanceAttempts({ projectRoot: sourceProjectRoot, profile });
   const sourceProfile = store.paths.profileRoot;
   const plannedFiles = new Map();
@@ -2707,7 +2697,10 @@ function runtimeSedimentationFixtures(roots) {
   return fixtures;
 }
 
-function globalReuseOnlyFixtures(roots) {
+export function globalReuseOnlyFixtures(roots) {
+  const reviewer = path.join(roots.codexHome, "agents", `${PACKED_REUSE_REVIEWER}.toml`);
+  mkdirSync(path.dirname(reviewer), { recursive: true });
+  writeFileSync(reviewer, `name = "${PACKED_REUSE_REVIEWER}"\ndescription = "Disposable acceptance reviewer for copy-free global reuse"\ndeveloper_instructions = "Inspect source bindings and project ownership without edits. Discovery is not native invocation evidence."\n`, "utf8");
   const fixtures = [
     {
       type: "agent",
@@ -2741,7 +2734,7 @@ function globalReuseOnlyFixtures(roots) {
   return fixtures;
 }
 
-function runGlobalReuseNegativeLane({ descriptor, roots, env, fixtures, timeoutMs }) {
+export function runGlobalReuseNegativeLane({ descriptor, roots, env, fixtures, timeoutMs }) {
   const artifactDir = path.join(roots.projectDir, ".meta-kim", "acceptance", "global-reuse");
   const stateDir = path.join(roots.projectDir, ".meta-kim", "state", "acceptance-global-reuse");
   const dbPath = path.join(stateDir, "runs.sqlite");
@@ -2753,61 +2746,15 @@ function runGlobalReuseNegativeLane({ descriptor, roots, env, fixtures, timeoutM
     "请直接复用全局 command acceptance-global-reuse-command，不需要迭代或修改，也不要复制到项目。",
   ].join("\n");
   const runId = "packed-global-reuse-negative";
-  requireSuccess(
-    "governed global reuse negative acceptance",
-    run(process.execPath, [
-      path.join(
-        descriptor.installedPackageRoot,
-        "scripts",
-        "run-meta-theory-governed-execution.mjs",
-      ),
-      "--task",
-      task,
-      "--run-id",
-      runId,
-      "--state-dir",
-      stateDir,
-      "--artifact-dir",
-      artifactDir,
-      "--db",
-      dbPath,
-      "--runtime",
-      "codex",
-      "--os",
-      "windows",
-      "--output-language",
-      "zh-CN",
-    ], {
-      cwd: roots.projectDir,
-      env,
-      timeoutMs,
-    }),
-  );
-  const artifact = JSON.parse(readFileSync(path.join(artifactDir, `${runId}.json`), "utf8"));
+  const artifact = runPackedGlobalReusePlanning({
+    installedPackageRoot: descriptor.installedPackageRoot,
+    roots, env, fixtures, task, runId, artifactDir, stateDir, dbPath, timeoutMs,
+  });
   const packet = artifact.projectCustomizationPacket;
   if (packet?.decision !== "use_global_directly") {
-    const inventoryPath = path.join(
-      descriptor.installedPackageRoot,
-      ".meta-kim",
-      "state",
-      "default",
-      "capability-index",
-      "global-capabilities.json",
-    );
-    const inventory = existsSync(inventoryPath)
-      ? JSON.parse(readFileSync(inventoryPath, "utf8"))
-      : null;
-    const acceptanceInventoryKeys = Object.fromEntries(
-      ["agents", "skills", "commands"].map((type) => [
-        type,
-        Object.keys(inventory?.byCapabilityType?.[type] ?? {}).filter((key) =>
-          key.includes("acceptance-global-reuse"),
-        ),
-      ]),
-    );
     throw new Error(
       `global reuse request resolved to ${packet?.decision ?? "missing"} instead of use_global_directly: ` +
-      JSON.stringify({ decisions: packet?.decisions ?? [], acceptanceInventoryKeys }),
+      JSON.stringify({ decisions: packet?.decisions ?? [], routeExecutionGate: artifact.selectedExecutionRoute?.routeExecutionGate }),
     );
   }
   const requested = new Set(fixtures.map((fixture) => fixture.id));
@@ -3385,6 +3332,9 @@ export function runPackedUserInstallUpdateAcceptance({
 } = {}) {
   let currentVersionTagCheck = null;
   let tempRoot = null;
+  let runtimePrerequisites = null;
+  let currentPackage = null;
+  let historicalUpdate = null;
   emit(onProgress, { event: "packed_user_acceptance_start", targets: [...PACKED_USER_TARGETS] });
   try {
     currentVersionTagCheck = assertCurrentVersionTagAbsent({
@@ -3395,6 +3345,10 @@ export function runPackedUserInstallUpdateAcceptance({
     tempRoot = realpathSync.native(
       mkdtempSync(path.join(os.tmpdir(), "meta-kim-packed-user-")),
     );
+    const prerequisiteRoots = makeIsolatedRoots(tempRoot, "runtime-prerequisites");
+    runtimePrerequisites = requirePackedRuntimePrerequisites({
+      env: isolatedEnvironment(environment, prerequisiteRoots), cwd: prerequisiteRoots.ordinaryCwd,
+    });
     let historicalResolution = null;
     let historicalResolutionError = null;
     if (!stopAfterGlobalIdempotence && includeHistorical) {
@@ -3416,7 +3370,7 @@ export function runPackedUserInstallUpdateAcceptance({
       environment,
       timeoutMs,
     });
-    const currentPackage = runCurrentPackageLane({
+    currentPackage = runCurrentPackageLane({
       packageInfo,
       root: tempRoot,
       environment,
@@ -3424,7 +3378,7 @@ export function runPackedUserInstallUpdateAcceptance({
       onProgress,
       stopAfterGlobalIdempotence,
     });
-    const historicalUpdate = stopAfterGlobalIdempotence
+    historicalUpdate = stopAfterGlobalIdempotence
       ? {
           status: "not_requested",
           historicalRef: historicalResolution?.ref ?? historicalRef,
@@ -3492,6 +3446,7 @@ export function runPackedUserInstallUpdateAcceptance({
       sourcePolicy: "npm_pack_installed_public_cli",
       currentVersionTagAbsent: currentVersionTagCheck.currentVersionTagAbsent,
       currentVersionTagCheck,
+      runtimePrerequisites,
       currentPackage,
       historicalUpdate: {
         ...historicalUpdate,
@@ -3502,6 +3457,9 @@ export function runPackedUserInstallUpdateAcceptance({
     emit(onProgress, { event: "packed_user_acceptance_complete", status });
     return result;
   } catch (error) {
+    const completedCurrentPackage = currentPackage ? { ...currentPackage, status: "partial" } : null;
+    // The private context carries the isolated environment, not public evidence.
+    if (completedCurrentPackage) delete completedCurrentPackage._portableRuntimeContext;
     const result = {
       status: "failed",
       releaseGradeEligible: false,
@@ -3509,8 +3467,11 @@ export function runPackedUserInstallUpdateAcceptance({
       currentVersionTagAbsent:
         currentVersionTagCheck?.currentVersionTagAbsent === true,
       currentVersionTagCheck,
-      currentPackage: null,
-      historicalUpdate: null,
+      runtimePrerequisites: error.runtimePrerequisites ?? runtimePrerequisites,
+      currentPackage: completedCurrentPackage,
+      historicalUpdate,
+      runtimeObservationPrerequisites: error.runtimeObservationPrerequisites ?? null,
+      failureKind: error.code ?? "verification_failed",
       boundedDiagnostics: error.boundedDiagnostics ?? null,
       error: error.message,
     };

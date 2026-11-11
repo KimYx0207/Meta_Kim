@@ -8,6 +8,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { runMetaTheoryGovernedExecution } from "./run-meta-theory-governed-execution.mjs";
+import { runDiagnosticReadPlan } from "./diagnostic-host-protocol.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(scriptDir, "..");
@@ -88,16 +89,17 @@ function validateContractShape(contract) {
 async function validateDefaultWritebackBoundary() {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-asset-sedimentation-"));
   try {
-    const report = await runMetaTheoryGovernedExecution({
+    const report = await runDiagnosticReadPlan(runMetaTheoryGovernedExecution, {
       task: [
         "同一套 PRD review standard 需要 skill。",
         "长期 test coverage owner 需要 agent。"
       ].join("\n"),
       runId: "validate-capability-asset-sedimentation",
+      projectRoot: REPO_ROOT,
       stateDir: tempDir,
       dbPath: path.join(tempDir, "runs.sqlite"),
       canonicalRoot: path.join(tempDir, "canonical")
-    });
+    }, [path.relative(REPO_ROOT, CONTRACT_PATH)]);
 
     assert.equal(report.wardenWritebackFlow.status, "candidate_only");
     assert.equal(report.wardenWritebackFlow.approvalRequired, true);

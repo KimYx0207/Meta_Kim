@@ -8,7 +8,7 @@ import path from "node:path";
 import process from "node:process";
 import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
 import { runDiagnosticReadPlan } from "../../scripts/diagnostic-host-protocol.mjs";
-import { fixtureCritical, fixtureReadWorkOrder, runFixtureHostCli } from "../helpers/host-reasoning-fixture.mjs";
+import { FIXTURE_DIAGNOSTIC_PROVIDERS, fixtureCritical, fixtureReadWorkOrder, runFixtureHostCli } from "../helpers/host-reasoning-fixture.mjs";
 import { localProtocolFixtureTaskFacts } from "../helpers/task-design-facts.mjs";
 import { assertOptionalPlaybookContract } from "../helpers/optional-playbook-contract.mjs";
 import { getReportLabels } from "../../scripts/meta-kim-i18n.mjs";
@@ -262,6 +262,7 @@ describe("34 — Meta-theory run deliverables", () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-deliverables-"));
     try {
       await runDiagnosticReadPlan(runMetaTheoryGovernedExecution, {
+        diagnosticProviders: FIXTURE_DIAGNOSTIC_PROVIDERS,
         task,
         runId: "test-run-deliverables",
         stateDir: tempDir,
@@ -554,10 +555,15 @@ describe("34 — Meta-theory run deliverables", () => {
       const revisionPhase = runArtifact.businessPhasePlanPacket.phases.find(
         (item) => item.phase === "revision"
       );
-      assert.equal(
-        revisionPhase.triggerEvaluation.activationState,
-        reviewPhase.status === "done" ? "accurate_skip" : revisionPhase.status === "skipped" ? "unsupported_skip" : "pending_without_enough_evidence"
-      );
+      assert.equal(runArtifact.governanceRequirementPlanPacket.gates.review.effectiveRequired, false);
+      assert.equal(reviewPhase.status, "skipped", "The bounded read does not require an independent Review phase");
+      assert.equal(runArtifact.sourceArtifacts.orchestrationReport.reviewResult.status, "pass",
+        "The structural review still checks the actual discovered inventory");
+      assert.equal(revisionPhase.status, "skipped");
+      assert.equal(revisionPhase.triggerEvaluation.activationState, "accurate_skip");
+      assert.equal(runArtifact.executionResult.actualWorkerExecution, false);
+      assert.equal(runArtifact.selectedExecutionRoute.recommendedRoute.nativeInvocationVerified, false);
+      assert.equal(runArtifact.publicReadyDecision.publicReady, false);
       assert.equal(
         runArtifact.businessPhasePlanPacket.phases.find((item) => item.phase === "feedback")
           .triggerEvaluation.activationState,
@@ -793,6 +799,7 @@ describe("34 — Meta-theory run deliverables", () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-deliverables-cli-"));
     try {
       await runDiagnosticReadPlan(runMetaTheoryGovernedExecution, {
+        diagnosticProviders: FIXTURE_DIAGNOSTIC_PROVIDERS,
         task,
         runId: "test-run-deliverables-cli",
         stateDir: tempDir,

@@ -13,6 +13,7 @@ import {
 } from "./install-manifest.mjs";
 import { resolveCliInvocation } from "./runtime-cli-invocation.mjs";
 import { renameWithTransientRetryAsync } from "./transient-rename.mjs";
+import { readReviewedNpmBaseline, prepareReviewedNpmBundle, assertReviewedNpmInstall } from "./npm-dependency-baseline.mjs";
 
 export const PROJECTION_PACKAGE_RECEIPT_SCHEMA =
   "meta-kim-global-projection-package-v1";
@@ -630,9 +631,9 @@ function parseNpmPackFilePaths(stdout) {
  * closed. Nothing reads the generated node_modules/.bin shims: the packaged CLI
  * and sync script are launched by absolute path inside packageRoot.
  */
-export function projectionInstallArgs(prefixDir, archivePath) {
+export function projectionInstallArgs(prefixDir, archivePath, { reviewedLock = false, preserveDependencies = false } = {}) {
   return [
-    "install",
+    reviewedLock && !preserveDependencies ? "ci" : "install",
     "--prefix",
     prefixDir,
     "--omit=dev",
@@ -640,7 +641,7 @@ export function projectionInstallArgs(prefixDir, archivePath) {
     "--no-audit",
     "--no-fund",
     "--no-bin-links",
-    archivePath,
+    ...(reviewedLock ? [] : [archivePath]),
   ];
 }
 
@@ -718,7 +719,7 @@ async function dependencySnapshot(bundleDir, packageName) {
   return { packages, closure: closureForEntries(entries), entries };
 }
 
-async function acceptedDependencyBase(sourceManifest, homeRoot) {
+async function acceptedDependencyBase(sourceManifest, homeRoot, reviewedBaseline) {
   const manifestPath = path.join(path.resolve(homeRoot), ".meta-kim", "install-manifest.json");
   if (!await lstatIfExists(manifestPath)) return null;
   const manifest = readManifest(manifestPath);
@@ -751,6 +752,13 @@ async function acceptedDependencyBase(sourceManifest, homeRoot) {
   });
   if (!verified) throw new Error("Accepted dependency authority failed its receipt or manifest closure verification");
   const previousManifest = await readJson(verified.packageManifestPath, "accepted package manifest");
+  const previousBaseline = readReviewedNpmBaseline(verified.packageRoot, previousManifest);
+  if (reviewedBaseline && reviewedBaseline.sha256 !== previousBaseline?.sha256) {
+    // An explicit reviewed lock is a separate dependency decision. The prior
+    // immutable bundle has already passed its receipt checks and remains intact.
+    // Build a fresh candidate and verify it against the new exact lock below.
+    return null;
+  }
   if (dependencyDeclarations(previousManifest) !== dependencyDeclarations(sourceManifest)) {
     throw new Error("Package dependency declarations changed; dependency-preserving update requires a separate dependency decision");
   }
@@ -1327,7 +1335,8 @@ export async function materializeGlobalProjectionPackage({
   );
   packageNameSegments(sourceManifest.name);
   assertVersion(sourceManifest.version);
-  const dependencyBase = await acceptedDependencyBase(sourceManifest, homeRoot);
+  const reviewedBaseline = readReviewedNpmBaseline(sourcePackageRoot, sourceManifest);
+  const dependencyBase = await acceptedDependencyBase(sourceManifest, homeRoot, reviewedBaseline);
   const npmRunner = await createTrustedNpmRunner({
     sourceRoot: sourcePackageRoot,
     homeRoot,
@@ -1435,6 +1444,7 @@ export async function materializeGlobalProjectionPackage({
           expectedFirstPartyClosure: sourceSnapshotBeforePack.closure,
         });
         if (dependencyBase) await assertAcceptedDependencies(existing.bundleDir, dependencyBase);
+        assertReviewedNpmInstall(existing.bundleDir, sourceManifest.name, reviewedBaseline);
         return existing;
       } catch (error) {
         const receiptStat = await lstatIfExists(finalLayout.receiptPath);
@@ -1458,11 +1468,13 @@ export async function materializeGlobalProjectionPackage({
       await fs.mkdir(stageBundleDir, { recursive: true });
     }
     await assertPlainDirectoryChain(storeHome, stageBundleDir);
+    if (reviewedBaseline) prepareReviewedNpmBundle(stageBundleDir, sourceManifest, archivePath, reviewedBaseline);
     npmRuntime.run([
-      ...projectionInstallArgs(stageBundleDir, archivePath),
+      ...projectionInstallArgs(stageBundleDir, archivePath, { reviewedLock: Boolean(reviewedBaseline), preserveDependencies: Boolean(dependencyBase) }),
       ...(dependencyBase ? ["--prefer-offline", "--package-lock=true"] : []),
     ], stageDir);
     await assertPlainDirectoryChain(storeHome, stageBundleDir);
+    assertReviewedNpmInstall(stageBundleDir, sourceManifest.name, reviewedBaseline);
     if (dependencyBase) {
       if (!dependencyBase.dependencySnapshot.entries.some((entry) => entry.path === "node_modules/.bin")) {
         const generatedBinDir = path.join(stageBundleDir, "node_modules", ".bin");

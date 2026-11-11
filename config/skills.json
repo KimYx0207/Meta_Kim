@@ -148,8 +148,9 @@
         "pluginName": "ecc"
       },
       "installMethod": "upstreamCli",
-      "upstreamPackage": "ecc-universal@latest",
+      "upstreamPackage": "ecc-universal@2.2.3",
       "upstreamProfile": "core",
+      "upstreamHookPolicy": "disabled",
       "legacyNames": [
         "everything-claude-code"
       ],

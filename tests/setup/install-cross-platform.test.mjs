@@ -83,8 +83,9 @@ describe("install platform config", () => {
     assert.equal(eccSkill.repo, "affaan-m/ECC");
     assert.equal(eccSkill.claudePlugin, "ecc@ecc");
     assert.equal(eccSkill.installMethod, "upstreamCli");
-    assert.equal(eccSkill.upstreamPackage, "ecc-universal@latest");
+    assert.equal(eccSkill.upstreamPackage, "ecc-universal@2.2.3");
     assert.equal(eccSkill.upstreamProfile, "core");
+    assert.equal(eccSkill.upstreamHookPolicy, "disabled");
     assert.deepEqual(eccSkill.legacyNames, ["everything-claude-code"]);
     assert.equal(eccSkill.platformSupport.codex.status, "native");
     assert.equal(eccSkill.platformSupport.cursor.status, "native");

@@ -1,6 +1,6 @@
 # Decision Template (Outcome-Branching Options)
 
-Use this template when multiple viable solutions exist with distinct trade-offs. Ask only questions whose answer changes execution, scope, risk, owner, or acceptance. Each visible question must have at least two materially different options, and each option must be understandable to non-technical users.
+Use this template when multiple viable solutions exist with distinct trade-offs. Ask only questions whose answer changes the user-visible result, scope, risk, cost, permission, or acceptance. Apply `config/governance/material-decision-policy.json`; owner/model/provider/loadout differences alone remain internal. Each visible question must have at least two materially different options, and each option must be understandable to non-technical users.
 
 ## Format
 
@@ -36,7 +36,7 @@ Renderer-specific payload schemas belong in runtime references, not in this gene
 
 ## When Not to Use
 
-- The answer would not change the deliverable, owner, scope, risk, or acceptance
+- The answer would not change the deliverable, scope, risk, cost, permission, or acceptance
 - The assistant can proceed with an explicit assumption and document it
 - The question exists only to satisfy a question count
 
@@ -46,7 +46,7 @@ This template binds `user-interaction-and-i18n`, `governance-orchestration`, `ru
 
 ## Pass
 
-- The question changes execution, scope, risk, owner, or acceptance.
+- The question changes the user-visible result, scope, risk, cost, permission, or acceptance.
 - Options are materially different, understandable to a non-technical user, and include trade-offs.
 - A recommended default is marked when Critical, Fetch, and Thinking evidence supports one.
 - Runtime fallback preserves decision purpose, route-changing dimension, runtime-native maximum option policy, trade-offs, selection result, fallback reason, writeback target, and locale.

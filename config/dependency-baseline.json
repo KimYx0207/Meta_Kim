@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "kimService": {
+    "repository": "KimYx0207/Kim_Service",
+    "commit": "2e50a72128770401a001c59115baca5baa09da00"
+  },
+  "graphify": {
+    "package": "graphifyy",
+    "version": "0.9.56"
+  },
+  "npm": {
+    "lockFile": "npm-shrinkwrap.json",
+    "sha256": "ad7654a8bc7631b48ab31b28c0b6ceb25e54f7007a485047efe4a2936cb4dd3e",
+    "nodeRegression": "22.13.0",
+    "nodeDshHost": "24.22.1",
+    "resolutionBefore": "2026-11-10T00:00:00.000Z"
+  }
+}

@@ -252,8 +252,8 @@
       ],
       "sourceArtifacts": [
         { "path": "canonical/runtime-assets/claude", "digestKind": "sha256", "sha256": "8fba85a1b66e5ebe35ddd70c42bb11cc490e513b15c09aa4ea64a29f6ffa1976" },
-        { "path": "scripts/runtime-hook-mapping.mjs", "digestKind": "sha256", "sha256": "e7de7774341afe7206ad90d0f291284cae9f344e7b2a0757ecd06ebe0df7046b" },
-        { "path": "setup.mjs", "digestKind": "sha256", "sha256": "41ea8e78891a0723893ce191012985e78e51922652d9d3cf6a9778ed5c9215a4" }
+        { "path": "scripts/runtime-hook-mapping.mjs", "digestKind": "sha256", "sha256": "f50b393d205728fe1e7507583c4b45b93832b6fbab924703a9d1ce5623d4827b" },
+        { "path": "setup.mjs", "digestKind": "sha256", "sha256": "d38cc9ed57eab5f0c7e7d9a233aaaa81c36a13e4618c8c4af0dde9b69264029d" }
       ],
       "summary": "Canonical runtime projection sources and install wiring are present in the repository.",
       "limitations": [
@@ -563,8 +563,8 @@
       ],
       "sourceArtifacts": [
         { "path": "canonical/runtime-assets/codex", "digestKind": "sha256", "sha256": "5cb91cf2adf020ae3e13c21bc419e08ce6527f29072561177a189464680a39ed" },
-        { "path": "scripts/runtime-hook-mapping.mjs", "digestKind": "sha256", "sha256": "e7de7774341afe7206ad90d0f291284cae9f344e7b2a0757ecd06ebe0df7046b" },
-        { "path": "setup.mjs", "digestKind": "sha256", "sha256": "41ea8e78891a0723893ce191012985e78e51922652d9d3cf6a9778ed5c9215a4" },
+        { "path": "scripts/runtime-hook-mapping.mjs", "digestKind": "sha256", "sha256": "f50b393d205728fe1e7507583c4b45b93832b6fbab924703a9d1ce5623d4827b" },
+        { "path": "setup.mjs", "digestKind": "sha256", "sha256": "d38cc9ed57eab5f0c7e7d9a233aaaa81c36a13e4618c8c4af0dde9b69264029d" },
         { "path": "AGENTS.md", "digestKind": "sha256", "sha256": "c4fc21fe218ec7c0d7962fedbd188694699c3fb7d6536abd30881d23e4c33cc6" }
       ],
       "summary": "Canonical runtime projection sources and install wiring are present in the repository.",
@@ -938,8 +938,8 @@
       ],
       "sourceArtifacts": [
         { "path": "canonical/runtime-assets/openclaw", "digestKind": "sha256", "sha256": "ebb521fbba8c4a8ac08dc3005630f8a00924108c4fbaae066303f37c98e68a6a" },
-        { "path": "scripts/sync-runtimes.mjs", "digestKind": "sha256", "sha256": "498d8ca369721bdd631afd356faec7064242697fae1fd2220d19a8890a12189b" },
-        { "path": "setup.mjs", "digestKind": "sha256", "sha256": "41ea8e78891a0723893ce191012985e78e51922652d9d3cf6a9778ed5c9215a4" }
+        { "path": "scripts/sync-runtimes.mjs", "digestKind": "sha256", "sha256": "554c16c8b349f9a89cdb0662ff435b3c3336380bfc313d6dd3a70bbfd98a332c" },
+        { "path": "setup.mjs", "digestKind": "sha256", "sha256": "d38cc9ed57eab5f0c7e7d9a233aaaa81c36a13e4618c8c4af0dde9b69264029d" }
       ],
       "summary": "Canonical runtime projection sources and install wiring are present in the repository.",
       "limitations": [
@@ -1292,8 +1292,8 @@
       ],
       "sourceArtifacts": [
         { "path": "canonical/runtime-assets/cursor", "digestKind": "sha256", "sha256": "786f610efc8d8f2c3e61e8260c4ce9b4f00da6af82701958fb46097b8c8c3780" },
-        { "path": "scripts/runtime-hook-mapping.mjs", "digestKind": "sha256", "sha256": "e7de7774341afe7206ad90d0f291284cae9f344e7b2a0757ecd06ebe0df7046b" },
-        { "path": "setup.mjs", "digestKind": "sha256", "sha256": "41ea8e78891a0723893ce191012985e78e51922652d9d3cf6a9778ed5c9215a4" }
+        { "path": "scripts/runtime-hook-mapping.mjs", "digestKind": "sha256", "sha256": "f50b393d205728fe1e7507583c4b45b93832b6fbab924703a9d1ce5623d4827b" },
+        { "path": "setup.mjs", "digestKind": "sha256", "sha256": "d38cc9ed57eab5f0c7e7d9a233aaaa81c36a13e4618c8c4af0dde9b69264029d" }
       ],
       "summary": "Canonical runtime projection sources and install wiring are present in the repository.",
       "limitations": [
@@ -1461,8 +1461,8 @@
       "sourceArtifacts": [
         { "path": "scripts/meta-kim-sync-config.mjs", "digestKind": "sha256", "sha256": "e765e3b2f385a20ad6ea185aee4faca939f5510e86b611af8cb2d6234fed796b" },
         { "path": "scripts/native-runtime-projection.mjs", "digestKind": "sha256", "sha256": "4ca0499a542ef447eaf536ba44949f46093984d7dd6ba0e0bcba90c6353176dd" },
-        { "path": "scripts/sync-runtimes.mjs", "digestKind": "sha256", "sha256": "498d8ca369721bdd631afd356faec7064242697fae1fd2220d19a8890a12189b" },
-        { "path": "scripts/sync-global-meta-theory.mjs", "digestKind": "sha256", "sha256": "6ac6234bf37e4423dd81f585746aa521cd642318d897c6f53d764ea268005f1a" },
+        { "path": "scripts/sync-runtimes.mjs", "digestKind": "sha256", "sha256": "554c16c8b349f9a89cdb0662ff435b3c3336380bfc313d6dd3a70bbfd98a332c" },
+        { "path": "scripts/sync-global-meta-theory.mjs", "digestKind": "sha256", "sha256": "c3618335a38a1fc32de3f600c290846b1aefd947f896471ef66e2901b303bf4e" },
         { "path": "canonical/runtime-assets/shared/hooks/native-runtime-adapter.mjs", "digestKind": "sha256", "sha256": "d2ba0b6af1f872cf8a0baaa4a4e0cee10d5ca3fffe359705dc25a926a0f28750" }
       ],
       "summary": "Canonical projections and existing install/update/check/uninstall wiring include native schema adapters and exact JSON mutation ownership.",
@@ -1598,8 +1598,8 @@
       "sourceArtifacts": [
         { "path": "scripts/meta-kim-sync-config.mjs", "digestKind": "sha256", "sha256": "e765e3b2f385a20ad6ea185aee4faca939f5510e86b611af8cb2d6234fed796b" },
         { "path": "scripts/native-runtime-projection.mjs", "digestKind": "sha256", "sha256": "4ca0499a542ef447eaf536ba44949f46093984d7dd6ba0e0bcba90c6353176dd" },
-        { "path": "scripts/sync-runtimes.mjs", "digestKind": "sha256", "sha256": "498d8ca369721bdd631afd356faec7064242697fae1fd2220d19a8890a12189b" },
-        { "path": "scripts/sync-global-meta-theory.mjs", "digestKind": "sha256", "sha256": "6ac6234bf37e4423dd81f585746aa521cd642318d897c6f53d764ea268005f1a" },
+        { "path": "scripts/sync-runtimes.mjs", "digestKind": "sha256", "sha256": "554c16c8b349f9a89cdb0662ff435b3c3336380bfc313d6dd3a70bbfd98a332c" },
+        { "path": "scripts/sync-global-meta-theory.mjs", "digestKind": "sha256", "sha256": "c3618335a38a1fc32de3f600c290846b1aefd947f896471ef66e2901b303bf4e" },
         { "path": "canonical/runtime-assets/shared/hooks/native-runtime-adapter.mjs", "digestKind": "sha256", "sha256": "d2ba0b6af1f872cf8a0baaa4a4e0cee10d5ca3fffe359705dc25a926a0f28750" }
       ],
       "summary": "Canonical projections and existing install/update/check/uninstall wiring include native schema adapters and exact JSON mutation ownership.",

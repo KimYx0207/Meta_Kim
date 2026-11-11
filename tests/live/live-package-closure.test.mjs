@@ -197,10 +197,10 @@ test("every runtime identity path is present, packed, and actually loaded", () =
  * running stale bytes as an expected build match. The assertion above only covers
  * the opposite direction, hashed-but-never-loaded.
  */
-test("the runtime identity covers every module the hub daemon executes", () => {
+test("the runtime identity covers every module and imported configuration the hub daemon executes", () => {
   const { visited: daemonModules } = importClosure(["scripts/meta-kim-live.mjs"]);
   const hashed = new Set(LIVE_HUB_RUNTIME_IDENTITY_PATHS);
-  const unhashed = [...daemonModules].filter((file) => /\.mjs$/u.test(file) && !hashed.has(file)).sort();
+  const unhashed = [...daemonModules].filter((file) => /\.(?:mjs|json)$/u.test(file) && !hashed.has(file)).sort();
   assert.deepEqual(
     unhashed,
     [],

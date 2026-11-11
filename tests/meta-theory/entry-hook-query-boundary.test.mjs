@@ -10,6 +10,15 @@ import { copyHookClosure } from "../helpers/hook-fixture.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const queryCases = [
+  "不要修改 README 文件",
+  "不要修改项目配置文件",
+  "Do not update the project configuration.",
+  "不要并行修改代码文件",
+  "不要调用 meta-theory 修改文件",
+  "请解释一下如何修改配置文件",
+  "Explain how to update a config file.",
+  "説明とは何ですか？",
+  "설명이란 무엇인가요?",
   "What does it mean to fix code?",
   "What does updating a config file mean?",
   "What does it mean to write a test?",
@@ -23,6 +32,12 @@ const queryCases = [
   "不要删除生产数据文件",
 ];
 const executionCases = [
+  "请修改 README 文件",
+  "这个操作为什么这么慢？",
+  "用两个子 agent 分析",
+  "ファイルを修正してください",
+  "파일을 수정해 주세요",
+  "请解释一下如何修改配置文件，然后帮我更新这个配置文件",
   "What does it mean to fix code? Then please update the config file.",
   "What does it mean to fix code and please update the config file?",
   "What does it mean to fix code and could you update the config file?",
@@ -35,6 +50,7 @@ const executionCases = [
   "帮我修复这个页面，别改变其他代码",
   "把这个页面改得高级一点",
   "meta-theory What does it mean to fix code?",
+  "META-THEORY Explain how to update a config file.",
   "Critical Fetch Thinking Review: repair this runtime hook",
   "Can you delete production data?",
   "Could you please remove the production database file?",

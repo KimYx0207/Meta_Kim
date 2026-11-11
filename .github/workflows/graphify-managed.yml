@@ -23,14 +23,17 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+      - name: Read the shared dependency baseline
+        id: dependency-baseline
+        run: node scripts/dependency-baseline.mjs --github-output
       - uses: actions/setup-node@v7
         with:
-          node-version: 22.13.0
+          node-version: ${{ steps.dependency-baseline.outputs.node-regression }}
       - name: Install the pinned native producer test dependency from PyPI
         run: |
-          python -m pip install --only-binary=:all: graphifyy==0.9.56
+          python -c "import json,subprocess,sys; d=json.load(open('config/dependency-baseline.json'))['graphify']; subprocess.check_call([sys.executable,'-m','pip','install','--only-binary=:all:',d['package']+'=='+d['version']])"
       - name: Require the tested producer version
-        run: python -c "from importlib.metadata import version; assert version('graphifyy') == '0.9.56'"
+        run: python -c "import json; from importlib.metadata import version; d=json.load(open('config/dependency-baseline.json'))['graphify']; assert version(d['package']) == d['version']"
       # All repositories, hooks, outputs, and sentinel files are isolated test
       # fixtures. Native extraction/clustering does not invoke models.
       - name: Test path containment, shared hook ownership, and replacement races

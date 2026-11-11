@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { ENTRY_CLASSIFIER_HOOK_FILES } from "./runtime-hook-mapping.mjs";
 /**
  * Global sync: canonical meta-theory skill + Meta_Kim Claude runtime hook assets into runtime homes.
  * Flags: --check, --print-targets, --with-global-hooks (opt into global hook copy + settings merge where supported), --skip-durable-mcp.
@@ -227,6 +228,7 @@ const GLOBAL_HOOK_PACKAGE_FILES = new Set([
   "governed-task-reference.mjs",
   "task-progress.mjs",
   "governed-host-checkpoint.mjs",
+  ...ENTRY_CLASSIFIER_HOOK_FILES,
   "activate-meta-theory-spine.mjs",
   "planning-continuity.mjs",
   // ── canonical/runtime-assets/claude/hooks/ ──

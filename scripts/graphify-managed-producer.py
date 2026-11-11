@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build one isolated candidate with the installed Graphify 0.9.56 runtime."""
+"""Build one isolated candidate with the installed baseline Graphify runtime."""
 import argparse
 from collections import Counter, defaultdict
 import gc
@@ -9,10 +9,16 @@ import inspect
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
-VERSION = "0.9.56"
+BASELINE = Path(__file__).resolve().with_name("dependency-baseline.json")
+if not BASELINE.is_file():
+    BASELINE = Path(__file__).resolve().parent.parent / "config" / "dependency-baseline.json"
+VERSION = json.loads(BASELINE.read_text())["graphify"]["version"]
+if BASELINE.is_symlink() or not re.fullmatch(r"\d+\.\d+\.\d+", VERSION):
+    raise RuntimeError("Managed Graphify requires a plain exact-version dependency baseline")
 REMAP_SHA256 = "2b6a7d3e62acee4263e5e57efc1f8e270b33495ddc6792d1cc5c31a9b227189e"
 MAX_BYTES = 512 * 1024 * 1024
 

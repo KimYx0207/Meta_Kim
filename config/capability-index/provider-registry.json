@@ -6899,7 +6899,7 @@
       "id": "optional-engine-agent-desktop",
       "providerType": "dependency_project",
       "providerKind": "dependency_project",
-      "summary": "Optional computer_use engine candidate through upstream CLI and C library; discovery observes PATH presence without executing the engine.",
+      "summary": "Optional computer_use engine candidate through upstream CLI, native stdio MCP (agent-desktop >=1.2.0), and C library; discovery observes PATH presence without executing the engine or validating its version.",
       "sourceOfTruth": "config/capability-index/dependency-project-registry.json",
       "mappings": {
         "dependencyProjectIds": [

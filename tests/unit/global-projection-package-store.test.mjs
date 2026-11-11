@@ -371,6 +371,70 @@ function manifestFor(verified) {
   };
 }
 
+test("a reviewed shrinkwrap upgrades a packed dependency into a new immutable bundle and rejects drift", async () => {
+  await withFixture(async ({ root, homeRoot, sourceRoot, packageManifest, env }) => {
+    const dependencyRoot = path.join(root, "dependency-source");
+    const archives = path.join(root, "dependency-archives");
+    mkdirSync(dependencyRoot); mkdirSync(archives);
+    const dependencyArchive = path.join(root, "reviewed-dependency.tgz");
+    const npm = (args, cwd = sourceRoot) => {
+      const result = spawnSync(process.execPath, [resolveNpmCliPath(), ...args], {
+        cwd, env, encoding: "utf8", timeout: 120_000,
+      });
+      assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+      return result.stdout;
+    };
+    const buildDependency = version => {
+      writeFileSync(path.join(dependencyRoot, "package.json"), JSON.stringify({ name: "meta-kim-baseline-fixture", version, files: ["value.js"] }));
+      writeFileSync(path.join(dependencyRoot, "value.js"), `module.exports=${JSON.stringify(version)};\n`);
+      const [packed] = JSON.parse(npm(["pack", "--json", "--ignore-scripts", "--pack-destination", archives], dependencyRoot));
+      writeFileSync(dependencyArchive, readFileSync(path.join(archives, packed.filename)));
+    };
+    packageManifest.dependencies = { "meta-kim-baseline-fixture": `file:${dependencyArchive}` };
+    packageManifest.files.push("config/", "npm-shrinkwrap.json");
+    writeFileSync(path.join(sourceRoot, "package.json"), JSON.stringify(packageManifest));
+    const register = verified => {
+      mkdirSync(path.join(homeRoot, ".meta-kim"), { recursive: true });
+      writeFileSync(path.join(homeRoot, ".meta-kim/install-manifest.json"), JSON.stringify(manifestFor(verified)));
+    };
+    const reviewLock = () => {
+      rmSync(path.join(sourceRoot, "package-lock.json"), { force: true });
+      rmSync(path.join(sourceRoot, "npm-shrinkwrap.json"), { force: true });
+      npm(["install", "--package-lock-only", "--ignore-scripts", "--offline", "--no-audit", "--no-fund"]);
+      npm(["shrinkwrap", "--offline", "--ignore-scripts"]);
+      mkdirSync(path.join(sourceRoot, "config"), { recursive: true });
+      const bytes = readFileSync(path.join(sourceRoot, "npm-shrinkwrap.json"));
+      writeFileSync(path.join(sourceRoot, "config/dependency-baseline.json"), JSON.stringify({ schemaVersion: 1,
+        npm: { lockFile: "npm-shrinkwrap.json", sha256: sha256(bytes) } }));
+      return bytes;
+    };
+    buildDependency("1.0.0");
+    const old = await materializeGlobalProjectionPackage({ sourceRoot, homeRoot, env });
+    register(old);
+    const oldClosure = directoryClosureSync(old.digestDir);
+    buildDependency("1.1.0");
+    const reviewedBytes = reviewLock();
+    assert.equal(JSON.parse(reviewedBytes).packages["node_modules/meta-kim-baseline-fixture"].version, "1.1.0");
+    const upgraded = await materializeGlobalProjectionPackage({ sourceRoot, homeRoot, env });
+    assert.notEqual(upgraded.digestDir, old.digestDir);
+    assert.deepEqual(directoryClosureSync(old.digestDir), oldClosure, "previous immutable bundle remains byte-identical");
+    assert.equal(JSON.parse(readFileSync(path.join(upgraded.bundleDir, "node_modules/meta-kim-baseline-fixture/package.json"))).version, "1.1.0");
+    register(upgraded);
+    const dependencyBefore = directoryClosureSync(path.join(upgraded.bundleDir, "node_modules/meta-kim-baseline-fixture"));
+    writeFileSync(path.join(sourceRoot, "assets/non-key.txt"), "new first-party code, same dependency lock\n");
+    const repeated = await materializeGlobalProjectionPackage({ sourceRoot, homeRoot, env });
+    assert.deepEqual(directoryClosureSync(path.join(repeated.bundleDir, "node_modules/meta-kim-baseline-fixture")), dependencyBefore);
+    register(repeated);
+    writeFileSync(path.join(sourceRoot, "npm-shrinkwrap.json"), `${reviewedBytes}\n`);
+    await assert.rejects(materializeGlobalProjectionPackage({ sourceRoot, homeRoot, env }), /lock differs from its baseline digest/);
+    writeFileSync(path.join(sourceRoot, "npm-shrinkwrap.json"), reviewedBytes);
+    writeFileSync(path.join(repeated.bundleDir, "node_modules/meta-kim-baseline-fixture/value.js"), "tampered dependency\n");
+    buildDependency("1.2.0"); reviewLock();
+    await assert.rejects(materializeGlobalProjectionPackage({ sourceRoot, homeRoot, env }), /receipt|manifest|closure/i,
+      "a new reviewed lock must not bypass verification of the existing authoritative bundle");
+  });
+});
+
 test("recording a stable package retires only superseded package authority entries", async () => {
   await withFixture(async ({ root, homeRoot, sourceRoot, env }) => {
     const verified = await materializeGlobalProjectionPackage({

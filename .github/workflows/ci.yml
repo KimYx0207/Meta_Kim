@@ -29,11 +29,14 @@ jobs:
           persist-credentials: false
           # The migration fingerprint check reads historical agent blobs.
           fetch-depth: 0
+      - name: Read the shared dependency baseline
+        id: dependency-baseline
+        run: node scripts/dependency-baseline.mjs --github-output
       - uses: actions/setup-node@v7
         with:
-          node-version: 22.13.0
+          node-version: ${{ steps.dependency-baseline.outputs.node-regression }}
       - name: Install test dependencies without lifecycle scripts
-        run: npm install --ignore-scripts --no-package-lock --no-audit --no-fund
+        run: npm ci --engine-strict --ignore-scripts --no-audit --no-fund
       # Every PR/push runs these lanes, including Markdown-only changes to
       # canonical prompts. Each matrix job has its own workspace. The runner
       # uses a fresh home and an environment allow-list without credentials.
@@ -57,9 +60,12 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: Read the shared dependency baseline
+        id: dependency-baseline
+        run: node scripts/dependency-baseline.mjs --github-output
       - uses: actions/setup-node@v7
         with:
-          node-version: 22.13.0
+          node-version: ${{ steps.dependency-baseline.outputs.node-regression }}
       # Real host filesystem/process tests complement cross-host lexical
       # fixtures. HOME and credentials use the same isolated runner as above.
       # Invoke Node directly so PowerShell's npm.ps1 cannot consume --suite.
@@ -76,9 +82,12 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v7
+      - name: Read the shared dependency baseline
+        id: dependency-baseline
+        run: node scripts/dependency-baseline.mjs --github-output
       - uses: actions/setup-node@v7
         with:
-          node-version: 22.13.0
+          node-version: ${{ steps.dependency-baseline.outputs.node-regression }}
       - name: Test planning recovery and linked project boundaries
         run: |
           node scripts/validate-planning-continuity.mjs
@@ -97,9 +106,12 @@ jobs:
           - windows-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Read the shared dependency baseline
+        id: dependency-baseline
+        run: node scripts/dependency-baseline.mjs --github-output
       - uses: actions/setup-node@v7
         with:
-          node-version: 22.13.0
+          node-version: ${{ steps.dependency-baseline.outputs.node-regression }}
       - name: Check global sync syntax
         run: node --check scripts/sync-global-meta-theory.mjs
       - name: Test global sync and stale-alias policy
@@ -118,9 +130,12 @@ jobs:
           - windows-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Read the shared dependency baseline
+        id: dependency-baseline
+        run: node scripts/dependency-baseline.mjs --github-output
       - uses: actions/setup-node@v7
         with:
-          node-version: 22.13.0
+          node-version: ${{ steps.dependency-baseline.outputs.node-regression }}
       # These tests use isolated homes and local synthetic skills. They do not
       # install third-party plugins, contact providers, or modify runner homes.
       - name: Test retirement, independent updates, and ownership boundaries
@@ -139,22 +154,26 @@ jobs:
         with:
           path: Meta_Kim
           persist-credentials: false
+      - name: Read the shared dependency baseline
+        id: dependency-baseline
+        working-directory: Meta_Kim
+        run: node scripts/dependency-baseline.mjs --github-output
       - name: Check out the reviewed professional capability source
         uses: actions/checkout@v7
         with:
-          repository: KimYx0207/Kim_Service
-          ref: f5fdabd18ebdce380a1f2c9edc797910a23ded6b
+          repository: ${{ steps.dependency-baseline.outputs.service-repository }}
+          ref: ${{ steps.dependency-baseline.outputs.service-commit }}
           path: Kim_Service
           persist-credentials: false
       - uses: actions/setup-node@v7
         with:
-          node-version: 22.13.0
+          node-version: ${{ steps.dependency-baseline.outputs.node-regression }}
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - name: Install existing MCP dependencies without lifecycle scripts
         working-directory: Meta_Kim
-        run: npm install --ignore-scripts --no-package-lock --no-audit --no-fund
+        run: npm ci --engine-strict --ignore-scripts --no-audit --no-fund
       # Fixed synthetic requests and real stdlib Python/MCP. No models, provider
       # credentials, supplier contact or purchasing are involved.
       # One isolated test-runner invocation reports both suites even if a test
@@ -175,19 +194,23 @@ jobs:
           path: Meta_Kim
           persist-credentials: false
           fetch-depth: 0
+      - name: Read the shared dependency baseline
+        id: dependency-baseline
+        working-directory: Meta_Kim
+        run: node scripts/dependency-baseline.mjs --github-output
       - uses: actions/checkout@v7
         with:
-          repository: KimYx0207/Kim_Service
-          ref: f5fdabd18ebdce380a1f2c9edc797910a23ded6b
+          repository: ${{ steps.dependency-baseline.outputs.service-repository }}
+          ref: ${{ steps.dependency-baseline.outputs.service-commit }}
           path: Kim_Service
           persist-credentials: false
       - uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version: ${{ steps.dependency-baseline.outputs.node-dsh-host }}
       - name: Install reviewed host and existing dependencies without lifecycle scripts
         working-directory: Meta_Kim
         run: |
-          npm install --ignore-scripts --no-package-lock --no-audit --no-fund
+          npm ci --engine-strict --ignore-scripts --no-audit --no-fund
           npm install --ignore-scripts --no-audit --no-fund --prefix "$RUNNER_TEMP/dsh-host" @deepseek-ai/dsh@0.2.2-rc.1
       - name: Build complete professional Skills from the reviewed source
         working-directory: Kim_Service
@@ -212,9 +235,12 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+      - name: Read the shared dependency baseline
+        id: dependency-baseline
+        run: node scripts/dependency-baseline.mjs --github-output
       - uses: actions/setup-node@v7
         with:
-          node-version: 22.13.0
+          node-version: ${{ steps.dependency-baseline.outputs.node-regression }}
       - name: Build npm package candidate
         run: |
           mkdir -p dist

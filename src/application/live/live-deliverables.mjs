@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
-import { lstat, open, realpath } from "node:fs/promises";
 import path from "node:path";
-import { LIVE_MAX_JSON_BYTES, isPathInside, normalizeLiveRunId } from "../../infrastructure/live/live-read-repository.mjs";
+import { LIVE_MAX_JSON_BYTES, normalizeLiveRunId } from "../../domain/live/live-read-contract.mjs";
+import { readBoundedDeliverable } from "../../data/repositories/live-deliverable-repository.mjs";
+import deliverablePolicy from "../../../config/live-deliverables.json" with { type: "json" };
 
-const KINDS = new Map([[".txt", "text"], [".md", "markdown"], [".html", "html"], [".htm", "html"]]);
+const KINDS = new Map(Object.entries(deliverablePolicy.textFormats));
 const PRIVATE_SEGMENTS = /^(?:\.env(?:\..*)?|\.git|node_modules|canonical|config|src|scripts|secrets?)$/iu;
 const SECRET = /(?:api[_-]?key|access[_-]?token|password|secret|authorization|cookie)\s*[:=]|\b(?:sk-|ghp_|github_pat_)[A-Za-z0-9_-]{8,}/iu;
 const sha = (value) => createHash("sha256").update(value).digest("hex");
@@ -36,6 +37,17 @@ function externalReference(value) {
   } catch { return null; }
 }
 
+function outputReference(value) {
+  const raw = typeof value === "string" ? value : value?.path ?? value?.url ?? value?.href;
+  return localReference(raw) ?? externalReference(raw);
+}
+
+function previewText(bytes) {
+  const encoding = bytes[0] === 0xff && bytes[1] === 0xfe ? "utf-16le"
+    : bytes[0] === 0xfe && bytes[1] === 0xff ? "utf-16be" : "utf-8";
+  return new TextDecoder(encoding).decode(bytes);
+}
+
 function executionObserved(result, artifact, runId) {
   if (!result || result.runId !== runId || !["executed", "completed"].includes(result.status)) return false;
   if (/structural|synthetic|planned|test_double|injected/iu.test(`${result.resultKind || ""} ${result.evidenceKind || ""}`)) return false;
@@ -51,8 +63,7 @@ export function collectLiveDeliverables(artifact) {
   if (!runId) return [];
   const output = [];
   const add = (value, taskPacketId = null, fallback = "Primary deliverable") => {
-    const raw = typeof value === "string" ? value : value?.path ?? value?.url ?? value?.href;
-    const ref = localReference(raw) ?? externalReference(raw);
+    const ref = outputReference(value);
     if (!ref) return;
     const id = `deliverable:${sha(`${runId}:${taskPacketId || "primary"}:${ref.reference}`).slice(0, 24)}`;
     if (output.some((item) => item.id === id)) return;
@@ -69,8 +80,16 @@ export function collectLiveDeliverables(artifact) {
     return typeof owner === "string" && owner.trim() && owner === (result?.ownerAgent ?? result?.owner) &&
       executionObserved(result, artifact, runId);
   });
-  if (actual.length) {
-    add(artifact.primaryDeliverable ?? artifact.summaryPacket?.primaryDeliverable ?? artifact.dispatchBoard?.primaryDeliverable);
+  const primary = artifact.primaryDeliverable ?? artifact.summaryPacket?.primaryDeliverable ?? artifact.dispatchBoard?.primaryDeliverable;
+  const primaryRef = outputReference(primary);
+  if (primaryRef) {
+    const producer = actual.find(result =>
+      (primary?.taskPacketId == null || primary.taskPacketId === result.taskPacketId) &&
+      [...list(result.producedArtifacts), result.deliverableLink].some(value => {
+        const ref = outputReference(value);
+        return ref?.kind === primaryRef.kind && ref.reference === primaryRef.reference;
+      }));
+    if (producer) add(primary, producer.taskPacketId);
   }
   for (const result of actual) {
     const taskPacketId = result.taskPacketId;
@@ -103,36 +122,9 @@ export async function readLiveDeliverable(artifact, deliverableId, projectRoot) 
   if (!item) return null;
   if (item.kind === "external") return { kind: item.kind, label: item.label, url: item.reference };
   if (item.text !== undefined) return Buffer.byteLength(item.text, "utf8") <= LIVE_MAX_JSON_BYTES
-    ? { kind: "text", label: item.label, text: item.text, contentVersion: `sha256:${sha(item.text)}` } : null;
+    ? { kind: "text", label: item.label, filename: "result.txt", bytes: Buffer.from(item.text), text: item.text, contentVersion: `sha256:${sha(item.text)}` } : null;
   if (!projectRoot) return null;
-  try {
-    const root = path.resolve(projectRoot);
-    const rootStat = await lstat(root);
-    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return null;
-    const target = path.resolve(root, item.reference);
-    if (!isPathInside(root, target) || target === root) return null;
-    let current = root;
-    const parts = path.relative(root, target).split(path.sep);
-    for (const [index, part] of parts.entries()) {
-      current = path.join(current, part);
-      const info = await lstat(current);
-      if (info.isSymbolicLink() || (index < parts.length - 1 ? !info.isDirectory() : !info.isFile())) return null;
-    }
-    const canonicalRoot = await realpath(root);
-    const canonicalTarget = await realpath(target);
-    if (!isPathInside(canonicalRoot, canonicalTarget)) return null;
-    const handle = await open(target, "r");
-    try {
-      const before = await handle.stat();
-      if (!before.isFile() || before.size > LIVE_MAX_JSON_BYTES || before.nlink !== 1) return null;
-      const bytes = Buffer.alloc(before.size + 1);
-      const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
-      const after = await handle.stat();
-      const named = await lstat(target);
-      if (bytesRead !== before.size || after.size !== before.size || after.mtimeMs !== before.mtimeMs ||
-        named.isSymbolicLink() || named.ino !== before.ino || named.dev !== before.dev ||
-        await realpath(target) !== canonicalTarget) return null;
-      return { kind: item.kind, label: item.label, text: bytes.subarray(0, bytesRead).toString("utf8"), contentVersion: `sha256:${sha(bytes.subarray(0, bytesRead))}` };
-    } finally { await handle.close(); }
-  } catch { return null; }
+  const bytes = await readBoundedDeliverable(projectRoot, item.reference);
+  return bytes === null ? null : { kind: item.kind, label: item.label, filename: path.posix.basename(item.reference),
+    bytes, text: previewText(bytes), contentVersion: `sha256:${sha(bytes)}` };
 }

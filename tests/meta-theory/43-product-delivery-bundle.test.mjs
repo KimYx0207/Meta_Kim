@@ -13,7 +13,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { importDatabaseSync } from "../../src/data/sqlite/runtime.mjs";
 import { createGovernanceRuntimeFixture } from "../helpers/governance-runtime-fixture.mjs";
-import { refreshFixtureSourcePins } from "../helpers/host-reasoning-fixture.mjs";
+import { FIXTURE_DIAGNOSTIC_PROVIDERS, refreshFixtureSourcePins } from "../helpers/host-reasoning-fixture.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
@@ -30,7 +30,8 @@ function runProductBundle({ stateDir, profile, fixture }) {
     stateDir,
   ], {
     timeout: 90_000,
-    env: { ...fixture.env, META_KIM_PROFILE: profile },
+    env: { ...fixture.env, META_KIM_PROFILE: profile,
+      META_KIM_DIAGNOSTIC_PROVIDERS: JSON.stringify(FIXTURE_DIAGNOSTIC_PROVIDERS) },
   });
   const jsonStart = result.stdout.indexOf("{");
   assert.notEqual(jsonStart, -1, result.stderr || result.stdout);

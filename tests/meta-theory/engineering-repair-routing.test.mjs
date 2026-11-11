@@ -1,11 +1,19 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstatSync, readFileSync, realpathSync, unlinkSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { createGovernanceRuntimeFixture } from "../helpers/governance-runtime-fixture.mjs";
+import { copyHookClosure } from "../helpers/hook-fixture.mjs";
 import { classifyTaskShape } from "../../scripts/governance-lib.mjs";
 import { classifyMetaTheoryEntry, hasProductBuildIntent } from "../../scripts/meta-theory-entry-classifier.mjs";
+import {
+  classifyMetaTheoryEntry as classifyHookEntry,
+  hasEngineeringRepairIntent as hookHasEngineeringRepairIntent,
+  hasProductBuildIntent as hookHasProductBuildIntent,
+} from "../../canonical/runtime-assets/shared/hooks/entry-classifier.mjs";
 
 const quantRepair = "完成量化0.4.6-3整轮行情末尾指标计算超时修复与选股持仓研究一致性验收，保留已认可完整产品，零新增成本，只用隔离测试及软件本身访问真实数据，禁止原始数据库引擎直读、凭据和云变更。";
 
@@ -42,26 +50,49 @@ test("negated construction and a definition do not grant product-build intent", 
   assert.equal(definition.signals.productBuildIntent, false);
 });
 
-test("the self-contained activation hook follows the same repair/constraint boundary", () => {
-  const source = readFileSync(new URL("../../canonical/runtime-assets/shared/hooks/activate-meta-theory-spine.mjs", import.meta.url), "utf8");
-  const start = source.indexOf("function affirmativeRequestClauses(");
-  const productStart = source.indexOf("function productBuildRequested(", start);
-  const end = source.indexOf("\nconst PROJECT_UNDERSTANDING_RE", start);
-  assert.ok(start >= 0 && productStart > start && end > productStart);
-  const classify = new Function("ACTION_RE", "PRODUCT_BUILD_OBJECT_RE", `${source.slice(start, end)}; return productBuildRequested;`)(
-    /build|create|implement|fix|repair|帮我|修复|做|新建|实现/iu,
-    /app|platform|dashboard|平台|系统|产品|发布器/iu,
-  );
-  for (const task of [quantRepair, "Fix the app timeout, preserve the approved platform", "修复旧系统并新建监控平台", "修复高并发平台超时，保留已认可产品", "帮我做个营销发布器"]) {
-    assert.equal(classify(task), hasProductBuildIntent(task), task);
+test("the projected activation hook follows the shared repair/constraint boundary", (t) => {
+  assert.equal(classifyMetaTheoryEntry, classifyHookEntry, "scripts and hooks must consume one classifier");
+  const root = mkdtempSync(path.join(tmpdir(), "meta-kim-repair-hook-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const hookDir = path.join(root, "hooks");
+  mkdirSync(hookDir);
+  const closure = copyHookClosure(path.resolve(import.meta.dirname, "../.."), hookDir, ["activate-meta-theory-spine.mjs"]);
+  assert.ok(closure.includes("entry-classifier.mjs"));
+  assert.ok(closure.includes("entry-classifier-core.mjs"));
+  assert.ok(closure.includes("entry-classification-lexicon.json"));
+  const cases = [
+    [quantRepair, false],
+    ["Fix the app timeout, preserve the approved platform", false],
+    ["修复旧系统并新建监控平台", true],
+    ["修复高并发平台超时，保留已认可产品", false],
+    ["帮我做个营销发布器", true],
+  ];
+  for (const [index, [task, productBuild]] of cases.entries()) {
+    assert.equal(hookHasProductBuildIntent(task), productBuild, task);
+    const classification = classifyMetaTheoryEntry(task);
+    assert.equal(classification.signals.productBuildIntent, productBuild, task);
+    assert.equal(classification.governedEntry, true, "an explicit repair/build request must reach the hook, including 高并发");
+    const projectRoot = path.join(root, `project-${index}`);
+    mkdirSync(path.join(projectRoot, ".git"), { recursive: true });
+    const result = spawnSync(process.execPath, [path.join(hookDir, "activate-meta-theory-spine.mjs")], {
+      cwd: projectRoot, input: JSON.stringify({ hook_event_name: "UserPromptSubmit", prompt: task }),
+      encoding: "utf8", timeout: 10_000, windowsHide: true,
+      env: { ...process.env, CLAUDE_PROJECT_DIR: "", META_KIM_PACKAGE_ROOT: "",
+        META_KIM_POST_COPY_AUTO: "off", META_KIM_LIVE_AUTO: "off", META_KIM_HOOK_RUNTIME: "codex",
+        META_KIM_SPINE_STATE_DIR: ".meta-kim/state/test/spine" },
+    });
+    assert.equal(result.error ?? null, null, `${task}: ${result.stderr}`);
+    assert.equal(result.signal, null, task);
+    assert.equal(result.status, 0, `${task}: ${result.stderr}`);
+    const state = JSON.parse(readFileSync(path.join(projectRoot, ".meta-kim/state/test/spine/spine-state.json"), "utf8"));
+    assert.equal(state.taskClassification, classification.taskClassification, task);
+    assert.equal(state.triggerReason, classification.triggerReason, task);
+    assert.equal(state.active, true, task);
+    assert.equal(state.currentStage, "critical", task);
+    assert.equal(state.stages.execution.status, "pending", "activation must not grant execution authority");
   }
-  const observedClauses = [];
-  const observeClauses = new Function("ACTION_RE", "PRODUCT_BUILD_OBJECT_RE", `${source.slice(start, end)}; return productBuildRequested;`)(
-    { test(clause) { observedClauses.push(clause); return /修复/iu.test(clause); } },
-    /平台/iu,
-  );
-  observeClauses("修复高并发平台超时，保留完整产品");
-  assert.ok(observedClauses.includes("修复高并发平台超时"), "the hook must keep 并 inside an engineering word");
+  assert.equal(hookHasEngineeringRepairIntent("修复高并发平台超时，保留完整产品"), true,
+    "the repair action and timeout must stay in one clause; 并 inside 高并发 is not a separator");
 });
 
 test("the actual route CLI sends the quant repair through existing engineering selection", (t) => {

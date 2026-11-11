@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, writeFile, rm, symlink } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile, rm, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -100,6 +100,7 @@ test("declared deliverable reads are exact, output-only, bounded, and reject sym
   assert.equal(await readLiveDeliverable(raw, "deliverable:" + "0".repeat(24), root), null);
   await writeFile(path.join(root, "outputs/too-large.txt"), "x".repeat(LIVE_MAX_JSON_BYTES + 1));
   const large = artifact({ primaryDeliverable: "outputs/too-large.txt" });
+  large.workerResultPackets[0].producedArtifacts = [large.primaryDeliverable];
   assert.equal(await readLiveDeliverable(large, collectLiveDeliverables(large)[0].id, root), null);
   assert.equal(collectLiveDeliverables(artifact({ workerResultPackets: [{ ...raw.workerResultPackets[0], status: "planned_not_executed" }] })).length, 0);
   for (const ownerAgent of ["foreign-owner", null, undefined]) {
@@ -108,7 +109,9 @@ test("declared deliverable reads are exact, output-only, bounded, and reject sym
     assert.equal(await readLiveDeliverable(foreign, refs[0].id, root), null);
   }
   for (const ref of ["../private.md", "outputs/../private.md", "src/private.md", "outputs/.env.md", "file:///private.md", "https://example.com/?token=bad", "javascript:alert(1)"]) {
-    assert.equal(collectLiveDeliverables(artifact({ primaryDeliverable: ref })).some((item) => item.taskPacketId === null), false, ref);
+    const unsafe = artifact({ primaryDeliverable: ref });
+    unsafe.workerResultPackets[0].producedArtifacts = [ref];
+    assert.equal(collectLiveDeliverables(unsafe).some(item => item.reference === ref), false, ref);
   }
   const outside = await mkdtemp(path.join(os.tmpdir(), "live-deliverable-private-"));
   t.after(() => rm(outside, { recursive: true, force: true }));
@@ -116,6 +119,7 @@ test("declared deliverable reads are exact, output-only, bounded, and reject sym
   try { await symlink(outside, path.join(root, "outputs/escape"), "junction"); }
   catch (error) { if (["EPERM", "EACCES"].includes(error.code)) { t.diagnostic("symlink unavailable for this host"); return; } throw error; }
   const linked = artifact({ primaryDeliverable: "outputs/escape/private.md" });
+  linked.workerResultPackets[0].producedArtifacts = [linked.primaryDeliverable];
   assert.equal(await readLiveDeliverable(linked, collectLiveDeliverables(linked)[0].id, root), null);
 });
 
@@ -312,4 +316,89 @@ for (const [field, value] of [["deliverableId", "../../outside"], ["actionId", "
   assert.equal(items[0].state, "recorded", "the malformed response/check is isolated and the original finding retained");
   assert.equal(items[0].deliverableId, f.target.id, "the original finding still belongs to its real deliverable");
   assert.doesNotMatch(JSON.stringify(items), /outside|invalid-action|invalid-task-alias/u);
+});
+
+
+test("structured outputs download their exact bound bytes without exposing a file-path API", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "live-structured-deliverable-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, "outputs"));
+  const content = '{"currency":"CNY","note":"<script>unsafe()</script>"}\n';
+  await writeFile(path.join(root, "outputs/预测.json"), content);
+  await writeFile(path.join(root, "outputs/forecast.csv"), "month,cash\n1,12500\n");
+  const raw = artifact();
+  raw.workerResultPackets[0].producedArtifacts = ["outputs/预测.json", "outputs/forecast.csv"];
+  const refs = collectLiveDeliverables(raw);
+  assert.deepEqual(refs.slice(0, 2).map(item => item.kind), ["text", "text"]);
+  const service = createLiveControlRoomService({ repository: { projectRoot: root, readArtifact: async id => id === runId ? raw : null, readLatestArtifact: async () => raw } });
+  const control = createLiveControlRoomServer({ service, port: 0 });
+  t.after(() => control.close());
+  const address = await control.start();
+  const url = `${address.url}/api/deliverable?runId=${runId}&deliverableId=${refs[0].id}`;
+  const preview = await fetch(url);
+  assert.match(await preview.text(), /&lt;script&gt;unsafe/u);
+  const downloaded = await fetch(url + "&download=1");
+  assert.equal(downloaded.status, 200);
+  assert.equal(downloaded.headers.get("content-type"), "application/octet-stream");
+  assert.match(downloaded.headers.get("content-disposition"), /filename\*=UTF-8''%E9/u);
+  assert.equal(await downloaded.text(), content);
+  assert.equal(downloaded.headers.get("x-meta-kim-content-version"), "sha256:" + createHash("sha256").update(content).digest("hex"));
+  assert.equal((await fetch(url + "&download=outputs/private.json")).status, 400);
+  assert.equal((await fetch(url.replace(runId, "foreign-run") + "&download=1")).status, 404);
+  const unknown = artifact({ primaryDeliverable: "outputs/private.js" });
+  assert.equal(collectLiveDeliverables(unknown).some(item => item.taskPacketId === null), false);
+});
+
+
+test("download preserves original UTF-16 and non-UTF-8 bytes while preview decodes BOM text", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "live-deliverable-encoding-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, "outputs"));
+  const text = "项目,收入\n第一期,12500\n";
+  const utf16 = Buffer.from(text, "utf16le");
+  const cases = [
+    ["utf16-le.csv", Buffer.concat([Buffer.from([0xff, 0xfe]), utf16]), text],
+    ["utf16-be.csv", Buffer.concat([Buffer.from([0xfe, 0xff]), Buffer.from(utf16).swap16()]), text],
+    ["non-utf8.txt", Buffer.from([0x66, 0x80, 0xff, 0x0a]), null],
+    ["utf8-bom.json", Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('{"金额":12500}')]), '{"金额":12500}'],
+  ];
+  const raw = artifact();
+  raw.workerResultPackets[0].producedArtifacts = cases.map(([name]) => "outputs/" + name);
+  const service = createLiveControlRoomService({ repository: { projectRoot: root, readArtifact: async id => id === runId ? raw : null, readLatestArtifact: async () => raw } });
+  const control = createLiveControlRoomServer({ service, port: 0 });
+  t.after(() => control.close());
+  const address = await control.start();
+  for (const [name, bytes, expectedText] of cases) {
+    await writeFile(path.join(root, "outputs", name), bytes);
+    const ref = collectLiveDeliverables(raw).find(item => item.reference === "outputs/" + name);
+    const url = `${address.url}/api/deliverable?runId=${runId}&deliverableId=${ref.id}`;
+    const downloaded = await fetch(url + "&download=1");
+    assert.equal(downloaded.status, 200);
+    assert.deepEqual(Buffer.from(await downloaded.arrayBuffer()), bytes, name + " must retain the original bytes");
+    assert.equal(Number(downloaded.headers.get("content-length")), bytes.length);
+    assert.equal(downloaded.headers.get("x-meta-kim-content-version"), "sha256:" + createHash("sha256").update(bytes).digest("hex"));
+    if (expectedText !== null) {
+      const read = await readLiveDeliverable(raw, ref.id, root);
+      assert.equal(read.text, expectedText, name + " preview must decode the BOM encoding");
+      assert.match(await (await fetch(url)).text(), /项目|金额/u);
+    }
+  }
+});
+
+test("primary output must bind to an actual matching worker artifact", () => {
+  const unbound = artifact({ primaryDeliverable: "outputs/unrelated-report.csv" });
+  assert.equal(collectLiveDeliverables(unbound).some(item => item.reference === "outputs/unrelated-report.csv"), false);
+  const bound = artifact({ primaryDeliverable: { path: "outputs/page.html", label: "Main result" } });
+  const refs = collectLiveDeliverables(bound).filter(item => item.reference === "outputs/page.html");
+  assert.equal(refs.length, 1);
+  assert.equal(refs[0].taskPacketId, taskPacketId);
+  assert.equal(refs[0].label, "Main result");
+});
+
+
+test("deliverable application and data layers do not import infrastructure implementations", async () => {
+  for (const relative of ["src/application/live/live-deliverables.mjs", "src/data/repositories/live-deliverable-repository.mjs"]) {
+    const source = await readFile(new URL("../../" + relative, import.meta.url), "utf8");
+    assert.doesNotMatch(source, /(?:from\s*|import\s*\()\s*["'][^"']*\/infrastructure\//u, relative);
+  }
 });

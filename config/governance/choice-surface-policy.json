@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
+  "materialChoicePolicyRef": "config/governance/material-decision-policy.json",
   "choiceRequiredWhen": [
     "choice changes scope",
     "choice changes risk or cost",
-    "choice changes owner or verification owner",
     "choice changes runtime or OS",
     "choice changes dependency adoption",
     "choice changes public-ready acceptance",
@@ -13,9 +13,10 @@
     "AI can inspect the answer locally",
     "question is filler",
     "approval overlay would be used for product choice",
-    "choice does not alter route/scope/risk/acceptance/owner/permission/non-goal"
+    "choice changes only owner, verification owner, model, provider, or loadout",
+    "choice does not alter user-visible result/scope/risk/acceptance/permission/non-goal"
   ],
-  "readOnlyPolicy": "Read-only/queryBypass is a safety and path-classification boundary, not a choice-surface skip reason by itself. Ask when branch-changing options exist; skip only when no user answer would change the route, scope, risk, owner, permission, non-goal, or acceptance.",
+  "readOnlyPolicy": "Read-only/queryBypass is a safety and path-classification boundary, not a choice-surface skip reason by itself. Ask when branch-changing options exist; skip only when no user answer would change the user-visible result, scope, risk, permission, non-goal, or acceptance.",
   "triggerProofPolicy": {
     "nativeSurfaceAvailableMeansCallIt": true,
     "primaryRuntimesNoDowngrade": ["codex", "claude_code"],

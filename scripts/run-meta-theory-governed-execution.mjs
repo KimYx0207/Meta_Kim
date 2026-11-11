@@ -21,6 +21,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { classifyMetaTheoryEntry } from "./meta-theory-entry-classifier.mjs";
+import { normalizeOsTarget } from "./runtime-operating-system.mjs";
 import { renderPreparationNotice } from "./governed-execution/preparation-notice.mjs";
 import { inspectTrustedPath, withSafeManagedFileLock } from "./safe-managed-file-operations.mjs";
 import { scopeComparisonKey, scopeKeysAreProvablyDisjoint } from "./task-scope-comparison.mjs";
@@ -426,10 +427,6 @@ function normalizeRouteRuntime(value, fallback = "codex") {
   return ROUTE_RUNTIME_ALIASES[normalized] ?? normalized;
 }
 
-function normalizeOsTarget(value, fallback = "windows") {
-  const normalized = String(value ?? fallback).trim().toLowerCase();
-  return normalized && normalized !== "auto" ? normalized : fallback;
-}
 
 const CARD_TYPE_CATALOG = Object.freeze([
   {
@@ -8868,7 +8865,7 @@ function buildCoreLoopArtifact({
   projectCapabilityCandidateRoot = null,
   projectCapabilityCreationArtifacts = [],
   runtime = "codex",
-  osTarget = "windows",
+  osTarget = null,
   outputLanguage = "zh-CN",
   executionAllowed = false,
   preDecisionOptionFrame = null,
@@ -9810,7 +9807,7 @@ export function buildWorkflowContractPackets({
   cardPlanPacket,
   businessFlowBlueprintPacket,
   runtime = "codex",
-  osTarget = "windows",
+  osTarget = null,
   outputLanguage = "zh-CN",
   languageSource = "latest_user_input",
   planChallengeResponses = [],
@@ -11054,6 +11051,19 @@ async function selectExecutionRoute({ task, actionTask = task, runtime = "codex"
   return JSON.parse(result.stdout);
 }
 
+/** Review the current selector's Fetch, bound to the consumed preparation.
+ * Discovery coverage does not require selecting or invoking every tool family.
+ */
+export function hasBoundMultiTypeCapabilityInventory({ fetchPacket, expectedInventoryDigest, runtime, osTarget }) {
+  const discovery = fetchPacket?.capabilityDiscovery;
+  if (fetchPacket?.stage !== "Fetch" || !/^[a-f0-9]{64}$/u.test(expectedInventoryDigest ?? "") ||
+      discovery?.inventoryDigest !== expectedInventoryDigest || discovery.context?.runtime !== runtime ||
+      discovery.context?.os !== osTarget || !Array.isArray(discovery.providers)) return false;
+  const types = new Set(discovery.providers.map(provider => provider.type));
+  return types.has("skills") && (types.has("runtimeTools") || types.has("commands")) &&
+    (types.has("mcpServers") || types.has("mcpTools"));
+}
+
 function providerListFromRoute(routeResult) {
   const selectedProviders = routeResult.recommendedRoute?.selectedCapabilityProviders ?? {};
   const selected = Object.entries(selectedProviders).filter(([, provider]) => provider && typeof provider.id === "string" && provider.id);
@@ -11522,9 +11532,9 @@ function synchronizeHostWorkOrder({ draft, packet }) {
   }
 }
 
-async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", osTarget = "windows", codexHostToolSchema = null, intentDialogue = null, taskCriterionAssignments = null, localToolRequest = null, calculationRequest = null, design = null, designRequirement = null, requirementsDiscovery = null, agentCapabilityProfileContext = null, hostThinking = null, projectContext = null, projectRoot = activeProjectRoot(), environment = process.env }) {
+async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", osTarget = null, codexHostToolSchema = null, intentDialogue = null, taskCriterionAssignments = null, localToolRequest = null, calculationRequest = null, design = null, designRequirement = null, requirementsDiscovery = null, agentCapabilityProfileContext = null, hostThinking = null, projectContext = null, projectRoot = activeProjectRoot(), environment = process.env }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
-  const routeOs = normalizeOsTarget(osTarget);
+  const routeOs = normalizeOsTarget(osTarget, { environment });
   const taskSignals = classifyMetaTheoryEntry(task).signals ?? {};
   const intentDeliveryStrategy = (classifyTaskShape(task) === "engineering_execution" && taskSignals.fileOrMutationIntent === true) || taskSignals.productBuildIntent === true
     ? intentDialogue?.deliveryStrategy ?? null : null;
@@ -11804,10 +11814,11 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
     })) ?? [];
   const omittedLaneIds = omittedLanesWithReason.map((lane) => lane.laneId);
   const checks = {
-    multiTypeCapabilityInventoryPresent:
-      providerList.some((provider) => provider.type === "skills") &&
-      providerList.some((provider) => provider.type === "runtimeTools" || provider.type === "commands") &&
-      providerList.some((provider) => provider.type === "mcpServers" || provider.type === "mcpTools"),
+    multiTypeCapabilityInventoryPresent: hasBoundMultiTypeCapabilityInventory({
+      fetchPacket: routeResult.fetchPacket,
+      expectedInventoryDigest: hostThinking?.fetchPacket.capabilityDiscovery.inventoryDigest,
+      runtime: routeRuntime, osTarget: routeOs,
+    }),
     workerTasksDeclareExecutionMode: workerTaskPackets.every((packet) => Boolean(packet.executionMode)),
     routeDrivenDefaultPath: true,
     oldCapabilityGapDefaultPathRemoved: true,
@@ -11987,7 +11998,7 @@ async function writeHostPreparation({ task, runId, taskFingerprint, outputDir, l
     completionRule: "Return the actual native choice or current host reasoning through this ordinary entry before formal dispatch." };
   if (!stopped && critical && !needsInput && researchGaps.length) nextAction.action = "complete_topic_research_and_source_bindings";
   if (!stopped && critical && !needsInput && !researchGaps.length && designPending) nextAction.action = "produce_integrated_design_for_current_boundaries";
-  if (!stopped && critical && !needsInput && taskDesignRoute?.route === "assess_unknowns") {
+  if (!stopped && critical && !needsInput && taskDesignRoute?.assessmentRequired === true) {
     nextAction.stage = "Thinking";
     nextAction.action = "assess_current_task_design_facts";
     nextAction.factsInput = { option: "governanceTaskFacts", cliFlag: "--governance-task-facts-input", schemaVersion: "governance-task-facts-v2",
@@ -12238,7 +12249,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   // the declared host is a separate option with no default.
   declaredRuntime = null,
   hostEnv = process.env,
-  osTarget = "windows",
+  osTarget: requestedOsTarget = null,
   approvalEvidence = null,
   approvalPacket = null,
   applyWriteback = false,
@@ -12262,6 +12273,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   previousPlanChallengeRunId = null,
   stageRunner = null,
   } = options;
+  const osTarget = normalizeOsTarget(requestedOsTarget, { environment: hostEnv });
   const normalizedTask = normalizeTask(task);
   if (!normalizedTask) {
     throw new Error("Missing task for governed meta-theory execution.");
@@ -12572,7 +12584,9 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   const researchPending = researchRequired && requirementsDiscovery?.research?.readiness !== "ready";
   const designPending = designRequirementSnapshot?.required === true && productDesign?.readiness !== "structure_ready_not_reviewed";
   const materialDecisionPending = taskDesignRoutePacket.humanDecisionRequired && !(requirementsDiscovery?.decisionItems?.some(item => item.resolutionClass === "material_user_decision") && planChallengePreview.planChallengeState.planChallengeSatisfied === true);
-  const designAssessmentPending = taskDesignRoutePacket.route === "assess_unknowns";
+  // Task-bound facts let the existing DAG retain independent work and bounded
+  // diagnosis. Each invocation still rejects its own unassessed dimensions.
+  const designAssessmentPending = taskDesignRoutePacket.assessmentRequired && !taskScopedThinking;
   const preparationPending = researchPending || designPending || materialDecisionPending || designAssessmentPending || !hostCritical || hostCritical.blockingUnknowns.length > 0 ||
     planChallengePreview.unresolvedQuestions.some((question) => declaredQuestionIds.has(question.questionId) && question.status === "open");
   const existingPath = runId == null ? null : resolveOutputFile(outputDir, String(runId) + ".json");
@@ -14049,7 +14063,7 @@ async function main() {
   // nobody declared a host for from being recorded as that default vendor.
   const declaredRuntimeArg = argValue("--runtime", process.env.META_KIM_RUNTIME ?? null);
   const runtimeArg = declaredRuntimeArg ?? "codex";
-  const osArg = argValue("--os", process.env.META_KIM_OS ?? "windows");
+  const osArg = argValue("--os", null);
   const cliOutputLanguage = argValue(
     "--output-language",
     argValue("--lang", null),

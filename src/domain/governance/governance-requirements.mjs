@@ -1,3 +1,5 @@
+import materialDecisionPolicy from "../../../config/governance/material-decision-policy.json" with { type: "json" };
+
 const FACTS_SCHEMA_VERSION = "governance-task-facts-v1";
 const REQUIREMENTS_SCHEMA_VERSION = "governance-requirements-v1";
 
@@ -14,16 +16,7 @@ export const GOVERNANCE_REQUIREMENT_KEYS = Object.freeze([
   "evolution",
 ]);
 
-const MATERIAL_DECISION_DIMENSIONS = new Set([
-  "result",
-  "risk",
-  "cost",
-  "scope",
-  "permission",
-  "compatibility",
-  "longTermImpact",
-  "publicReadyAcceptance",
-]);
+const MATERIAL_DECISION_DIMENSIONS = new Set(materialDecisionPolicy.materialDimensions);
 
 const SECURITY_FACT_KEYS = Object.freeze([
   "auth",
