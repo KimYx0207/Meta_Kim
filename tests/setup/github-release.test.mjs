@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
 import test from 'node:test';
-import { releaseDocumentLinks, releaseSection, resolveReleaseTitle, selectPassedRuns, verifyPublished } from '../../.github/scripts/publish-release.mjs';
+import { publishReleaseAssets, releaseDocumentLinks, releaseSection, resolveReleaseTitle, selectPassedRuns, verifyPublished } from '../../.github/scripts/publish-release.mjs';
 
 const sha = 'a'.repeat(40);
 const workflow = '.github/workflows/ci.yml';
@@ -69,4 +72,124 @@ test('release links respect document directories and preserve literal code sampl
   assert.ok(result.includes('```md\n[example](docs/example.md)\n```'));
   assert.ok(result.includes('~~~md\n![example](docs/image.svg)\n~~~'));
   assert.ok(result.endsWith('[contact](mailto:maintainer@example.com)'));
+});
+
+// Model the documented GitHub API, including the published-only tag endpoint,
+// while exercising the production upload / verify / publish flow end to end.
+function releaseRemote(t, { existing = null, olderReleases = 0, corruptUpload = false } = {}) {
+  const output = fs.mkdtempSync(path.join(os.tmpdir(), 'github-release-flow-'));
+  t.after(() => fs.rmSync(output, { recursive: true, force: true }));
+  const config = { repository: 'owner/project', tag: 'v3.10.0', sha,
+    releaseTitle: 'Meta_Kim 3.10.0' };
+  const bytes = Buffer.from('the package bytes already checked by the release gate');
+  const file = path.join(output, 'meta-kim-3.10.0.tgz');
+  fs.writeFileSync(file, bytes);
+  fs.writeFileSync(path.join(output, 'release-notes.md'), 'Verified release notes.\n');
+  const assets = [{ name: path.basename(file), file, size: bytes.length,
+    sha256: createHash('sha256').update(bytes).digest('hex') }];
+  const remoteAsset = { name: assets[0].name, size: assets[0].size,
+    digest: `sha256:${assets[0].sha256}` };
+  const releases = Array.from({ length: olderReleases }, (_, index) => ({
+    id: index + 1, tag_name: `v0.0.${index}`, draft: false, assets: [],
+  }));
+  if (existing) releases.push({ id: 441245129, tag_name: config.tag,
+    name: config.releaseTitle, draft: existing === 'draft',
+    assets: existing === 'published' ? [remoteAsset] : [],
+    html_url: `https://github.com/${config.repository}/releases/tag/${config.tag}` });
+  const reads = [];
+  const writes = [];
+  const endpoint = `repos/${config.repository}/releases`;
+  const current = () => releases.find(release => release.tag_name === config.tag);
+  const missing = () => { throw Object.assign(new Error('Not Found'), { stderr: 'gh: Not Found (HTTP 404)' }); };
+  const request = (url, body) => {
+    if (body) {
+      assert.equal(url, endpoint);
+      assert.equal(body.draft, true);
+      assert.equal(body.target_commitish, sha);
+      assert.equal(body.body, 'Verified release notes.\n');
+      assert.equal(current(), undefined, 'an interrupted draft must be reused');
+      const release = { id: 441245129, ...body, assets: [],
+        html_url: `https://github.com/${config.repository}/releases/tag/${config.tag}` };
+      releases.push(release);
+      writes.push('create');
+      return structuredClone(release);
+    }
+    reads.push(url);
+    if (url === `${endpoint}/tags/${config.tag}`) {
+      const release = current();
+      return release && !release.draft ? structuredClone(release) : missing();
+    }
+    if (url.startsWith(`${endpoint}?`)) {
+      const page = Number(new URL(url, 'https://api.github.com/').searchParams.get('page'));
+      return structuredClone(releases.slice((page - 1) * 100, page * 100));
+    }
+    if (url === `${endpoint}/441245129` && current()) return structuredClone(current());
+    return missing();
+  };
+  const run = (program, args) => {
+    assert.equal(program, 'gh');
+    assert.equal(args[0], 'release');
+    assert.equal(args[2], config.tag);
+    assert.equal(args[args.indexOf('--repo') + 1], config.repository);
+    const release = current();
+    assert.ok(release, 'CLI operation needs an existing release');
+    if (args[1] === 'upload') {
+      const uploaded = fs.readFileSync(args[3]);
+      release.assets = [{ name: path.basename(args[3]), size: uploaded.length,
+        digest: `sha256:${corruptUpload ? '0'.repeat(64) : createHash('sha256').update(uploaded).digest('hex')}` }];
+      writes.push('upload');
+    } else {
+      assert.equal(args[1], 'edit');
+      release.name = args[args.indexOf('--title') + 1];
+      if (args.includes('--draft=false')) {
+        release.draft = false;
+        writes.push('publish');
+      } else writes.push('edit-draft');
+    }
+  };
+  return { config, assets, output, request, run, current, reads, writes,
+    publish: () => publishReleaseAssets(config, assets, output, { request, run }) };
+}
+
+test('a new draft uploads and publishes even though the tag endpoint cannot read drafts', t => {
+  const remote = releaseRemote(t);
+  assert.equal(remote.publish().status, 'published');
+  assert.equal(remote.current().draft, false);
+  assert.deepEqual(remote.writes, ['create', 'upload', 'publish']);
+  assert.equal(remote.reads.filter(url => url.endsWith('/441245129')).length, 2);
+});
+
+test('an interrupted draft beyond the first page is reused and a later published retry is read-only', t => {
+  const remote = releaseRemote(t, { existing: 'draft', olderReleases: 100 });
+  assert.equal(remote.publish().status, 'published');
+  assert.ok(remote.reads.some(url => url.endsWith('page=2')));
+  assert.equal(remote.current().id, 441245129);
+  assert.deepEqual(remote.writes, ['edit-draft', 'upload', 'publish']);
+  const written = [...remote.writes];
+  assert.equal(remote.publish().status, 'already_published');
+  assert.deepEqual(remote.writes, written);
+});
+
+test('already-published assets are verified and a mismatch never triggers an upload', t => {
+  const remote = releaseRemote(t, { existing: 'published' });
+  assert.equal(remote.publish().status, 'already_published');
+  remote.current().assets[0].digest = `sha256:${'0'.repeat(64)}`;
+  assert.throws(remote.publish, /Published asset differs/u);
+  assert.deepEqual(remote.writes, []);
+});
+
+test('an uploaded digest mismatch leaves the draft unpublished', t => {
+  const remote = releaseRemote(t, { existing: 'draft', corruptUpload: true });
+  assert.throws(remote.publish, /Published asset differs/u);
+  assert.equal(remote.current().draft, true);
+  assert.ok(!remote.writes.includes('publish'));
+});
+
+test('release lookup permissions errors are not treated as a missing release', t => {
+  const remote = releaseRemote(t);
+  const denied = Object.assign(new Error('Forbidden'), { stderr: 'gh: Forbidden (HTTP 403)' });
+  assert.throws(() => publishReleaseAssets(remote.config, remote.assets, remote.output, {
+    request: () => { throw denied; }, run: remote.run,
+  }), error => error === denied);
+  assert.deepEqual(remote.writes, []);
 });
