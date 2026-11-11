@@ -1,0 +1,58 @@
+name: Recover Meta_Kim v3.10.0 publication
+
+# Resume the already verified draft; never build, retag or replace assets.
+on:
+  create:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-Meta_Kim-v3.10.0
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    if: >-
+      github.repository == 'KimYx0207/Meta_Kim' &&
+      github.event_name == 'create' && github.event.ref_type == 'branch' &&
+      github.ref == 'refs/heads/release-recovery/v3.10.0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Check out reviewed maintenance code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+          path: maintenance
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check out the unchanged product source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: 185597ba7ee658fa8eb33b7c93152fc437c05818
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - name: Test the recovery checks and publication API fix
+        working-directory: maintenance
+        run: node --test tests/setup/github-release.test.mjs tests/setup/release-recovery.test.mjs
+      - name: Check original source, main CI, tag and exact downloadable assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node maintenance/.github/scripts/resume-release.mjs prepare "$GITHUB_WORKSPACE/source" "$RUNNER_TEMP/release-recovery"
+      - name: Reinstall the unchanged archive and repeat its original checks
+        working-directory: source
+        run: |
+          npm install --prefix "$RUNNER_TEMP/recovery-package-smoke" --ignore-scripts --no-audit --no-fund "$RUNNER_TEMP/release-recovery/assets/meta-kim-3.10.0.tgz"
+          node .github/scripts/check-release-package.mjs "$RUNNER_TEMP/release-recovery/assets/meta-kim-3.10.0.tgz" "$RUNNER_TEMP/recovery-package-smoke/node_modules/meta-kim" "$RUNNER_TEMP/release-recovery/package-check-rechecked.json"
+      - name: Publish only the checked existing draft ID and read it back
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node maintenance/.github/scripts/resume-release.mjs publish "$GITHUB_WORKSPACE/source" "$RUNNER_TEMP/release-recovery"

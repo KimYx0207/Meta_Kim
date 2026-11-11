@@ -100,8 +100,8 @@ function evidence(config) {
   return selectPassedRuns(result.workflow_runs, config.sha, config.workflows);
 }
 
-function optionalApi(endpoint) {
-  try { return api(endpoint); }
+function optionalApi(endpoint, request = api) {
+  try { return request(endpoint); }
   catch (error) {
     if (/HTTP 404/u.test(String(error.stderr))) return null;
     throw error;
@@ -136,6 +136,50 @@ export function verifyPublished(release, assets, config) {
     assert(remote && remote.size === item.size && remote.digest === `sha256:${item.sha256}`,
       `Published asset differs: ${item.name}`);
   }
+}
+
+function findRelease(repository, tag, request) {
+  const endpoint = `repos/${repository}/releases`;
+  const published = optionalApi(`${endpoint}/tags/${encodeURIComponent(tag)}`, request);
+  if (published) return published;
+  // GitHub's tag endpoint returns published releases. Drafts are visible in
+  // the authenticated release list and must subsequently be read by ID.
+  for (let page = 1; ; page++) {
+    const releases = request(`${endpoint}?per_page=100&page=${page}`);
+    const match = releases.find(release => release.tag_name === tag);
+    if (match) return match;
+    if (releases.length < 100) return null;
+  }
+}
+
+export function publishReleaseAssets(config, assets, output, { request = api, run = command } = {}) {
+  const endpoint = `repos/${config.repository}/releases`;
+  let release = findRelease(config.repository, config.tag, request);
+  if (release && !release.draft) {
+    verifyPublished(release, assets, config);
+    return { status: 'already_published', url: release.html_url };
+  }
+  if (!release) release = request(endpoint, {
+    tag_name: config.tag, target_commitish: config.sha, draft: true,
+    name: config.releaseTitle,
+    body: fs.readFileSync(path.join(output, 'release-notes.md'), 'utf8'),
+  });
+  else run('gh', ['release', 'edit', config.tag, '--repo', config.repository,
+    '--title', config.releaseTitle, '--notes-file', path.join(output, 'release-notes.md')]);
+  assert.equal(release.tag_name, config.tag);
+  const releasePath = `${endpoint}/${release.id}`;
+  for (const item of assets) run('gh', ['release', 'upload', config.tag, item.file,
+    '--repo', config.repository, '--clobber']);
+  release = request(releasePath);
+  verifyPublished(release, assets, config);
+  run('gh', ['release', 'edit', config.tag, '--repo', config.repository,
+    '--draft=false', '--latest', '--title', config.releaseTitle,
+    '--notes-file', path.join(output, 'release-notes.md')]);
+  release = request(releasePath);
+  assert.equal(release.draft, false);
+  verifyPublished(release, assets, config);
+  return { status: 'published', url: release.html_url, commit: config.sha,
+    assets: assets.map(({ name, size, sha256 }) => ({ name, size, sha256 })) };
 }
 
 export function main(args = process.argv.slice(2)) {
@@ -182,29 +226,7 @@ export function main(args = process.argv.slice(2)) {
     ref = api(`repos/${config.repository}/git/refs`, { ref: `refs/tags/${config.tag}`, sha: tag.sha });
     assert.equal(peelTag(config.repository, ref), config.sha);
   }
-  let release = optionalApi(`repos/${config.repository}/releases/tags/${config.tag}`);
-  if (release && !release.draft) {
-    verifyPublished(release, assets, config);
-    console.log(json({ status: 'already_published', url: release.html_url }));
-    return;
-  }
-  if (!release) command('gh', ['release', 'create', config.tag, '--repo', config.repository,
-    '--verify-tag', '--draft', '--title', config.releaseTitle,
-    '--notes-file', path.join(output, 'release-notes.md')]);
-  else command('gh', ['release', 'edit', config.tag, '--repo', config.repository,
-    '--title', config.releaseTitle, '--notes-file', path.join(output, 'release-notes.md')]);
-  for (const item of assets) command('gh', ['release', 'upload', config.tag, item.file,
-    '--repo', config.repository, '--clobber']);
-  release = api(`repos/${config.repository}/releases/tags/${config.tag}`);
-  verifyPublished(release, assets, config);
-  command('gh', ['release', 'edit', config.tag, '--repo', config.repository,
-    '--draft=false', '--latest', '--title', config.releaseTitle,
-    '--notes-file', path.join(output, 'release-notes.md')]);
-  release = api(`repos/${config.repository}/releases/tags/${config.tag}`);
-  assert.equal(release.draft, false);
-  verifyPublished(release, assets, config);
-  console.log(json({ status: 'published', url: release.html_url, commit: config.sha,
-    assets: assets.map(({ name, size, sha256 }) => ({ name, size, sha256 })) }));
+  console.log(json(publishReleaseAssets(config, assets, output)));
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
