@@ -30,7 +30,7 @@
         "lastInspectedAt": null
       },
       "capabilityCard": {
-        "oneLine": "First-party professional owner contracts for everyday content, ecommerce, career, education and small-business work.",
+        "oneLine": "First-party professional agent and method contracts for software, design, finance, data, operations and everyday work; discover exact coverage from the versioned generated capability index.",
         "taskShapes": [
           "professional_content",
           "industry_analysis",
@@ -41,7 +41,11 @@
           "电商商品页、客服回复、店铺数据",
           "简历、面试、周报邮件",
           "备课、知识讲解、练习题",
-          "副业方向、启动计划、报价成本"
+          "副业方向、启动计划、报价成本",
+          "软件开发、架构、测试、故障诊断与恢复",
+          "产品设计、设计系统、品牌、动效与可访问性",
+          "财务建模、经营预测、会计核对与量化研究",
+          "数据分析、制造、能源、供应链与运营"
         ],
         "inputContract": {
           "requires": [
@@ -979,15 +983,16 @@
         "uri": "garrytan/gstack",
         "localPath": null,
         "inspectionStatus": "inspected_reference",
-        "lastInspectedAt": "2026-06-01"
+        "lastInspectedAt": "2026-11-12"
       },
       "capabilityCard": {
-        "oneLine": "Reference capability catalog for generated SKILL.md providers, host projections, browser/QA/review workflows, and agent-facing metadata.",
+        "oneLine": "Reference capability catalog for generated SKILL.md providers, host projections, browser/QA/review workflows, actionable error recovery, and agent-facing metadata.",
         "canDo": [
           "model capability-provider-first design",
           "show generated SKILL.md catalog patterns",
           "show host-specific projection config for Claude, Codex, Cursor, and OpenClaw",
-          "provide reference evidence for keeping concrete work in skill/runtime context instead of durable agent identity"
+          "provide reference evidence for keeping concrete work in skill/runtime context instead of durable agent identity",
+          "review errors for an explicit cause, safe next step, receipt state and verification"
         ],
         "canNotDo": [
           "automatic execution without trust review",
@@ -1012,7 +1017,8 @@
           "gstack",
           "skill catalog design",
           "capability provider before execution agent",
-          "host projection pattern"
+          "host projection pattern",
+          "actionable error recovery and developer experience review"
         ],
         "verificationMethod": "npm run meta:deps:compat",
         "risk": [
@@ -1080,11 +1086,12 @@
         "source": "gh_readonly_inspection",
         "confidence": "verified_local",
         "verificationCommand": "gh repo view garrytan/gstack --json nameWithOwner,description,url,defaultBranchRef && gh api repos/garrytan/gstack/git/trees/HEAD?recursive=1 --jq '.tree[].path'",
-        "lastVerifiedAt": "2026-06-01",
+        "lastVerifiedAt": "2026-11-12",
         "evidence": [
-          "Repository description presents gstack as 23 opinionated tools for CEO, Designer, Eng Manager, Release Manager, Doc Engineer, and QA roles.",
-          "Tree inspection found many generated SKILL.md / SKILL.md.tmpl providers and only agents/openai.yaml as interface metadata.",
-          "Host configs under hosts/ define Codex, Claude, Cursor, and OpenClaw projection rules, path rewrites, frontmatter policy, and suppressed resolvers."
+          "Historical source inspection (2026-06-01): Repository description presents gstack as 23 opinionated tools for CEO, Designer, Eng Manager, Release Manager, Doc Engineer, and QA roles.",
+          "Historical source inspection (2026-06-01): Tree inspection found many generated SKILL.md / SKILL.md.tmpl providers and only agents/openai.yaml as interface metadata.",
+          "Historical source inspection (2026-06-01): Host configs under hosts/ define Codex, Claude, Cursor, and OpenClaw projection rules, path rewrites, frontmatter policy, and suppressed resolvers.",
+          "Current method inspection: https://github.com/garrytan/gstack/blob/0ead11c8e20a82e249f36c3abf89599dfe602324/devex-review/SKILL.md distinguishes observed error paths from inferred behavior and requires actionable recovery, verification and redaction. This is source-reference evidence, not host execution acceptance."
         ]
       },
       "integrationDispositionRef": "config/contracts/dependency-absorption-contract.json#currentReview.items[id=gstack]"

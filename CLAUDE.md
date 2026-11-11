@@ -357,7 +357,7 @@ After changing canonical prompts, skills, hooks, contracts, or runtime-facing do
 2. `npm run meta:sync`
 3. `npm run meta:check`
 4. `npm run meta:check:global`
-5. `npm run meta:verify:all` before release or after larger changes
+5. Follow the canonical verification tiers in `AGENTS.md` under **Maintenance Loop** and **Release Modes**. The low-risk smoke path and standard full release path have distinct scopes; runtime, install, Hook, dependency, package and security changes require the standard full path.
 
 Use supporting commands as needed:
 
@@ -379,7 +379,7 @@ Use supporting commands as needed:
 - `npm run meta:sync:global`
 - `npm run prompt:next-iteration`
 
-`npm run meta:verify:all` runs runtime sync checks, project validation, graphify health, global sync checks, smoke-level runtime acceptance, setup tests, and meta-theory tests.
+`AGENTS.md` owns the release policy. `npm run meta:verify:all` begins with packed-product install/update acceptance, including original native-host observation prerequisites, before the standard verification stages. A missing prerequisite leaves subsequent stages unrun; separate diagnostic passes do not fill them in. Optional `meta:verify:live-certified` adds external attestation as described by that same policy.
 
 ## Install And Packaging Notes
 

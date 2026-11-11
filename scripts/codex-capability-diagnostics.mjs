@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
+import { buildCodexRecoveryGuidance } from "./codex-capability-recovery.mjs";
 
 export const DEFAULT_SKILL_METADATA_CHAR_BUDGET = 8000;
 export const SKILL_METADATA_CONTEXT_WINDOW_PERCENT = 2;
@@ -310,7 +311,7 @@ export async function replayCodexJsonl(files) {
       ? Math.max(...averageDescriptionCharsPerSkillValues)
       : null;
     const processExitFailure = exitReceiptObserved && !exitSuccess;
-    reports.push({
+    const report = {
       sourceRef: path.basename(file),
       sourceDigest: createHash("sha256").update(rawJsonl).digest("hex"),
       sourceBinding: {
@@ -363,7 +364,9 @@ export async function replayCodexJsonl(files) {
         diagnosticOnly: true,
         publicReady: false,
       },
-    });
+    };
+    report.recovery = buildCodexRecoveryGuidance(report);
+    reports.push(report);
   }
   return { schemaVersion: "codex-capability-diagnostics-v0.1", kind: "jsonl_replay", reports };
 }

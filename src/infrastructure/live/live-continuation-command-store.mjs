@@ -1,7 +1,9 @@
 import { open, lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 
+import { getProcessStartIdentity, lockOwnerAppearsLive } from "../../../scripts/release-state-hardening.mjs";
 import { canonicalDigest } from "../../domain/shared/canonical-digest.mjs";
 import {
   validateLiveContinuationCommand,
@@ -18,6 +20,8 @@ export const LIVE_CONTINUATION_COMMAND_LOG_FILE = "continuation-commands.jsonl";
 const PROFILE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/u;
 const MAX_RECORDS = 16_384;
 const MAX_LOG_BYTES = 32 * 1024 * 1024;
+const LOCK_SCHEMA_VERSION = "meta-kim-live-continuation-lock-v1";
+const LOCK_OWNER_FILE = "owner.json";
 
 function fail(message, code = "LIVE_CONTINUATION_STORE_ERROR") {
   const error = new Error(`Live continuation command store: ${message}`);
@@ -134,17 +138,99 @@ async function readLog(filePath) {
   return records;
 }
 
+async function readLockOwner(lockPath) {
+  let info;
+  try { info = await lstat(lockPath); }
+  catch (error) { if (error?.code === "ENOENT") return { exists: false }; throw error; }
+  // Legacy empty files and unknown owners remain protected. Elapsed time
+  // cannot establish whether another process or machine owns a lock.
+  if (!info.isDirectory() || info.isSymbolicLink()) return { exists: true, reason: "lock_owner_unknown" };
+  try {
+    const ownerPath = path.join(lockPath, LOCK_OWNER_FILE);
+    const ownerInfo = await lstat(ownerPath);
+    if (!ownerInfo.isFile() || ownerInfo.isSymbolicLink() || ownerInfo.size > 4_096) {
+      return { exists: true, reason: "lock_owner_unknown" };
+    }
+    const raw = await readFile(ownerPath, "utf8");
+    const owner = JSON.parse(raw);
+    if (owner?.schemaVersion !== LOCK_SCHEMA_VERSION || !/^[a-f0-9-]{36}$/u.test(owner.token ?? "") ||
+        !Number.isSafeInteger(owner.pid) || owner.pid <= 0 || typeof owner.hostname !== "string" ||
+        !owner.hostname || !(owner.processStartIdentity === null || typeof owner.processStartIdentity === "string")) {
+      return { exists: true, reason: "lock_owner_unknown" };
+    }
+    const reason = owner.hostname !== os.hostname() ? "lock_owner_foreign"
+      : lockOwnerAppearsLive(owner) ? "lock_owner_active" : "lock_owner_exited";
+    return { exists: true, reason, owner, raw, info };
+  } catch (error) {
+    if (error?.code === "ENOENT" || error?.code === "ENOTDIR" || error instanceof SyntaxError) {
+      return { exists: true, reason: "lock_owner_unknown" };
+    }
+    throw error;
+  }
+}
+
+async function preserveExitedLock(lockPath, observed) {
+  const current = await readLockOwner(lockPath);
+  if (current.reason !== "lock_owner_exited" || current.raw !== observed.raw ||
+      current.info.ino !== observed.info.ino || current.info.dev !== observed.info.dev) return false;
+  const retainedPath = `${lockPath}.exited-${observed.owner.token}`;
+  try { await lstat(retainedPath); return false; }
+  catch (error) { if (error?.code !== "ENOENT") throw error; }
+  try {
+    // Retain the nonempty directory under this exact owner's token. Competing
+    // recoverers cannot replace it, so a delayed observer cannot move a newer
+    // writer's lock after the first recovery has succeeded.
+    await rename(lockPath, retainedPath);
+    return true;
+  } catch (error) {
+    if (["ENOENT", "EEXIST", "ENOTEMPTY", "ENOTDIR", "EPERM"].includes(error?.code)) return false;
+    throw error;
+  }
+}
+
 async function acquireLock(lockPath, timeoutMs = 5_000) {
-  const started = Date.now();
-  while (true) {
-    try {
-      const handle = await open(lockPath, "wx");
-      return handle;
-    } catch (error) {
-      if (error?.code !== "EEXIST") throw error;
-      if (Date.now() - started >= timeoutMs) fail("command log CAS lock timed out", "LIVE_CONTINUATION_STORE_CAS_BUSY");
+  const token = randomUUID();
+  const pendingPath = `${lockPath}.${token}.tmp`;
+  const owner = { schemaVersion: LOCK_SCHEMA_VERSION, token, pid: process.pid,
+    hostname: os.hostname(), processStartIdentity: getProcessStartIdentity(process.pid) };
+  let acquired = false;
+  try {
+    // Publish a complete nonempty lock directory atomically. A process crash
+    // before publication leaves only its private temporary directory.
+    await mkdir(pendingPath, { mode: 0o700 });
+    const handle = await open(path.join(pendingPath, LOCK_OWNER_FILE), "wx", 0o600);
+    try { await handle.writeFile(`${JSON.stringify(owner)}\n`); await handle.sync(); }
+    finally { await handle.close(); }
+    const started = Date.now();
+    while (true) {
+      const observed = await readLockOwner(lockPath);
+      if (!observed.exists) {
+        try { await rename(pendingPath, lockPath); acquired = true; }
+        catch (error) { if (!["EEXIST", "ENOTEMPTY", "ENOTDIR", "EPERM"].includes(error?.code)) throw error; }
+        if (acquired) return async () => {
+          const current = await readLockOwner(lockPath);
+          if (current.owner?.token === token && current.owner.pid === process.pid && current.owner.hostname === owner.hostname) {
+            await rm(lockPath, { recursive: true });
+          }
+        };
+      } else if (observed.reason === "lock_owner_exited" && await preserveExitedLock(lockPath, observed)) {
+        continue;
+      }
+      if (Date.now() - started >= timeoutMs) {
+        const error = new Error("Live continuation command store: command log CAS lock timed out; inspect the recorded owner before retrying");
+        error.code = "LIVE_CONTINUATION_STORE_CAS_BUSY";
+        error.recovery = {
+          reason: observed.reason ?? "lock_acquisition_raced",
+          nextAction: observed.reason === "lock_owner_active"
+            ? "Wait for the recorded writer to finish, then retry the same command."
+            : "Inspect the retained lock and its owning host. Preserve unknown owners; remove a legacy lock only after independently confirming its writer has stopped.",
+        };
+        throw error;
+      }
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
+  } finally {
+    if (!acquired) await rm(pendingPath, { recursive: true, force: true }).catch(() => {});
   }
 }
 
@@ -197,12 +283,11 @@ export function createLiveContinuationCommandStore({
       await mkdir(directory, { recursive: true });
       await assertNoSymlinkComponents(rootCandidate, directory);
       const lockPath = `${targetPath}.lock`;
-      const lock = await acquireLock(lockPath, lockTimeoutMs);
+      const releaseLock = await acquireLock(lockPath, lockTimeoutMs);
       try {
         return await operation();
       } finally {
-        await lock.close().catch(() => {});
-        await rm(lockPath, { force: true }).catch(() => {});
+        await releaseLock().catch(() => {});
       }
     });
     queue = next.catch(() => {});

@@ -524,7 +524,17 @@ async function existingHostEffect(command, commandStore, repository) {
   if (projection.eventChain.ok !== true) fail("host effect event chain is not verified");
   const idempotencyKey = `live-continuation:${canonicalDigest({ commandId: command.commandId, nonce: command.nonce, commandDigest: command.commandDigest })}`;
   const effect = projection.effects.find((item) => item.idempotencyKey === idempotencyKey);
-  if (!effect || effect.runId !== command.runId || effect.nodeId !== command.nodeId ||
+  if (!effect) {
+    const error = new Error("Live continuation planner: recorded host command has no matching effect; reservation recovery is required before dispatch");
+    error.code = "LIVE_CONTINUATION_EFFECT_RESERVATION_INCOMPLETE";
+    error.recovery = freeze({
+      status: "recovery_required", commandId: command.commandId, commandDigest: command.commandDigest,
+      runId: command.runId, nodeId: command.nodeId, mayDispatch: false,
+      nextAction: "Inspect the recorded command and authoritative durable run, and reconcile any original host receipt before a new dispatch. Preserve the command nonce; do not recreate an effect from an unverified result.",
+    });
+    throw error;
+  }
+  if (effect.runId !== command.runId || effect.nodeId !== command.nodeId ||
       effect.attemptId !== command.claim.attemptId || effect.providerBinding.adapterId !== command.runtimeAdapter) {
     fail("recorded host command has no matching effect");
   }

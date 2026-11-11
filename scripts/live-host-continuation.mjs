@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
 import { openDurableRunRepository } from "../src/application/run/open-durable-run-repository.mjs";
@@ -10,6 +10,46 @@ import { createLiveContinuationCommandStore } from "../src/infrastructure/live/l
 import { createLiveRuntimeAdapterRegistry } from "../src/infrastructure/live/live-runtime-adapter-registry.mjs";
 import { canonicalDigest } from "../src/domain/shared/canonical-digest.mjs";
 import { inspectTrustedPath } from "./safe-managed-file-operations.mjs";
+
+const EXCHANGE_JSON_ROLES = {
+  input: { code: "LIVE_HOST_INPUT_JSON_INVALID", label: "input exchange" },
+  existing: { code: "LIVE_HOST_EXISTING_EXCHANGE_JSON_INVALID", label: "existing exchange artifact" },
+  request: { code: "LIVE_HOST_REQUEST_JSON_INVALID", label: "prepared request artifact" },
+};
+
+function parseExchangeJson(text, role) {
+  try { return JSON.parse(text); }
+  catch (cause) {
+    if (!(cause instanceof SyntaxError)) throw cause;
+    const { code, label } = EXCHANGE_JSON_ROLES[role];
+    // Native JSON errors may quote private work orders or tool returns. Report
+    // the controlled file role, never the parser message or its original cause.
+    const error = new Error(`Live host continuation: the ${label} file contains invalid JSON`);
+    error.code = code;
+    error.recovery = {
+      status: "recovery_required", artifactRole: role, readOnly: true, mayDispatch: false,
+      nextAction: `Inspect the local ${label} file for truncation or invalid syntax and compare it with its original source. Preserve it and reconcile any original host receipt before retrying.`,
+    };
+    throw error;
+  }
+}
+
+async function publishExchangeFile(output, value) {
+  await fs.mkdir(path.dirname(output), { recursive: true });
+  const pending = `${output}.${randomUUID()}.tmp`;
+  const handle = await fs.open(pending, "wx", 0o600);
+  try {
+    await handle.writeFile(`${JSON.stringify(value)}\n`);
+    await handle.sync();
+    await handle.close();
+    // Linking the flushed private file publishes a complete artifact without
+    // overwriting another exchange that appeared after the initial read.
+    await fs.link(pending, output);
+  } finally {
+    await handle.close().catch(() => {});
+    await fs.rm(pending, { force: true }).catch(() => {});
+  }
+}
 
 /** One bounded host exchange. This process has no Codex chat tools or sender. */
 export async function runLiveHostContinuationCli(args) {
@@ -31,7 +71,7 @@ export async function runLiveHostContinuationCli(args) {
     return inspectTrustedPath(root, relative, { allowMissing }).target;
   };
   const rawInput = await fs.readFile(ownedPath(values.input));
-  const input = JSON.parse(rawInput.toString("utf8"));
+  const input = parseExchangeJson(rawInput.toString("utf8"), "input");
   const db = inspectTrustedPath(root, path.relative(root, path.resolve(root, values.db)), { allowMissing: false }).target;
   const store = createLiveContinuationCommandStore({ projectRoot: root, profile: values.profile });
   const registry = createLiveRuntimeAdapterRegistry({ adapters: [{ adapterId: "codex-host-threads", runtime: "codex",
@@ -43,7 +83,7 @@ export async function runLiveHostContinuationCli(args) {
       const workOrder = values["work-order"] ? await fs.readFile(ownedPath(values["work-order"]), "utf8") : undefined;
       const output = ownedPath(values.output, true);
       let previous = null;
-      try { previous = JSON.parse(await fs.readFile(output, "utf8")); }
+      try { previous = parseExchangeJson(await fs.readFile(output, "utf8"), "existing"); }
       catch (error) { if (error.code !== "ENOENT") throw error; }
       if (previous && previous.commandDigest !== input.commandDigest) throw new Error("Existing exchange belongs to another command");
       // These arguments are supplied by the current authorized host, separately
@@ -61,17 +101,20 @@ export async function runLiveHostContinuationCli(args) {
           canonicalDigest(previous.request) !== canonicalDigest(prepared.request) || previous.effect?.effectId !== prepared.effect?.effectId)) {
         throw new Error("Existing exchange request binding changed");
       }
-      if (prepared.status === "prepared") {
-        await fs.mkdir(path.dirname(output), { recursive: true });
-        await fs.writeFile(output, JSON.stringify({ commandId: input.commandId, commandDigest: input.commandDigest, ...prepared }) + "\n", { flag: "wx", mode: 0o600 });
+      let requestArtifactState = previous ? "existing" : "absent";
+      if (!previous && ["prepared", "already_prepared"].includes(prepared.status)) {
+        await publishExchangeFile(output, { commandId: input.commandId, commandDigest: input.commandDigest, ...prepared });
+        requestArtifactState = prepared.status === "prepared" ? "created" : "restored";
       }
       return { status: prepared.status, reason: prepared.reason, mayDispatch: prepared.mayDispatch,
         effectId: prepared.effect?.effectId, effectState: prepared.effectState, requestDigest: prepared.requestDigest,
         tool: prepared.request?.tool, targetThreadId: input.payload?.targetThreadId, requestPath: output,
+        requestArtifactState,
+        nextAction: prepared.status === "already_prepared" ? "reconcile_original_host_return" : undefined,
         authorizationAuthenticatedByLibrary: false, completionVerified: false };
     }
     if (!["returned", "unknown"].includes(values.outcome)) throw new Error("Receipt outcome must be returned or unknown");
-    const prepared = JSON.parse(await fs.readFile(ownedPath(values.request), "utf8"));
+    const prepared = parseExchangeJson(await fs.readFile(ownedPath(values.request), "utf8"), "request");
     const record = (await store.list()).find((item) => item.command.commandId === prepared.commandId);
     if (!record || record.command.commandDigest !== prepared.commandDigest) throw new Error("Prepared request has no matching command log record");
     const receipt = { effectId: prepared.effect.effectId, requestDigest: prepared.requestDigest,
@@ -87,7 +130,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     process.stdout.write(JSON.stringify(result) + "\n");
     if (["blocked", "waiting", "in_doubt"].includes(result.status)) process.exitCode = 2;
   }).catch((error) => {
-    process.stderr.write(JSON.stringify({ status: "blocked", code: error.code ?? null, error: error.message }) + "\n");
+    process.stderr.write(JSON.stringify({ status: "blocked", code: error.code ?? null, error: error.message,
+      ...(error.recovery ? { recovery: error.recovery } : {}) }) + "\n");
     process.exitCode = 1;
   });
 }
