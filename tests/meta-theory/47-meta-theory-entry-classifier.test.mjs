@@ -435,10 +435,22 @@ describe("47 - Meta-theory entry classifier", () => {
     const skill = await readFile("canonical/skills/meta-theory/SKILL.md");
     const combined = `${readme}\n${readmeZh}\n${agents}\n${skill}`;
 
-    assert.match(readme, /describe the outcome/i);
-    assert.match(readme, /do not need to memorize commands/i);
-    assert.match(readmeZh, /直接说想要的结果/);
-    assert.match(readmeZh, /不用背命令，也不用先报出技术角色/);
+    assert.match(readme, /describe (?:the|your) (?:outcome|goal|result) in your own words/i);
+    assert.match(readmeZh, /用自己的话.*(?:目标|结果|想得到什么)/);
+
+    // The actual first-task example after installation must use the ordinary
+    // governed entry, without requiring an activation phrase.
+    for (const [file, raw] of [["README.md", readme], ["README.zh-CN.md", readmeZh]]) {
+      const firstTaskSection = raw.match(/(?:^|\n)### 2\.[^\n]*\n([\s\S]*?)(?=\n### |$)/)?.[1];
+      assert.ok(firstTaskSection, `${file} must explain the first project task after installation`);
+      const example = firstTaskSection.match(/^>\s*[“"](.+?)[”"]\s*$/m)?.[1];
+      assert.ok(example, `${file} must show a concrete natural-language task request`);
+
+      const entry = classifyMetaTheoryEntry(example);
+      assert.equal(entry.governedEntry, true, `${file} first-task example must enter governed work`);
+      assert.equal(entry.path, "standard_path", `${file} first-task example must use the normal entry path`);
+    }
+
     assert.match(agents, /Do not require humans to know or type command words/);
     assert.match(skill, /ordinary natural-language durable work/);
     assert.match(skill, /not required human behavior/);
