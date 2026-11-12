@@ -1,48 +1,43 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="850" viewBox="0 0 1000 850" lang="ja-JP" xml:lang="ja-JP" role="img" aria-labelledby="title desc">
-<title id="title">ひと言のアイデアを、届けられる成果へ。</title><desc id="desc">目標、参考資料、役割分担、成果をひとつの流れに。</desc>
-<style>text{font-family:Noto Sans CJK JP,sans-serif} path{stroke-linecap:round;stroke-linejoin:round}</style>
-<rect x="0" y="0" width="1000" height="850" rx="26" fill="#f3f6fb" stroke="none"/>
-<text x="42" y="48" font-size="22" font-weight="750" fill="#245dd8">META_KIM</text>
-<text x="958" text-anchor="end" y="48" font-size="17" font-weight="500" fill="#5c6980">ワークフローの説明図</text>
-<text x="42" y="108" font-size="39" font-weight="750" fill="#11243b">ひと言のアイデアを、届けられる成果へ。</text>
-<text x="42" y="151" font-size="23" font-weight="400" fill="#435169">目標、参考資料、役割分担、成果をひとつの流れに。</text>
-<rect x="42" y="194" width="436" height="232" rx="22" fill="#ffffff" stroke="#dce4ef"/>
-<rect x="66" y="218" width="44" height="42" rx="13" fill="#245dd8" stroke="none"/>
-<text x="88" text-anchor="middle" y="248" font-size="23" font-weight="750" fill="#fff">01</text>
-<text x="126" y="249" font-size="28" font-weight="700" fill="#11243b">目標を整理</text>
-<text x="66" y="298" font-size="24" font-weight="400" fill="#435169">何を解決したいのか。</text>
-<text x="66" y="334" font-size="24" font-weight="400" fill="#435169">成功の条件を具体的にする。</text>
-<rect x="58" y="357" width="404" height="54" rx="12" fill="#edf3fb" stroke="none"/>
-<text x="72" y="378" font-size="16" font-weight="600" fill="#245dd8">残るもの</text>
-<text x="72" y="401" font-size="21" font-weight="650" fill="#223850">目標と受け入れ条件</text>
-<rect x="520" y="194" width="436" height="232" rx="22" fill="#ffffff" stroke="#dce4ef"/>
-<rect x="544" y="218" width="44" height="42" rx="13" fill="#245dd8" stroke="none"/>
-<text x="566" text-anchor="middle" y="248" font-size="23" font-weight="750" fill="#fff">02</text>
-<text x="604" y="249" font-size="28" font-weight="700" fill="#11243b">調べて選ぶ</text>
-<text x="544" y="298" font-size="24" font-weight="400" fill="#435169">資料や類似例を調べる。</text>
-<text x="544" y="334" font-size="24" font-weight="400" fill="#435169">選択肢と判断の理由を整理。</text>
-<rect x="536" y="357" width="404" height="54" rx="12" fill="#edf3fb" stroke="none"/>
-<text x="550" y="378" font-size="16" font-weight="600" fill="#245dd8">残るもの</text>
-<text x="550" y="401" font-size="21" font-weight="650" fill="#223850">参考資料と方針</text>
-<rect x="42" y="452" width="436" height="232" rx="22" fill="#ffffff" stroke="#dce4ef"/>
-<rect x="66" y="476" width="44" height="42" rx="13" fill="#245dd8" stroke="none"/>
-<text x="88" text-anchor="middle" y="506" font-size="23" font-weight="750" fill="#fff">03</text>
-<text x="126" y="507" font-size="28" font-weight="700" fill="#11243b">計画して作る</text>
-<text x="66" y="556" font-size="24" font-weight="400" fill="#435169">全体設計からモジュールへ。</text>
-<text x="66" y="592" font-size="24" font-weight="400" fill="#435169">依存関係に合わせて進める。</text>
-<rect x="58" y="615" width="404" height="54" rx="12" fill="#edf3fb" stroke="none"/>
-<text x="72" y="636" font-size="16" font-weight="600" fill="#245dd8">残るもの</text>
-<text x="72" y="659" font-size="21" font-weight="650" fill="#223850">作業計画と成果物</text>
-<rect x="520" y="452" width="436" height="232" rx="22" fill="#ffffff" stroke="#dce4ef"/>
-<rect x="544" y="476" width="44" height="42" rx="13" fill="#245dd8" stroke="none"/>
-<text x="566" text-anchor="middle" y="506" font-size="23" font-weight="750" fill="#fff">04</text>
-<text x="604" y="507" font-size="28" font-weight="700" fill="#11243b">確認して届ける</text>
-<text x="544" y="556" font-size="24" font-weight="400" fill="#435169">最初の目標と成果を照合。</text>
-<text x="544" y="592" font-size="24" font-weight="400" fill="#435169">次に必要な作業を記録する。</text>
-<rect x="536" y="615" width="404" height="54" rx="12" fill="#edf3fb" stroke="none"/>
-<text x="550" y="636" font-size="16" font-weight="600" fill="#245dd8">残るもの</text>
-<text x="550" y="659" font-size="21" font-weight="650" fill="#223850">レビュー済み成果と引き継ぎ</text>
-<rect x="42" y="732" width="914" height="82" rx="18" fill="#102b43" stroke="none"/>
-<text x="66" y="767" font-size="27" font-weight="650" fill="#f5f9ff">終えた作業を残し、次の一歩から続ける。</text>
-<text x="66" y="798" font-size="20" font-weight="400" fill="#c0d9ed">判断と進捗の記録を、次の改善に引き継げます。</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1220" viewBox="0 0 1200 1220" role="img" aria-labelledby="title desc" lang="ja-JP" xml:lang="ja-JP">
+<title id="title">スマホの登録画面を、使いやすくするまで</title><desc id="desc">目標を伝え、作業を追い、結果を試して、次の改善へ。</desc>
+<style>text{font-family:Inter, Noto Sans CJK JP, sans-serif}path{stroke-linecap:round;stroke-linejoin:round}</style>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M1 1L8 5L1 9" fill="none" stroke="#23765b" stroke-width="1.5"/></marker></defs>
+<rect width="1200" height="1220" rx="24" fill="#f7f9f5"/>
+<text x="48" y="48" font-size="19" font-weight="750" fill="#23765b" text-anchor="start"><tspan x="48" dy="0">META_KIM / 作業の流れ</tspan></text>
+<text x="48" y="103" font-size="38" font-weight="750" fill="#17372f" text-anchor="start"><tspan x="48" dy="0">スマホの登録画面を、使いやすくするまで</tspan></text>
+<text x="48" y="146" font-size="24" font-weight="450" fill="#52665e" text-anchor="start"><tspan x="48" dy="0">目標を伝え、作業を追い、結果を試して、次の改善へ。</tspan></text>
+<rect x="190" y="190" width="820" height="140" rx="18" fill="#e7f1e9" stroke="#cedbd1" stroke-width="2"/>
+<path d="M214 216v88" stroke="#23765b" stroke-width="5"/>
+<text x="236" y="241" font-size="29" font-weight="700" fill="#17372f" text-anchor="start"><tspan x="236" dy="0">変えたいことを伝える</tspan></text>
+<text x="236" y="284" font-size="23" font-weight="450" fill="#52665e" text-anchor="start"><tspan x="236" dy="0">スマホで入力しやすくする。</tspan><tspan x="236" dy="33.35">今のデータ項目は維持する。</tspan></text>
+<path d="M600 334V368" fill="none" stroke="#23765b" stroke-width="3" marker-end="url(#arrow)"/>
+<rect x="190" y="385" width="820" height="140" rx="18" fill="white" stroke="#cedbd1" stroke-width="2"/>
+<path d="M214 411v88" stroke="#23765b" stroke-width="5"/>
+<text x="236" y="436" font-size="29" font-weight="700" fill="#17372f" text-anchor="start"><tspan x="236" dy="0">既存のプロジェクトを理解</tspan></text>
+<text x="236" y="479" font-size="23" font-weight="450" fill="#52665e" text-anchor="start"><tspan x="236" dy="0">コード、画面の流れ、参考資料を読む。</tspan><tspan x="236" dy="33.35">変更方針と確認方法を決める。</tspan></text>
+<path d="M600 530V555H350V585" fill="none" stroke="#23765b" stroke-width="3" marker-end="url(#arrow)"/>
+<path d="M600 555H850V585" fill="none" stroke="#23765b" stroke-width="3" marker-end="url(#arrow)"/>
+<text x="600" y="574" font-size="20" font-weight="500" fill="#52665e" text-anchor="middle"><tspan x="600" dy="0">独立した作業は同時に進められる</tspan></text>
+<rect x="145" y="605" width="420" height="150" rx="18" fill="white" stroke="#cedbd1" stroke-width="2"/>
+<path d="M169 631v98" stroke="#23765b" stroke-width="5"/>
+<text x="191" y="656" font-size="29" font-weight="700" fill="#17372f" text-anchor="start"><tspan x="191" dy="0">スマホのレイアウト</tspan></text>
+<text x="191" y="699" font-size="23" font-weight="450" fill="#52665e" text-anchor="start"><tspan x="191" dy="0">入力欄と余白を調整。</tspan><tspan x="191" dy="33.35">入力しやすい画面へ。</tspan></text>
+<rect x="635" y="605" width="420" height="150" rx="18" fill="white" stroke="#cedbd1" stroke-width="2"/>
+<path d="M659 631v98" stroke="#23765b" stroke-width="5"/>
+<text x="681" y="656" font-size="29" font-weight="700" fill="#17372f" text-anchor="start"><tspan x="681" dy="0">わかりやすい案内</tspan></text>
+<text x="681" y="699" font-size="23" font-weight="450" fill="#52665e" text-anchor="start"><tspan x="681" dy="0">入力エラーを伝える。</tspan><tspan x="681" dy="33.35">完了後の行動を示す。</tspan></text>
+<path d="M355 760V795H600V823" fill="none" stroke="#23765b" stroke-width="3" marker-end="url(#arrow)"/>
+<path d="M845 760V795H600" fill="none" stroke="#23765b" stroke-width="3"/>
+<rect x="190" y="840" width="820" height="140" rx="18" fill="white" stroke="#cedbd1" stroke-width="2"/>
+<path d="M214 866v88" stroke="#23765b" stroke-width="5"/>
+<text x="236" y="891" font-size="29" font-weight="700" fill="#17372f" text-anchor="start"><tspan x="236" dy="0">一連の操作を確認する</tspan></text>
+<text x="236" y="934" font-size="23" font-weight="450" fill="#52665e" text-anchor="start"><tspan x="236" dy="0">未入力、誤入力、正常な送信を試す。</tspan><tspan x="236" dy="33.35">送信するデータ項目が同じか確認する。</tspan></text>
+<path d="M600 983V1015" fill="none" stroke="#23765b" stroke-width="3" marker-end="url(#arrow)"/>
+<rect x="190" y="1034" width="820" height="140" rx="18" fill="#e7f1e9" stroke="#cedbd1" stroke-width="2"/>
+<path d="M214 1060v88" stroke="#23765b" stroke-width="5"/>
+<text x="236" y="1085" font-size="29" font-weight="700" fill="#17372f" text-anchor="start"><tspan x="236" dy="0">成果を開き、改善を続ける</tspan></text>
+<text x="236" y="1128" font-size="23" font-weight="450" fill="#52665e" text-anchor="start"><tspan x="236" dy="0">変更したコード、起動方法、確認記録を受け取る。</tspan><tspan x="236" dy="33.35">決めたことを残し、次の作業へ引き継ぐ。</tspan></text>
+<path d="M1012 908H1120V455H1020" fill="none" stroke="#23765b" stroke-width="3" marker-end="url(#arrow)" stroke-dasharray="8 8"/>
+<rect x="1029" y="789" width="140" height="85" rx="10" fill="#f7f9f5" stroke="#f7f9f5" stroke-width="2"/>
+<text x="1100" y="822" font-size="20" font-weight="600" fill="#bb633e" text-anchor="middle"><tspan x="1100" dy="0">問題があれば</tspan><tspan x="1100" dy="28.0">タスクへ戻る</tspan></text>
 </svg>

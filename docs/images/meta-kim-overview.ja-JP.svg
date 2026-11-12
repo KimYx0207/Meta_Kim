@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1040" viewBox="0 0 1200 1040" role="img" aria-labelledby="title desc" lang="ja-JP" xml:lang="ja-JP">
+<title id="title">Meta_Kim が支える部分</title><desc id="desc">いつもの AI クライアントで、作業を整理しながら進めます。</desc>
+<style>text{font-family:Inter, Noto Sans CJK JP, sans-serif}path{stroke-linecap:round;stroke-linejoin:round}</style>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M1 1L8 5L1 9" fill="none" stroke="#23765b" stroke-width="1.5"/></marker></defs>
+<rect width="1200" height="1040" rx="24" fill="#f7f9f5"/>
+<text x="48" y="48" font-size="19" font-weight="750" fill="#23765b" text-anchor="start"><tspan x="48" dy="0">META_KIM / 仕組み</tspan></text>
+<text x="48" y="103" font-size="38" font-weight="750" fill="#17372f" text-anchor="start"><tspan x="48" dy="0">Meta_Kim が支える部分</tspan></text>
+<text x="48" y="146" font-size="24" font-weight="450" fill="#52665e" text-anchor="start"><tspan x="48" dy="0">いつもの AI クライアントで、作業を整理しながら進めます。</tspan></text>
+<rect x="60" y="190" width="460" height="145" rx="18" fill="#e7f1e9" stroke="#cedbd1" stroke-width="2"/>
+<path d="M84 216v93" stroke="#23765b" stroke-width="5"/>
+<text x="106" y="241" font-size="29" font-weight="700" fill="#17372f" text-anchor="start"><tspan x="106" dy="0">目標を伝える</tspan></text>
+<text x="106" y="284" font-size="23" font-weight="450" fill="#52665e" text-anchor="start"><tspan x="106" dy="0">欲しい結果を説明し、</tspan><tspan x="106" dy="33.35">重要な選択を決める。</tspan></text>
+<path d="M290 340V380" fill="none" stroke="#23765b" stroke-width="3" marker-end="url(#arrow)"/>
+<rect x="60" y="388" width="765" height="300" rx="22" fill="white" stroke="#23765b" stroke-width="2"/>
+<text x="87" y="425" font-size="20" font-weight="700" fill="#23765b" text-anchor="start"><tspan x="87" dy="0">いつもの AI クライアント</tspan></text>
+<rect x="85" y="458" width="335" height="180" rx="18" fill="#e7f1e9" stroke="#cedbd1" stroke-width="2"/>
+<path d="M109 484v128" stroke="#23765b" stroke-width="5"/>
+<text x="131" y="509" font-size="29" font-weight="700" fill="#17372f" text-anchor="start"><tspan x="131" dy="0">Meta_Kim</tspan></text>
+<text x="131" y="552" font-size="23" font-weight="450" fill="#52665e" text-anchor="start"><tspan x="131" dy="0">方針とタスクを整理。</tspan><tspan x="131" dy="33.35">確認して作業を続ける。</tspan></text>
+<rect x="452" y="458" width="345" height="180" rx="18" fill="white" stroke="#cedbd1" stroke-width="2"/>
+<path d="M476 484v128" stroke="#23765b" stroke-width="5"/>
+<text x="498" y="509" font-size="29" font-weight="700" fill="#17372f" text-anchor="start"><tspan x="498" dy="0">専門手法とツール</tspan></text>
+<text x="498" y="552" font-size="23" font-weight="450" fill="#52665e" text-anchor="start"><tspan x="498" dy="0">Kim Service のパッケージ、</tspan><tspan x="498" dy="33.35">クライアントの既存機能。</tspan></text>
+<path d="M450 555H425" fill="none" stroke="#23765b" stroke-width="3" marker-end="url(#arrow)"/>
+<rect x="875" y="437" width="280" height="210" rx="18" fill="white" stroke="#cedbd1" stroke-width="2"/>
+<path d="M899 463v158" stroke="#23765b" stroke-width="5"/>
+<text x="921" y="488" font-size="29" font-weight="700" fill="#17372f" text-anchor="start"><tspan x="921" dy="0">Live の進捗画面</tspan></text>
+<text x="921" y="531" font-size="23" font-weight="450" fill="#52665e" text-anchor="start"><tspan x="921" dy="0">タスクの関係と進捗、</tspan><tspan x="921" dy="33.35">詳細と成果物を見る。</tspan></text>
+<path d="M825 533H861" fill="none" stroke="#23765b" stroke-width="3" marker-end="url(#arrow)" stroke-dasharray="8 8"/>
+<text x="875" y="694" font-size="18" font-weight="450" fill="#52665e" text-anchor="start"><tspan x="875" dy="0">記録された作業を表示</tspan></text>
+<text x="454" y="666" font-size="18" font-weight="450" fill="#52665e" text-anchor="start"><tspan x="454" dy="0">Kim Service は必要に応じて利用</tspan></text>
+<path d="M260 694V744" fill="none" stroke="#23765b" stroke-width="3" marker-end="url(#arrow)"/>
+<rect x="60" y="770" width="460" height="170" rx="18" fill="white" stroke="#cedbd1" stroke-width="2"/>
+<path d="M84 796v118" stroke="#23765b" stroke-width="5"/>
+<text x="106" y="821" font-size="29" font-weight="700" fill="#17372f" text-anchor="start"><tspan x="106" dy="0">プロジェクト</tspan></text>
+<text x="106" y="864" font-size="23" font-weight="450" fill="#52665e" text-anchor="start"><tspan x="106" dy="0">コード、ファイル、</tspan><tspan x="106" dy="33.35">保存された作業記録。</tspan></text>
+<path d="M526 850H659" fill="none" stroke="#23765b" stroke-width="3" marker-end="url(#arrow)"/>
+<rect x="680" y="770" width="475" height="170" rx="18" fill="#e7f1e9" stroke="#cedbd1" stroke-width="2"/>
+<path d="M704 796v118" stroke="#23765b" stroke-width="5"/>
+<text x="726" y="821" font-size="29" font-weight="700" fill="#17372f" text-anchor="start"><tspan x="726" dy="0">次の会話</tspan></text>
+<text x="726" y="864" font-size="23" font-weight="450" fill="#52665e" text-anchor="start"><tspan x="726" dy="0">目標、決定事項、</tspan><tspan x="726" dy="33.35">進捗を引き継ぐ。</tspan></text>
+<path d="M917 768V735H425V695" fill="none" stroke="#23765b" stroke-width="3" marker-end="url(#arrow)" stroke-dasharray="8 8"/>
+</svg>

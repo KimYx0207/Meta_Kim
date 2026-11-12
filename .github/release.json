@@ -3,7 +3,7 @@
   "title": "Meta_Kim",
   "versionFile": "package.json",
   "tagPrefix": "v",
-  "workflows": [".github/workflows/ci.yml", ".github/workflows/graphify-managed.yml", ".github/workflows/runtime-evidence-review.yml"],
+  "workflows": [".github/workflows/ci.yml", ".github/workflows/graphify-managed.yml", ".github/workflows/runtime-evidence-review.yml", ".github/workflows/readme-visuals.yml"],
   "changelogs": [
     { "file": "CHANGELOG.md", "language": "English" },
     { "file": "CHANGELOG.zh-CN.md", "language": "简体中文" },

@@ -1,48 +1,43 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="850" viewBox="0 0 1000 850" lang="ko-KR" xml:lang="ko-KR" role="img" aria-labelledby="title desc">
-<title id="title">한 줄의 아이디어를 전달할 수 있는 결과로.</title><desc id="desc">목표와 근거, 역할 분담과 결과를 하나의 흐름으로 잇습니다.</desc>
-<style>text{font-family:Noto Sans CJK KR,sans-serif} path{stroke-linecap:round;stroke-linejoin:round}</style>
-<rect x="0" y="0" width="1000" height="850" rx="26" fill="#f3f6fb" stroke="none"/>
-<text x="42" y="48" font-size="22" font-weight="750" fill="#245dd8">META_KIM</text>
-<text x="958" text-anchor="end" y="48" font-size="17" font-weight="500" fill="#5c6980">작업 흐름 설명도</text>
-<text x="42" y="108" font-size="39" font-weight="750" fill="#11243b">한 줄의 아이디어를 전달할 수 있는 결과로.</text>
-<text x="42" y="151" font-size="23" font-weight="400" fill="#435169">목표와 근거, 역할 분담과 결과를 하나의 흐름으로 잇습니다.</text>
-<rect x="42" y="194" width="436" height="232" rx="22" fill="#ffffff" stroke="#dce4ef"/>
-<rect x="66" y="218" width="44" height="42" rx="13" fill="#245dd8" stroke="none"/>
-<text x="88" text-anchor="middle" y="248" font-size="23" font-weight="750" fill="#fff">01</text>
-<text x="126" y="249" font-size="28" font-weight="700" fill="#11243b">목표 정리</text>
-<text x="66" y="298" font-size="24" font-weight="400" fill="#435169">해결할 문제를 정합니다.</text>
-<text x="66" y="334" font-size="24" font-weight="400" fill="#435169">완료 기준을 구체화합니다.</text>
-<rect x="58" y="357" width="404" height="54" rx="12" fill="#edf3fb" stroke="none"/>
-<text x="72" y="378" font-size="16" font-weight="600" fill="#245dd8">남기는 것</text>
-<text x="72" y="401" font-size="21" font-weight="650" fill="#223850">목표와 완료 기준</text>
-<rect x="520" y="194" width="436" height="232" rx="22" fill="#ffffff" stroke="#dce4ef"/>
-<rect x="544" y="218" width="44" height="42" rx="13" fill="#245dd8" stroke="none"/>
-<text x="566" text-anchor="middle" y="248" font-size="23" font-weight="750" fill="#fff">02</text>
-<text x="604" y="249" font-size="28" font-weight="700" fill="#11243b">조사와 선택</text>
-<text x="544" y="298" font-size="24" font-weight="400" fill="#435169">자료와 유사 사례를 찾습니다.</text>
-<text x="544" y="334" font-size="24" font-weight="400" fill="#435169">대안을 비교하고 결정합니다.</text>
-<rect x="536" y="357" width="404" height="54" rx="12" fill="#edf3fb" stroke="none"/>
-<text x="550" y="378" font-size="16" font-weight="600" fill="#245dd8">남기는 것</text>
-<text x="550" y="401" font-size="21" font-weight="650" fill="#223850">참고 자료와 결정 근거</text>
-<rect x="42" y="452" width="436" height="232" rx="22" fill="#ffffff" stroke="#dce4ef"/>
-<rect x="66" y="476" width="44" height="42" rx="13" fill="#245dd8" stroke="none"/>
-<text x="88" text-anchor="middle" y="506" font-size="23" font-weight="750" fill="#fff">03</text>
-<text x="126" y="507" font-size="28" font-weight="700" fill="#11243b">계획과 제작</text>
-<text x="66" y="556" font-size="24" font-weight="400" fill="#435169">전체 설계에서 모듈로 나눕니다.</text>
-<text x="66" y="592" font-size="24" font-weight="400" fill="#435169">의존성에 맞춰 병렬로 진행합니다.</text>
-<rect x="58" y="615" width="404" height="54" rx="12" fill="#edf3fb" stroke="none"/>
-<text x="72" y="636" font-size="16" font-weight="600" fill="#245dd8">남기는 것</text>
-<text x="72" y="659" font-size="21" font-weight="650" fill="#223850">작업 계획과 결과 파일</text>
-<rect x="520" y="452" width="436" height="232" rx="22" fill="#ffffff" stroke="#dce4ef"/>
-<rect x="544" y="476" width="44" height="42" rx="13" fill="#245dd8" stroke="none"/>
-<text x="566" text-anchor="middle" y="506" font-size="23" font-weight="750" fill="#fff">04</text>
-<text x="604" y="507" font-size="28" font-weight="700" fill="#11243b">검토와 전달</text>
-<text x="544" y="556" font-size="24" font-weight="400" fill="#435169">처음 목표에 맞춰 확인합니다.</text>
-<text x="544" y="592" font-size="24" font-weight="400" fill="#435169">다음에 할 일을 기록합니다.</text>
-<rect x="536" y="615" width="404" height="54" rx="12" fill="#edf3fb" stroke="none"/>
-<text x="550" y="636" font-size="16" font-weight="600" fill="#245dd8">남기는 것</text>
-<text x="550" y="659" font-size="21" font-weight="650" fill="#223850">검토한 결과와 인계 내용</text>
-<rect x="42" y="732" width="914" height="82" rx="18" fill="#102b43" stroke="none"/>
-<text x="66" y="767" font-size="27" font-weight="650" fill="#f5f9ff">완료한 작업을 보존하고 다음 단계부터 이어갑니다.</text>
-<text x="66" y="798" font-size="20" font-weight="400" fill="#c0d9ed">결정과 진행 기록을 다음 개선 작업에 활용합니다.</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1220" viewBox="0 0 1200 1220" role="img" aria-labelledby="title desc" lang="ko-KR" xml:lang="ko-KR">
+<title id="title">모바일 가입 화면을 개선하는 과정</title><desc id="desc">목표를 말하고, 작업을 보고, 결과를 확인하며 개선을 이어갑니다.</desc>
+<style>text{font-family:Inter, Noto Sans CJK KR, sans-serif}path{stroke-linecap:round;stroke-linejoin:round}</style>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M1 1L8 5L1 9" fill="none" stroke="#23765b" stroke-width="1.5"/></marker></defs>
+<rect width="1200" height="1220" rx="24" fill="#f7f9f5"/>
+<text x="48" y="48" font-size="19" font-weight="750" fill="#23765b" text-anchor="start"><tspan x="48" dy="0">META_KIM / 작업 흐름</tspan></text>
+<text x="48" y="103" font-size="38" font-weight="750" fill="#17372f" text-anchor="start"><tspan x="48" dy="0">모바일 가입 화면을 개선하는 과정</tspan></text>
+<text x="48" y="146" font-size="24" font-weight="450" fill="#52665e" text-anchor="start"><tspan x="48" dy="0">목표를 말하고, 작업을 보고, 결과를 확인하며 개선을 이어갑니다.</tspan></text>
+<rect x="190" y="190" width="820" height="140" rx="18" fill="#e7f1e9" stroke="#cedbd1" stroke-width="2"/>
+<path d="M214 216v88" stroke="#23765b" stroke-width="5"/>
+<text x="236" y="241" font-size="29" font-weight="700" fill="#17372f" text-anchor="start"><tspan x="236" dy="0">바꾸고 싶은 점 전달</tspan></text>
+<text x="236" y="284" font-size="23" font-weight="450" fill="#52665e" text-anchor="start"><tspan x="236" dy="0">모바일에서 가입하기 쉽게.</tspan><tspan x="236" dy="33.35">기존 데이터 항목은 유지.</tspan></text>
+<path d="M600 334V368" fill="none" stroke="#23765b" stroke-width="3" marker-end="url(#arrow)"/>
+<rect x="190" y="385" width="820" height="140" rx="18" fill="white" stroke="#cedbd1" stroke-width="2"/>
+<path d="M214 411v88" stroke="#23765b" stroke-width="5"/>
+<text x="236" y="436" font-size="29" font-weight="700" fill="#17372f" text-anchor="start"><tspan x="236" dy="0">기존 프로젝트 이해</tspan></text>
+<text x="236" y="479" font-size="23" font-weight="450" fill="#52665e" text-anchor="start"><tspan x="236" dy="0">코드와 현재 흐름, 참고 자료를 읽습니다.</tspan><tspan x="236" dy="33.35">수정 방향과 확인 방법을 정합니다.</tspan></text>
+<path d="M600 530V555H350V585" fill="none" stroke="#23765b" stroke-width="3" marker-end="url(#arrow)"/>
+<path d="M600 555H850V585" fill="none" stroke="#23765b" stroke-width="3" marker-end="url(#arrow)"/>
+<text x="600" y="574" font-size="20" font-weight="500" fill="#52665e" text-anchor="middle"><tspan x="600" dy="0">독립적인 작업은 함께 진행할 수 있습니다</tspan></text>
+<rect x="145" y="605" width="420" height="150" rx="18" fill="white" stroke="#cedbd1" stroke-width="2"/>
+<path d="M169 631v98" stroke="#23765b" stroke-width="5"/>
+<text x="191" y="656" font-size="29" font-weight="700" fill="#17372f" text-anchor="start"><tspan x="191" dy="0">모바일 화면 개선</tspan></text>
+<text x="191" y="699" font-size="23" font-weight="450" fill="#52665e" text-anchor="start"><tspan x="191" dy="0">입력칸과 간격 조정.</tspan><tspan x="191" dy="33.35">편하게 작성하는 폼.</tspan></text>
+<rect x="635" y="605" width="420" height="150" rx="18" fill="white" stroke="#cedbd1" stroke-width="2"/>
+<path d="M659 631v98" stroke="#23765b" stroke-width="5"/>
+<text x="681" y="656" font-size="29" font-weight="700" fill="#17372f" text-anchor="start"><tspan x="681" dy="0">명확한 안내</tspan></text>
+<text x="681" y="699" font-size="23" font-weight="450" fill="#52665e" text-anchor="start"><tspan x="681" dy="0">입력 오류를 알리고,</tspan><tspan x="681" dy="33.35">완료 후 행동을 안내.</tspan></text>
+<path d="M355 760V795H600V823" fill="none" stroke="#23765b" stroke-width="3" marker-end="url(#arrow)"/>
+<path d="M845 760V795H600" fill="none" stroke="#23765b" stroke-width="3"/>
+<rect x="190" y="840" width="820" height="140" rx="18" fill="white" stroke="#cedbd1" stroke-width="2"/>
+<path d="M214 866v88" stroke="#23765b" stroke-width="5"/>
+<text x="236" y="891" font-size="29" font-weight="700" fill="#17372f" text-anchor="start"><tspan x="236" dy="0">전체 흐름 확인</tspan></text>
+<text x="236" y="934" font-size="23" font-weight="450" fill="#52665e" text-anchor="start"><tspan x="236" dy="0">빈칸, 잘못된 값, 정상 제출을 시험합니다.</tspan><tspan x="236" dy="33.35">제출되는 데이터 항목이 같은지 확인합니다.</tspan></text>
+<path d="M600 983V1015" fill="none" stroke="#23765b" stroke-width="3" marker-end="url(#arrow)"/>
+<rect x="190" y="1034" width="820" height="140" rx="18" fill="#e7f1e9" stroke="#cedbd1" stroke-width="2"/>
+<path d="M214 1060v88" stroke="#23765b" stroke-width="5"/>
+<text x="236" y="1085" font-size="29" font-weight="700" fill="#17372f" text-anchor="start"><tspan x="236" dy="0">결과를 열고 다음 개선으로</tspan></text>
+<text x="236" y="1128" font-size="23" font-weight="450" fill="#52665e" text-anchor="start"><tspan x="236" dy="0">수정된 코드, 실행 방법, 확인 기록을 받습니다.</tspan><tspan x="236" dy="33.35">결정 사항을 남겨 다음 작업에서 이어갑니다.</tspan></text>
+<path d="M1012 908H1120V455H1020" fill="none" stroke="#23765b" stroke-width="3" marker-end="url(#arrow)" stroke-dasharray="8 8"/>
+<rect x="1029" y="789" width="140" height="85" rx="10" fill="#f7f9f5" stroke="#f7f9f5" stroke-width="2"/>
+<text x="1100" y="822" font-size="20" font-weight="600" fill="#bb633e" text-anchor="middle"><tspan x="1100" dy="0">문제 발견 시</tspan><tspan x="1100" dy="28.0">작업으로 복귀</tspan></text>
 </svg>

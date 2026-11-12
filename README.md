@@ -2,7 +2,7 @@
 
 # 元 · Meta_Kim
 
-**From an idea to a clear plan, coordinated work and a result you can use.**
+**Tell your AI what you want to finish. Keep the work moving from the first idea to the next improvement.**
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja-JP.md) · [한국어](README.ko-KR.md)
 
@@ -11,62 +11,39 @@
 
 </div>
 
-## Give your AI assistant a whole job to carry through
+## Give your AI a job to carry through
 
-**Meta_Kim connects your goal, project context, specialist methods and progress records inside your AI client.** It helps the assistant understand the job, choose an approach, coordinate the work and check the result. Decisions and completed work stay with the project, ready for the next session.
+**Meta_Kim helps your AI assistant plan the work, bring in the right skills, check the result and pick up where it left off.** You keep using your usual AI client. The project's goals, decisions and progress stay together as the work grows.
 
-### Where it helps
+![Meta_Kim Live showing a task map and the progress of a demonstration workflow](docs/images/meta-kim-live-task.png)
 
-| Your situation | How the work takes shape |
-| --- | --- |
-| You have an idea for a tool or a new feature | Compare practical approaches, settle the user journey, then turn it into a plan and implementation tasks |
-| An existing product needs improvement | Read the current project, identify the affected experience and code, then make and check focused changes |
-| A project spans several specialties or sessions | Give each task the right methods and materials, track dependencies, and resume from saved results |
+*The actual Live interface, running its built-in workflow demo. Start with the task map to see how the work connects; click a task to look inside it.*
 
-You describe the outcome in your own words. Meta_Kim organizes the work around it. **[Kim Service](https://github.com/KimYx0207/Kim_Service) adds professional methods for the people and tools doing that work.** You can use it alongside other capability sources already available in your client.
+## One example: make a sign-up page easier to use on a phone
 
-## What a delivery can look like
+You already have a working website. The sign-up form feels awkward on a phone, and you want to improve it without changing the data you collect.
 
-For an event registration tool, a first request might be:
+You describe the outcome in your own words. **Start with the problem you see:** the fields feel cramped, errors are hard to spot, and you want to try the changed flow yourself. Meta_Kim helps the assistant read the existing project and turn that request into a workable approach.
 
-> “Build a mobile-friendly event registration tool. Help me choose an approach, create registration and attendee export, then walk me through how to use it.”
+**Agree on the change, then follow the work.** In this example, that could mean adjusting the mobile layout, making field errors clearer and checking that the same data still reaches the application. The work is divided into tasks with the relevant files, methods and completion criteria. Live shows how those tasks connect and what is happening now.
 
-The agreed scope becomes a concrete handover. For this example:
+**Try the result, then keep improving it.** Ask for the changed source, how to run it and the checks that were performed. Walk through the form on a phone-sized screen: leave a field empty, enter an invalid value, then complete a normal sign-up. Your next request can build on that result—“Keep this layout, but make the confirmation message clearer.” Saved decisions and task records help the next session continue the same job.
 
-| Part of the job | Deliverable to inspect |
-| --- | --- |
-| Choose an approach | A recommendation with the user flow, relevant references and reasons for the choice |
-| Plan the product | One requirements document: system and technology choices, then modules, interfaces and acceptance criteria |
-| Build the experience | Registration, attendee management and export work divided into clear tasks, with the relevant source files and materials |
-| Check the result | A walkthrough of registration and export, recorded checks, and specific revisions where needed |
-| Pick it up later | Completed outputs, decisions, remaining tasks and the next action in the project record |
+![A goal becomes research, a plan, coordinated tasks, checks and the next improvement](docs/images/intent-to-delivery.svg)
 
-The same process can support a small repair or a larger product. The plan grows with the work that needs doing.
+This is a first-project example. The same way of working also fits a new feature, a repair or a larger product built over several sessions.
 
-## How the work moves forward
+## How Meta_Kim helps the work stay together
 
-![From a goal through research, planning and specialist work to a checked delivery](docs/images/intent-to-delivery.svg)
+![How the user, AI client, Meta_Kim, specialist capabilities and project records work together](docs/images/meta-kim-overview.svg)
 
-1. **Understand the outcome.** Read the project and clarify the few questions that change what should be built.
-2. **Find a workable approach.** Investigate the important unknowns, compare useful options and explain a recommendation.
-3. **Prepare the work.** Turn the chosen approach into tasks with inputs, owners, dependencies and clear completion criteria.
-4. **Build and coordinate.** Give each task the methods and materials it needs. Independent ready work can progress together.
-5. **Review, try and improve.** Check outputs against the goal, incorporate feedback and retain useful decisions and results for the next iteration.
+You bring the goal and make the product choices that matter. **Meta_Kim organizes the work inside your AI client:** what to understand first, which tasks are ready, what each task needs and how to judge the result.
 
-The **Live task board** brings tasks, owners, dependencies, outputs and checks into one view. When work is interrupted, saved records help the next session continue from the current state. If one task needs a new approach, its next step stays visible while independent work continues.
+**[Kim Service](https://github.com/KimYx0207/Kim_Service) supplies specialist methods** for work such as product design, development and analysis. Meta_Kim can use them alongside the tools and skills already available in your client. The working records connect the plan to the outputs, so a later session has something concrete to continue from.
 
-<details>
-<summary>Preview the Live demo (Chinese interface)</summary>
+## Try it on your own project
 
-![Live task board in Chinese with demonstration task data](docs/images/meta-kim-live-demo.png)
-
-*This preview shows the Chinese interface with demonstration task data.*
-
-</details>
-
-## Start with your first project
-
-Requires **Node.js 22.13.0+** and a configured AI client. Current release: **[v3.10.1](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.10.1)**.
+You need **Node.js 22.13.0+** and a configured AI client. Current release: **[v3.10.2](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.10.2)**.
 
 ### 1. Install Meta_Kim
 
@@ -77,27 +54,35 @@ npm install
 node setup.mjs
 ```
 
-Follow setup to select your clients and installation scope. Global setup lets you reuse the same capabilities across projects; project setup gives a project its own configuration. Existing user settings are merged. [Installation options](docs/technical-notes.md#installation-options).
+Choose the client you use and follow the setup prompts. You can install for one project or reuse the setup across projects. See [installation options](docs/technical-notes.md#installation-options) when you need to choose a scope or configure an optional service.
 
 ### 2. Open your project and describe the result
 
-In your configured client, open the project you want to work on and give a practical request:
+Open the project in the client you configured. For the sign-up example, send this as a normal chat message:
 
 > “Review this project's sign-up flow. Make it easier to use on a phone, preserve the current data fields, and show me the changed flow with its checks.”
 
-The assistant starts with the available project information. You make the choices that materially affect the product; routine implementation decisions stay with the working team.
+The assistant starts from the current project. Explain any real constraints—such as keeping existing fields or matching your product's style—and answer the questions that affect the result. You can follow the proposed approach and ask for changes as the work develops.
 
-### 3. Follow progress and try the deliverable
+### 3. Open Live and inspect a task
 
-Open the current task's Live link. From the Meta_Kim checkout, you can also start Live for your project with:
+From the Meta_Kim checkout, run:
 
 ```bash
 node bin/meta-kim.mjs live --project-root "/path/to/your-project"
 ```
 
-Replace the example path with your project directory. Use the outputs and checks to review the result, then give feedback on what should change next.
+Replace the quoted path with your project's absolute directory, then open the local URL printed by the command. Live reads the project's saved task and execution records. If you want to explore the interface first, open the same URL with `?demo=states` to see the built-in demo.
 
-### Keep an existing installation up to date
+**First, look at the task map** shown at the top of this page. Follow the links between tasks to understand what is in progress and what depends on another task. **Then click a task node.** Its detail panel lets you inspect the task summary; choose **Evidence** to read the recorded outputs and checks.
+
+![A selected task in Meta_Kim Live with its details and recorded evidence](docs/images/meta-kim-live-detail.png)
+
+*The same built-in demo after selecting a task. Use the detail panel to understand one piece of work before returning to the whole map.*
+
+Return to your AI client to give feedback on the actual deliverable. In our example, that means trying the sign-up flow and explaining the next change you want.
+
+### Update an existing installation
 
 Run these commands in your Meta_Kim checkout:
 
@@ -123,15 +108,11 @@ Choose the client you already work in. Each integration uses that client's own c
 
 [Compatibility catalog](config/runtime-compatibility-catalog.json) · [Installation and technical notes](docs/technical-notes.md). Dependency projects maintain their own client support.
 
-## Find the next useful guide
+## Go further when you need to
 
-| You want to… | Read |
-| --- | --- |
-| Choose installation scope, enable Hooks or configure an optional service | [Installation and technical notes](docs/technical-notes.md) |
-| Understand how research and requirements reach the people doing the work | [Intent to delivery](canonical/skills/meta-theory/references/intent-to-delivery.md) |
-| Work with the Live interface or extend its views | [Live SDK](docs/live-sdk.md) |
-| Understand the architecture or contribute | [Architecture](docs/harness-architecture.md) · [Contributor guide](AGENTS.md) |
-| See what changed in each version | [Changelog](CHANGELOG.md) |
+For setup choices, Hooks and optional services, read the [installation and technical notes](docs/technical-notes.md). To see how a goal becomes actionable work, read [intent to delivery](canonical/skills/meta-theory/references/intent-to-delivery.md).
+
+If you are extending Meta_Kim, start with the [architecture](docs/harness-architecture.md), [Live SDK](docs/live-sdk.md) and [contributor guide](AGENTS.md). The [changelog](CHANGELOG.md) records each version's changes.
 
 ## Contact
 

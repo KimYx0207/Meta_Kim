@@ -1,0 +1,700 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "3a6a3361a7ba70194c7e1dcfba2a51cf1150758e",
+  "sourceTreeClean": true,
+  "sourceFileSha256": {
+    "src/presentation/live/live-control-room-page.mjs": "7055de6c404f2c77cb5095d0ea3d403a11410c6ef6ef3bfd0b6116b3c29d005b",
+    "src/presentation/live/live-ui-copy.mjs": "ee7578df9b52d57216823abc0957c79a4da743c920391f305c6aa30f083b0705",
+    "src/presentation/live/live-ui-copy.ja.mjs": "ab5235adfd3e66b3f83670f2ddc436baf8b2c74400f652c493cb714fdbe430bd",
+    "src/presentation/live/live-ui-copy.ko.mjs": "d373e1409c871847c69853920d322d64acf21d1030e40cb9bfa91ac11a6fb636",
+    "src/infrastructure/live/live-control-room-server.mjs": "9e0daff152b581f79a47e1fe9612f8c1217320e0df37d2c36c3bcd7d737cc608",
+    "scripts/capture-live-readme-screenshots.py": "f75ee25420fb3bd99cf25660b6425028a8371bd553a8434ebbdbc59d89d21af0"
+  },
+  "captureKind": "actual browser screenshot",
+  "dataKind": "product built-in state demo; synthetic task data",
+  "modelExecution": false,
+  "capturedAt": "2026-11-12T16:43:04.721922+00:00",
+  "screenshots": [
+    {
+      "file": "meta-kim-live-task.png",
+      "language": "en",
+      "htmlLanguage": "en",
+      "urlPath": "/?demo=states",
+      "viewport": {
+        "width": 1600,
+        "height": 1100
+      },
+      "view": "task",
+      "actions": [
+        "Open /?demo=states",
+        "Choose en using the language selector",
+        "Expand the eight-stage flow",
+        "Fit the graph to the viewport"
+      ],
+      "sha256": "8c3427479fd0b39e3369ac8bc8e2f867fef798af9a22a818e10b3b19050f50b6",
+      "titleReadability": [
+        {
+          "nodeId": "demo-owner",
+          "title": "Request accepted",
+          "onScreenFontPx": 14.26,
+          "words": [
+            {
+              "word": "Request",
+              "lines": 1,
+              "clipped": false
+            },
+            {
+              "word": "accepted",
+              "lines": 1,
+              "clipped": false
+            }
+          ]
+        },
+        {
+          "nodeId": "demo-requirements",
+          "title": "Requirements analysis",
+          "onScreenFontPx": 14.26,
+          "words": [
+            {
+              "word": "Requirements",
+              "lines": 1,
+              "clipped": false
+            },
+            {
+              "word": "analysis",
+              "lines": 1,
+              "clipped": false
+            }
+          ]
+        },
+        {
+          "nodeId": "demo-plan",
+          "title": "Execution orchestration",
+          "onScreenFontPx": 14.26,
+          "words": [
+            {
+              "word": "Execution",
+              "lines": 1,
+              "clipped": false
+            },
+            {
+              "word": "orchestration",
+              "lines": 1,
+              "clipped": false
+            }
+          ]
+        },
+        {
+          "nodeId": "demo-running-ui",
+          "title": "UI implementation",
+          "onScreenFontPx": 14.26,
+          "words": [
+            {
+              "word": "implementation",
+              "lines": 1,
+              "clipped": false
+            }
+          ]
+        },
+        {
+          "nodeId": "demo-running-test",
+          "title": "State verification",
+          "onScreenFontPx": 14.26,
+          "words": [
+            {
+              "word": "State",
+              "lines": 1,
+              "clipped": false
+            },
+            {
+              "word": "verification",
+              "lines": 1,
+              "clipped": false
+            }
+          ]
+        },
+        {
+          "nodeId": "demo-queued",
+          "title": "Independent review",
+          "onScreenFontPx": 14.26,
+          "words": [
+            {
+              "word": "Independent",
+              "lines": 1,
+              "clipped": false
+            },
+            {
+              "word": "review",
+              "lines": 1,
+              "clipped": false
+            }
+          ]
+        },
+        {
+          "nodeId": "demo-blocked",
+          "title": "Release acceptance",
+          "onScreenFontPx": 14.26,
+          "words": [
+            {
+              "word": "Release",
+              "lines": 1,
+              "clipped": false
+            },
+            {
+              "word": "acceptance",
+              "lines": 1,
+              "clipped": false
+            }
+          ]
+        }
+      ],
+      "description": "Built-in demonstration of task states"
+    },
+    {
+      "file": "meta-kim-live-detail.png",
+      "language": "en",
+      "htmlLanguage": "en",
+      "urlPath": "/?demo=states",
+      "viewport": {
+        "width": 1600,
+        "height": 1100
+      },
+      "view": "detail",
+      "actions": [
+        "Open /?demo=states",
+        "Choose en using the language selector",
+        "Expand the eight-stage flow",
+        "Fit the graph to the viewport",
+        "Click the Requirements analysis demo node",
+        "Open the Evidence tab",
+        "Focus the selected task with Follow (F)",
+        "Zoom in 8 wheel steps to full task cards",
+        "Center the selected task with Follow (F)"
+      ],
+      "sha256": "de88555ad6a2af37f32cf67d428facce651c0cf9e6e776e53ea5a6568376d26b",
+      "titleReadability": [
+        {
+          "nodeId": "demo-owner",
+          "title": "Request accepted",
+          "onScreenFontPx": 20.25,
+          "words": [
+            {
+              "word": "Request",
+              "lines": 1,
+              "clipped": false
+            },
+            {
+              "word": "accepted",
+              "lines": 1,
+              "clipped": false
+            }
+          ]
+        },
+        {
+          "nodeId": "demo-requirements",
+          "title": "Requirements analysis",
+          "onScreenFontPx": 20.25,
+          "words": [
+            {
+              "word": "Requirements",
+              "lines": 1,
+              "clipped": false
+            },
+            {
+              "word": "analysis",
+              "lines": 1,
+              "clipped": false
+            }
+          ]
+        },
+        {
+          "nodeId": "demo-plan",
+          "title": "Execution orchestration",
+          "onScreenFontPx": 20.25,
+          "words": [
+            {
+              "word": "Execution",
+              "lines": 1,
+              "clipped": false
+            },
+            {
+              "word": "orchestration",
+              "lines": 1,
+              "clipped": false
+            }
+          ]
+        },
+        {
+          "nodeId": "demo-running-ui",
+          "title": "UI implementation",
+          "onScreenFontPx": 20.25,
+          "words": [
+            {
+              "word": "implementation",
+              "lines": 1,
+              "clipped": false
+            }
+          ]
+        },
+        {
+          "nodeId": "demo-running-test",
+          "title": "State verification",
+          "onScreenFontPx": 20.25,
+          "words": [
+            {
+              "word": "State",
+              "lines": 1,
+              "clipped": false
+            },
+            {
+              "word": "verification",
+              "lines": 1,
+              "clipped": false
+            }
+          ]
+        },
+        {
+          "nodeId": "demo-queued",
+          "title": "Independent review",
+          "onScreenFontPx": 20.25,
+          "words": [
+            {
+              "word": "Independent",
+              "lines": 1,
+              "clipped": false
+            },
+            {
+              "word": "review",
+              "lines": 1,
+              "clipped": false
+            }
+          ]
+        },
+        {
+          "nodeId": "demo-blocked",
+          "title": "Release acceptance",
+          "onScreenFontPx": 20.25,
+          "words": [
+            {
+              "word": "Release",
+              "lines": 1,
+              "clipped": false
+            },
+            {
+              "word": "acceptance",
+              "lines": 1,
+              "clipped": false
+            }
+          ]
+        }
+      ],
+      "description": "The selected demo task's recorded demonstration evidence"
+    },
+    {
+      "file": "meta-kim-live-task.zh-CN.png",
+      "language": "zh",
+      "htmlLanguage": "zh-CN",
+      "urlPath": "/?demo=states",
+      "viewport": {
+        "width": 1600,
+        "height": 1100
+      },
+      "view": "task",
+      "actions": [
+        "Open /?demo=states",
+        "Choose zh using the language selector",
+        "Expand the eight-stage flow",
+        "Fit the graph to the viewport"
+      ],
+      "sha256": "379e1907429b5215fa580616d22c63f9226e5893a2c77804a1639e62c00e512b",
+      "titleReadability": [
+        {
+          "nodeId": "demo-owner",
+          "title": "任务已受理",
+          "onScreenFontPx": 14.26,
+          "words": []
+        },
+        {
+          "nodeId": "demo-requirements",
+          "title": "需求分析",
+          "onScreenFontPx": 14.26,
+          "words": []
+        },
+        {
+          "nodeId": "demo-plan",
+          "title": "执行编排",
+          "onScreenFontPx": 14.26,
+          "words": []
+        },
+        {
+          "nodeId": "demo-running-ui",
+          "title": "界面实现",
+          "onScreenFontPx": 14.26,
+          "words": []
+        },
+        {
+          "nodeId": "demo-running-test",
+          "title": "状态验证",
+          "onScreenFontPx": 14.26,
+          "words": []
+        },
+        {
+          "nodeId": "demo-queued",
+          "title": "独立审查",
+          "onScreenFontPx": 14.26,
+          "words": []
+        },
+        {
+          "nodeId": "demo-blocked",
+          "title": "发布验收",
+          "onScreenFontPx": 14.26,
+          "words": []
+        }
+      ],
+      "description": "Built-in demonstration of task states"
+    },
+    {
+      "file": "meta-kim-live-detail.zh-CN.png",
+      "language": "zh",
+      "htmlLanguage": "zh-CN",
+      "urlPath": "/?demo=states",
+      "viewport": {
+        "width": 1600,
+        "height": 1100
+      },
+      "view": "detail",
+      "actions": [
+        "Open /?demo=states",
+        "Choose zh using the language selector",
+        "Expand the eight-stage flow",
+        "Fit the graph to the viewport",
+        "Click the Requirements analysis demo node",
+        "Open the Evidence tab",
+        "Focus the selected task with Follow (F)",
+        "Zoom in 8 wheel steps to full task cards",
+        "Center the selected task with Follow (F)"
+      ],
+      "sha256": "d15333966c5bbb0d624d574b26a786afd563173afeee717a1b5b7fa0c751e8f7",
+      "titleReadability": [
+        {
+          "nodeId": "demo-owner",
+          "title": "任务已受理",
+          "onScreenFontPx": 20.25,
+          "words": []
+        },
+        {
+          "nodeId": "demo-requirements",
+          "title": "需求分析",
+          "onScreenFontPx": 20.25,
+          "words": []
+        },
+        {
+          "nodeId": "demo-plan",
+          "title": "执行编排",
+          "onScreenFontPx": 20.25,
+          "words": []
+        },
+        {
+          "nodeId": "demo-running-ui",
+          "title": "界面实现",
+          "onScreenFontPx": 20.25,
+          "words": []
+        },
+        {
+          "nodeId": "demo-running-test",
+          "title": "状态验证",
+          "onScreenFontPx": 20.25,
+          "words": []
+        },
+        {
+          "nodeId": "demo-queued",
+          "title": "独立审查",
+          "onScreenFontPx": 20.25,
+          "words": []
+        },
+        {
+          "nodeId": "demo-blocked",
+          "title": "发布验收",
+          "onScreenFontPx": 20.25,
+          "words": []
+        }
+      ],
+      "description": "The selected demo task's recorded demonstration evidence"
+    },
+    {
+      "file": "meta-kim-live-task.ja-JP.png",
+      "language": "ja",
+      "htmlLanguage": "ja-JP",
+      "urlPath": "/?demo=states",
+      "viewport": {
+        "width": 1600,
+        "height": 1100
+      },
+      "view": "task",
+      "actions": [
+        "Open /?demo=states",
+        "Choose ja using the language selector",
+        "Expand the eight-stage flow",
+        "Fit the graph to the viewport"
+      ],
+      "sha256": "cd01f88b9333b79202a70ebce47eed82af41bdc34415d4b0395c6d07c993bb71",
+      "titleReadability": [
+        {
+          "nodeId": "demo-owner",
+          "title": "依頼を受付済み",
+          "onScreenFontPx": 14.26,
+          "words": []
+        },
+        {
+          "nodeId": "demo-requirements",
+          "title": "要件分析",
+          "onScreenFontPx": 14.26,
+          "words": []
+        },
+        {
+          "nodeId": "demo-plan",
+          "title": "実行の調整",
+          "onScreenFontPx": 14.26,
+          "words": []
+        },
+        {
+          "nodeId": "demo-running-ui",
+          "title": "画面の実装",
+          "onScreenFontPx": 14.26,
+          "words": []
+        },
+        {
+          "nodeId": "demo-running-test",
+          "title": "状態の検証",
+          "onScreenFontPx": 14.26,
+          "words": []
+        },
+        {
+          "nodeId": "demo-queued",
+          "title": "独立レビュー",
+          "onScreenFontPx": 14.26,
+          "words": []
+        },
+        {
+          "nodeId": "demo-blocked",
+          "title": "リリースの受け入れ確認",
+          "onScreenFontPx": 14.26,
+          "words": []
+        }
+      ],
+      "description": "Built-in demonstration of task states"
+    },
+    {
+      "file": "meta-kim-live-detail.ja-JP.png",
+      "language": "ja",
+      "htmlLanguage": "ja-JP",
+      "urlPath": "/?demo=states",
+      "viewport": {
+        "width": 1600,
+        "height": 1100
+      },
+      "view": "detail",
+      "actions": [
+        "Open /?demo=states",
+        "Choose ja using the language selector",
+        "Expand the eight-stage flow",
+        "Fit the graph to the viewport",
+        "Click the Requirements analysis demo node",
+        "Open the Evidence tab",
+        "Focus the selected task with Follow (F)",
+        "Zoom in 8 wheel steps to full task cards",
+        "Center the selected task with Follow (F)"
+      ],
+      "sha256": "431ecdbbd1e322e2c352f418d3e146d7bbecefae398ab78a61405282e68291dc",
+      "titleReadability": [
+        {
+          "nodeId": "demo-owner",
+          "title": "依頼を受付済み",
+          "onScreenFontPx": 20.25,
+          "words": []
+        },
+        {
+          "nodeId": "demo-requirements",
+          "title": "要件分析",
+          "onScreenFontPx": 20.25,
+          "words": []
+        },
+        {
+          "nodeId": "demo-plan",
+          "title": "実行の調整",
+          "onScreenFontPx": 20.25,
+          "words": []
+        },
+        {
+          "nodeId": "demo-running-ui",
+          "title": "画面の実装",
+          "onScreenFontPx": 20.25,
+          "words": []
+        },
+        {
+          "nodeId": "demo-running-test",
+          "title": "状態の検証",
+          "onScreenFontPx": 20.25,
+          "words": []
+        },
+        {
+          "nodeId": "demo-queued",
+          "title": "独立レビュー",
+          "onScreenFontPx": 20.25,
+          "words": []
+        },
+        {
+          "nodeId": "demo-blocked",
+          "title": "リリースの受け入れ確認",
+          "onScreenFontPx": 20.25,
+          "words": []
+        }
+      ],
+      "description": "The selected demo task's recorded demonstration evidence"
+    },
+    {
+      "file": "meta-kim-live-task.ko-KR.png",
+      "language": "ko",
+      "htmlLanguage": "ko-KR",
+      "urlPath": "/?demo=states",
+      "viewport": {
+        "width": 1600,
+        "height": 1100
+      },
+      "view": "task",
+      "actions": [
+        "Open /?demo=states",
+        "Choose ko using the language selector",
+        "Expand the eight-stage flow",
+        "Fit the graph to the viewport"
+      ],
+      "sha256": "e727413ede5bf6d32ddab1b3a86b59975b28ad3a663cf62b5d1e8e9f124a4779",
+      "titleReadability": [
+        {
+          "nodeId": "demo-owner",
+          "title": "요청 접수됨",
+          "onScreenFontPx": 14.26,
+          "words": []
+        },
+        {
+          "nodeId": "demo-requirements",
+          "title": "요구 사항 분석",
+          "onScreenFontPx": 14.26,
+          "words": []
+        },
+        {
+          "nodeId": "demo-plan",
+          "title": "실행 조율",
+          "onScreenFontPx": 14.26,
+          "words": []
+        },
+        {
+          "nodeId": "demo-running-ui",
+          "title": "UI 구현",
+          "onScreenFontPx": 14.26,
+          "words": []
+        },
+        {
+          "nodeId": "demo-running-test",
+          "title": "상태 검증",
+          "onScreenFontPx": 14.26,
+          "words": []
+        },
+        {
+          "nodeId": "demo-queued",
+          "title": "독립 검토",
+          "onScreenFontPx": 14.26,
+          "words": []
+        },
+        {
+          "nodeId": "demo-blocked",
+          "title": "릴리스 검수",
+          "onScreenFontPx": 14.26,
+          "words": []
+        }
+      ],
+      "description": "Built-in demonstration of task states"
+    },
+    {
+      "file": "meta-kim-live-detail.ko-KR.png",
+      "language": "ko",
+      "htmlLanguage": "ko-KR",
+      "urlPath": "/?demo=states",
+      "viewport": {
+        "width": 1600,
+        "height": 1100
+      },
+      "view": "detail",
+      "actions": [
+        "Open /?demo=states",
+        "Choose ko using the language selector",
+        "Expand the eight-stage flow",
+        "Fit the graph to the viewport",
+        "Click the Requirements analysis demo node",
+        "Open the Evidence tab",
+        "Focus the selected task with Follow (F)",
+        "Zoom in 8 wheel steps to full task cards",
+        "Center the selected task with Follow (F)"
+      ],
+      "sha256": "687fa66131cefce3514d57ed4ad967520a043d16e6568e74f1826adaedb8953f",
+      "titleReadability": [
+        {
+          "nodeId": "demo-owner",
+          "title": "요청 접수됨",
+          "onScreenFontPx": 20.25,
+          "words": []
+        },
+        {
+          "nodeId": "demo-requirements",
+          "title": "요구 사항 분석",
+          "onScreenFontPx": 20.25,
+          "words": []
+        },
+        {
+          "nodeId": "demo-plan",
+          "title": "실행 조율",
+          "onScreenFontPx": 20.25,
+          "words": []
+        },
+        {
+          "nodeId": "demo-running-ui",
+          "title": "UI 구현",
+          "onScreenFontPx": 20.25,
+          "words": []
+        },
+        {
+          "nodeId": "demo-running-test",
+          "title": "상태 검증",
+          "onScreenFontPx": 20.25,
+          "words": []
+        },
+        {
+          "nodeId": "demo-queued",
+          "title": "독립 검토",
+          "onScreenFontPx": 20.25,
+          "words": []
+        },
+        {
+          "nodeId": "demo-blocked",
+          "title": "릴리스 검수",
+          "onScreenFontPx": 20.25,
+          "words": []
+        }
+      ],
+      "description": "The selected demo task's recorded demonstration evidence"
+    }
+  ],
+  "server": {
+    "entrypoint": "startLiveControlRoom",
+    "readOnly": true,
+    "controlEnabled": false
+  },
+  "browserVersion": "151.0.7922.34",
+  "status": "captured",
+  "sourceArtifact": {
+    "repository": "KimYx0207/Meta_Kim",
+    "workflowRunId": 43261597553,
+    "artifactId": 13963933426,
+    "artifactName": "live-readme-screenshots"
+  }
+}

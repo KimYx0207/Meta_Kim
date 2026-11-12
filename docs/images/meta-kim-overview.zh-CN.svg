@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1040" viewBox="0 0 1200 1040" role="img" aria-labelledby="title desc" lang="zh-CN" xml:lang="zh-CN">
+<title id="title">Meta_Kim 在哪里帮你</title><desc id="desc">你在熟悉的 AI 客户端里做事，它帮助 AI 把工作安排清楚。</desc>
+<style>text{font-family:Inter, Noto Sans CJK SC, sans-serif}path{stroke-linecap:round;stroke-linejoin:round}</style>
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M1 1L8 5L1 9" fill="none" stroke="#23765b" stroke-width="1.5"/></marker></defs>
+<rect width="1200" height="1040" rx="24" fill="#f7f9f5"/>
+<text x="48" y="48" font-size="19" font-weight="750" fill="#23765b" text-anchor="start"><tspan x="48" dy="0">META_KIM / 工作结构</tspan></text>
+<text x="48" y="103" font-size="38" font-weight="750" fill="#17372f" text-anchor="start"><tspan x="48" dy="0">Meta_Kim 在哪里帮你</tspan></text>
+<text x="48" y="146" font-size="24" font-weight="450" fill="#52665e" text-anchor="start"><tspan x="48" dy="0">你在熟悉的 AI 客户端里做事，它帮助 AI 把工作安排清楚。</tspan></text>
+<rect x="60" y="190" width="460" height="145" rx="18" fill="#e7f1e9" stroke="#cedbd1" stroke-width="2"/>
+<path d="M84 216v93" stroke="#23765b" stroke-width="5"/>
+<text x="106" y="241" font-size="29" font-weight="700" fill="#17372f" text-anchor="start"><tspan x="106" dy="0">你提出目标</tspan></text>
+<text x="106" y="284" font-size="23" font-weight="450" fill="#52665e" text-anchor="start"><tspan x="106" dy="0">说清想得到什么，</tspan><tspan x="106" dy="33.35">决定重要的产品选择。</tspan></text>
+<path d="M290 340V380" fill="none" stroke="#23765b" stroke-width="3" marker-end="url(#arrow)"/>
+<rect x="60" y="388" width="765" height="300" rx="22" fill="white" stroke="#23765b" stroke-width="2"/>
+<text x="87" y="425" font-size="20" font-weight="700" fill="#23765b" text-anchor="start"><tspan x="87" dy="0">你使用的 AI 客户端</tspan></text>
+<rect x="85" y="458" width="335" height="180" rx="18" fill="#e7f1e9" stroke="#cedbd1" stroke-width="2"/>
+<path d="M109 484v128" stroke="#23765b" stroke-width="5"/>
+<text x="131" y="509" font-size="29" font-weight="700" fill="#17372f" text-anchor="start"><tspan x="131" dy="0">Meta_Kim</tspan></text>
+<text x="131" y="552" font-size="23" font-weight="450" fill="#52665e" text-anchor="start"><tspan x="131" dy="0">理清方案，安排任务。</tspan><tspan x="131" dy="33.35">检查成果，接续工作。</tspan></text>
+<rect x="452" y="458" width="345" height="180" rx="18" fill="white" stroke="#cedbd1" stroke-width="2"/>
+<path d="M476 484v128" stroke="#23765b" stroke-width="5"/>
+<text x="498" y="509" font-size="29" font-weight="700" fill="#17372f" text-anchor="start"><tspan x="498" dy="0">专业方法与工具</tspan></text>
+<text x="498" y="552" font-size="23" font-weight="450" fill="#52665e" text-anchor="start"><tspan x="498" dy="0">Kim Service 能力包，</tspan><tspan x="498" dy="33.35">以及客户端已有的工具。</tspan></text>
+<path d="M450 555H425" fill="none" stroke="#23765b" stroke-width="3" marker-end="url(#arrow)"/>
+<rect x="875" y="437" width="280" height="210" rx="18" fill="white" stroke="#cedbd1" stroke-width="2"/>
+<path d="M899 463v158" stroke="#23765b" stroke-width="5"/>
+<text x="921" y="488" font-size="29" font-weight="700" fill="#17372f" text-anchor="start"><tspan x="921" dy="0">Live 进度界面</tspan></text>
+<text x="921" y="531" font-size="23" font-weight="450" fill="#52665e" text-anchor="start"><tspan x="921" dy="0">看任务关系和进展，</tspan><tspan x="921" dy="33.35">点开详情与产物。</tspan></text>
+<path d="M825 533H861" fill="none" stroke="#23765b" stroke-width="3" marker-end="url(#arrow)" stroke-dasharray="8 8"/>
+<text x="875" y="694" font-size="18" font-weight="450" fill="#52665e" text-anchor="start"><tspan x="875" dy="0">展示已记录的工作</tspan></text>
+<text x="454" y="666" font-size="18" font-weight="450" fill="#52665e" text-anchor="start"><tspan x="454" dy="0">Kim Service 可按需使用</tspan></text>
+<path d="M260 694V744" fill="none" stroke="#23765b" stroke-width="3" marker-end="url(#arrow)"/>
+<rect x="60" y="770" width="460" height="170" rx="18" fill="white" stroke="#cedbd1" stroke-width="2"/>
+<path d="M84 796v118" stroke="#23765b" stroke-width="5"/>
+<text x="106" y="821" font-size="29" font-weight="700" fill="#17372f" text-anchor="start"><tspan x="106" dy="0">你的项目</tspan></text>
+<text x="106" y="864" font-size="23" font-weight="450" fill="#52665e" text-anchor="start"><tspan x="106" dy="0">代码、文件和</tspan><tspan x="106" dy="33.35">保存下来的工作记录。</tspan></text>
+<path d="M526 850H659" fill="none" stroke="#23765b" stroke-width="3" marker-end="url(#arrow)"/>
+<rect x="680" y="770" width="475" height="170" rx="18" fill="#e7f1e9" stroke="#cedbd1" stroke-width="2"/>
+<path d="M704 796v118" stroke="#23765b" stroke-width="5"/>
+<text x="726" y="821" font-size="29" font-weight="700" fill="#17372f" text-anchor="start"><tspan x="726" dy="0">下一次对话</tspan></text>
+<text x="726" y="864" font-size="23" font-weight="450" fill="#52665e" text-anchor="start"><tspan x="726" dy="0">接着原来的目标、</tspan><tspan x="726" dy="33.35">决定和进度往下做。</tspan></text>
+<path d="M917 768V735H425V695" fill="none" stroke="#23765b" stroke-width="3" marker-end="url(#arrow)" stroke-dasharray="8 8"/>
+</svg>

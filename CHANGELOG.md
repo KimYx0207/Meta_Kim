@@ -4,6 +4,15 @@
 
 User-facing changes for each release. Detailed test results live in the linked verification records.
 
+## [3.10.2] - 2026-11-12
+
+### See how it works, then try your first task
+
+- **See Live directly in the README.** The overview and selected-task screenshots appear in the page alongside the steps to open a task and inspect its evidence. They show the running interface's built-in demonstration data.
+- **Understand the product through matching diagrams.** Framework and task-flow diagrams use the same language as each of the four READMEs, explaining where Meta_Kim fits and how a goal becomes work that can be checked and continued.
+- **Follow one complete first task.** A mobile sign-up improvement connects the request, plan, work, checks and next iteration. Installation, the first natural-language request and the Live launch command follow in the order you use them.
+- **Choose your Live language.** The interface offers Chinese, English, Japanese and Korean and remembers the selection in the browser. Controls and status explanations follow that choice while task text, identifiers and recorded content keep their original wording.
+
 ## [3.10.1] - 2026-11-12
 
 ### Pick up the work with a clear next step
