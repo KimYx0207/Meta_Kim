@@ -6,11 +6,26 @@ User-facing changes for each release. Detailed test results live in the linked v
 
 ## [Unreleased]
 
-### Understand the whole product on one page
+## [3.11.0] - 2026-11-13
 
-- Explain how decisions, architecture and module planning, task dependencies, selected methods, output checks and saved progress work together.
-- Bring setup, client choices, Live, DSH, updates and continuation into all four language READMEs, alongside the existing screenshots and diagrams.
-- Merge the four installation guides into their READMEs and remove repeated documentation detours.
+### Keep company work continuous across sessions and people
+
+- **Attach execution to a company-owned Work item.** Optional Work context carries the organization, item, revision, information scope, source references, accepted artifacts and decisions into worker handoffs, receipts and continuation. A company can use the same contract with one member today and more collaborators later.
+- **Record adoption and effects after execution.** Fresh observations can record which result was adopted, why it was selected and what was later observed, without rerunning the worker or rewriting the original execution receipt. Produced, verified, adopted and effective remain distinct facts.
+- **Choose the client and model separately.** Explicit choices and observed host or adapter facts feed the shared selection policy. Native command adapters pass the requested model through their argument interface; receipts distinguish requested, applied and observed selection. Unsupported or conflicting requests are reported before execution, and configured defaults keep their provenance.
+- **Resume with the same execution identity.** Saved model parameters, Work context and reviewed material remain bound to continuation. Concurrent preparation of one new run admits one creator while preserving existing reads and stop behavior.
+
+### Understand the workflow through animated diagrams
+
+- **Follow both PRD passes and all eight stages.** Ten diagram topics in four languages cover the system map, architecture and module PRDs, stage progression, orchestration, pacing and whitespace, continuation, Work context, layers and runtime selection. Titles and endings are centered; static and reduced-motion views remain readable.
+- **See where each fact belongs.** The README maps application, data and presentation responsibilities to the existing directories and identifies the source for business context, runtime choices, contracts and display data.
+- **Use one complete guide.** All four READMEs bring together decisions, task dependencies, selected methods, setup, client choices, Live, DSH, output checks and saved progress, with existing real screenshots. The former installation guides are included in their corresponding README.
+
+### Update and verification
+
+Run `git pull --ff-only`, then `node setup.mjs --update`. DSH users use `node bin/meta-kim.mjs dsh update`. Existing requests without Work context keep their current input path; use the documented optional Work and model parameters when needed.
+
+The GitHub Release records the exact source commit, completed repository CI and checks on its downloadable package. These records describe their tested scope; native model quality remains an observation from the actual task.
 
 ## [3.10.2] - 2026-11-12
 

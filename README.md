@@ -226,7 +226,7 @@ Use optional `workContext` in the ordinary API or CLI `--work-context-input`; ap
 
 ## Start with your own project
 
-You need **Node.js 22.13.0+**, Git and an AI client with its model connection configured. Current release: **[v3.10.2](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.10.2)**.
+You need **Node.js 22.13.0+**, Git and an AI client with its model connection configured. Current release: **[v3.11.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.11.0)**.
 
 ### 1. Install Meta_Kim
 
