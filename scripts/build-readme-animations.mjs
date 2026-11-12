@@ -37,7 +37,7 @@ class Diagram{
   Object.assign(this,{locale,id,t,duration,styles:[],parts:[],n:0});
   const tr=wrap(t.title,848,40).length,sr=wrap(t.sub,848,30).length;
   this.top=128+tr*50+sr*39+38;
-  this.parts.push(text(copy[locale].brand,56,53,848,{size:24,fill:C.blue,weight:700}),text(t.title,56,113,848,{size:40,line:50,weight:750}),text(t.sub,56,125+tr*50,848,{size:30,line:39,fill:C.muted}),`<path d="M56 ${this.top-24}H904" stroke="#dce5f2" stroke-width="4"/><path class="clock" pathLength="1" d="M56 ${this.top-24}H904" stroke="${C.blue}" stroke-width="4"/>`);
+  this.parts.push(text(copy[locale].brand,480,53,848,{size:24,fill:C.blue,weight:700,align:'middle'}),text(t.title,480,113,848,{size:40,line:50,weight:750,align:'middle'}),text(t.sub,480,125+tr*50,848,{size:30,line:39,fill:C.muted,align:'middle'}),`<path d="M56 ${this.top-24}H904" stroke="#dce5f2" stroke-width="4"/><path class="clock" pathLength="1" d="M56 ${this.top-24}H904" stroke="${C.blue}" stroke-width="4"/>`);
  }
  motion(frames,base=''){
   const name=`m${this.n++}`;this.styles.push(`@keyframes ${name}{${frames}}.${name}{${base};animation:${name} ${this.duration}s ease-in-out infinite}`);return name;
@@ -48,10 +48,11 @@ class Diagram{
   const h=o.h||cardSize(row,w,o),color=o.color||C.blue,start=o.start??.05,end=o.end??.2;
   const focus=this.focus(start,end),done=this.motion(`0%,${end*100}%{opacity:0}${end*100+1.5}%,100%{opacity:1}`,'opacity:1'),grow=this.motion(`0%,${start*100}%{transform:scaleX(0)}${end*100}%,100%{transform:scaleX(1)}`,'transform:scaleX(1);transform-box:fill-box;transform-origin:left center');
   let s=`<g class="node" data-label="${esc(row[0])}" data-box="${x},${y},${w},${h}"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="22" fill="${o.fill||'#fff'}" stroke="${C.line}" stroke-width="1.5"/><rect class="focus ${focus}" x="${x}" y="${y}" width="${w}" height="${h}" rx="22" fill="${color}" fill-opacity=".055" stroke="${color}" stroke-width="3"/>`;
+  const align=o.align||'start',textX=align==='middle'?x+w/2:x+26;
   let baseline=y+58;
-  if(o.badge){s+=text(o.badge,x+26,baseline,w-52,{size:25,line:33,weight:700,fill:color});baseline+=wrap(o.badge,w-52,25).length*33+15;}
-  s+=text(row[0],x+26,baseline,w-52,{size:o.titleSize||36,line:44,weight:700});baseline+=wrap(row[0],w-52,o.titleSize||36).length*44+12;
-  if(row[1])s+=text(row[1],x+26,baseline,w-52,{size:o.bodySize||32,line:42,fill:C.muted});
+  if(o.badge){s+=text(o.badge,textX,baseline,w-52,{size:25,line:33,weight:700,fill:color,align});baseline+=wrap(o.badge,w-52,25).length*33+15;}
+  s+=text(row[0],textX,baseline,w-52,{size:o.titleSize||36,line:44,weight:700,align});baseline+=wrap(row[0],w-52,o.titleSize||36).length*44+12;
+  if(row[1])s+=text(row[1],textX,baseline,w-52,{size:o.bodySize||32,line:42,fill:C.muted,align});
   if(o.progress!==false)s+=`<rect x="${x+26}" y="${y+h-14}" width="${w-52}" height="4" rx="2" fill="#e2e9f3"/><rect class="progress ${grow}" x="${x+26}" y="${y+h-14}" width="${w-52}" height="4" rx="2" fill="${color}"/><g class="completed ${done}"><circle cx="${x+w-20}" cy="${y+20}" r="11" fill="${C.teal}"/><path d="M${x+w-26} ${y+20}l4 4 8-9" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></g>`;
   this.parts.push(s+'</g>');return{x,y,w,h,cx:x+w/2,b:y+h};
  }
@@ -70,7 +71,7 @@ class Diagram{
 <rect width="960" height="${h}" rx="26" fill="${C.paper}"/>
 ${this.parts.join('\n')}
 <path d="M56 ${bottom+35}H904" stroke="${C.line}"/>
-${text(this.t.footer,56,bottom+82,848,{size:30,line:39,fill:C.muted})}
+${text(this.t.footer,480,bottom+82,848,{size:30,line:39,fill:C.muted,align:'middle'})}
 </svg>\n`;
  }
 }
@@ -81,30 +82,30 @@ function diagrams(locale){
   const y=d.top,centerY=y+topH+96,centerH=cardSize([c.map.center,c.map.centerBody],644),lowerY=centerY+centerH+96,middle={x:158,y:centerY,w:644,h:centerH,cx:480,b:centerY+centerH};
   const coords=[[56,y],[500,y],[56,lowerY],[500,lowerY]],colors=[C.blue,C.purple,C.teal,C.amber];
   coords.forEach(([x,yy],i)=>{const port=i<2?middle.y:middle.b,anchor=i%2?650:310,target=i<2?yy+topH:yy,cy=i<2?port-48:port+48;d.wire(`M${anchor} ${port}C${anchor} ${cy} ${x+w/2} ${cy} ${x+w/2} ${target}`,.04+i*.16,.13+i*.16,{color:colors[i],arrow:false});});
-  d.card(middle.x,middle.y,middle.w,[c.map.center,c.map.centerBody],{h:centerH,start:.01,end:.13,fill:'#eaf1ff',progress:false});
+  d.card(middle.x,middle.y,middle.w,[c.map.center,c.map.centerBody],{h:centerH,start:.01,end:.13,fill:'#eaf1ff',progress:false,align:'middle'});
   coords.forEach(([x,yy],i)=>d.card(x,yy,w,c.map.cards[i],{h:i<2?topH:bottomH,color:colors[i],start:.1+i*.16,end:.24+i*.16}));
   const end=lowerY+bottomH,caption=c.map.govern+' · '+c.map.perform;d.label(caption,480,end+68,848,{size:31,line:41,align:'middle',weight:700});
   out['system-map']=d.finish(end+68+wrap(caption,848,31).length*41);
  }
  {
   const t=c.architecture,d=new Diagram(locale,'prd-architecture',t);let y=d.top,previous;
-  [t.intent,t.research,t.choice].forEach((row,i)=>{const node=d.card(80,y,800,row,{badge:l.archInputs[i],start:.02+i*.14,end:.15+i*.14,color:[C.blue,C.teal,C.purple][i]});if(previous)d.down(previous,node,.09+i*.14,.15+i*.14);previous=node;y=node.b+62;});
+  [t.intent,t.research,t.choice].forEach((row,i)=>{const node=d.card(80,y,800,row,{badge:l.archInputs[i],start:.02+i*.14,end:.15+i*.14,color:[C.blue,C.teal,C.purple][i],align:'middle'});if(previous)d.down(previous,node,.09+i*.14,.15+i*.14);previous=node;y=node.b+62;});
   const heights=[t.cards.slice(0,2),t.cards.slice(2)].map(group=>Math.max(...group.map(row=>cardSize(row,404,{badge:l.output})))),groupY=y,groupH=90+heights[0]+32+heights[1]+22;
   d.parts.push(`<rect x="40" y="${groupY}" width="880" height="${groupH}" rx="25" fill="#eaf1ff" stroke="#bdd0f4"/>`);
-  d.wire(`M480 ${previous.b}V${groupY}`,.43,.49);d.label(t.prd,64,groupY+52,820,{size:35,line:44,weight:700,fill:C.blue});y=groupY+90;
+  d.wire(`M480 ${previous.b}V${groupY}`,.43,.49);d.label(t.prd,480,groupY+52,820,{size:35,line:44,weight:700,fill:C.blue,align:'middle'});y=groupY+90;
   t.cards.forEach((row,i)=>{const yy=y+(i>1?heights[0]+32:0),x=i%2?500:56;d.card(x,yy,404,row,{h:heights[i>1?1:0],badge:l.output,start:.49+i*.08,end:.65+i*.08,color:i%2?C.purple:C.blue});});
   out['prd-architecture']=d.finish(groupY+groupH);
  }
  {
   const t=c.modules,d=new Diagram(locale,'prd-modules',t);let y=d.top;
-  const baseline=d.card(80,y,800,t.baseline,{badge:l.input,start:.02,end:.13});y=baseline.b+58;
-  const module=d.card(80,y,800,t.module,{badge:l.expand,start:.13,end:.26,color:C.purple});d.down(baseline,module,.1,.17);y=module.b+72;
+  const baseline=d.card(80,y,800,t.baseline,{badge:l.input,start:.02,end:.13,align:'middle'});y=baseline.b+58;
+  const module=d.card(80,y,800,t.module,{badge:l.expand,start:.13,end:.26,color:C.purple,align:'middle'});d.down(baseline,module,.1,.17);y=module.b+72;
   const hs=[0,1].map(i=>Math.max(...t.cards.slice(i*2,i*2+2).map(row=>cardSize(row,404)))),groupY=y,groupH=86+hs[0]+28+hs[1]+22;
   d.parts.push(`<rect x="40" y="${groupY}" width="880" height="${groupH}" rx="25" fill="#edf5fb" stroke="#bdd0e2"/>`);
-  d.wire(`M480 ${module.b}V${groupY}`,.25,.31,{color:C.purple});d.label(l.moduleDetails,64,groupY+52,820,{size:35,line:44,weight:700,fill:C.purple});y=groupY+86;
+  d.wire(`M480 ${module.b}V${groupY}`,.25,.31,{color:C.purple});d.label(l.moduleDetails,480,groupY+52,820,{size:35,line:44,weight:700,fill:C.purple,align:'middle'});y=groupY+86;
   t.cards.forEach((row,i)=>{const xx=i%2?500:56,yy=y+(i>1?hs[0]+28:0);d.card(xx,yy,404,row,{h:hs[i>1?1:0],start:.3+i*.065,end:.44+i*.065,color:[C.blue,C.teal,C.purple,C.amber][i]});});
   const bottom=groupY+groupH;y=bottom+76;d.wire(`M480 ${bottom}V${y}`,.57,.65,{color:C.teal});
-  const tasks=d.card(80,y,800,[t.work,t.workBody],{badge:l.output,start:.65,end:.8,color:C.teal});y=tasks.b+76;const laneH=Math.max(...t.lanes.map(v=>cardSize([v,''],264)));
+  const tasks=d.card(80,y,800,[t.work,t.workBody],{badge:l.output,start:.65,end:.8,color:C.teal,align:'middle'});y=tasks.b+76;const laneH=Math.max(...t.lanes.map(v=>cardSize([v,''],264)));
   t.lanes.forEach((v,i)=>{const x=56+i*292;d.wire(`M480 ${tasks.b}V${y-34}H${x+132}V${y}`,.8,.85,{color:[C.blue,C.teal,C.purple][i]});d.card(x,y,264,[v,''],{h:laneH,start:.85,end:.94,color:[C.blue,C.teal,C.purple][i]});});out['prd-modules']=d.finish(y+laneH);
  }
  {
@@ -114,28 +115,28 @@ function diagrams(locale){
   d.wire(`M${review[0]} ${review[1]+height/2}H28V${planning[1]-44}H${planning[0]+w/2}V${planning[1]}`,.77,.84,{color:C.purple,back:true,transient:true});
   d.wire(`M${verify[0]+w} ${verify[1]+height/2}H932V${execution[1]-78}H${execution[0]+w/2}V${execution[1]}`,.86,.94,{color:C.purple,back:true,transient:true});
   t.cards.forEach((row,i)=>{const[x,y]=coords[i];d.card(x,y,w,[row[0],l.output+' · '+row[2]],{h:height,badge:`0${i+1} · ${row[1]}`,start:.01+i*.083,end:.1+i*.083,color:[C.blue,C.teal,C.purple,C.blue,C.amber,C.purple,C.teal,C.amber][i]});});
-  const bottom=coords[7][1]+height,titleH=d.label(t.returnTitle,56,bottom+65,848,{size:34,line:44,weight:700,fill:C.purple});const lines=d.label(l.returnRoutes,56,bottom+80+titleH,848,{size:31,line:41,fill:C.purple});out['eight-stages']=d.finish(bottom+80+titleH+lines);
+  const bottom=coords[7][1]+height,titleH=d.label(t.returnTitle,480,bottom+65,848,{size:34,line:44,weight:700,fill:C.purple,align:'middle'});const lines=d.label(l.returnRoutes,480,bottom+80+titleH,848,{size:31,line:41,fill:C.purple,align:'middle'});out['eight-stages']=d.finish(bottom+80+titleH+lines);
  }
  {
   const t=c.orchestration,d=new Diagram(locale,'orchestration',t,30);let y=d.top;
-  const shared=d.card(80,y,800,t.shared,{start:.01,end:.13});y=shared.b+78;
+  const shared=d.card(80,y,800,t.shared,{start:.01,end:.13,align:'middle'});y=shared.b+78;
   const pairs=[[t.ui,t.api],[t.waiting,t.progressing],[t.resume,t.done]],timing=[[[.13,.29],[.13,.29]],[[.3,.62],[.3,.53]],[[.63,.79],[.53,.82]]],nodes=[];let bottom=y;
   pairs.forEach((rows,r)=>{const h=Math.max(...rows.map((row,i)=>cardSize(row,404,{badge:r===1?(i?l.keepsWorking:l.waitOnly):undefined}))),pair=[];rows.forEach((row,i)=>{const x=i?500:56,[start,end]=timing[r][i];pair.push(d.card(x,y,404,row,{h,start,end,color:r===1&&!i?C.amber:i?C.teal:C.blue,progress:!(r===1&&!i),badge:r===1?(i?l.keepsWorking:l.waitOnly):undefined}));});nodes.push(pair);bottom=y+h;y=bottom+76;});
   d.wire(`M480 ${shared.b}V${nodes[0][0].y-36}H258V${nodes[0][0].y}`,.08,.15);d.wire(`M480 ${nodes[0][0].y-36}H702V${nodes[0][1].y}`,.08,.15,{color:C.teal});
   for(let r=0;r<2;r++)for(let i=0;i<2;i++)d.down(nodes[r][i],nodes[r+1][i],r===0?.25:i?.49:.59,r===0?.32:i?.55:.65,{color:i?C.teal:r===0?C.amber:C.blue});
-  d.wire(`M258 ${bottom}V${y-36}H480V${y}`,.79,.86);d.wire(`M702 ${bottom}V${y-36}H480`,.79,.86,{color:C.teal,arrow:false});const merge=d.card(80,y,800,t.merge,{badge:l.join,start:.86,end:.96,color:C.teal});out.orchestration=d.finish(merge.b);
+  d.wire(`M258 ${bottom}V${y-36}H480V${y}`,.79,.86);d.wire(`M702 ${bottom}V${y-36}H480`,.79,.86,{color:C.teal,arrow:false});const merge=d.card(80,y,800,t.merge,{badge:l.join,start:.86,end:.96,color:C.teal,align:'middle'});out.orchestration=d.finish(merge.b);
  }
  {
   const t=c.rhythm,d=new Diagram(locale,'rhythm',{...t,sub:t.sub+' · '+l.alternatives},32);let y=d.top;
-  const event=d.card(80,y,800,t.event,{start:.01,end:.12,progress:false});y=event.b+80;
+  const event=d.card(80,y,800,t.event,{start:.01,end:.12,progress:false,align:'middle'});y=event.b+80;
   const rows=t.rows.map(row=>[row[0],row[1]+' · '+row[2]]),hs=[0,1].map(i=>Math.max(...rows.slice(i*2,i*2+2).map(row=>cardSize(row,376)))),secondY=y+hs[0]+72,positions=[[72,y],[512,y],[72,secondY],[512,secondY]],colors=[C.muted,C.teal,C.blue,C.amber];
   positions.forEach(([x,yy],i)=>{const trunk=i<2?y-49:secondY-36,side=i%2?924:36,route=i<2?`M480 ${event.b}V${trunk}H${x+188}V${yy}`:`M480 ${event.b}V${y-61}H${side}V${trunk}H${x+188}V${yy}`;d.wire(route,.08+i*.13,.18+i*.13,{color:colors[i],transient:true});d.card(x,yy,376,rows[i],{h:hs[i>1?1:0],start:.12+i*.13,end:.24+i*.13,color:colors[i],progress:false});});
-  y=secondY+hs[1]+74;d.label(l.pauseCondition,56,y,848,{size:30,line:39,weight:650,fill:C.purple});y+=wrap(l.pauseCondition,848,30).length*39+28;
-  const pause=d.card(80,y,800,t.pause,{badge:l.pauseInput,start:.68,end:.82,color:C.purple,progress:false}),resume=d.card(80,pause.b+64,800,[l.resume,t.continue],{start:.83,end:.95,color:C.teal});d.down(pause,resume,.79,.86,{color:C.purple});out.rhythm=d.finish(resume.b);
+  y=secondY+hs[1]+74;d.label(l.pauseCondition,480,y,848,{size:30,line:39,weight:650,fill:C.purple,align:'middle'});y+=wrap(l.pauseCondition,848,30).length*39+28;
+  const pause=d.card(80,y,800,t.pause,{badge:l.pauseInput,start:.68,end:.82,color:C.purple,progress:false,align:'middle'}),resume=d.card(80,pause.b+64,800,[l.resume,t.continue],{start:.83,end:.95,color:C.teal,align:'middle'});d.down(pause,resume,.79,.86,{color:C.purple});out.rhythm=d.finish(resume.b);
  }
  {
   const t=c.continuity,d=new Diagram(locale,'continuity',t);let y=d.top;
-  const current=d.card(80,y,800,t.current,{start:.01,end:.15});y=current.b+78;
+  const current=d.card(80,y,800,t.current,{start:.01,end:.15,align:'middle'});y=current.b+78;
   const left=[t.saved,t.resume,t.verify],right=[t.learning,[t.evaluate[0],l.evaluateEvidence],[l.writeback,t.evaluate[1]]];let prev;
   for(let r=0;r<3;r++){
    const pair=[left[r],right[r]],h=Math.max(...pair.map((row,i)=>cardSize(row,404,{badge:r===0?(i?l.reusable:l.currentTask):undefined}))),nodes=pair.map((row,i)=>d.card(i?500:56,y,404,row,{h,badge:r===0?(i?l.reusable:l.currentTask):undefined,start:.15+r*.2,end:.32+r*.2,color:i?C.purple:C.teal}));
