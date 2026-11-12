@@ -2,7 +2,7 @@
 
 专业角色源码放在 Kim Service 的 `agents/<id>/`。Meta_Kim 从其生成索引读取候选，再根据角色合同选择；Kim Service 不承载总路由，Meta_Kim 也不把这些角色投影为九个治理 Agent 之外的持久身份。
 
-人话目录在 Kim Service 的 `agents/README.md`，覆盖自媒体、电商、求职职场、教育、副业创业，每类三个角色。第三方包及其既有参考地位保持独立。
+面向使用者的能力说明统一在 Kim Service 的 `README.md#capability-directory`，英文版为 `README_EN.md#capability-directory`。实际角色与能力从组件合同及生成索引读取，不维护另一份固定行业或数量清单。第三方包及其既有参考地位保持独立。
 
 ## 绑定一个本地包
 
@@ -11,18 +11,19 @@
 1. 显式环境变量 `META_KIM_KIM_SERVICE_ROOT`。
 2. 项目本地 `.meta-kim/local.overrides.json` 中的 `dependencyRoots["kim-service"]`。
 3. 依赖声明的 `source.localPath`；发布源码默认是 `null`。
+4. 前面没有显式声明时，读取当前用户安装清单中已登记、且内容校验通过的受管理 Kim Service 源码。
 
-路径可为绝对路径，也可相对当前 Meta_Kim 项目根。比如两个仓库由维护者明确放在同一父目录时，可在保留原配置字段的前提下加：
+路径可为绝对路径，也可相对当前工作项目根。为便于在不同安装位置使用，建议在工作项目的本地配置中填写绝对路径，并保留原有字段：
 
 ```json
 {
   "dependencyRoots": {
-    "kim-service": "../Kim_Service"
+    "kim-service": "/absolute/path/to/Kim_Service"
   }
 }
 ```
 
-没有显式绑定时返回 `not_configured`，不会扫描任意兄弟目录、下载或安装软件。显式路径失效时返回 `missing`，不会悄悄改用另一份副本。本机路径只进入本地配置，不写入公共注册表。
+没有显式绑定，也没有安装清单登记的受管理来源时，返回 `not_configured`；不会扫描任意兄弟目录、下载或安装软件。受管理来源必须与安装回执中的内容摘要一致。显式路径失效时返回 `missing`，不会悄悄改用另一份副本。本机路径只进入本地配置，不写入公共注册表。
 
 ## 如何进入现有流程
 

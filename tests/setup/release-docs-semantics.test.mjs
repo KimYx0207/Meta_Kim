@@ -16,18 +16,9 @@ describe("release documentation semantics", () => {
     "README.ja-JP.md",
     "README.ko-KR.md",
   ];
-  const technicalNotesFiles = readmeFiles.map(
+  const retiredGuides = readmeFiles.map(
     (file) => `docs/${file.replace("README", "technical-notes")}`,
   );
-
-  const assertLocalMarkdownLink = (raw, file, target) => {
-    assert.ok(raw.includes(`](${target})`), `${file} must link ${target}`);
-    assert.equal(
-      existsSync(path.resolve(root, path.dirname(file), target)),
-      true,
-      `${file} links a missing local reference: ${target}`,
-    );
-  };
 
   const currentChangelogSection = (raw) => {
     const nextReleaseIndex = raw.search(/\n## \[[^\]]+\] - \d{4}-\d{2}-\d{2}/);
@@ -95,13 +86,14 @@ describe("release documentation semantics", () => {
         "CHANGELOG.zh-CN.md",
         "CHANGELOG.ja-JP.md",
         "CHANGELOG.ko-KR.md",
-        ...technicalNotesFiles,
+        ...readmeFiles,
       ]) {
         assert.equal(packageFiles.has(requiredFile), true, `package missing ${requiredFile}`);
       }
       for (const retiredFile of [
         "canonical/runtime-assets/shared/lib/validator.mjs",
         "tests/poc-design-gate/RESULTS.md",
+        ...retiredGuides,
       ]) {
         assert.equal(packageFiles.has(retiredFile), false, `package retained ${retiredFile}`);
       }
@@ -152,7 +144,7 @@ describe("release documentation semantics", () => {
       /ECC는 추가로 .*native install target/,
     ];
 
-    for (const file of [...readmeFiles, ...technicalNotesFiles]) {
+    for (const file of readmeFiles) {
       const raw = readFileSync(path.join(root, file), "utf8");
 
       for (const pattern of forbiddenDependencyMatrixPatterns) {
@@ -176,18 +168,18 @@ describe("release documentation semantics", () => {
       /依存プロジェクトの対応クライアントは各上流プロジェクトが管理/,
       /의존 프로젝트의 지원 클라이언트는 해당 상위 프로젝트가 관리/,
     ];
-    technicalNotesFiles.forEach((file, index) => {
+    readmeFiles.forEach((file, index) => {
       assert.match(readFileSync(path.join(root, file), "utf8"), dependencyGuidance[index], file);
     });
   });
 
-  test("localized product overviews link truthful client tiers and technical verification guidance", () => {
-    const betaNames = ["DeepSeek Harness", "Qoder", "Trae"];
+  test("localized product overviews explain client use and output review inline", () => {
+    const betaNames = ["DSH", "Qoder", "Trae"];
     const taskResultScope = [
-      /Native task results and model quality[^.\n]*actual outputs/u,
-      /原生任务结果和模型专业效果[^。\n]*实际产物/u,
-      /ネイティブなタスク結果とモデルの専門的な品質[^。\n]*実際の成果物/u,
-      /네이티브 작업 결과와 모델의 전문적인 품질[^.\n]*실제 결과물/u,
+      /(?:check|review|verify)[\s\S]*(?:outputs|delivered|deliverables)/iu,
+      /(?:检查|核对|验收)[\s\S]*(?:实际产物|交付文件|成果)/u,
+      /(?:確認|検証|受け入れ)[\s\S]*(?:実際の成果物|成果物|納品)/u,
+      /(?:확인|검증|검토)[\s\S]*(?:실제 결과물|산출물|결과물)/u,
     ];
     const removedPublicCandidatePatterns = [
       /\bKiro\b/u,
@@ -220,41 +212,26 @@ describe("release documentation semantics", () => {
 
     for (const [index, file] of readmeFiles.entries()) {
       const raw = readFileSync(path.join(root, file), "utf8");
-      const notesFile = technicalNotesFiles[index];
-      const notes = readFileSync(path.join(root, notesFile), "utf8");
 
       for (const client of ["Codex", "Claude Code", "Cursor", "OpenClaw", "Gemini CLI", "ZCode"]) assert.match(raw, new RegExp(client), `${file} missing requested client ${client}`);
-      assert.match(raw, /config\/runtime-compatibility-catalog\.json/, file);
       assert.ok(raw.includes(`[v${releasedVersion}](https://github.com/KimYx0207/Meta_Kim/releases/tag/v${releasedVersion})`), `${file} must label and link the current released version`);
-      assertLocalMarkdownLink(raw, file, notesFile);
-      assertLocalMarkdownLink(notes, notesFile, `../${file}`);
-      for (const runtime of ["claude", "codex", "gemini", "zcode", "dsh"]) {
-        assertLocalMarkdownLink(notes, notesFile, `../canonical/skills/meta-theory/references/runtime-${runtime}.md`);
-      }
-      for (const reference of [
-        "../config/runtime-compatibility-catalog.json",
-        "../AGENTS.md",
-        "verification/dsh-professional-quality-20261111.md",
-        "verification/task-scoped-canary-20261111.md",
-      ]) {
-        assertLocalMarkdownLink(notes, notesFile, reference);
-      }
-      assert.match(notes, taskResultScope[index], `${notesFile} must distinguish observed integration checks from actual task results`);
+      assert.doesNotMatch(raw, /\]\([^)]*technical-notes[^)]*\)/u, `${file} must keep common usage guidance on the page`);
+      assert.match(raw, taskResultScope[index], `${file} must explain checking the actual task deliverable`);
       for (const operation of ["install", "check", "update", "uninstall"]) {
-        assert.ok(notes.includes(`node bin/meta-kim.mjs dsh ${operation}`), `${notesFile} must use the Meta_Kim CLI for DSH ${operation}`);
+        assert.ok(raw.includes(`node bin/meta-kim.mjs dsh ${operation}`), `${file} must use the Meta_Kim CLI for DSH ${operation}`);
       }
       for (const betaName of betaNames) {
-        const clientRow = raw.split("\n").find((line) => /^\|/u.test(line) && line.includes(betaName));
+        const clientRow = raw.split(/\n\s*\n/u).find((paragraph) => paragraph.includes(betaName) && /\bBeta\b/iu.test(paragraph));
         assert.ok(clientRow, `${file} missing ${betaName} client guidance`);
         assert.match(clientRow, /\bBeta\b/iu, `${file} must label ${betaName} as Beta`);
         if (betaName === "Qoder" || betaName === "Trae") {
-          assert.match(clientRow, /compatibility|兼容|互換|호환/iu, `${file} must distinguish ${betaName} compatibility adapters`);
+          assert.match(clientRow, /compatibility|adapters?|兼容|适配|互換|アダプタ|호환|어댑터/iu, `${file} must distinguish ${betaName} compatibility adapters`);
         }
       }
       assert.doesNotMatch(raw, /alt="Runtime"/, file);
       assert.doesNotMatch(raw, /runtime-Claude%20Code%20%7C%20Codex%20%7C%20OpenClaw%20%7C%20Cursor/, file);
 
-      for (const [documentFile, document] of [[file, raw], [notesFile, notes]]) {
+      for (const [documentFile, document] of [[file, raw]]) {
         for (const pattern of removedPublicCandidatePatterns) {
           assert.doesNotMatch(document, pattern, `${documentFile} still publishes a research-only candidate`);
         }
@@ -349,7 +326,7 @@ describe("release documentation semantics", () => {
     for (const file of readmeFiles) {
       const raw = readFileSync(path.join(root, file), "utf8");
 
-      assert.match(raw, /https:\/\/img\.shields\.io\/badge\/[^\s]+-Apache--2\.0/);
+      assert.match(raw, /\[Apache License 2\.0\]\(LICENSE\)/);
       assert.match(raw, /Apache License 2\.0/);
       assert.match(raw, /NOTICE/);
       assert.match(raw, /Meta_Kim by KimYx0207/);

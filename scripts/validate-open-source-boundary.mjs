@@ -105,41 +105,32 @@ function assertDocsExplainBoundary() {
   const docs = [
     {
       readme: "README.md",
-      guide: "docs/technical-notes.md",
       generationPattern: /directories.*generated locally.*npm run meta:sync/,
       boundaryPattern:
         /excluded from GitHub source.*kept local.*\.gitignore/,
     },
     {
       readme: "README.zh-CN.md",
-      guide: "docs/technical-notes.zh-CN.md",
       generationPattern: /客户端目录.*npm run meta:sync.*在本地生成/,
       boundaryPattern: /\.gitignore.*保留在本地.*不提交到 GitHub 源码/,
     },
     {
       readme: "README.ja-JP.md",
-      guide: "docs/technical-notes.ja-JP.md",
       generationPattern: /クライアント別ディレクトリ.*npm run meta:sync.*ローカルに生成/,
       boundaryPattern: /\.gitignore.*GitHub のソースから除外.*ローカルに保持/,
     },
     {
       readme: "README.ko-KR.md",
-      guide: "docs/technical-notes.ko-KR.md",
       generationPattern: /클라이언트별 디렉터리.*npm run meta:sync.*로컬에 생성/,
       boundaryPattern: /\.gitignore.*GitHub 소스에서 제외.*로컬에 유지/,
     },
   ];
 
-  for (const { readme, guide, generationPattern, boundaryPattern } of docs) {
-    const readmeRaw = readFileSync(repoPath(readme), "utf8");
-    const escapedGuide = guide.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const guideLink = new RegExp(`\\]\\((?:\\./)?${escapedGuide}(?:#[^\\s)]*)?\\)`);
-    assert(guideLink.test(readmeRaw), `${readme} must link to its localized technical guide ${guide}.`);
-
-    const raw = readFileSync(repoPath(guide), "utf8");
-    assert(raw.includes("`canonical/`") && raw.includes("`config/`"), `${guide} must identify the canonical source and configuration directories.`);
-    assert(generationPattern.test(raw), `${guide} must explain that runtime directories are generated locally by meta:sync.`);
-    assert(boundaryPattern.test(raw), `${guide} must explain that .gitignore keeps generated runtime projections local and out of GitHub source.`);
+  for (const { readme, generationPattern, boundaryPattern } of docs) {
+    const raw = readFileSync(repoPath(readme), "utf8");
+    assert(raw.includes("`canonical/`") && raw.includes("`config/`"), `${readme} must identify the canonical source and configuration directories.`);
+    assert(generationPattern.test(raw), `${readme} must explain that runtime directories are generated locally by meta:sync.`);
+    assert(boundaryPattern.test(raw), `${readme} must explain that .gitignore keeps generated runtime projections local and out of GitHub source.`);
   }
 }
 

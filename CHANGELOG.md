@@ -4,6 +4,14 @@
 
 User-facing changes for each release. Detailed test results live in the linked verification records.
 
+## [Unreleased]
+
+### Understand the whole product on one page
+
+- Explain how decisions, architecture and module planning, task dependencies, selected methods, output checks and saved progress work together.
+- Bring setup, client choices, Live, DSH, updates and continuation into all four language READMEs, alongside the existing screenshots and diagrams.
+- Merge the four installation guides into their READMEs and remove repeated documentation detours.
+
 ## [3.10.2] - 2026-11-12
 
 ### See how it works, then try your first task

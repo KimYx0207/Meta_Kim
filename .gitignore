@@ -126,10 +126,6 @@ docs/**
 !docs/graphify-managed-lifecycle.md
 !docs/harness-architecture.md
 !docs/dependency-baseline.md
-!docs/technical-notes.md
-!docs/technical-notes.zh-CN.md
-!docs/technical-notes.ja-JP.md
-!docs/technical-notes.ko-KR.md
 !docs/images/
 !docs/images/**
 !docs/verification/
