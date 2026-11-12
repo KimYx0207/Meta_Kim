@@ -207,7 +207,7 @@ Meta_Kim은 계획, 발견, 진행 상황, 결정, 결과물과 검사 기록을
 
 ## 내 프로젝트에서 시작하기
 
-**Node.js 22.13.0+**, Git, 모델 연결을 설정한 AI 클라이언트가 필요합니다. 현재 공개 버전은 **[v3.10.2](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.10.2)**입니다.
+**Node.js 22.13.0+**, Git, 모델 연결을 설정한 AI 클라이언트가 필요합니다. 현재 공개 버전은 **[v3.10.2](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.10.2)** 입니다.
 
 ### 1. Meta_Kim 설치하기
 
@@ -307,7 +307,7 @@ git clone https://github.com/KimYx0207/Kim_Service.git
 
 ## DeepSeek Harness 설치
 
-DSH는 네이티브 profile, Skill과 MCP 설정을 사용하는 별도의 Beta 연동을 제공합니다. **DSH 0.2.2-rc.1**과 **Node.js 24.9.0+**가 설치되어 있다면 Meta_Kim 체크아웃에서 다음을 실행하세요.
+DSH는 네이티브 profile, Skill과 MCP 설정을 사용하는 별도의 Beta 연동을 제공합니다. **DSH 0.2.2-rc.1**과 **Node.js 24.9.0+** 가 설치되어 있다면 Meta_Kim 체크아웃에서 다음을 실행하세요.
 
 ```bash
 node bin/meta-kim.mjs dsh install
