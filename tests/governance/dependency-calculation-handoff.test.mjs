@@ -392,7 +392,9 @@ test("missing host reasoning, invalid inputs and wrong runtime cannot launch Pyt
       assert.deepEqual(report.workerTaskPackets, []);
     }
     const config = options(); config.stageRunner.runtime = "claude";
-    await assert.rejects(runner(config), /Pending preparation identity or paired material mismatch/u);
+    config.stageRunner.invokeWorker = async () => { workerCalls++; throw new Error("Conflicting runtime must not invoke worker"); };
+    await assert.rejects(runner(config), { name: "TypeError",
+      message: /^Explicit runtime and execution adapter binding differ; another client cannot be substituted$/u });
     assert.equal(pythonCalls, 0);
     assert.equal(workerCalls, 0);
   } finally { childProcess.spawn = original; syncBuiltinESMExports(); }
