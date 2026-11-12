@@ -164,13 +164,33 @@ for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, async () => { awa
                                     page.locator('.node-card[data-node-id="demo-requirements"] .node-identity-button').click()
                                     page.locator('[data-live-inspector-tab="evidence"]').click()
                                     page.locator('[data-live-inspector-panel="evidence"]').wait_for(state="visible")
+                                    # The overview already shows the whole graph. Use the
+                                    # shipped focus shortcut and wheel zoom for its detail,
+                                    # keeping the inspector open and task text unchanged.
+                                    graph = page.locator('[data-live-graph]')
+                                    graph.focus()
+                                    page.keyboard.press("f")
+                                    zoom_steps = 0
+                                    for _ in range(20):
+                                        if graph.get_attribute("data-semantic-zoom") == "card":
+                                            break
+                                        scale = graph.evaluate("element => Number(getComputedStyle(element).getPropertyValue('--camera-scale'))")
+                                        page.locator('.node-card[data-node-id="demo-requirements"] .node-identity-button').hover()
+                                        page.mouse.wheel(0, -120)
+                                        page.wait_for_function("previous => Number(getComputedStyle(document.querySelector('[data-live-graph]')).getPropertyValue('--camera-scale')) > previous", arg=scale)
+                                        zoom_steps += 1
+                                    if graph.get_attribute("data-semantic-zoom") != "card":
+                                        raise RuntimeError("The detail did not reach full task cards using the graph controls")
+                                    graph.focus()
+                                    page.keyboard.press("f")
+                                    page.locator('[data-live-inspector-panel="evidence"]').wait_for(state="visible")
                                     if evidence:
                                         assert evidence in page.locator('[data-live-inspector-panel="evidence"]').inner_text()
                                     if language != "en":
                                         evidence_text = page.locator('[data-live-inspector-panel="evidence"]').inner_text()
                                         if "evidence ·" in evidence_text or "verified" in evidence_text:
                                             raise RuntimeError("Evidence UI type or status is not localized")
-                                    steps += ["Click the Requirements analysis demo node", "Open the Evidence tab"]
+                                    steps += ["Click the Requirements analysis demo node", "Open the Evidence tab", "Focus the selected task with Follow (F)", f"Zoom in {zoom_steps} wheel steps to full task cards", "Center the selected task with Follow (F)"]
                                     page.mouse.move(1590, 1090)
                                 if page_errors:
                                     raise RuntimeError("Live page error: " + page_errors[0])
