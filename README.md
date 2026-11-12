@@ -2,65 +2,206 @@
 
 # 元 · Meta_Kim
 
-**Give your AI a goal. Keep the plan, the work and the next step connected.**
+**Describe the result you want. Keep research, design, teamwork, acceptance and the next improvement connected.**
 
 [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja-JP.md) · [한국어](README.ko-KR.md)
 
 </div>
 
-## Turn an idea into work you can follow and use
+## You describe a goal. What happens next?
 
-**Meta_Kim helps your AI assistant carry a project from “this needs to be better” to a result you can inspect, use and improve.** It works inside your existing AI client: it helps clarify the goal, choose an approach, organize the work, bring in relevant expertise and check what was actually delivered.
+> “I want a small booking app. Customers should choose a time on their phones, staff should manage bookings, and tapping twice should produce just one booking.”
 
-This matters when a job takes more than one prompt. A design decision affects implementation; one task needs another task's output; a later conversation needs to know what was finished. Meta_Kim keeps those connections in the project, so the next step can build on the work already done.
+**Meta_Kim helps your AI turn that request into work it can carry out, check and continue improving.** Inside your existing AI client, it organizes the whole process: understand the problem, inspect the project and relevant sources, compare choices that affect the experience, outline the system, develop the modules, coordinate the work and check the result.
 
-![Meta_Kim Live showing a task map and the progress of a demonstration workflow](docs/images/meta-kim-live-task.png)
+The outcome should be concrete: for this example, a working booking page, a management view, the relevant source, instructions for running it, and checks for normal bookings, repeated submissions and fully booked time slots. The booking app below is a running example of how the pieces connect.
 
-*The actual Live interface with its built-in workflow demo. The map shows related tasks and their states; selecting a task reveals its records.*
+To use it, open your project in your AI client and give the assistant your request, existing materials and constraints. Make choices and provide feedback in that conversation. **Live is the panel for inspecting tasks, progress and evidence.** The screenshot shows what it presents; setup and launch instructions follow below.
 
-## One project, from the first request to the next improvement
+![The actual Meta_Kim Live interface showing task relationships and workflow progress](docs/images/meta-kim-live-task.png)
 
-Suppose your website already has a sign-up form. It works, but on a phone the fields feel cramped and errors are hard to spot. You want an easier experience while keeping the same data fields.
+*The running Live interface with built-in workflow demonstration data. In Live, open a task to inspect its details. The animated diagrams below use the booking example to explain the operating model.*
 
-**Describe the outcome in your own words.** The assistant first reads the existing flow and identifies what must stay: the data sent to the server, the required fields and the product's style. It can examine relevant references and compare approaches before changing the page. The questions it brings back should help make a real choice—for example, whether the form must stay on one screen.
+## A mind map of the whole system
 
-**The approach becomes a connected plan.** At the project level, the plan records how the page, validation and server interface fit together. At the task level, it identifies the mobile layout changes, clearer error messages and checks needed to prove the same data still reaches the application. Each task has a scope, inputs, expected output and a way to judge completion. Independent work can proceed together; work that depends on an interface decision waits for that decision.
+![Meta_Kim mind map: goals, design, tasks, quality and continued improvement](docs/images/animated-system-map.en.svg)
 
-**You receive something you can try.** In this example, ask for the changed source, instructions for running it and the results of the checks. Try the flow at a phone-sized width: submit an empty field, enter an invalid value, then complete a normal sign-up. The result is compared with the agreed criteria. If the layout is better but an error still appears in the wrong place, the next task addresses that specific problem.
+**Start at the user’s goal and follow the four branches.** See how understanding, design, tasks and delivery relate to that goal, together with their division of responsibility: Meta_Kim organizes the work and specialist capabilities carry it out.
 
-**The next conversation continues the same project.** You can say, “Keep this layout, but make the confirmation message clearer.” The recorded decisions, completed tasks and results provide the starting point. The assistant checks them against the current project before continuing.
+- **Goal:** who is using the product, in what situation, for what result and under which constraints.
+- **Design:** inspect evidence, compare feasible approaches and keep important decisions in one requirements design.
+- **Tasks:** define inputs, owners and deliverables, then use dependencies to organize serial and parallel work.
+- **Quality:** review the output, run the appropriate checks and return problems to the affected tasks.
+- **Continuation and improvement:** save decisions, progress and results; resume from valid work and retain methods supported by evidence.
 
-![A goal becomes research, a plan, coordinated tasks, checks and the next improvement](docs/images/intent-to-delivery.svg)
+The value is in these connections. Changing a module interface updates the relevant work. A branch awaiting your decision can leave independent work moving. An ineffective method needs a new basis before another attempt.
 
-A small repair can stay small. A feature that crosses several modules gets a more detailed plan. The amount of planning follows the work and its risks.
+## First PRD pass: turn an idea into a system and module outline
 
-## Why the pieces keep working together
+**A PRD, or product requirements document, explains what to build, why it matters and how to judge the result.** In Meta_Kim, the system outline and module details are two passes over the same PRD. Earlier decisions remain part of the later design.
 
-![How the user, AI client, Meta_Kim, specialist capabilities and project records work together](docs/images/meta-kim-overview.svg)
+![The first PRD pass turns goals, project context and research into architecture, module outlines and pending decisions](docs/images/animated-prd-architecture.en.svg)
 
-### A clear result gives every later choice a purpose
+**Follow one generation cycle:** the request leads to project inspection and research, then option comparison, then four parts of the same PRD: user journey, technology and scope, module outline, and shared agreements.
 
-An initial request often mixes the problem, a possible solution and assumptions about the project. Meta_Kim helps separate them: what you want to achieve, what must be preserved and what would count as success. Research and references are brought in when they affect an important choice. That gives the assistant a reason for selecting an approach and gives you something concrete to review before substantial work begins.
+### Understand the user journey before fixing the system structure
 
-### One design connects the whole system to individual tasks
+1. **Translate the request into observable outcomes.** Who books and who manages bookings? What appears after selecting a time? How should repeated submissions behave? Identify the users, main journey, constraints and acceptance criteria.
+2. **Inspect what already exists.** Read the project structure, actual code, technologies and versions, existing data and current changes. Preserve choices that already work well.
+3. **Research the unknowns that affect a decision.** Use official documentation to establish whether a capability can work. Examine complete journeys and relevant source to design the booking experience. State handling, interfaces and recovery in GitHub projects can inform the approach.
+4. **Compare genuinely different options.** A hosted booking service, an extension to the current app and a separate service can change the experience, effort, maintenance and data ownership. Explain the tradeoffs and a recommendation when a product direction needs your judgment.
+5. **Record the chosen system outline.** Include the technology and version baseline, architecture, module responsibilities, interfaces and shared state, main acceptance criteria, and the questions that still need evidence or your choice.
 
-For software work, the same design has two views. The **architecture view** describes the overall structure, interfaces and constraints. The **module view** turns it into tasks with clear responsibilities and acceptance criteria. A module's work therefore has a place in the overall result. When a decision changes, Meta_Kim can identify the affected tasks instead of treating every completed task as obsolete.
+For the booking app, that outline might contain:
 
-### Dependencies decide what can move forward
+- **User journey:** see available times, enter details and confirm; staff view and change bookings.
+- **System structure:** a presentation layer displays pages and states, an application layer coordinates booking rules, and a data layer stores time slots and bookings.
+- **Modules:** time-slot lookup, booking creation and staff management, each with an initial purpose and boundary.
+- **Shared agreements:** who owns remaining capacity, which booking states exist, and how submission and cancellation interfaces connect.
+- **Acceptance and open choices:** complete a booking on a phone and keep repeated submissions consistent; decide explicitly whether text-message reminders belong in the first delivery.
 
-Tasks are organized by what they need and what they produce. Independent tasks can be assigned in parallel when the client provides the necessary tools; tasks sharing a prerequisite or a file must be coordinated. If one branch needs your decision, unrelated ready work can still continue. This makes the plan useful during execution, rather than a checklist that is forgotten once coding starts.
+For example, “tapping twice should produce one booking” becomes an acceptance criterion assigned to booking creation. Responsibility for recognizing the same submission and maintaining capacity becomes part of the interface and shared-state agreements. The user journey and these responsibilities determine the module boundaries.
 
-### Each task brings the expertise and materials it needs
+**You can assess the whole approach before implementation details grow.** Exploration can retain open questions. Before a module is ready for execution, its required decisions and interfaces must be settled. A small repair reuses its accepted design and expands only the affected part.
 
-Meta_Kim selects from the capabilities available in the client and from explicitly connected libraries such as Kim Service. A task can carry a specialist method, relevant references or an editable example together with its inputs and checks. Only the materials relevant to that task are loaded. The point is to give the worker enough context to produce the right result while keeping unrelated material out of its way.
+## Second PRD pass: make each module ready to implement
 
-### Project records give an interrupted task a place to resume
+Once the direction is settled, the AI develops each module's detailed design and synthesizes it into the same PRD. Modules continue to share the concepts, state and interfaces established above.
 
-Plans, findings, progress and execution receipts connect the intended work to what actually happened. A later session can read them, compare them with the current files and identify the next step. If a previous operation's outcome is unclear, it first checks that outcome before repeating the operation. Valid completed work remains useful, even when the conversation or a particular task is interrupted.
+![The second PRD pass expands a module into journeys, states, rules, interfaces, acceptance and implementation tasks](docs/images/animated-prd-modules.en.svg)
 
-### Checks lead to a specific correction
+**Follow one module being developed:** carry forward the system baseline, select booking creation, fill in actions, states, rules, contracts and acceptance, then hand those details to the UI, API and verification tasks below.
 
-A task is complete when its outputs meet its criteria and the relevant checks support that conclusion. When the same approach repeatedly fails without changing the basis for the attempt, the affected task needs a reviewed correction: a different method, a revised assumption or a clearer decision. Useful findings can then inform the next improvement. You can see what was delivered, why it was accepted and what still needs work.
+For the booking-creation module, the details answer practical questions:
+
+- **How does the user complete the step?** Choose a time, enter details, confirm and receive the result; identify where editing and cancellation lead next.
+- **What appears in each state?** Loading feedback, no available times, submission errors and retry, and success. Include phone layouts, keyboard use and accessibility.
+- **Which business rules apply?** Capacity per time slot, repeated clicks, a slot becoming full during submission, and capacity restored after cancellation.
+- **How does the module connect to the rest?** Input fields, returned results, state ownership and permissions; elaborate transactions, retries and migration where the project needs them.
+- **How is correctness demonstrated?** Every acceptance criterion maps to a task and a check, covering the normal journey and relevant failure and recovery cases.
+
+The detailed design also connects each requirement to implementation and a check. These are example tasks for the booking app:
+
+| Requirement | Design and implementation work | Check |
+| --- | --- | --- |
+| Repeated taps create one booking | The UI handles the submitting state; the API recognizes the same submission and returns the same booking | Tap repeatedly and resend the same request; confirm that only one booking record is added |
+| The last place cannot be overbooked | Data and API work keep capacity updates consistent; the UI shows a fully booked result | Send two concurrent requests; confirm successes do not exceed remaining capacity |
+| Cancellation restores capacity | The cancellation API updates booking state and capacity; the UI shows the result | Query the slot after cancellation; confirm booking state and remaining capacity agree |
+
+Each worker receives **the current system baseline, its complete relevant module design, settled decisions and interfaces, required outputs and acceptance criteria**. Frontend and backend work share agreed fields and states before proceeding within their own scopes.
+
+If you later change the rule for releasing capacity after cancellation, related decisions, modules and dependencies identify the affected tasks. Valid completed work remains useful while changes focus on their actual impact.
+
+## Eight stages: what each step produces for the next
+
+![The eight-stage loop: Critical, Fetch, Thinking, Execution, Review, Meta-Review, Verification and Evolution, with returns when problems are found](docs/images/animated-eight-stages.en.svg)
+
+**Follow the highlights from 01 to 08.** Each card names the result its stage leaves behind. The next stage uses that result; a problem returns to the stage equipped to resolve it.
+
+| Stage | What it receives and does | What it passes on |
+| --- | --- | --- |
+| **01 Critical · Clarify the job** | Read the request and project context; establish users, outcome, scope and important constraints | A clear goal, success criteria and material open questions |
+| **02 Fetch · Research and discover** | Investigate those questions through code, relevant sources and available professional capabilities | Sourced findings, candidate methods and specific missing facts |
+| **03 Thinking · Choose and plan** | Combine goals and evidence, compare routes, develop both PRD views and arrange dependencies | The design baseline, owners, methods, inputs, outputs and acceptance plan |
+| **04 Execution · Do the work** | Carry out the bounded tasks using the current design | Inspectable actual outputs, execution records and the stage’s merged result |
+| **05 Review · Inspect the result** | Compare outputs with the goal; examine earlier understanding, research and design | Concrete findings, corrections and a review judgment |
+| **06 Meta-Review · Examine the review** | Check standards, omissions and the evidence supporting the judgment | A review of that judgment and issues needing further inspection |
+| **07 Verification · Check actual behavior** | Test or inspect the current result; the booking app needs success, repeated-submission and failure-recovery checks | Fresh evidence, results and remaining issues for the current version |
+| **08 Evolution · Improve reusable methods** | Select useful lessons from actual outcomes and evaluate proposed changes | Reviewed method updates, or a reason that no writeback is needed |
+
+This is the operating backbone. **Stages follow their defined order; independent work inside the active stage can run in parallel and is merged before the next stage.** A misunderstood goal returns to clarification, missing facts to research, an unsuitable design to planning, and a failed check to affected work. Preparation follows the task’s needs, and review depth follows its risk. When there is no reusable lesson, record that no method update is needed.
+
+## Dynamic orchestration: use dependencies and current state to decide what runs now
+
+**Dynamic orchestration keeps asking which tasks are ready to proceed.** It considers prerequisites, file scopes, resources, permissions and the current client's available execution capacity.
+
+![Booking tasks run within one stage using dependencies, parallel work, local waits and a merge before review](docs/images/animated-orchestration.en.svg)
+
+**Start with the shared contract, then watch both branches.** The UI branch waits for a choice while API work continues. Once the UI resumes, both outputs meet at the merge. That change in readiness is what dynamic orchestration handles.
+
+The booking work can proceed like this:
+
+1. **Settle the shared interface first.** Submission fields and success/error responses become shared inputs for frontend and backend work.
+2. **Start independent work together.** Page implementation and booking-interface implementation can proceed together when their scopes are separate and the client provides execution capacity. Work touching the same files needs coordinated ordering.
+3. **Release dependent work as inputs finish.** Connecting the page to the real interface waits for both outputs. The scheduler keeps filling newly ready work and hands the stage's outputs to one merge owner.
+4. **Keep a local wait local.** If a page design needs your choice, its UI tasks wait while backend work using the agreed fields and interfaces can continue.
+5. **Return problems to relevant tasks.** A failed branch preserves independently successful work. Diagnose the failure, establish an evidenced correction and then resume the affected work.
+
+Repeated ineffective attempts on the same basis pause the affected task so its method or evidence can be corrected. You can see what is waiting, why, and what would make it ready again.
+
+## Rhythm and intentional silence: make room for the decision that matters now
+
+**Intentional silence leaves room for the current decision and your attention.** It governs when to show information, say less or wait. Open PRD items instead describe missing information or unsettled decisions; those are tracked separately.
+
+![Rhythm control chooses whether to act now, defer, pause or insert a more important intervention](docs/images/animated-rhythm.en.svg)
+
+**Start with the new information at the top:** is it settled, missing facts, ready for your choice, or urgent? Those conditions determine the next card. Pause leaves time to absorb the result and records how work can resume.
+
+Suppose you have just reviewed the system plan, compared providers and handled a significant change. The next message should clarify what is settled and which decision remains. New demanding questions can wait while longer material stays in a file. The default rhythm rules place a Pause after three consecutive high-attention cards; resuming means checking the current state and next action again.
+
+A pause records its reason, unfinished work and recovery condition. If it concerns only that page choice, authorized work independent of the judgment can continue. An explicit request to pause the whole project is respected.
+
+### Ten action cards respond to changing conditions
+
+“Dealing a card” means choosing an action for the current situation. The cards operate within the eight-stage backbone. **Select cards by their triggering conditions and skip those already satisfied.**
+
+| Action card | When it appears | Booking example |
+| --- | --- | --- |
+| **Clarify** | An unknown answer would change the direction | Establish whether staff may cancel for a customer |
+| **Shrink scope** | Scope puts the current delivery at risk | Finish the complete booking journey and schedule extensions for a later round |
+| **Options** | Feasible approaches differ in experience, cost or maintenance | Compare a hosted service with implementation in the current app |
+| **Execute** | Design, inputs and execution conditions are ready | Build the booking page and API |
+| **Verify** | There is an output to check | Exercise bookings, repeated submissions and cancellation |
+| **Fix** | A check finds a concrete issue | Correct capacity that fails to return after cancellation |
+| **Rollback** | The impact is spreading and a stable state must be restored | Restore the affected change using its recovery plan |
+| **Risk** | A permission, shared-data or other material risk appears | Address whether staff can access another branch’s bookings |
+| **Nudge** | A low-risk next step is mildly stuck | Suggest first confirming one successful booking example |
+| **Pause** | Demanding choices or information have become too dense | Leave a short status and recovery point, then allow time to absorb the result |
+
+The same card can be handled differently: act now when it fits, skip it when already satisfied, suppress a low-value interruption, defer it until dependencies are ready, insert an urgent intervention, or escalate for an owner's judgment. **Settled answers stay recorded. The system handles internal Agent allocation; your attention goes to choices that change the product result.**
+
+## Nine governance roles connect to the specialists who perform the work
+
+**meta-warden** is the entry point to the collaboration. The nine roles have distinct responsibilities:
+
+- **meta-warden** coordinates direction, arbitrates conflicts and synthesizes the final conclusion.
+- **meta-conductor** arranges stages, task dependencies, parallel and serial work, and interaction rhythm.
+- **meta-genesis** designs needed Agent identities, responsibilities and prompt structure.
+- **meta-artisan** assembles suitable Skills, MCP capabilities and tools for a task.
+- **meta-sentinel** handles permissions, risk, Hooks and recovery boundaries.
+- **meta-librarian** manages memory, context and continuity after interruption.
+- **meta-prism** reviews quality, detects drift and requests concrete corrections.
+- **meta-scout** discovers and evaluates external capabilities and references.
+- **meta-chrysalis** combines improvement signals and coordinates approved writeback.
+
+These roles participate as the task requires. **Establish the work, find the capability that fits, then bind the owner, method, tools and acceptance in one work order.** For the booking app, the components work together as follows:
+
+| Component | What it establishes | Booking example |
+| --- | --- | --- |
+| **Agent · Executor** | Who produces the result and within which scope | UI and API owners receive explicit file scopes and deliverables |
+| **Skill · Working method** | The procedure and quality standard | A UI method covers mobile layout, feedback states and usability |
+| **Professional material and examples** | Knowledge relevant to this task | Supply applicable state-design or API examples to their task |
+| **Tools and MCP** | How the project or service can be operated | Read code, edit files, inspect pages and check actual results |
+| **Command · Reusable entry point** | How to invoke a repeated operation | Make an existing check procedure available as a task command |
+| **Hook · Triggered check** | Which key conditions to inspect at a defined moment | Check relevant capabilities, task scope and permission boundaries when an operation is requested |
+
+Search the project and client’s existing capabilities first, then consider connected sources such as Kim Service. Reuse a suitable capability, adapt one for project needs, or create one when a reusable gap remains. The executor receives the work order with current design, selected materials and acceptance criteria; the merge owner combines the results.
+
+## Resume interrupted work and improve the next round
+
+![Plans, findings, progress and outputs establish a recovery point, while evaluated lessons inform the next round](docs/images/animated-continuity.en.svg)
+
+**Follow current work → saved records → the next session.** The two lower branches use the actual results to continue unfinished work and evaluate which lessons are worth retaining.
+
+Meta_Kim saves plans, findings, progress, decisions, outputs and checks in the project. A later conversation compares those records with the current files: what is done, which choice is pending, and which operation's result still needs confirmation. It then resumes from the valid continuation point.
+
+You can say:
+
+> “Continue the booking app. Keep the completed booking journey, read the remaining work from last time, finish the cancellation message and capacity restoration, then walk me through acceptance.”
+
+If an earlier operation's result is uncertain, check the current outcome before deciding whether to repeat it. Project maps help locate related modules; memory and run records explain earlier decisions. Current source and outputs remain part of that check.
+
+To retain a lesson, record the observed problem and proposed improvement, evaluate the result and its effect on other cases, then update a method or component through the relevant review. **Improvement has a concrete case, a comparison and a recovery path, so later work can benefit from tested experience.**
 
 <a id="installation"></a>
 
