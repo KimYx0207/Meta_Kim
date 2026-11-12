@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { workBindingsMatch } from "../../src/domain/governance/work-context.mjs";
 
 const hash = (text) => createHash("sha256").update(text).digest("hex");
 const object = (value) => Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -119,6 +120,7 @@ export function buildMethodInvocationContext({ method, packet, upstreamResults =
   // The invocation path verifies this context before delivering it.
   if (accepts("designBinding") && packet.designBinding) inputs.designBinding = clone(packet.designBinding);
   if (accepts("designContext") && packet.designContext) inputs.designContext = clone(packet.designContext);
+  if (accepts("workContext") && packet.workContext) inputs.workContext = clone(packet.workContext);
   setDefault("projectFacts", packet.projectContextBinding);
   // These are adapter facts, not caller-supplied declarations of authority.
   if (accepts("runtimeBindings")) inputs.runtimeBindings = [];
@@ -140,7 +142,8 @@ export function buildMethodInvocationContext({ method, packet, upstreamResults =
     status: method.method && inputProblems.length ? "needs_input" : method.method ? "ready" : "legacy_compatible",
     context: { scopeFiles: packet.scopeFiles ?? [], nonGoals: packet.nonGoals ?? [], acceptanceCriterionIds: assignedIds,
       acceptanceCriteria: packet.acceptanceCriteria ?? [], intentBinding: packet.intentBinding ?? null,
-      designBinding: packet.designBinding ?? null },
+      designBinding: packet.designBinding ?? null,
+      ...(packet.workBinding ? { workBinding: clone(packet.workBinding), workContext: clone(packet.workContext), workScopeRef: packet.workScopeRef, workContextRef: packet.workContextRef } : {}) },
     inputContract: method.inputContract,
     outputContract: method.outputContract,
     method: method.method,
@@ -201,6 +204,7 @@ export function buildMethodDeliveryEnvelope({ runId, packet, outputText, methodB
   return {
     schemaVersion: "method-delivery-envelope-v1",
     runId, taskPacketId: packet.taskPacketId, ownerAgent: packet.ownerAgent ?? packet.owner,
+    ...(packet.workBinding ? { workBinding: clone(packet.workBinding) } : {}),
     taskHash: packet.intentBinding?.taskHash ?? null,
     intentDigest: packet.intentBinding?.intentDigest ?? null,
     designDigest: packet.designBinding?.designDigest ?? packet.designDigest ?? null,
@@ -225,6 +229,7 @@ export function methodDeliveryMatches({ envelope, runId, packet, outputText }) {
   return Boolean(envelope?.schemaVersion === "method-delivery-envelope-v1" && typeof outputText === "string" &&
     envelope.runId === runId && envelope.taskPacketId === packet.taskPacketId &&
     envelope.ownerAgent === (packet.ownerAgent ?? packet.owner) &&
+    workBindingsMatch(envelope.workBinding, packet.workBinding) &&
     envelope.taskHash === (packet.intentBinding?.taskHash ?? null) &&
     envelope.intentDigest === (packet.intentBinding?.intentDigest ?? null) &&
     envelope.designDigest === (packet.designBinding?.designDigest ?? packet.designDigest ?? null) &&

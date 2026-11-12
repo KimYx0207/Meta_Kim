@@ -335,7 +335,9 @@ describe("SKILL.md structural integrity", async () => {
     test("governed runner routes through the requested runtime instead of hardcoding Codex", async () => {
       const runner = await readFile("scripts/run-meta-theory-governed-execution.mjs");
       assert.match(runner, /argValue\("--runtime"/);
-      assert.match(runner, /normalizeRouteRuntime\(runtimeArg\)/);
+      assert.match(runner, /resolvePlanningRuntime\(\{\s*requestedRuntime: runtime/u);
+      assert.match(runner, /runtime = runtimeSelection\.runtime/u);
+      assert.match(runner, /configuredRuntime: hostEnv\?\.META_KIM_RUNTIME/u);
       assert.match(runner, /SELECT_EXECUTION_ROUTE_SCRIPT/);
       assert.match(runner, /"--runtime",\s*routeRuntime/);
       assert.match(runner, /runtimeFamily: routeRuntime/);

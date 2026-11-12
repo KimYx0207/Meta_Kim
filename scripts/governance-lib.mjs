@@ -6,6 +6,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { getProfilePaths } from "./meta-kim-local-state.mjs";
 import { hasEngineeringRepairIntent, hasProductBuildIntent } from "./meta-theory-entry-classifier.mjs";
+import { loadFormalToolProfiles } from "./runtime-tool-profiles.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const repoRoot = path.resolve(__dirname, "..");
@@ -23,7 +24,7 @@ export const GOVERNANCE_ACTIONS = [
   "verify_user_goal",
   "evolve_writeback",
 ];
-export const RUNTIMES = ["claude_code", "codex", "openclaw", "cursor", "gemini", "zcode"];
+export const RUNTIMES = loadFormalToolProfiles().map(profile => profile.runtime);
 export { OPERATING_SYSTEM_TARGETS as OS_TARGETS } from "../src/application/runtime/operating-system.mjs";
 export const SUPPORT = ["native", "partial", "unsupported", "unknown"];
 export const CONFIDENCE = [

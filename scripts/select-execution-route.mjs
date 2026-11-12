@@ -9,6 +9,8 @@ import { classifyMetaTheoryEntry } from "./meta-theory-entry-classifier.mjs";
 import { runtimeOperatingSystem } from "./runtime-operating-system.mjs";
 import { selectRuntimeAgentEvidence } from "./runtime-agent-evidence.mjs";
 import { loadRuntimeProfiles, resolveRuntimeProjection } from "./meta-kim-sync-config.mjs";
+import { resolvePlanningRuntime } from "./runtime-tool-profiles.mjs";
+import { detectHostRuntimeFromEnv } from "./governed-execution/host-runtime-provenance.mjs";
 import {
   evaluateChoiceRequirement,
   resolveNativeChoiceSurface,
@@ -124,7 +126,10 @@ const rejectedCodexHostToolSchemaRaw =
   argValue("--codex-host-tool-schema", null) ??
   process.env.META_KIM_CODEX_HOST_TOOL_SCHEMA ??
   null;
-const runtime = runtimeArg === "auto" ? "codex" : runtimeArg;
+const detectedHost = detectHostRuntimeFromEnv(process.env);
+const runtimeSelection = resolvePlanningRuntime({ requestedRuntime: runtimeArg, configuredRuntime: process.env.META_KIM_RUNTIME,
+  hostRuntime: detectedHost.runtime, hostBasis: detectedHost.basis });
+const runtime = runtimeSelection.runtime;
 const operatingSystem = runtimeOperatingSystem(osArg);
 const { targetOs: osTarget, hostOs } = operatingSystem;
 const taskShape = classifyTaskShape(task);
@@ -1941,7 +1946,7 @@ if (fetchOnly || hostWorkOrder) {
   const inventoryDigest = createHash("sha256").update(stableJson(inventory)).digest("hex");
   const identify = (provider) => ({ ...provider,
     inventoryRef: "sha256:" + createHash("sha256").update(stableJson(provider)).digest("hex") });
-  const fetchPacket = { stage: "Fetch", capabilityDiscovery: { inventoryDigest,
+  const fetchPacket = { stage: "Fetch", runtimeSelection, capabilityDiscovery: { inventoryDigest,
     context: { runtime, os: osTarget, hostOs },
     agents: agents.map(identify), providers: providers.map(identify),
     searchLog: ownerDiscoveryPacket.capabilityDiscoverySearchLog },
@@ -1949,7 +1954,7 @@ if (fetchOnly || hostWorkOrder) {
   const gap = (missing) => ({ gap: "The host-selected work order has an unresolved current capability binding.",
     missing, returnToStage: "Thinking" });
   if (fetchOnly) {
-    console.log(JSON.stringify({ schemaVersion: 1, task, taskShape, runtime, os: osTarget,
+    console.log(JSON.stringify({ schemaVersion: 1, task, taskShape, runtime, runtimeSelection, os: osTarget,
       status: "needs_thinking", fetchPacket, ownerDiscoveryPacket,
       recommendedRoute: null, rankedRoutes: [], workerTaskPacketDrafts: [],
       routeExecutionGate: { canHandoffToHost: false, canEnterExecution: false, executionAuthorized: false,
@@ -4519,7 +4524,7 @@ const output = {
     ? ["critical-real-intent-lock", "fetch-evidence-labeling", "thinking-subject-path-map", "thinking-minimum-test", "review-pass-kill-gate"]
     : [],
   candidateFoundationalCapabilities,
-  runtimeFilterResult: { requested: runtimeArg, applied: runtime, unsupported: !RUNTIMES.includes(runtime) },
+  runtimeFilterResult: { requested: runtimeArg, applied: runtime, unsupported: !RUNTIMES.includes(runtime), selection: runtimeSelection },
   osFilterResult: { requested: operatingSystem.requested, applied: osTarget, host: hostOs, source: operatingSystem.source, unsupported: !OS_TARGETS.includes(osTarget) },
   rankedRoutes,
   recommendedRoute,

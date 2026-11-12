@@ -439,6 +439,7 @@ test("a CLI run with no declared runtime records the host it was actually starte
     "--state-dir", outputRoot,
     "--artifact-dir", outputRoot,
     "--db", path.join(outputRoot, "runs.sqlite"),
+    "--stage-runner-model", "fixture-model[1m]",
     "--project-capability-mutation-mode", "read_only", "--no-emit-conversation-notice",
   ], { criticalInput, governanceTaskFacts,
     workOrders: preparation => [fixtureReadWorkOrder(preparation, { id: "package-name", todayTask: task,
@@ -454,6 +455,9 @@ test("a CLI run with no declared runtime records the host it was actually starte
   // the same project is another task's state, not permission to borrow its chat.
   assert.equal(artifact.hostProvenancePacket.provenanceBasis, "host_env_marker");
   assert.equal(artifact.hostProvenancePacket.conversationLinkState, "unlinked");
-  // The route still plans against its own default; only provenance changed.
-  assert.equal(artifact.requestRecord.runtimeContext.routeTarget, "codex");
+  assert.equal(artifact.requestRecord.runtimeContext.routeTarget, "claude_code");
+  assert.equal(artifact.runtimeSelection.source, "observed_host");
+  assert.equal(artifact.modelSelection.requested, "fixture-model[1m]");
+  assert.equal(artifact.modelSelection.applied, null);
+  assert.deepEqual(artifact.traceEvalControlPlane.toolModelRetrievalHandoffMetadata.model, artifact.modelSelection);
 });

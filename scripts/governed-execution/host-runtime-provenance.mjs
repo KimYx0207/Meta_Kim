@@ -15,9 +15,10 @@
  * modes:
  *   - provenance: which host this record came from. A default is a lie, so an
  *     unproven host is `unavailable`.
- *   - route target: which runtime the route plans against. Route selection only
- *     supports codex and claude, so it keeps its default and stays in the
- *     orchestration evidence where planning belongs.
+ *   - route target: which configured client the route plans against. Formal
+ *     discovery profiles are distinct from the built-in Codex/Claude subprocess
+ *     adapters; neither a profile nor a configured default proves host identity
+ *     or the provider/model actually used.
  */
 
 import {

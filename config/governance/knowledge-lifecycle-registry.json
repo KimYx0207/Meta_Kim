@@ -10,6 +10,16 @@
       "targetRef": "config/contracts/core-loop-contract.json",
       "toStatus": "active"
     },
+    "company-work-runtime-20261113:reviewed-meta-theory-source": {
+      "appliedAt": "2026-11-12T21:33:04.703Z",
+      "approvalDigest": "sha256:fb09b56917b2c54a7030433ff59a7ed2860508d93f4688fab90d00766f863411",
+      "candidateDigest": "sha256:1ab70a8582a327143dbed002e0bd8ac2d612132c6a04642a8819d44efb434bda",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "rollbackPlanDigest": "sha256:d063ff3022567bb06393c45bdcebd35927fbec1fe2addc84b2d8dedcd631c855",
+      "targetRef": "canonical/skills/meta-theory/SKILL.md",
+      "toStatus": "active"
+    },
     "dsh-display-name-20261110:canonical-spelling": {
       "appliedAt": "2026-11-10T23:01:18.142Z",
       "approvalDigest": "sha256:f619120a2231d5a05e65fa82e44cc9147cd9fa5bf7a7b7a40b728862f05e8720",
@@ -147,9 +157,9 @@
       "foundational": true,
       "kind": "knowledge",
       "lifecycle": {
-        "changedAt": "2026-11-10T23:01:18.142Z",
-        "lastTransitionId": "dsh-display-name-20261110:canonical-spelling",
-        "reason": "Apply the user-requested DSH display spelling. The canonical source differs only by DSh to DSH; preserve all methods, official lowercase command/package/API/path identifiers, permission boundaries and existing evidence distinctions."
+        "changedAt": "2026-11-12T21:33:04.703Z",
+        "lastTransitionId": "company-work-runtime-20261113:reviewed-meta-theory-source",
+        "reason": "Bind the exact current source for the user-requested optional company Work context and separate client/model selection. The additions reuse the eight-stage flow and existing authorization, retain unobserved outcomes, and do not create a business database, scheduler or automatic public writeback. The source binding records current-session agent review, not user-performed acceptance or native model execution."
       },
       "provenance": {
         "evidenceRefs": [
@@ -161,7 +171,7 @@
         ]
       },
       "replacementRefs": [],
-      "sourceDigest": "sha256:4d5aa879eca0466b3c5f5ed56681f75064f9ac6f931c2a84b3cb24afc3408272",
+      "sourceDigest": "sha256:756138e72c2085f4524130d937bd5ad0424cc5b50555e9589c9d2401394ce7c2",
       "status": "active",
       "targetRef": "canonical/skills/meta-theory/SKILL.md"
     },
@@ -674,6 +684,39 @@
       "targetRef": "config/contracts/core-loop-contract.json",
       "toStatus": "active",
       "transitionId": "material-choice-20261112:reviewed-core-loop-binding"
+    },
+    {
+      "appliedAt": "2026-11-12T21:33:04.703Z",
+      "approvalDigest": "sha256:fb09b56917b2c54a7030433ff59a7ed2860508d93f4688fab90d00766f863411",
+      "candidateDigest": "sha256:1ab70a8582a327143dbed002e0bd8ac2d612132c6a04642a8819d44efb434bda",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "previousEntry": {
+        "executionClass": "execution_eligible",
+        "foundational": true,
+        "kind": "knowledge",
+        "lifecycle": {
+          "changedAt": "2026-11-10T23:01:18.142Z",
+          "lastTransitionId": "dsh-display-name-20261110:canonical-spelling",
+          "reason": "Apply the user-requested DSH display spelling. The canonical source differs only by DSh to DSH; preserve all methods, official lowercase command/package/API/path identifiers, permission boundaries and existing evidence distinctions."
+        },
+        "provenance": {
+          "evidenceRefs": [
+            "AGENTS.md#Meta-Theory-Activation"
+          ],
+          "recordedAt": "2026-08-12T00:00:00.000Z",
+          "sourceRefs": [
+            "canonical/skills/meta-theory/SKILL.md"
+          ]
+        },
+        "replacementRefs": [],
+        "sourceDigest": "sha256:4d5aa879eca0466b3c5f5ed56681f75064f9ac6f931c2a84b3cb24afc3408272",
+        "status": "active",
+        "targetRef": "canonical/skills/meta-theory/SKILL.md"
+      },
+      "targetRef": "canonical/skills/meta-theory/SKILL.md",
+      "toStatus": "active",
+      "transitionId": "company-work-runtime-20261113:reviewed-meta-theory-source"
     }
   ],
   "policy": {
@@ -683,7 +726,7 @@
     "referenceOnlyPromotion": false,
     "retiredRecordsRemainTombstones": true
   },
-  "revision": 14,
+  "revision": 15,
   "schemaVersion": "knowledge-lifecycle-registry-v1",
-  "updatedAt": "2026-11-11T18:58:03.366Z"
+  "updatedAt": "2026-11-12T21:33:04.703Z"
 }

@@ -7,7 +7,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { copy, diagramLabels } from './readme-animation-copy.mjs';
+import { copy, diagramLabels, workContextCopy } from './readme-animation-copy.mjs';
+import { architectureCopy, runtimeSelectionCopy } from './readme-architecture-copy.mjs';
 const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const OUT=path.join(ROOT,'docs/images');
 const check=process.argv.includes('--check');
@@ -143,6 +144,63 @@ function diagrams(locale){
    if(r===0){d.wire(`M480 ${current.b}V${y-36}H258V${y}`,.1,.18,{color:C.teal});d.wire(`M480 ${y-36}H702V${y}`,.1,.18,{color:C.purple});}else nodes.forEach((node,i)=>d.down(prev[i],node,.29+(r-1)*.2,.37+(r-1)*.2,{color:i?C.purple:C.teal}));prev=nodes;y+=h+74;
   }
   out.continuity=d.finish(y-74);
+ }
+ {
+  const t=workContextCopy[locale],d=new Diagram(locale,'work-context',t,32);
+  const host=d.card(80,d.top,800,t.host,{start:.01,end:.13,progress:false,align:'middle',fill:'#eaf1ff'});
+  const y=host.b+82,w=404,h=Math.max(...t.runs.map(row=>cardSize(row,w)));
+  const runs=t.runs.map((row,i)=>{
+   const x=i?500:56;
+   d.wire(`M480 ${host.b}V${y-38}H${x+w/2}V${y}`,.08+i*.12,.17+i*.12,{color:i?C.teal:C.blue});
+   return d.card(x,y,w,row,{h,start:.13+i*.12,end:.29+i*.12,color:i?C.teal:C.blue});
+  });
+  const receiptY=y+h+84;
+  runs.forEach((r,i)=>d.wire(`M${r.cx} ${r.b}V${receiptY-38}H480${i?'':`V${receiptY}`}`,.36,.43,{color:i?C.teal:C.blue,arrow:!i}));
+  const receipt=d.card(80,receiptY,800,t.receipt,{start:.4,end:.49,progress:false,align:'middle'});
+  const groupY=receipt.b+66,hs=[0,1].map(i=>Math.max(...t.states.slice(i*2,i*2+2).map(row=>cardSize(row,w))));
+  const groupBottom=groupY+hs[0]+30+hs[1];
+  d.parts.push(`<rect x="40" y="${groupY-16}" width="880" height="${groupBottom-groupY+32}" rx="25" fill="#edf3fa" stroke="#cbd9e9"/>`);
+  d.wire(`M480 ${receipt.b}V${groupY-16}`,.45,.5);
+  t.states.forEach((row,i)=>d.card(i%2?500:56,groupY+(i>1?hs[0]+30:0),w,row,{h:hs[i>1?1:0],start:.49+i*.075,end:.59+i*.075,progress:false,color:[C.blue,C.teal,C.purple,C.amber][i]}));
+  const candidateY=groupBottom+88;
+  d.wire(`M480 ${groupBottom+16}V${candidateY}`,.79,.85,{color:C.purple});
+  const candidate=d.card(80,candidateY,800,t.candidate,{start:.84,end:.96,progress:false,color:C.purple,align:'middle'});
+  out['work-context']=d.finish(candidate.b);
+ }
+ {
+  const t=architectureCopy[locale],d=new Diagram(locale,'layers',t,32);
+  const source=d.card(80,d.top,800,t.source,{start:.01,end:.13,progress:false,align:'middle',fill:'#eaf1ff'});
+  const app=d.card(80,source.b+76,800,t.application,{start:.14,end:.28,progress:false,align:'middle'});
+  d.down(source,app,.09,.17);
+  const y=app.b+112,w=392,h=Math.max(cardSize(t.data,w),cardSize(t.adapter,w));
+  const data={x:64,y,w,h,cx:260,b:y+h},adapter={x:504,y,w,h,cx:700,b:y+h};
+  d.wire(`M700 ${app.b}V${y}`,.25,.35,{color:C.purple});
+  d.wire(`M896 ${y+h/2}H930V${app.y+app.h/2}H880`,.41,.55,{color:C.purple,back:true});
+  d.wire(`M260 ${app.b}V${y}`,.56,.65,{color:C.teal});
+  d.label(t.result,480,app.b+59,360,{size:26,line:34,fill:C.purple,align:'middle'});
+  d.card(data.x,y,w,t.data,{h,start:.61,end:.76,progress:false,color:C.teal});
+  d.card(adapter.x,y,w,t.adapter,{h,start:.31,end:.48,progress:false,color:C.purple});
+  const presentation=d.card(80,y+h+94,800,t.presentation,{start:.78,end:.95,progress:false,color:C.teal,align:'middle',fill:'#edf8f6'});
+  d.wire(`M260 ${data.b}V${presentation.y-42}H480V${presentation.y}`,.72,.83,{color:C.teal});
+  out.layers=d.finish(presentation.b);
+ }
+ {
+  const t=runtimeSelectionCopy[locale],d=new Diagram(locale,'runtime-selection',t,30);
+  const task=d.card(80,d.top,800,t.task,{start:.01,end:.12,progress:false,align:'middle',fill:'#eaf1ff'});
+  const w=404,choiceY=task.b+78,choiceH=Math.max(...t.choices.map(row=>cardSize(row,w)));
+  const checkY=choiceY+choiceH+78,checkH=Math.max(...t.checks.map(row=>cardSize(row,w)));
+  const checks=[];
+  t.choices.forEach((row,i)=>{
+   const x=i?500:56,color=i?C.purple:C.blue;
+   d.wire(`M480 ${task.b}V${choiceY-38}H${x+w/2}V${choiceY}`,.08,.17,{color});
+   const choice=d.card(x,choiceY,w,row,{h:choiceH,start:.14,end:.36,progress:false,color});
+   const check=d.card(x,checkY,w,t.checks[i],{h:checkH,start:.4,end:.64,progress:false,color});
+   d.down(choice,check,.32,.45,{color});checks.push(check);
+  });
+  const receiptY=checkY+checkH+94;
+  checks.forEach((n,i)=>d.wire(`M${n.cx} ${n.b}V${receiptY-42}H480${i?'':`V${receiptY}`}`,.63,.77,{color:i?C.purple:C.blue,arrow:!i}));
+  const receipt=d.card(80,receiptY,800,t.receipt,{start:.77,end:.96,progress:false,color:C.teal,align:'middle',fill:'#edf8f6'});
+  out['runtime-selection']=d.finish(receipt.b);
  }
  return out;
 }

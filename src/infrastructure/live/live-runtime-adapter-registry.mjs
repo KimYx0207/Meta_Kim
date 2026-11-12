@@ -4,6 +4,7 @@
  * Registry entries are dependency-injected. This module never discovers a
  * host CLI, allocates model quota, or performs an implicit runtime call.
  */
+import { loadFormalToolProfiles, normalizeConfiguredModel, modelSelectionRecord } from "../../../scripts/runtime-tool-profiles.mjs";
 export const LIVE_RUNTIME_ADAPTER_REGISTRY_SCHEMA_VERSION =
   "meta-kim-live-runtime-adapter-registry-v1";
 export const LIVE_CONTINUATION_RUNTIME_ACTIONS = Object.freeze([
@@ -13,10 +14,7 @@ export const LIVE_CONTINUATION_RUNTIME_ACTIONS = Object.freeze([
   "handoff",
 ]);
 export const SUPPORTED_LIVE_RUNTIME_IDS = Object.freeze([
-  "claude",
-  "codex",
-  "cursor",
-  "openclaw",
+  ...loadFormalToolProfiles().map(profile => profile.id),
   "fake",
   "fixture",
   "mock",
@@ -85,12 +83,16 @@ function normalizeAdapter(input, { requireExecutor = true } = {}) {
   if (execute !== undefined && typeof execute !== "function") fail("adapter execute must be a function");
   const sideEffectMode = input.sideEffectMode ?? "injected";
   if (sideEffectMode !== "injected") fail("adapter sideEffectMode must be injected");
+  if (input.modelSelectionSupported !== undefined && typeof input.modelSelectionSupported !== "boolean") {
+    fail("adapter.modelSelectionSupported must be a boolean");
+  }
   return {
     schemaVersion: LIVE_RUNTIME_ADAPTER_REGISTRY_SCHEMA_VERSION,
     adapterId,
     runtime,
     capabilities,
     sideEffectMode,
+    modelSelectionSupported: input.modelSelectionSupported === true,
     execute,
     metadata: input.metadata === undefined ? null : input.metadata,
   };
@@ -168,13 +170,19 @@ export function createLiveRuntimeAdapterRegistry({ adapters = [] } = {}) {
     if (typeof adapter.execute !== "function") {
       fail("resolved adapter has no injected executor", "LIVE_RUNTIME_ADAPTER_EXECUTOR_REQUIRED");
     }
+    const model = normalizeConfiguredModel(request.model);
+    if (model != null && !adapter.modelSelectionSupported) {
+      fail("adapter does not declare support for an explicit model parameter", "LIVE_RUNTIME_ADAPTER_MODEL_UNSUPPORTED");
+    }
     const result = await adapter.execute(Object.freeze({
       ...request,
+      ...(model != null ? { model } : {}),
       adapterId: adapter.adapterId,
       runtime: adapter.runtime,
       capabilities: adapter.capabilities,
     }));
-    return { adapterId: adapter.adapterId, runtime: adapter.runtime, action, result };
+    return { adapterId: adapter.adapterId, runtime: adapter.runtime, action, result,
+      modelSelection: modelSelectionRecord(model, { application: "injected_adapter_request", applied: model != null }) };
   };
 
   return Object.freeze({

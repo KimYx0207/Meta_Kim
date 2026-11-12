@@ -16,7 +16,7 @@
 
 最终你应当能拿到具体产物：例如可运行的预约页面、管理入口、相关源码、启动方法，以及正常预约、重复提交、时段已满等场景的检查结果。下面用这个预约工具作为贯穿示例，说明系统每一步如何衔接。
 
-实际使用时，在 AI 客户端里打开你的项目，把需求、现有资料和限制发给 AI；后续选择和反馈也在这里完成。**Live 是查看任务、进度和证据的面板**，下图先展示它能看到什么，安装与打开方法在后面。
+实际使用时，在 AI 客户端里打开你的项目，用自己的话描述目标，并把现有资料和限制发给 AI；后续选择和反馈也在这里完成。**Live 是查看任务、进度和证据的面板**，下图先展示它能看到什么，安装与打开方法在后面。
 
 ![Meta_Kim Live 的真实界面，显示任务关系和工作流进度](docs/images/meta-kim-live-task.zh-CN.png)
 
@@ -203,6 +203,25 @@ Meta_Kim 把计划、发现、进度、决定、产物和检查记录保存在�
 
 复用经验时，先记录遇到的问题和候选改法，再验证它是否改善结果、是否影响其他场景，经过相应审阅后更新方法或组件。**持续改进有具体样本、比较和恢复路径，下一次任务才能用上经过检验的经验。**
 
+## 一件公司的事，可以跨越多次执行
+
+![同一公司事项承接多次执行，分别记录产出、核验、采用和效果，再整理候选经验](docs/images/animated-work-context.zh-CN.svg)
+
+**公司业务系统保存长期事项，Meta_Kim 把每次执行接回同一件事。** 公司现在只有一个人，也可以使用同一套接口；以后增加成员，事项和已有决定继续保留。宿主提供公司、事项、上下文版本、访问范围与来源引用，Meta_Kim 将它们绑定到本轮工单和结果。上下文变了就开新一轮，已有记录仍可追溯。
+
+完成回执分别回答四个问题：
+
+| 回执 | 记录什么 |
+| --- | --- |
+| **产出 produced** | 哪个真实执行结果已经返回；计划与“已收到”不算产出 |
+| **核验 verified** | 本轮独立结果审查的结论和证据；尚未核验保留未知 |
+| **采用 adopted** | 宿主记录采用了哪一版、原决定引用及理由；没提供理由记为未知 |
+| **效果 effect** | 采用后的业务观察与来源；核验通过不能推出业务有效 |
+
+例如，这轮生成了 v2，公司仍沿用上轮已批准的 v1，回执会分别保留两者，不会要求人重新批准 v1。宿主可以在执行结束后追加采用、效果和经验复用记录，原执行文件保持不变，worker 不会重跑。经验可记为直接复用、调整后复用或不适用；失败核验、未采用与采用反馈只进入待审候选，沿用现有知识生命周期。
+
+接入使用普通 API 的可选 `workContext`，或 CLI `--work-context-input`；后续观察使用 `workOutcome` / `--work-outcome-input`，绑定原 `runId` 和当前事项上下文。字段和调用说明见 [既有治理参考](canonical/skills/meta-theory/references/dev-governance.md#optional-company-work-context)。未传入时保持原流程。业务记录与身份授权由宿主负责，引用本身不授予访问权限，也不会自动发布公司知识。
+
 <a id="installation"></a>
 
 ## 在自己的项目里开始
@@ -277,6 +296,25 @@ node bin/meta-kim.mjs live --project-root "/path/to/your-project"
 
 **Qoder、Trae** 的 Beta 适配资源随包提供，需要明确配置后才启用，不是新增的 `--targets` 安装目标。DeepSeek Harness 使用下面的独立安装方式。依赖项目自己的客户端支持由上游维护。
 
+### 客户端与模型分别配置
+
+![从任务和宿主信号选择客户端与模型，核对适配能力，并分别记录请求、应用和实际观测](docs/images/animated-runtime-selection.zh-CN.svg)
+
+**专业方法、执行客户端和模型是三个独立选择。** 同一套 PRD、八阶段、交接和核验方法可以供不同客户端使用。Claude Code、Codex、Gemini CLI、ZCode 等名称描述使用入口；模型由该客户端的连接和本轮请求决定。例如，Claude Code 接入 MiniMax 模型时，客户端仍是 Claude Code，模型单独记录。
+
+| 要调整什么 | 现有配置入口 | 实际行为 |
+| --- | --- | --- |
+| 本轮客户端 | API `runtime` / CLI `--runtime` | 明确指定优先；自动选择读取已绑定适配器、配置与宿主信号，记录选择来源 |
+| 无宿主信号时的兼容默认值 | `config/contracts/runtime-priority-and-compatibility-contract.json` 的 `selectionPolicy.defaultPlanningRuntime` | 作为有来源的规划默认值，不把它当作执行成功或权限证据 |
+| 本轮 worker 模型 | API `stageRunner.model` / CLI `--stage-runner-model` | 已实现的命令桥按真实协议传入；注入式适配器必须明确声明可处理模型选择 |
+| 账户、连接与模型可用性 | 当前客户端或宿主配置 | 由真实运行环境提供；方法包不替你开通模型或扩大工具权限 |
+
+没有显式模型时，记录为运行进程的默认行为；不推断已继承父会话的模型。执行回执分开保留 **requested（请求）、applied（传入适配器）、observed（实际观测）**，没有观测证据就保持未知。显式请求不支持时给出缺口，不悄悄改用另一款模型。更换执行配置需要新一轮执行依据，已完成的事项记录仍可继续引用。
+
+安装投影、宿主接续和原生命令桥各有真实支持范围。上表六个安装目标来自 `config/sync.json`；内置只读阶段 worker 的原生命令桥目前实现 Codex 与 Claude Code 协议。Gemini、ZCode 等宿主接续要有对应的真实适配器和能力证据。MiniMax Code 或其他新客户端可先读取通用方法；新增原生运行需要实现并验证相应适配，不能只增加一个名称就宣称能执行。
+
+旧版本的运行记录若缺少新的客户端、操作系统与模型绑定，仍保留为历史依据；进一步执行使用新 `runId`，重新获取当前能力与上下文，不推测历史模型。新版运行的恢复保留原模型参数记录；仅追加业务采用或效果观察时不重跑 worker。
+
 ## 需要专业方法时，接上 Kim Service
 
 Meta_Kim 负责组织工作，**Kim Service 提供可复用的专业方法和材料**，用于设计、分析、内容交付等具体任务。接入之后，Meta_Kim 选择任务执行方法时，就能把这些能力纳入考虑；实际工作仍通过当前客户端已有的工具执行。
@@ -346,6 +384,20 @@ node setup.mjs --check
 安装或客户端加载出现问题时，可以运行 `node bin/meta-kim.mjs doctor` 检查配置并查看下一步建议。更新时保留工作项目的记录，后续对话才能继续使用。
 
 ## 源码与生成文件
+
+![配置与共享方法进入应用编排，宿主适配器返回实际结果，数据层保存记录，展示层读取状态](docs/images/animated-layers.zh-CN.svg)
+
+**每类事实有自己的唯一权威，应用、数据和展示围绕这些来源连接。** 当前职责分布如下，目录名对应仓库中的实际实现：
+
+| 职责 | 权威位置或实现 | 修改时的边界 |
+| --- | --- | --- |
+| 共享方法与阶段契约 | `canonical/`、`config/contracts/` | 方法、八阶段和治理规则各维护自己的正本 |
+| 客户端与适配事实 | `config/sync.json`、`config/runtime-compatibility-catalog.json`、`scripts/runtime-tool-profiles.mjs` | 投影目标、格式与能力证据分开；安装发现不等于可执行 |
+| 应用编排与领域规则 | `src/application/`、`src/domain/`、`scripts/governed-execution/` | 组织任务、依赖、恢复与结果判断；主入口仍在 `scripts/run-meta-theory-governed-execution.mjs` |
+| 数据与宿主适配 | `src/data/repositories/`、`src/infrastructure/` | 保存运行和知识记录，通过已有适配协议连接真实宿主 |
+| 展示 | `src/presentation/live/`、`src/presentation/run-surfaces/` | 显示状态、证据和下一步，不维护另一套模型选择规则 |
+
+扩展时按责任修改：新方法进入 canonical，新客户端补配置和适配证据，新展示读取已有状态。业务事项主记录、组织权限、外部通知、定时整理继续由接入的业务宿主提供。README 的动态图由 `scripts/build-readme-animations.mjs` 和本地化文案生成，使用 `--check` 检查源稿与图是否一致；标题、入口和结尾居中，减少动画时仍能读懂全部关系。
 
 共用的 Agent、Skill 和运行资源维护在 `canonical/` 中，机器可读配置位于 `config/`。`.claude/`、`.codex/`、`.cursor/` 等客户端目录由 `npm run meta:sync` 在本地生成，由 `.gitignore` 管理并保留在本地，不提交到 GitHub 源码；发布包携带对应的共用源文件。
 

@@ -35,7 +35,7 @@ test("machine result transport keeps the complete final JSON separately from the
     { type: "turn.completed", usage: {} },
   ];
   const wire = `${records.map((item) => JSON.stringify(item)).join("\n")}\n`;
-  const program = `let input="";process.stdin.on("data",chunk=>input+=chunk);process.stdin.on("end",async()=>{if(input.includes("fixture-write-conflict"))(await import("node:fs")).writeFileSync(${JSON.stringify(path.join(root, "conflict.json"))},"preserved fixture bytes",{flag:"wx"});const wire=Buffer.from(${JSON.stringify(wire)});const split=wire.indexOf(Buffer.from("实际"))+1;process.stdout.write(wire.subarray(0,split));setTimeout(()=>process.stdout.write(wire.subarray(split)),25);});`;
+  const program = `if(process.argv[process.argv.indexOf("--model")+1]!=="fixture-model[1m]")process.exit(17);let input="";process.stdin.on("data",chunk=>input+=chunk);process.stdin.on("end",async()=>{if(input.includes("fixture-write-conflict"))(await import("node:fs")).writeFileSync(${JSON.stringify(path.join(root, "conflict.json"))},"preserved fixture bytes",{flag:"wx"});const wire=Buffer.from(${JSON.stringify(wire)});const split=wire.indexOf(Buffer.from("实际"))+1;process.stdout.write(wire.subarray(0,split));setTimeout(()=>process.stdout.write(wire.subarray(split)),25);});`;
   if (process.platform === "win32") {
     writeFileSync(path.join(root, "fake-codex.mjs"), program);
     writeFileSync(path.join(root, "codex.cmd"), '@echo off\r\n"%~dp0\\node.exe" "%~dp0\\fake-codex.mjs" %*\r\n');
@@ -44,9 +44,12 @@ test("machine result transport keeps the complete final JSON separately from the
   }
   // A synthetic CLI process tests transport only; it makes no model call.
   const result = await invokeReadOnlyRuntimeWorker({ runtime: "codex", workspaceRoot: root, prompt: "Return the requested JSON",
+    model: "fixture-model[1m]",
     env: { ...process.env, PATH: `${root}${path.delimiter}${process.env.PATH}` },
     machineResultArtifact: { ownedRoot: root, relativePath: "final.json", maxBytes: 256 * 1024, responseContract: { type: "object" } } });
   assert.equal(result.status, "pass", JSON.stringify(result));
+  assert.equal(result.modelSelection.applied, "fixture-model[1m]");
+  assert.equal(result.modelSelection.observed, null, "a synthetic CLI receiving argv is not provider model evidence");
   const actual = await readObservedMachineResult(result);
   const actualCharacters = [...actual];
   const firstDifference = [...final].findIndex((char, index) => char !== actualCharacters[index]);
@@ -65,6 +68,7 @@ test("machine result transport keeps the complete final JSON separately from the
   assert.equal(writeAdmissions, 0, "A real observed blocked message needs no reviewer or write admission");
   const conflictPath = path.join(root, "conflict.json");
   const conflict = await invokeReadOnlyRuntimeWorker({ runtime: "codex", workspaceRoot: root, prompt: "fixture-write-conflict: Return the requested JSON",
+    model: "fixture-model[1m]",
     env: { ...process.env, PATH: `${root}${path.delimiter}${process.env.PATH}` },
     machineResultArtifact: { ownedRoot: root, relativePath: "conflict.json", maxBytes: 256 * 1024, responseContract: { type: "object" } } });
   assert.equal(conflict.status, "failed");
@@ -660,12 +664,16 @@ let input="";process.stdin.on("data",chunk=>input+=chunk);process.stdin.on("end"
 
 test("machine goal runs real independent processes and refills a freed slot with the dependent task", async (t) => {
   const context = await parallelMachineGoalFixture(t);
+  context.host.model = "fixture-model[1m]";
   const { result, resume, events } = await context.run();
   assert.equal(result.status, "waiting", JSON.stringify(result));
   assert.equal(context.maxActive, 2);
   assert.equal(context.active, 0, "Returning must drain every admitted process");
   assert.deepEqual(context.invoked, ["a", "b", "c"]);
   assert.ok(result.calls.every((call) => call.status === "completed" && call.acceptanceStatus === "pending_independent_review"));
+  assert.ok(result.calls.every(call => call.modelSelection.applied === context.host.model && call.modelSelection.observed === null));
+  assert.equal(result.modelSelection.applied, context.host.model);
+  assert.equal(result.modelSelection.scope, "run");
   assert.equal(resume.activeClaims.length, 0);
   assert.equal(resume.completedNodes.length, 4, "Three deliveries and the existing stage merge are retained");
   const timeline = readFileSync(context.timelinePath, "utf8").trim().split("\n").map((line) => JSON.parse(line));
@@ -676,6 +684,9 @@ test("machine goal runs real independent processes and refills a freed slot with
   assert.equal(events.at(-1).eventType, "RunCoordinatorReleased");
   const replay = await context.run();
   assert.deepEqual(replay.result.calls, []);
+  assert.equal(replay.result.modelSelection.applied, context.host.model, "durable replay retains the original parameter receipt without invoking another worker");
+  assert.equal(replay.result.modelSelection.observed, null);
+  assert.equal(replay.result.modelSelection.scope, "run");
   assert.deepEqual(context.invoked, ["a", "b", "c"], "Resume reuses all durable deliveries");
 });
 
@@ -1201,14 +1212,21 @@ test("structured required inputs stop before native or injected invocation and m
   useDependencyEnvironment(t, fixture.environment);
   let invoked = false;
   const bridge = await runStageRunnerBridge({ runId: "method-input-missing", runtime: "codex", stageDagPacket: dagFor(["method"]),
+    model: "fixture-model[1m]", modelSelectionSupported: true,
     workerTaskPackets: [fixture.selected], workspaceRoot: process.cwd(), invokeWorker: async () => { invoked = true; return { status: "pass" }; } });
   assert.equal(invoked, false);
   assert.equal(bridge.failure.failureClass, "dependency_method_inputs_missing");
   assert.deepEqual(bridge.nodeRecords[0].methodInputProblems, [{ field: "facts", reason: "missing" }]);
+  assert.equal(bridge.nodeRecords[0].modelSelection.requested, "fixture-model[1m]");
+  assert.equal(bridge.nodeRecords[0].modelSelection.applied, null);
+  assert.equal(bridge.modelSelection.application, "not_invoked");
+  assert.equal(bridge.modelSelection.applied, null);
   const native = await invokeReadOnlyRuntimeWorker({ runtime: "claude", workspaceRoot: process.cwd(), packet: fixture.selected,
-    prompt: "must not launch", env: { ...fixture.environment, PATH: "" } });
+    model: "fixture-model[1m]", prompt: "must not launch", env: { ...fixture.environment, PATH: "" } });
   assert.equal(native.failureClass, "dependency_method_inputs_missing");
   assert.equal(native.runtimeProcessInvoked, undefined);
+  assert.equal(native.modelSelection.requested, "fixture-model[1m]");
+  assert.equal(native.modelSelection.applied, null);
   fixture.selected.methodInputs = { facts: "Known facts" };
   writeFileSync(path.join(fixture.componentRoot, "method.json"), '{"schemaVersion":1,"steps":["drift"]}');
   await assert.rejects(loadDependencyAgentMethod({ packet: fixture.selected, environment: fixture.environment }), /not verified/u);

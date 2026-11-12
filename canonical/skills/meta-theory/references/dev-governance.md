@@ -21,6 +21,57 @@ Meta agents govern:
 - Review sub-agent verifies quality and evidence.
 - Execution workers produce the deliverable.
 
+## Client, Model And Provider Selection
+
+Keep the method, client adapter and model/provider as separate choices. Select methods from current capability evidence. For the ordinary runner, `runtime: "auto"` (or omitted `--runtime`) resolves, in order, an explicit runtime, configured stage-runner runtime, registered host adapter, `META_KIM_RUNTIME`, declared host, observed current-host markers, then `selectionPolicy.defaultPlanningRuntime` in `config/contracts/runtime-priority-and-compatibility-contract.json`. The last is a labeled compatibility planning default, not evidence about the host. A conflicting or unknown host stays unproven. An explicit runtime that cannot be served must remain a capability gap; do not substitute another client.
+
+Formal discovery profiles come from `config/sync.json.supportedTargets` and the runtime compatibility catalog. Gemini or ZCode profiles do not imply a built-in subprocess protocol. Built-in read-only native workers currently implement the verified Codex/Claude CLI protocols; other registered clients require an explicitly injected adapter with the relevant declared action. Do not invent a MiniMax CLI or infer a model from its client name.
+
+When the user/host has configured a model, pass the exact opaque identifier as `stageRunner.model` (CLI `--stage-runner-model`). Configure it from preparation onward; a changed runtime/model starts a fresh run/Fetch instead of resuming old owner/source bindings. This setting does not start execution. Built-in adapters pass it as a separate `--model` argument. An injected registry adapter must declare `modelSelectionSupported: true` and consume the `model` request field; an unsupported explicit choice fails instead of being dropped. Keep authentication, endpoint/provider configuration and model availability with the host. Codex keeps `--ignore-user-config` isolation, so an omitted model does not prove inheritance of a parent session or user configuration.
+
+Record `runtimeSelection.source` and `modelSelection.requested/applied/observed` in preparation and results. `applied` means the parameter was sent to the selected invocation, not that a provider confirmed the served model. `scope: "current_call"` describes that call; durable `scope: "run"` includes preserved parameter records from earlier completed nodes without invoking them again. Without independent observation, `observed` remains `null` with `observationStatus: "not_observed"`. In Fetch/Verification, report unsupported adapters, missing provider access and unobserved execution honestly; do not claim automatic best-model selection.
+
+## Optional Company Work Context
+
+Use this only when the current host already supplies a company-owned, long-lived Work. A company may have one or many people; its business records and identity authority stay with that host. Preserve the existing eight-stage spine, human milestones and knowledge lifecycle. Do not create another scheduler, approval system, Work database or organization IAM.
+
+Pass `workContext` to `runMetaTheoryGovernedExecution`, or `--work-context-input <json-file>` to the same CLI:
+
+```json
+{
+  "schemaVersion": "kim-work-context-v1",
+  "organizationRef": "company:kim", "workRef": "work:launch",
+  "contextRevision": "revision:2", "scopeRef": "scope:operations",
+  "sourceRefs": ["record:brief:2"],
+  "acceptedArtifactRefs": ["artifact:brief:v1"],
+  "decisionRefs": ["decision:approve-v1"]
+}
+```
+
+These are opaque host references, not credentials or proof that their contents were fetched. In Fetch, inspect the needed current source/version through existing authorized capabilities; record unresolved sources instead of inventing facts. In Thinking, place only the relevant resolved facts in existing task evidence/method inputs. The runner binds each worker and returned delivery to the organization, Work, revision and digest. Work orders, worker prompts and method context carry the normalized reference-only snapshot, including sources, adopted versions and decisions; they do not copy the referenced private business content or resolve it outside the current host-authorized scope. Keep permission and material-change decisions with existing host mechanisms. A changed context starts a new run; it does not invalidate a still-applicable historical business decision or require its approval again.
+
+The digest uses SHA-256 over normalized JSON: object keys sorted recursively, arrays in original order, omitted reference lists normalized to `[]`. References are nonempty strings up to 500 characters without control characters; lists hold at most 64 unique references. Keep version references exact. Missing `workContext` leaves the old route unchanged; malformed supplied context and cross-Work/revision reuse are explicit errors.
+
+Summary reports `workReceipt` with four independent states: `produced` records returned execution outputs, `verified` uses the existing independent outcome review, `adopted` records the host's chosen version, and `effect` records subsequent business observations. A plan/acknowledgement is not production; a verified v2 does not replace an adopted v1. Unobserved adoption or effect stays `unknown`.
+
+Append business observations to an existing materialized run using the same `task`, `runId`, `workContext` and output directory plus `workOutcome` (CLI `--work-outcome-input`):
+
+```js
+workOutcome: {
+  schemaVersion: "kim-work-outcome-v1", runId: current.runId,
+  workBinding: current.workBinding,
+  adopted: { status: "accepted", artifactRefs: ["artifact:brief:v1"],
+    decisionRef: "decision:approve-v1", reason: "Continue using the approved version." },
+  effect: { status: "unknown" },
+  knowledgeReuse: [{ sourceRef: "knowledge:launch-checklist", disposition: "adapted",
+    reason: "Keep the useful checks; adjust them for this launch." }]
+}
+```
+
+This current observation must match the run and full Work binding; `decisionRef` may point to an earlier applicable decision without new human approval. Adoption states are `unknown`, `pending`, `accepted`, `rejected`; accepted/rejected require a decision reference, and accepted requires exact artifact references. Effect is `unknown` or `observed`, with evidence references for an observation. Reuse is `direct`, `adapted` or `not_applicable`. Preserve missing reasons as `unknown`; reasons and effect summaries accept multiline text up to 8,000 characters. The entry appends a run projection without rewriting execution files or dispatching workers. These host observations remain explicitly unverified by Meta_Kim.
+
+In Evolution, retain failed technical reviews and host adoption/effect/reuse observations as organization-scoped candidates with sources and reasons. A not-applicable result is useful feedback, not a successful reuse. Use the existing reviewed knowledge lifecycle to decide whether anything should become durable; receipt collection does not authorize canonical/public knowledge publication or automatically promote a candidate.
+
 ## Task Classes And No-Agent Exception
 
 `taskClass` categories:

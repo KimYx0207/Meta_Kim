@@ -16,7 +16,7 @@
 
 The outcome should be concrete: for this example, a working booking page, a management view, the relevant source, instructions for running it, and checks for normal bookings, repeated submissions and fully booked time slots. The booking app below is a running example of how the pieces connect.
 
-To use it, open your project in your AI client and give the assistant your request, existing materials and constraints. Make choices and provide feedback in that conversation. **Live is the panel for inspecting tasks, progress and evidence.** The screenshot shows what it presents; setup and launch instructions follow below.
+To use it, open your project in your AI client and describe the result in your own words, together with existing materials and constraints. Make choices and provide feedback in that conversation. **Live is the panel for inspecting tasks, progress and evidence.** The screenshot shows what it presents; setup and launch instructions follow below.
 
 ![The actual Meta_Kim Live interface showing task relationships and workflow progress](docs/images/meta-kim-live-task.png)
 
@@ -203,6 +203,25 @@ If an earlier operation's result is uncertain, check the current outcome before 
 
 To retain a lesson, record the observed problem and proposed improvement, evaluate the result and its effect on other cases, then update a method or component through the relevant review. **Improvement has a concrete case, a comparison and a recovery path, so later work can benefit from tested experience.**
 
+## One company Work can span many runs
+
+![One company Work connects multiple runs, keeps production, verification, adoption and effect separate, then collects learning candidates](docs/images/animated-work-context.en.svg)
+
+**The company's business system owns the long-lived Work; Meta_Kim links each execution back to it.** The same optional interface supports a one-person company and a growing team. The host supplies organization, Work, context revision, scope and source references. These bind the current work orders and results. Changed context starts a new run while earlier records remain traceable.
+
+The receipt answers four separate questions:
+
+| Receipt | What it records |
+| --- | --- |
+| **produced** | Actual returned execution outputs; a plan or acknowledgement is not an output |
+| **verified** | The existing independent outcome review and evidence; unchecked remains unknown |
+| **adopted** | The host's exact adopted version, original decision reference and reason; missing reason remains unknown |
+| **effect** | Subsequent business observations and sources; verification alone does not establish effectiveness |
+
+A run may produce v2 while the company keeps the previously approved v1. Both remain visible without asking for v1's approval again. The host can append adoption, effect and knowledge-reuse observations after execution; original execution files stay unchanged and workers do not rerun. Reuse can be direct, adapted or not applicable. Failed verification, rejection and adoption feedback remain candidates for the existing reviewed knowledge lifecycle.
+
+Use optional `workContext` in the ordinary API or CLI `--work-context-input`; append observations with `workOutcome` / `--work-outcome-input`, bound to the original `runId` and current Work context. See the [existing governance reference](canonical/skills/meta-theory/references/dev-governance.md#optional-company-work-context) for fields and usage. Omit these inputs to retain the existing flow. The host owns business records and authorization; references grant no access and do not publish company knowledge automatically.
+
 <a id="installation"></a>
 
 ## Start with your own project
@@ -277,6 +296,25 @@ After installation, reopen the client in your working project so it loads the co
 
 **Qoder and Trae** Beta adapter resources are included for experimental integration. They are inactive until explicitly configured and are not additional `--targets` options. DeepSeek Harness uses the separate setup below. Dependency projects maintain their own client support.
 
+### Configure the client and model separately
+
+![Select a client and model from task inputs and host evidence, check adapter capability, and keep requested, applied and observed values separate](docs/images/animated-runtime-selection.en.svg)
+
+**A professional method, an execution client and a model are separate choices.** The same PRD, eight-stage workflow, handoff and verification methods can be used in different clients. Names such as Claude Code, Codex, Gemini CLI and ZCode describe the client; its connection settings and the current request determine the model. A Claude Code client connected to a MiniMax model remains a Claude Code client, with the model recorded separately.
+
+| What to change | Existing configuration entry | Behavior |
+| --- | --- | --- |
+| Client for this run | API `runtime` / CLI `--runtime` | Explicit selection takes priority; auto uses bound adapters, configuration and host signals, retaining its source |
+| Compatibility default without host evidence | `selectionPolicy.defaultPlanningRuntime` in `config/contracts/runtime-priority-and-compatibility-contract.json` | A traceable planning default, never proof of execution or permission |
+| Worker model for this run | API `stageRunner.model` / CLI `--stage-runner-model` | Implemented command bridges pass it through their real protocol; injected adapters must declare model-selection support |
+| Account, connection and model availability | Current client or host settings | Supplied by the actual environment; method packages do not grant model access or tool permissions |
+
+Without an explicit model, the record identifies runtime-process defaults; it does not infer inheritance from the parent session. Receipts distinguish **requested**, **applied to the adapter**, and **observed** models. Missing observations remain unknown. An unsupported explicit request produces a capability gap instead of a silent substitution. Changing execution settings requires a new execution basis while completed Work records remain reusable.
+
+Installation projections, host continuation and native command bridges have separate support boundaries. The six installer targets above come from `config/sync.json`. Built-in read-only stage workers currently implement native Codex and Claude Code protocols. Host continuation for Gemini, ZCode and other clients requires a real adapter and capability evidence. MiniMax Code or another new client can read portable methods; native execution requires an implemented and verified adapter, not just another name in a list.
+
+Older runs without the new client, operating-system and model binding remain historical evidence. Further execution uses a new `runId` and fresh capability/context evidence, without guessing the historical model. Resuming a newly bound run preserves its original model-parameter record; appending business adoption or effect observations does not rerun workers.
+
 ## Add Kim Service when the job needs specialist methods
 
 Meta_Kim organizes the work. **Kim Service supplies reusable specialist methods and materials** for tasks such as design, analysis and content delivery. Connecting it lets Meta_Kim consider those methods when selecting how a task should be done; the task still runs through the tools available in your client.
@@ -346,6 +384,20 @@ node setup.mjs --check
 If installation or client loading needs attention, `node bin/meta-kim.mjs doctor` checks the setup and suggests the next step. Keep your working project's records when updating so later sessions can continue from them.
 
 ## Source and generated files
+
+![Authoritative configuration feeds application orchestration, host adapters return results, data stores records, and views present state](docs/images/animated-layers.en.svg)
+
+**Each kind of fact has one authoritative source; application, data and views connect through those sources.** These paths describe the current implementation:
+
+| Responsibility | Source or implementation | Change boundary |
+| --- | --- | --- |
+| Shared methods and stage contracts | `canonical/`, `config/contracts/` | Methods, eight stages and governance each retain their own source |
+| Client and adapter facts | `config/sync.json`, `config/runtime-compatibility-catalog.json`, `scripts/runtime-tool-profiles.mjs` | Projection targets, formats and capability evidence stay distinct; installation is not execution proof |
+| Application and domain rules | `src/application/`, `src/domain/`, `scripts/governed-execution/` | Tasks, dependencies, recovery and outcome rules; the main entry remains `scripts/run-meta-theory-governed-execution.mjs` |
+| Data and host adapters | `src/data/repositories/`, `src/infrastructure/` | Persist run and knowledge records; connect actual hosts through existing adapter protocols |
+| Presentation | `src/presentation/live/`, `src/presentation/run-surfaces/` | Show state, evidence and next actions without another model-selection policy |
+
+Extend the responsible layer: methods in canonical, client configuration and verified adapters for a new host, existing state for a new view. The business host retains the Work master record, organization permissions, external notifications and scheduled knowledge processing. `scripts/build-readme-animations.mjs` and localized copy generate the README diagrams; `--check` detects source drift. Titles, entry cards and endings are centered, and reduced motion retains the complete relationships.
 
 Shared Agents, Skills and runtime assets are maintained in `canonical/`, with machine-readable configuration in `config/`. Client directories such as `.claude/`, `.codex/` and `.cursor/` are generated locally by `npm run meta:sync`. These runtime projections are excluded from GitHub source and kept local through `.gitignore`; the distribution package includes their shared sources.
 

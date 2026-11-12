@@ -10,6 +10,7 @@ import { productDesignDigest } from "./governed-execution/product-design.mjs";
 import { normalizeHostCritical } from "./governed-execution/intent-dialogue.mjs";
 import { readCurrentTaskFacts, selectTaskDesignRoute } from "./governed-execution/task-design-dispatch.mjs";
 import { taskOutcomeDigest } from "../src/domain/governance/task-outcome.mjs";
+import { normalizeWorkContext, workBindingFor, workBindingsMatch, projectWorkReceipt } from "../src/domain/governance/work-context.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
@@ -5216,11 +5217,39 @@ export function validatePreparationArtifact(contract, artifact) {
   ensure(criticalCandidates.some(critical => preparation.bindingDigest === productDesignDigest({ taskHash,
     intentDigest: intent.intentBinding.intentDigest ?? null, requirementsDigest: discovery?.discoveryDigest ?? null,
     projectContextDigest: artifact.projectContextPacket?.digest ?? null, critical,
-    questions: artifact.preDecisionOptionFrame.unresolvedQuestions, materialBindings: preparation.materialBindings })), "Preparation frame or Critical binding digest mismatch.");
+    questions: artifact.preDecisionOptionFrame.unresolvedQuestions, materialBindings: preparation.materialBindings,
+    ...(artifact.workContext ? { workBinding: workBindingFor(artifact.workContext) } : {}) })), "Preparation frame or Critical binding digest mismatch.");
   for (const name of ["intentPacket", "fetchPacket", "thinkingPacket", "goalContractPacket", "preDecisionOptionFrame", "publicReadyDecision"]) validateNestedPacketConsistency(artifact, name);
 }
 
+function validateWorkContext(artifact) {
+  const context = normalizeWorkContext(artifact?.workContext ?? null);
+  if (!context) {
+    ensure(artifact?.workBinding == null && artifact?.workReceipt == null && artifact?.workOutcomePacket == null, "Work fields require the optional external workContext.");
+    return;
+  }
+  const binding = workBindingFor(context);
+  ensure(workBindingsMatch(artifact.workBinding, binding), "Work binding differs from current context.");
+  if (artifact.coreLoop) {
+    ensure(workBindingsMatch(workBindingFor(artifact.coreLoop.workContext), binding) && workBindingsMatch(artifact.coreLoop.workBinding, binding), "Nested Work context differs.");
+  }
+  const packets = [...(artifact.workerTaskPackets ?? []), ...(artifact.coreLoop?.thinkingPacket?.workerTaskPackets ?? []),
+    ...(artifact.sourceArtifacts?.orchestrationReport?.workerTaskPackets ?? [])];
+  for (const packet of packets) ensure(workBindingsMatch(packet.workBinding, binding) && workBindingsMatch(workBindingFor(packet.workContext), binding) && packet.workScopeRef === context.scopeRef,
+    "Worker does not belong to the current Work/scope context.");
+  for (const result of [...(artifact.workerResultPackets ?? []), ...(artifact.executionResult?.workerResultPackets ?? []),
+    ...(artifact.coreLoop?.executionResult?.workerResultPackets ?? [])]) ensure(workBindingsMatch(result.workBinding, binding), "Worker result belongs to another Work context.");
+  const projected = projectWorkReceipt(artifact);
+  ensure(productDesignDigest(artifact.workReceipt) === productDesignDigest(projected.workReceipt), "Work receipt cannot promote production/review into adoption or effect.");
+  if (artifact.coreLoop) ensure(productDesignDigest(artifact.coreLoop.workReceipt) === productDesignDigest(projected.workReceipt), "Nested Work receipt differs.");
+  for (const [actual, expected] of [[artifact.evolutionWritebackPacket, projected.evolutionWritebackPacket],
+    [artifact.coreLoop?.evolutionWritebackPacket, projected.coreLoop?.evolutionWritebackPacket]]) {
+    if (expected) ensure(productDesignDigest(actual?.workFeedback) === productDesignDigest(expected.workFeedback), "Work feedback must retain the candidate-only boundary.");
+  }
+}
+
 export function validateArtifact(contract, artifact) {
+  validateWorkContext(artifact);
   if (artifact?.artifactKind === "host_preparation" || artifact?.preparation != null) {
     validatePreparationArtifact(contract, artifact);
     return;

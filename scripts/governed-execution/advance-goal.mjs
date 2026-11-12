@@ -10,6 +10,7 @@ import { inspectTrustedPath, executeSafeManagedFileTransaction, normalizeManaged
 import { restoreHumanMilestoneDeclarations, resolveHumanMilestoneReviews, hasNativeHumanMilestoneTransport } from "./plan-challenge-host-continuation.mjs";
 import { readEvaluatedOutcomeReview } from "./product-design.mjs";
 import { projectHumanGateProgress } from "../../src/domain/scheduling/human-gate-progress.mjs";
+import { normalizeConfiguredModel, modelSelectionRecord } from "../runtime-tool-profiles.mjs";
 import { TASK_PROGRESS_POLICY, taskProgressGoal, checkedTaskProgress, recordTaskProgress, projectTaskProgress }
   from "../../canonical/runtime-assets/shared/hooks/task-progress.mjs";
 
@@ -24,13 +25,15 @@ export async function advanceGovernedGoal({
   runtime, host, kernel, taskFingerprint, observations = [], env = process.env, humanMilestones = [], thinkingGaps = [], design = null, outcomeReview = null,
 }) {
   const calls = [];
+  const configuredModel = normalizeConfiguredModel(host?.model);
+  let modelSelection = modelSelectionRecord(configuredModel);
   let humanMilestoneReviews = [];
   let humanGateProgress = null;
   let refreshHumanGateProgress = () => {};
   let activeThinkingGaps = [];
   let revisionNextAction = null;
   let taskProgress = { policyId: TASK_PROGRESS_POLICY.id, coverage: "not_observed", tasks: [], evidenceLevel: "owner_reported", nativeInvocationVerified: false };
-  const finish = (status, reason, outcome = null) => ({ runId, status, reason, runtime, calls,
+  const finish = (status, reason, outcome = null) => ({ runId, status, reason, runtime, modelSelection, calls,
     outcome, humanMilestoneReviews, humanGateProgress, taskProgress, thinkingGaps: activeThinkingGaps,
     ...(revisionNextAction ? { nextAction: revisionNextAction } : {}), publicReady: false, userOutcomeAccepted: false });
   if (typeof host?.authorize !== "function" || typeof host?.adapterRegistry?.invoke !== "function") {
@@ -108,6 +111,11 @@ export async function advanceGovernedGoal({
     resume = kernel.resumeRun({ runId, graphDigest: stageDagPacket.graphDigest, taskFingerprint });
     if (resume.activeClaims?.length || resume.blockingEffects?.length) return finish("waiting", "existing_claim_or_unresolved_effect", outcome);
     const records = new Map(resume.completedNodes.map((entry) => [entry.nodeId, entry.output]));
+    // Durable results describe this run, not only calls made during this resume.
+    const recordedModel = [...records.values()].find(record => record.modelSelection?.requested === configuredModel &&
+      record.modelSelection?.applied != null)?.modelSelection;
+    modelSelection = recordedModel ? { ...recordedModel, scope: "run" }
+      : modelSelectionRecord(configuredModel, { scope: "run", application: records.size ? "not_observed" : "not_invoked" });
     const requiresProfessionalInput = (entry) => entry.domainOutput?.handoff.requiresDecision || ["needs_input", "blocked"].includes(entry.domainOutput?.status);
     const priorStages = new Set(stageDagPacket.stageOrder.slice(0, stageDagPacket.stageOrder.indexOf("Execution")));
     const prefix = stageDagPacket.nodes.filter((node) => priorStages.has(node.stage)).map((node) => node.nodeId);
@@ -455,14 +463,18 @@ export async function advanceGovernedGoal({
             `Only these existing assigned owners may receive a handoff: ${JSON.stringify([...assignedOwners])}\n` +
             "Return one pure JSON object matching the source outputContract; no prose or code fences. Self-reports remain pending independent review.";
           const request = { action: "handoff", runtime, runId, node, packet: dispatched, workspaceRoot: root,
+            ...(configuredModel != null ? { model: configuredModel } : {}),
             prompt, upstreamResults: upstream, timeoutMs: host.timeoutMs, env,
             machineResultArtifact: { ownedRoot, relativePath: `${digest({ nodeId: node.nodeId, attemptId: claim.attemptId })}.json`, maxBytes: host.maxResultBytes,
               responseContract: method.outputContract } };
           callIndex = calls.length;
           calls.push({ nodeId: node.nodeId, attemptId: claim.attemptId, taskPacketId: packet.taskPacketId, ownerAgent: packet.ownerAgent, runtime, status: "invocation_started" });
           const invoked = await host.adapterRegistry.invoke(host.adapterId, request);
+          const callModelSelection = modelSelectionRecord(configuredModel, { application: "injected_adapter_request", applied: configuredModel != null });
+          modelSelection = { ...callModelSelection, scope: "run" };
           const actual = invoked.result;
           calls[callIndex] = { ...calls[callIndex], status: actual.status, invocationStatus: actual.status, invocationReason: actual.reason,
+            modelSelection: callModelSelection,
             invocationFailureMessage: actual.failureMessage,
             sessionId: actual.sessionId, messageId: actual.messageId,
             inputDigest: actual.inputSha256, rawOutputSha256: actual.rawOutputSha256, machineResultArtifact: actual.machineResultArtifact,
@@ -474,6 +486,8 @@ export async function advanceGovernedGoal({
           const body = receiver.decodeMachineMethodResult({ text, outputContract: method.outputContract, maxBytes: host.maxResultBytes });
           assertCoordinator();
           const result = { nodeId: node.nodeId, attemptId: claim.attemptId, taskPacketId: packet.taskPacketId, ownerAgent: packet.ownerAgent,
+            modelSelection: callModelSelection,
+            ...(packet.workBinding ? { workBinding: structuredClone(packet.workBinding) } : {}),
             status: "completed", runtime, sessionId: actual.sessionId, messageId: actual.messageId,
             sourceBinding: actual.ownerMethodBinding, inputDigest: actual.inputSha256, domainInputDigest: digest({ packet: dispatched, completeUpstream }),
             machineResultArtifact: actual.machineResultArtifact, outputSha256: actual.machineResultArtifact.sha256,

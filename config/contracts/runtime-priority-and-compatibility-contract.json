@@ -10,6 +10,11 @@
   ],
   "status": "productized",
   "currentAsOf": "2026-08-21",
+  "selectionPolicy": {
+    "defaultPlanningRuntime": "codex",
+    "defaultBoundary": "Backward-compatible planning configuration used only when no explicit runtime, registered adapter or current host is available. This is not host provenance, native capability evidence or a model selection.",
+    "explicitSelectionFailure": "Never substitute another runtime or model after an explicit selection fails."
+  },
   "purpose": "Make Claude Code and Codex the primary prompt-first full-flow runtimes, keep ZCode, DeepSeek Harness, Qoder CLI, and Trae as opt-in beta compatibility adapters, and preserve OpenClaw and Cursor as compatibility runtimes without allowing lower tiers to overclaim or block a higher tier.",
   "primaryRuntimeTier": [
     "claude_code",

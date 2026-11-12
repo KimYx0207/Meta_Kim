@@ -24,10 +24,13 @@ export function refreshFixtureSourcePins(fixture) {
 }
 
 export function fixtureInventoryProvider(preparation, id, kind = "agents") {
+  const runtime = preparation.fetchPacket.capabilityDiscovery.context.runtime;
+  const target = runtime === "claude_code" ? "claude" : runtime;
   const candidates = preparation.fetchPacket.capabilityDiscovery[kind].filter(provider => provider.id === id &&
     provider.routeEligible !== false && provider.executionEligible !== false && !provider.cacheEvidenceOnly &&
-    (provider.runtime === "codex" || /[\\/]\.codex[\\/]/u.test(provider.sourceRef ?? "")));
-  assert.equal(candidates.length, 1, `Expected one current Codex discovery fixture for ${id}, found ${candidates.length}`);
+    (provider.runtime === runtime || [provider.sourceRef, provider.sourceRoot, provider.sourceKey]
+      .some(value => String(value ?? "").replaceAll("\\", "/").includes("/." + target + "/"))));
+  assert.equal(candidates.length, 1, `Expected one current ${runtime} discovery fixture for ${id}, found ${candidates.length}`);
   assert.match(candidates[0].inventoryRef, /^sha256:[a-f0-9]{64}$/u);
   return structuredClone(candidates[0]);
 }

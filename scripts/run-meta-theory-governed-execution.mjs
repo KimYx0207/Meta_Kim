@@ -27,6 +27,8 @@ import { renderPreparationNotice } from "./governed-execution/preparation-notice
 import { inspectTrustedPath, withSafeManagedFileLock } from "./safe-managed-file-operations.mjs";
 import { scopeComparisonKey, scopeKeysAreProvablyDisjoint } from "./task-scope-comparison.mjs";
 import { projectWorkflowWorkerResults } from "./governed-execution/worker-result-projection.mjs";
+import { normalizeWorkContext, workBindingFor, workBindingsMatch, assertWorkContextMatches,
+  bindWorkerWorkContext, normalizeWorkOutcome, projectWorkReceipt } from "../src/domain/governance/work-context.mjs";
 import { classifyTaskShape } from "./governance-lib.mjs";
 import { prepareDependencyCalculationInput, bindDependencyCalculationWorkOrder, prepareDependencyCalculationHandoff, readDependencyCalculationInputFile, readDependencyCalculationMethodInputsFile } from "./governed-execution/dependency-calculation-handoff.mjs";
 import { resolveDependencyProjectRoot } from "./dependency-agent-discovery.mjs";
@@ -40,7 +42,8 @@ import {
   normalizeOutputLanguage,
   resolveOutputLanguage,
 } from "./meta-kim-i18n.mjs";
-import { buildAgentProjectionTargets } from "./runtime-tool-profiles.mjs";
+import { buildAgentProjectionTargets, loadFormalToolProfiles, normalizePlanningRuntime, resolvePlanningRuntime,
+  normalizeConfiguredModel, modelSelectionRecord } from "./runtime-tool-profiles.mjs";
 import { getProfilePaths } from "./meta-kim-local-state.mjs";
 import { resolveRuntimeHomeDir } from "./meta-kim-sync-config.mjs";
 import { copyProjectCapability } from "./project-capability-copy.mjs";
@@ -122,6 +125,7 @@ import {
 } from "../canonical/runtime-assets/shared/hooks/spine-state.mjs";
 import {
   detectHostSessionConversationId,
+  detectHostRuntimeFromEnv,
   governedRunStateProfile,
   resolveGovernedRunProvenance,
   resolveSpineConversationBinding,
@@ -413,19 +417,8 @@ const RUNTIME_SMOKE_PROJECTIONS = {
 
 const AGENT_TEAMS_PLAYBOOK_ID = "agent-teams-playbook";
 const CODEX_DEFAULT_AGENT_MAX_THREADS = 2;
-const ROUTE_RUNTIME_ALIASES = Object.freeze({
-  claude: "claude_code",
-  claude_code: "claude_code",
-  claudecode: "claude_code",
-  codex: "codex",
-  cursor: "cursor",
-  openclaw: "openclaw",
-});
-
-function normalizeRouteRuntime(value, fallback = "codex") {
-  const normalized = String(value ?? fallback).trim().toLowerCase();
-  if (!normalized || normalized === "auto") return fallback;
-  return ROUTE_RUNTIME_ALIASES[normalized] ?? normalized;
+function normalizeRouteRuntime(value) {
+  return normalizePlanningRuntime(value) ?? resolvePlanningRuntime().runtime;
 }
 
 
@@ -1518,7 +1511,7 @@ export async function readProductReviewProjection({ artifact, projectRoot, jsonP
   const input = await readPersistedOutcomeReviewInput({ artifact, jsonPath, outputDir });
   if (!input) return artifact;
   const review = await evaluateProductOutcomeReview({ input, artifact, projectRoot });
-  const reviewed = projectProductReview(artifact, review);
+  const reviewed = projectWorkReceipt(projectProductReview(artifact, review));
   const projectionPath = resolveOutputFile(outputDir, `${artifact.runId}.review-${review.reviewDigest.slice(0, 20)}.json`);
   return { ...reviewed, paths: { ...(artifact.paths ?? {}), json: projectionPath, executionJson: jsonPath,
     review: resolveOutputFile(outputDir, `${artifact.runId}.outcome-review.json`) } };
@@ -1547,7 +1540,8 @@ async function applyPersistedOutcomeReview({ artifact, input, projectRoot, jsonP
   const pointerPath = resolveOutputFile(outputDir, `${artifact.runId}.outcome-review.json`);
   const baseArtifactSha256 = await fileDigestIfExists(jsonPath);
   const review = evaluatedReview ?? await evaluateProductOutcomeReview({ input, artifact, projectRoot });
-  const reviewed = projectProductReview(artifact, review);
+  const reviewed = await readWorkOutcomeProjection({ artifact: projectWorkReceipt(projectProductReview(artifact, review)), jsonPath, outputDir });
+  if (reviewed.workOutcomePacket) await atomicWriteFile(workOutcomeProjectionPath(outputDir, reviewed, reviewed.workOutcomePacket), `${JSON.stringify(reviewed, null, 2)}\n`);
   const projectionPath = resolveOutputFile(outputDir, `${artifact.runId}.review-${review.reviewDigest.slice(0, 20)}.json`);
   const livePath = resolveOutputFile(outputDir, `${artifact.runId}.live.json`);
   const live = prepareLiveProjectionRecord(reviewed);
@@ -1566,6 +1560,39 @@ async function applyPersistedOutcomeReview({ artifact, input, projectRoot, jsonP
     }, null, 2)}\n`);
   });
   return { ...reviewed, paths: { ...(artifact.paths ?? {}), json: projectionPath, executionJson: jsonPath, review: pointerPath, liveProjection: livePath } };
+}
+
+/** Business observations append a projection; the execution receipt is immutable.
+ * Revalidation uses current review evidence and the exact external Work digest. */
+function workOutcomeProjectionPath(outputDir, artifact, outcome) {
+  const digest = productDesignDigest({ outcome, reviewDigest: artifact.outcomeReviewPacket?.reviewDigest ?? null });
+  return resolveOutputFile(outputDir, `${artifact.runId}.work-${digest.slice(0, 20)}.json`);
+}
+
+async function readWorkOutcomeProjection({ artifact, jsonPath, outputDir = path.dirname(jsonPath) }) {
+  if (!artifact.workContext) return artifact;
+  const pointerPath = resolveOutputFile(outputDir, `${artifact.runId}.work-outcome.json`);
+  if (!existsSync(pointerPath)) return projectWorkReceipt(artifact);
+  const saved = JSON.parse(await fs.readFile(pointerPath, "utf8"));
+  if (saved.runId !== artifact.runId || saved.baseArtifactSha256 !== await fileDigestIfExists(jsonPath)) throw new Error("Work outcome base artifact changed");
+  const projected = projectWorkReceipt(artifact, saved.input);
+  return { ...projected, paths: { ...(artifact.paths ?? {}),
+    json: workOutcomeProjectionPath(outputDir, projected, saved.input),
+    executionJson: jsonPath, workOutcome: pointerPath,
+    markdown: artifact.paths?.markdown ?? resolveOutputFile(outputDir, `${artifact.runId}.${artifact.resolvedOutputLanguage ?? "zh-CN"}.md`) } };
+}
+
+async function appendWorkOutcomeProjection({ artifact, input, jsonPath, outputDir }) {
+  const outcome = normalizeWorkOutcome(input, { runId: artifact.runId, workContext: artifact.workContext });
+  const projected = projectWorkReceipt(artifact, outcome);
+  const pointerPath = resolveOutputFile(outputDir, `${artifact.runId}.work-outcome.json`);
+  const projectionPath = workOutcomeProjectionPath(outputDir, projected, outcome);
+  const baseArtifactSha256 = await fileDigestIfExists(jsonPath);
+  await atomicWriteFile(projectionPath, `${JSON.stringify(projected, null, 2)}\n`);
+  await updateLatestGovernedProjection(outputDir, () => atomicWriteFile(pointerPath,
+    `${JSON.stringify({ schemaVersion: "kim-work-outcome-projection-v1", runId: artifact.runId, baseArtifactSha256, input: outcome }, null, 2)}\n`));
+  return { ...projected, paths: { ...(artifact.paths ?? {}), json: projectionPath, executionJson: jsonPath, workOutcome: pointerPath,
+    markdown: artifact.paths?.markdown ?? resolveOutputFile(outputDir, `${artifact.runId}.${artifact.resolvedOutputLanguage ?? "zh-CN"}.md`) } };
 }
 
 async function openRunnerDurableCoordinator({
@@ -4413,10 +4440,7 @@ function buildTraceEvalControlPlane({
     })),
     toolModelRetrievalHandoffMetadata: {
       tools: tools.length > 0 ? tools : ["npm run meta:route:validate"],
-      model: {
-        selectionPolicy: "runtime_host_default",
-        providerSpecificModelName: "not hardcoded in Meta_Kim contract",
-      },
+      model: modelSelectionRecord(null),
       retrieval:
         retrieval.length > 0
           ? retrieval
@@ -8865,7 +8889,7 @@ function buildCoreLoopArtifact({
   projectCapabilityMutationMode = "auto",
   projectCapabilityCandidateRoot = null,
   projectCapabilityCreationArtifacts = [],
-  runtime = "codex",
+  runtime = "auto",
   osTarget = null,
   outputLanguage = "zh-CN",
   executionAllowed = false,
@@ -8963,6 +8987,7 @@ function buildCoreLoopArtifact({
     return {
       runId,
       taskPacketId: packet.taskPacketId,
+      ...(packet.workBinding ? { workBinding: structuredClone(packet.workBinding) } : {}),
       owner: packet.owner,
       ownerAgent: packet.ownerAgent,
       executionMode: packet.executionMode,
@@ -9807,7 +9832,7 @@ export function buildWorkflowContractPackets({
   writebackFlow,
   cardPlanPacket,
   businessFlowBlueprintPacket,
-  runtime = "codex",
+  runtime = "auto",
   osTarget = null,
   outputLanguage = "zh-CN",
   languageSource = "latest_user_input",
@@ -10345,6 +10370,7 @@ export function buildWorkflowContractPackets({
     return {
       runId,
       taskPacketId: packet.taskPacketId,
+      ...(packet.workBinding ? { workBinding: structuredClone(packet.workBinding) } : {}),
       owner: packet.owner,
       status: "planned_not_executed",
       producedArtifacts: [],
@@ -10928,7 +10954,7 @@ export function evaluateObservedLocalToolOutcome(coreLoop, bridgeResult) {
   return evaluateTaskOutcome(goal, observations);
 }
 
-function selectExecutionRouteArgs({ task, actionTask = task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null, agentCapabilityProfileContext = null, methodRequest = null, requirementsContext = null, fetchOnly = false, hostWorkOrder = null, projectRoot = activeProjectRoot() }) {
+function selectExecutionRouteArgs({ task, actionTask = task, runtime = "auto", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null, agentCapabilityProfileContext = null, methodRequest = null, requirementsContext = null, fetchOnly = false, hostWorkOrder = null, projectRoot = activeProjectRoot() }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(os);
   return [
@@ -10956,7 +10982,7 @@ function selectExecutionRouteArgs({ task, actionTask = task, runtime = "codex", 
   ];
 }
 
-async function selectExecutionRouteInProcess({ task, actionTask = task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null, agentCapabilityProfileContext = null, methodRequest = null, requirementsContext = null, fetchOnly = false, hostWorkOrder = null, projectRoot = activeProjectRoot(), spawnError = null }) {
+async function selectExecutionRouteInProcess({ task, actionTask = task, runtime = "auto", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null, agentCapabilityProfileContext = null, methodRequest = null, requirementsContext = null, fetchOnly = false, hostWorkOrder = null, projectRoot = activeProjectRoot(), spawnError = null }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(os);
   const originalArgv = process.argv;
@@ -11005,7 +11031,7 @@ async function selectExecutionRouteInProcess({ task, actionTask = task, runtime 
   }
 }
 
-async function selectExecutionRoute({ task, actionTask = task, runtime = "codex", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null, agentCapabilityProfileContext = null, methodRequest = null, requirementsContext = null, fetchOnly = false, hostWorkOrder = null, projectRoot = activeProjectRoot(), environment = process.env }) {
+async function selectExecutionRoute({ task, actionTask = task, runtime = "auto", os = "windows", runId = null, codexHostToolSchema = null, intentDeliveryStrategy = null, localToolRequest = null, agentCapabilityProfileContext = null, methodRequest = null, requirementsContext = null, fetchOnly = false, hostWorkOrder = null, projectRoot = activeProjectRoot(), environment = process.env }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(os);
   const args = selectExecutionRouteArgs({ task, actionTask, runtime: routeRuntime, os: routeOs, runId, codexHostToolSchema, intentDeliveryStrategy, localToolRequest, agentCapabilityProfileContext, methodRequest, requirementsContext, fetchOnly, hostWorkOrder, projectRoot });
@@ -11535,7 +11561,7 @@ function synchronizeHostWorkOrder({ draft, packet }) {
   }
 }
 
-async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", osTarget = null, codexHostToolSchema = null, intentDialogue = null, taskCriterionAssignments = null, localToolRequest = null, calculationRequest = null, design = null, designRequirement = null, requirementsDiscovery = null, agentCapabilityProfileContext = null, hostThinking = null, projectContext = null, projectRoot = activeProjectRoot(), environment = process.env }) {
+async function buildRouteDrivenOrchestration({ task, runId, runtime = "auto", osTarget = null, codexHostToolSchema = null, intentDialogue = null, taskCriterionAssignments = null, localToolRequest = null, calculationRequest = null, design = null, designRequirement = null, requirementsDiscovery = null, agentCapabilityProfileContext = null, hostThinking = null, projectContext = null, projectRoot = activeProjectRoot(), environment = process.env }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(osTarget, { environment });
   const taskSignals = classifyMetaTheoryEntry(task).signals ?? {};
@@ -11971,7 +11997,7 @@ async function buildRouteDrivenOrchestration({ task, runId, runtime = "codex", o
 
 /** Persist host preparation without manufacturing execution workers or a DAG. */
 async function writeHostPreparation({ task, runId, taskFingerprint, outputDir, language, goalContract,
-  dialogue, confirmedIntent, requirementsDiscovery, preview, critical, fetchResult = null, previousRunId = null, projectRoot, projectContext = null, researchRequired = false, taskDesignRoute = null, governanceTaskFacts = null, designPending = false }) {
+  dialogue, confirmedIntent, requirementsDiscovery, preview, critical, fetchResult = null, previousRunId = null, projectRoot, projectContext = null, researchRequired = false, taskDesignRoute = null, governanceTaskFacts = null, designPending = false, workContext = null, runtimeSelection = null, modelSelection = null, preparationExistedAtEntry = true }) {
   const id = validateRunId(runId ?? uniqueRunId(taskFingerprint), "preparation runId");
   const jsonPath = resolveOutputFile(outputDir, id + ".json");
   const markdownPath = resolveOutputFile(outputDir, id + "." + language + ".md");
@@ -12004,6 +12030,7 @@ async function writeHostPreparation({ task, runId, taskFingerprint, outputDir, l
     action: stopped ? "wait_for_explicit_user_resume" : needsInput ? ready.some((question) => question.options?.length >= 2) ? "invoke_current_native_choice_surface" : "complete_current_material_question" : !critical ? "produce_current_critical_understanding" : factQuestions.length ? "resolve_discoverable_facts" : "consume_fetch_and_produce_thinking",
     producer: "current_host_ai", questions: ready, researchGaps, inputRefs: ["projectContextPacket", "intentPacket", "preDecisionOptionFrame", "fetchPacket", "requirementsDiscoveryPacket.research"],
     completionRule: "Return the actual native choice or current host reasoning through this ordinary entry before formal dispatch." };
+  if (workContext) nextAction.inputRefs.push("workContext");
   if (!stopped && critical && !needsInput && researchGaps.length) nextAction.action = "complete_topic_research_and_source_bindings";
   if (!stopped && critical && !needsInput && !researchGaps.length && designPending) nextAction.action = "produce_integrated_design_for_current_boundaries";
   if (!stopped && critical && !needsInput && taskDesignRoute?.assessmentRequired === true) {
@@ -12021,10 +12048,12 @@ async function writeHostPreparation({ task, runId, taskFingerprint, outputDir, l
   const commonMaterials = stopped ? { bindings: [], gaps: [] } : collectPlanChallengeMaterials({ artifact: materialView, projectRoot });
   const materialBindings = commonMaterials.bindings;
   const bindingDigest = productDesignDigest({ taskHash: goalContract.taskHash, intentDigest: dialogue.intentDigest ?? null,
-    requirementsDigest: requirementsDiscovery?.discoveryDigest ?? null, projectContextDigest: projectContext?.digest ?? null, critical, questions, materialBindings });
+    requirementsDigest: requirementsDiscovery?.discoveryDigest ?? null, projectContextDigest: projectContext?.digest ?? null, critical, questions, materialBindings,
+    ...(workContext ? { workBinding: workBindingFor(workContext) } : {}) });
   if (needsInput && previousRunId) {
     const priorPath = resolveOutputFile(outputDir, previousRunId + ".json");
     const prior = JSON.parse(await fs.readFile(priorPath, "utf8"));
+    assertWorkContextMatches(prior.workContext ?? null, workContext);
     const priorOpen = prior.preDecisionOptionFrame?.unresolvedQuestions.filter((question) => question.status === "open") ?? [];
     if (prior.preparation?.status === "needs_input" && prior.task === task && prior.projectContextPacket?.digest === projectContext?.digest &&
         prior.requirementsDiscoveryPacket?.discoveryDigest === requirementsDiscovery?.discoveryDigest &&
@@ -12036,8 +12065,10 @@ async function writeHostPreparation({ task, runId, taskFingerprint, outputDir, l
     }
   }
   if (existsSync(jsonPath) || existsSync(markdownPath)) {
+    if (!preparationExistedAtEntry) throw new Error(`Governed run '${id}' was reserved or already exists from another request; a concurrent creator cannot become a historical preparation read.`);
     if (!existsSync(jsonPath) || !existsSync(markdownPath)) throw new Error("Preserve incomplete preparation pair; do not overwrite or ask again");
     const existing = JSON.parse(await fs.readFile(jsonPath, "utf8"));
+    assertWorkContextMatches(existing.workContext ?? null, workContext);
     if (existing.preparation?.bindingDigest !== bindingDigest || existing.task !== task ||
         textSha256(await fs.readFile(markdownPath, "utf8")) !== existing.preparation.markdownSha256) {
       throw new Error("Existing run differs or already executes; use a new preparation identity, never overwrite it");
@@ -12050,7 +12081,9 @@ async function writeHostPreparation({ task, runId, taskFingerprint, outputDir, l
       "匹配 GitHub 参考：" + requirementsDiscovery.research.matchingRepositoryCount + "；按当前决策问题与来源充分性判断，数量不等于结论", ...researchGaps.map(gap => "研究缺口：" + gap)] : []),
     "", "下一步：" + nextAction.action,
     "尚未形成正式执行工单或执行图；候选库存不是实际调用、权限或验收。", ""].join("\n");
-  const artifact = { schemaVersion: 1, artifactKind: "host_preparation", runId: id, task, taskFingerprint, status: stopped ? "stopped_by_user" : "partial",
+  let artifact = { schemaVersion: 1, artifactKind: "host_preparation", runId: id, task, taskFingerprint, status: stopped ? "stopped_by_user" : "partial",
+    ...(workContext ? { workContext, workBinding: workBindingFor(workContext) } : {}),
+    ...(runtimeSelection ? { runtimeSelection, modelSelection } : {}),
     partialReasons: [status], resolvedOutputLanguage: language,
     preparation: { status, createdAt: new Date().toISOString(), bindingDigest, previousRunId,
       intentSnapshot: confirmedIntent, materialBindings, materialGaps: commonMaterials.gaps, markdownSha256: textSha256(text) },
@@ -12059,7 +12092,8 @@ async function writeHostPreparation({ task, runId, taskFingerprint, outputDir, l
     intentPacket: { ...(critical ?? {}), stage: "Critical", realIntent: dialogue.outcome, intentBinding: dialogue,
       status: critical ? "host_provided_not_independently_verified" : "host_reasoning_required" },
     preDecisionOptionFrame: questionFrame,
-    fetchPacket: fetchResult?.fetchPacket ?? { stage: "Fetch", status: "not_started_before_critical" },
+    fetchPacket: fetchResult?.fetchPacket ? { ...fetchResult.fetchPacket, ...(runtimeSelection ? { runtimeSelection } : {}) }
+      : { stage: "Fetch", status: "not_started_before_critical" },
     thinkingPacket: { stage: "Thinking", status: "host_reasoning_required", workerTaskPackets: [] },
     workerTaskPackets: [], dispatchBoard: null, selectedExecutionRoute: null,
     hostInvocationRequestPacket: { status, nextAction, executionAllowed: false },
@@ -12068,6 +12102,7 @@ async function writeHostPreparation({ task, runId, taskFingerprint, outputDir, l
     coreLoop: { workerTaskPackets: [], executionResult: { executionAllowed: false, actualWorkerExecution: false } } };
   artifact.coreLoop = { ...artifact.coreLoop, intentPacket: artifact.intentPacket, fetchPacket: artifact.fetchPacket,
     thinkingPacket: artifact.thinkingPacket, goalContractPacket: goalContract, preDecisionOptionFrame: artifact.preDecisionOptionFrame, publicReadyDecision: artifact.publicReadyDecision };
+  artifact = projectWorkReceipt(artifact);
   artifact.hostInvocationRequestPacket.pendingDecisions = ready.slice(0, 1).filter((question) => question.options?.length >= 2).map((question) =>
     createPlanChallengeQuestion({ artifact, questionId: question.questionId, projectRoot, at: artifact.preparation.createdAt }));
   const currentMaterialGaps = artifact.hostInvocationRequestPacket.pendingDecisions.flatMap((request) => request.materialGaps ?? []);
@@ -12175,8 +12210,17 @@ function projectStoppedRun(artifact, preview, control, paths) {
 }
 
 /** Bind the restriction to the original identity without editing its receipts. */
-async function returnStoppedHostPreparation({ task, runId, previousRunId, stateDir, artifactDir, projectRoot, preview, outputLanguage, observedStop = null }) {
+async function returnStoppedHostPreparation({ task, runId, previousRunId, stateDir, artifactDir, projectRoot, preview, outputLanguage, observedStop = null, workContext = null, workContextInputError = false }) {
   const outputDir = artifactDir ? path.resolve(artifactDir) : path.resolve(stateDir);
+  const stoppedProjection = (artifact, control, paths) => {
+    const stopped = projectStoppedRun(artifact, preview, control, paths);
+    if (!workContextInputError && workBindingsMatch(workBindingFor(artifact.workContext ?? null), workBindingFor(workContext))) return stopped;
+    // A stop still persists for the named original run. A conflicting or broken
+    // Work input must not disclose that run's business context or old outputs.
+    return { runId: artifact.runId, status: "stopped_by_user", workContextStatus: "conflict_not_reused",
+      hostInvocationRequestPacket: stopped.hostInvocationRequestPacket,
+      machineExecution: stopped.machineExecution, publicReadyDecision: stopped.publicReadyDecision };
+  };
   await fs.mkdir(outputDir, { recursive: true });
   const targetId = runId ?? previousRunId;
   if (targetId != null) {
@@ -12189,7 +12233,7 @@ async function returnStoppedHostPreparation({ task, runId, previousRunId, stateD
           (artifact.goalContractPacket?.taskHash != null && artifact.goalContractPacket.taskHash !== taskOutcomeDigest(task))) {
         throw new Error("Cannot stop a different run or task identity");
       }
-      if (observedStop) return projectStoppedRun(artifact, preview, observedStop,
+      if (observedStop) return stoppedProjection(artifact, observedStop,
         { ...(artifact.paths ?? {}), json: jsonPath, reservation: reservationPath });
       if (!existsSync(reservationPath)) {
         const language = artifact.resolvedOutputLanguage ?? resolveOutputLanguage({ explicitLanguage: outputLanguage, latestInput: task }).language;
@@ -12211,14 +12255,16 @@ async function returnStoppedHostPreparation({ task, runId, previousRunId, stateD
         await atomicWriteFile(reservationPath, `${JSON.stringify({ ...reservation, stopControl: control, updatedAt: nowIso() }, null, 2)}\n`);
         return { artifact: freshArtifact, control };
       });
-      return projectStoppedRun(current.artifact, preview, current.control, { ...(current.artifact.paths ?? {}), json: jsonPath, reservation: reservationPath });
+      return stoppedProjection(current.artifact, current.control, { ...(current.artifact.paths ?? {}), json: jsonPath, reservation: reservationPath });
     }
     const pending = await readBoundRunControl({ outputDir, runId: id, task });
-    if (pending?.stopControl?.status === "stopped") return projectStoppedRun({ runId: id, task, taskFingerprint: pending.reservation.taskFingerprint }, preview,
+    if (pending?.stopControl?.status === "stopped") return stoppedProjection({ runId: id, task, taskFingerprint: pending.reservation.taskFingerprint },
       pending.stopControl, { reservation: reservationPath });
     if (pending || previousRunId === targetId) throw new Error("Cannot bind stop to an unknown task artifact; preserve the existing identity and jobs");
   }
-  return writeHostPreparation({ task, runId: targetId, taskFingerprint: stableId("task", task), outputDir,
+  if (workContextInputError) return { runId: targetId ?? null, status: "stopped_by_user", workContextStatus: "invalid_input_not_reused", machineExecution: { status: "blocked", reason: "stopped_by_user", calls: [] } };
+  const baseFingerprint = stableId("task", task);
+  return writeHostPreparation({ task, runId: targetId, taskFingerprint: workContext ? stableId("task", JSON.stringify([baseFingerprint, workBindingFor(workContext)])) : baseFingerprint, outputDir, workContext,
     language: resolveOutputLanguage({ explicitLanguage: outputLanguage, latestInput: task }).language,
     goalContract: buildGoalContractPacket({ task }), dialogue: prepareIntentDialogue({ task }), confirmedIntent: null,
     requirementsDiscovery: null, preview, critical: null, projectRoot: path.resolve(projectRoot) });
@@ -12227,6 +12273,8 @@ async function returnStoppedHostPreparation({ task, runId, previousRunId, stateD
 export async function runMetaTheoryGovernedExecution(options = {}) {
   let {
   task,
+  workContext = null,
+  workOutcome = null,
   confirmedIntent = null,
   criticalInput = null,
   thinkingInput = null,
@@ -12251,10 +12299,8 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   stateDir = DEFAULT_STATE_DIR,
   artifactDir = null,
   dbPath = DEFAULT_DB_PATH,
-  runtime = "codex",
-  // `runtime` is the route's planning target and keeps its default. Provenance
-  // must be able to tell "the caller named a host" from "nobody named one", so
-  // the declared host is a separate option with no default.
+  runtime = "auto",
+  // Planning selection is separate from provenance and native adapter support.
   declaredRuntime = null,
   hostEnv = process.env,
   osTarget: requestedOsTarget = null,
@@ -12291,20 +12337,34 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   const controlAction = typeof planChallengeControl === "string" ? parsePlanChallengeControl(planChallengeControl)
     : planChallengeControl?.trusted === true && planChallengeControl.binding === "plan-challenge-control" &&
       planChallengeControl.evidenceRefs?.length ? planChallengeControl.action : null;
+  const earlyControlPreview = buildPlanChallengeState({ task: normalizedTask, control: planChallengeControl });
+  const explicitStop = controlAction === "summarize_stop" || earlyControlPreview.planChallengeState.stopRequested || earlyControlPreview.planChallengeState.phase === "stopped_by_user";
+  let workContextSnapshot = null;
+  let workContextInputError = false;
+  try { workContextSnapshot = normalizeWorkContext(workContext); }
+  catch (error) { if (!explicitStop) throw error; workContextInputError = true; }
   const controlOutputDir = artifactDir ? path.resolve(artifactDir) : path.resolve(stateDir);
+  // Observe before the first await: a preparation created while this request is
+  // in flight is another creator's identity, not this caller's historical read.
+  const preparationExistedAtEntry = runId != null && existsSync(resolveOutputFile(controlOutputDir,
+    validateRunId(String(runId), "control runId") + ".json"));
   const resumedStopIds = new Set();
   for (const id of new Set([runId, previousPlanChallengeRunId].filter((value) => value != null).map(String))) {
+    const boundPath = resolveOutputFile(controlOutputDir, validateRunId(id, "control runId") + ".json");
+    if (!explicitStop && existsSync(boundPath)) {
+      const boundArtifact = JSON.parse(await fs.readFile(boundPath, "utf8"));
+      assertWorkContextMatches(boundArtifact.workContext ?? null, workContextSnapshot);
+    }
     let current = await readBoundRunControl({ outputDir: controlOutputDir, runId: id, task: normalizedTask });
     if (current?.stopControl?.status === "stopped") {
       current = await resumeBoundRunControl({ current, task: normalizedTask, controlAction, host: stageRunner });
       if (current.stopControl?.status === "stopped") {
         const preview = buildPlanChallengeState({ task: normalizedTask, control: "summarize_stop" });
-        return returnStoppedHostPreparation({ task: normalizedTask, runId: id, stateDir, artifactDir, projectRoot, preview, outputLanguage, observedStop: current.stopControl });
+        return returnStoppedHostPreparation({ task: normalizedTask, runId: id, stateDir, artifactDir, projectRoot, preview, outputLanguage, observedStop: current.stopControl, workContext: workContextSnapshot, workContextInputError });
       }
     }
     if (current?.stopControl?.status === "resumed") resumedStopIds.add(id);
   }
-  const earlyControlPreview = buildPlanChallengeState({ task: normalizedTask, control: planChallengeControl });
   const priorStopped = !resumedStopIds.has(String(runId ?? previousPlanChallengeRunId)) && priorChallengeState?.taskHash === taskOutcomeDigest(normalizedTask) &&
     (priorChallengeState.planChallengeState?.stopRequested === true || priorChallengeState.planChallengeState?.phase === "stopped_by_user");
   if (controlAction === "summarize_stop" || earlyControlPreview.planChallengeState.stopRequested || earlyControlPreview.planChallengeState.phase === "stopped_by_user" || priorStopped) {
@@ -12313,7 +12373,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
       stopReason: "user_requested_summary_stop", phase: "stopped_by_user", planChallengeSatisfied: false, executionAllowed: false };
     preview.readyDecisionFrontier = [];
     return returnStoppedHostPreparation({ task: normalizedTask, runId, previousRunId: previousPlanChallengeRunId,
-      stateDir, artifactDir, projectRoot, preview, outputLanguage });
+      stateDir, artifactDir, projectRoot, preview, outputLanguage, workContext: workContextSnapshot, workContextInputError });
   }
   if (runId != null) {
     const existingPath = resolveOutputFile(artifactDir ? path.resolve(artifactDir) : path.resolve(stateDir), validateRunId(String(runId), "runId") + ".json");
@@ -12323,12 +12383,52 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
       if (!resumedStopIds.has(String(runId)) && saved.task === normalizedTask && saved.goalContractPacket?.taskHash === taskOutcomeDigest(normalizedTask) &&
           (savedStop?.stopRequested === true || savedStop?.phase === "stopped_by_user")) {
         return returnStoppedHostPreparation({ task: normalizedTask, runId, previousRunId: previousPlanChallengeRunId,
-          stateDir, artifactDir, projectRoot, preview: saved.preDecisionOptionFrame, outputLanguage });
+          stateDir, artifactDir, projectRoot, preview: saved.preDecisionOptionFrame, outputLanguage, workContext: workContextSnapshot });
       }
     }
   }
   // Snapshot the parsed host boundary before any asynchronous discovery. A
   // caller changing a constraints object later cannot change this work order.
+  if (workOutcome != null) {
+    const outcome = normalizeWorkOutcome(structuredClone(workOutcome), { runId, workContext: workContextSnapshot });
+    const jsonPath = resolveOutputFile(controlOutputDir, validateRunId(String(runId), "workOutcome runId") + ".json");
+    if (!existsSync(jsonPath)) throw new TypeError("Work outcome requires an existing materialized run; it never starts execution");
+    const base = JSON.parse(await fs.readFile(jsonPath, "utf8"));
+    if (base.preparation || base.task !== normalizedTask || base.runId !== runId) throw new TypeError("Work outcome requires the original task and materialized run identity");
+    assertWorkContextMatches(base.workContext, workContextSnapshot);
+    const reviewed = await readProductReviewProjection({ artifact: base, projectRoot, jsonPath, outputDir: controlOutputDir });
+    return appendWorkOutcomeProjection({ artifact: reviewed, input: outcome, jsonPath, outputDir: controlOutputDir });
+  }
+  const detectedHost = detectHostRuntimeFromEnv(hostEnv);
+  const registeredAdapter = typeof stageRunner?.adapterRegistry?.resolve === "function" && stageRunner.adapterId
+    ? stageRunner.adapterRegistry.resolve(stageRunner.adapterId, { action: "handoff" }) : null;
+  const runtimeSelection = resolvePlanningRuntime({ requestedRuntime: runtime,
+    stageRunnerRuntime: stageRunner?.runtime, adapterRuntime: registeredAdapter?.runtime,
+    configuredRuntime: hostEnv?.META_KIM_RUNTIME, declaredRuntime,
+    hostRuntime: detectedHost.runtime, hostBasis: detectedHost.basis });
+  runtime = runtimeSelection.runtime;
+  for (const candidate of [stageRunner?.runtime, registeredAdapter?.runtime]) {
+    const binding = normalizePlanningRuntime(candidate);
+    if (binding != null && binding !== runtime) throw new TypeError("Explicit runtime and execution adapter binding differ; another client cannot be substituted");
+  }
+  const configuredModel = normalizeConfiguredModel(stageRunner?.model);
+  const modelSelection = modelSelectionRecord(configuredModel);
+  if (configuredModel != null && stageRunner?.adapterRegistry && registeredAdapter?.modelSelectionSupported !== true) {
+    throw new TypeError("Registered host adapter does not declare support for an explicit model parameter");
+  }
+  const injectedRuntime = registeredAdapter?.runtime ?? loadFormalToolProfiles().find(profile => profile.runtime === runtime)?.id ?? runtime;
+  // A changed host/model invalidates old Fetch and execution bindings. A host
+  // may still read an old run or append a Work observation without executing it.
+  for (const id of new Set([runId, previousPlanChallengeRunId].filter(value => value != null).map(String))) {
+    const previousPath = resolveOutputFile(controlOutputDir, validateRunId(id, "runtime-bound runId") + ".json");
+    if (!existsSync(previousPath)) continue;
+    const previous = JSON.parse(await fs.readFile(previousPath, "utf8"));
+    const previousRuntime = previous.runtimeSelection?.runtime ?? previous.fetchPacket?.capabilityDiscovery?.context?.runtime ?? previous.requestRecord?.runtimeContext?.routeTarget;
+    if (previousRuntime && (normalizePlanningRuntime(previousRuntime) !== runtime ||
+      (previous.modelSelection?.requested ?? null) !== configuredModel)) {
+      throw new TypeError("Runtime or model selection changed; create a new run with fresh Fetch instead of reusing previous execution bindings");
+    }
+  }
   let confirmedIntentSnapshot = confirmedIntent == null ? null : structuredClone(confirmedIntent);
   const humanMilestonesSnapshot = structuredClone(stageRunner?.humanMilestones ?? []);
   if (!Array.isArray(projectCapabilityCreationArtifacts)) throw new TypeError("projectCapabilityCreationArtifacts must be an array");
@@ -12344,7 +12444,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     const previous = JSON.parse(await fs.readFile(sourcePath, "utf8"));
     if (previous.preparation && previous.task === normalizedTask && previous.goalContractPacket?.taskHash === taskOutcomeDigest(normalizedTask)) {
       if (!resumedStopIds.has(String(previousPlanChallengeRunId)) && (previous.preDecisionOptionFrame?.planChallengeState?.stopRequested === true || previous.preDecisionOptionFrame?.planChallengeState?.phase === "stopped_by_user")) {
-        return returnStoppedHostPreparation({ task: normalizedTask, runId, previousRunId: previousPlanChallengeRunId, stateDir, artifactDir, projectRoot, preview: previous.preDecisionOptionFrame, outputLanguage });
+        return returnStoppedHostPreparation({ task: normalizedTask, runId, previousRunId: previousPlanChallengeRunId, stateDir, artifactDir, projectRoot, preview: previous.preDecisionOptionFrame, outputLanguage, workContext: workContextSnapshot });
       }
       predecessorPreparation = previous;
       confirmedIntentSnapshot ??= previous.preparation.intentSnapshot;
@@ -12354,6 +12454,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     const context = structuredClone(planChallengeHostInput);
     const pendingPath = inspectTrustedPath(path.resolve(projectRoot), path.relative(path.resolve(projectRoot), path.resolve(projectRoot, context.artifactPath)), { allowMissing: false }).target;
     consumedQuestionArtifact = JSON.parse(await fs.readFile(pendingPath, "utf8"));
+    assertWorkContextMatches(consumedQuestionArtifact.workContext ?? null, workContextSnapshot);
     if (consumedQuestionArtifact.goalContractPacket?.taskHash !== taskOutcomeDigest(normalizedTask)) throw new TypeError("Plan-challenge answer belongs to another original task");
     try {
       const host = await openCodexDesktopPlanChallengeHost({ ...context, projectRoot: path.resolve(projectRoot), artifactPath: pendingPath,
@@ -12486,8 +12587,11 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
       taskHash: intentDialogue.taskHash, intentDigest: intentDialogue.intentDigest, sourceIntentDigest: consumedPlanChoice.binding.intentDigest });
   }
   const dialogueTask = intentDialogue.status === "host_provided_understanding" ? intentDialogue.routeTask : normalizedTask;
-  const baseTaskFingerprint = stableId("task", calculationRequest
-    ? JSON.stringify([normalizedTask, calculationRequest.summary, runtime, osTarget, stageRunner?.runtime ?? runtime]) : normalizedTask);
+  const taskSourceFingerprint = stableId("task", JSON.stringify([
+    normalizedTask, calculationRequest?.summary ?? null, runtime, osTarget, configuredModel,
+  ]));
+  const baseTaskFingerprint = workContextSnapshot
+    ? stableId("task", JSON.stringify([taskSourceFingerprint, workBindingFor(workContextSnapshot)])) : taskSourceFingerprint;
   const allocatedTaskFingerprint = taskCriterionAssignmentsSnapshot == null ? baseTaskFingerprint
     : stableId("task", JSON.stringify([baseTaskFingerprint, taskCriterionAssignmentsSnapshot]));
   // Requirements dialogue evolves before execution. Its content digest is not
@@ -12561,7 +12665,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     outputLanguage: resolvedOutputLanguage,
   });
   if (planChallengePreview.planChallengeState.stopRequested === true || planChallengePreview.planChallengeState.phase === "stopped_by_user") {
-    return returnStoppedHostPreparation({ task: normalizedTask, runId, previousRunId: previousPlanChallengeRunId, stateDir, artifactDir, projectRoot, preview: planChallengePreview, outputLanguage });
+    return returnStoppedHostPreparation({ task: normalizedTask, runId, previousRunId: previousPlanChallengeRunId, stateDir, artifactDir, projectRoot, preview: planChallengePreview, outputLanguage, workContext: workContextSnapshot });
   }
   const hostThinking = normalizeHostThinking({ input: thinkingInput == null ? null : { ...thinkingInput, intentPacket: thinkingCritical }, task: normalizedTask, dialogue: intentDialogue, requirementsDiscovery });
   // Typed host questions, rather than generated lexical defaults, are the
@@ -12618,6 +12722,9 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     const fetched = hostCritical ? await selectExecutionRoute({ task: normalizedTask, actionTask: normalizedTask,
       runtime, os: osTarget, projectRoot, environment: calculationEnvironment, fetchOnly: true }) : null;
     return writeHostPreparation({ task: normalizedTask, runId, taskFingerprint, outputDir, language: resolvedOutputLanguage,
+      workContext: workContextSnapshot,
+      runtimeSelection, modelSelection,
+      preparationExistedAtEntry,
       goalContract: designGoal, dialogue: intentDialogue, confirmedIntent: confirmedIntentSnapshot, requirementsDiscovery,
       preview: { ...planChallengePreview, currentQuestionIds: [...declaredQuestionIds] }, critical: hostCritical, fetchResult: fetched, previousRunId: requestedPreviousRunId, projectRoot: path.resolve(projectRoot), projectContext, researchRequired, taskDesignRoute: taskDesignRoutePacket, governanceTaskFacts: currentTaskFacts, designPending });
   }
@@ -12711,7 +12818,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   if (existingOutcomeReview) {
     const reviewed = await applyPersistedOutcomeReview({ artifact: existing, input: outcomeReviewSnapshot, projectRoot, jsonPath: existingPath, outputDir });
     await notifyReviewed(reviewed);
-    return currentCallNotice(reviewed);
+    return currentCallNotice(await readWorkOutcomeProjection({ artifact: reviewed, jsonPath: existingPath, outputDir }));
   }
   if (durableMode === "resume") {
     const reservation = await readDurableReservation(reservationPath, {
@@ -12747,7 +12854,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
       const restored = await applyPersistedOutcomeReview({ artifact: materialized, input: outcomeReviewSnapshot, projectRoot, jsonPath, outputDir });
       await publishProgress(progressEvent({ runId: effectiveRunId, stage: "Resume", status: "already_materialized", reason: taskProgressReason(resolvedOutputLanguage, "resume"), details: { source: "durableExecution", replayedTaskCount: 0 } }));
       await notifyReviewed(restored);
-      return currentCallNotice(restored);
+      return currentCallNotice(await readWorkOutcomeProjection({ artifact: restored, jsonPath, outputDir }));
     }
   } else if (durableMode === "fresh") {
     await reserveExplicitRunId(reservationPath, {
@@ -12760,7 +12867,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     if (previous.runId !== effectiveRunId || previous.taskFingerprint !== taskFingerprint || previous.task !== normalizedTask) throw new TypeError("Review continuation task or design fingerprint mismatch");
     const reviewed = await applyPersistedOutcomeReview({ artifact: previous, input: outcomeReviewSnapshot, projectRoot, jsonPath, outputDir });
     await notifyReviewed(reviewed);
-    return currentCallNotice(reviewed);
+    return currentCallNotice(await readWorkOutcomeProjection({ artifact: reviewed, jsonPath, outputDir }));
   } else if (requestedRunId != null && allowOverwrite !== true) {
     await reserveExplicitRunId(reservationPath, {
       runId: effectiveRunId,
@@ -12810,6 +12917,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     projectRoot: path.resolve(projectRoot),
     environment: calculationEnvironment,
   });
+  orchestrationReport.workerTaskPackets = bindWorkerWorkContext(orchestrationReport.workerTaskPackets ?? [], workContextSnapshot);
   for (const packet of orchestrationReport.workerTaskPackets ?? []) {
     if (packet.researchEvidence?.length) await readTaskResearchEvidence({ projectRoot: path.resolve(projectRoot), evidence: packet.researchEvidence,
       taskHash: intentDialogue.taskHash, intentDigest: intentDialogue.intentDigest ?? null });
@@ -13094,6 +13202,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   });
   coreLoop = {
     ...coreLoop,
+    ...(workContextSnapshot ? { workContext: workContextSnapshot, workBinding: workBindingFor(workContextSnapshot) } : {}),
     productDesignPacket: productDesign,
     requirementsDiscoveryPacket: requirementsDiscovery,
     projectContextPacket: projectContext,
@@ -13137,7 +13246,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
         machineExecution = await advanceGovernedGoal({ runId: effectiveRunId, goalContract: coreLoop.goalContractPacket,
           stageDagPacket: coreLoop.stageDagPacket, workerTaskPackets: packets, projectRoot,
           artifactRoot: stageRunner.machineArtifactRoot ?? path.join(outputDir, "machine-results"),
-          runtime: normalizeStageRunnerRuntime(stageRunner.runtime ?? routeRuntime), host: stageRunner,
+          runtime: injectedRuntime, host: { ...stageRunner, model: configuredModel },
           kernel, taskFingerprint, observations: stageRunner.outcomeObservations ?? [], env: calculationEnvironment,
           humanMilestones, thinkingGaps: designHumanMilestones.gaps, design: productDesign, outcomeReview: executionOutcomeReview });
         const milestoneQuestions = machineExecution.humanMilestoneReviews.filter((review) => review.decisionId && !review.nextAction).map((review) => ({
@@ -13296,6 +13405,8 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
       const bridgeResult = await runStageRunnerBridge({
         runId: effectiveRunId,
         runtime: stageRunner.runtime ?? routeRuntime,
+        model: configuredModel,
+        modelSelectionSupported: stageRunner.modelSelectionSupported === true,
         stageDagPacket: coreLoop.stageDagPacket,
         workerTaskPackets: coreLoop.thinkingPacket.workerTaskPackets,
         workspaceRoot: path.resolve(projectRoot),
@@ -13563,10 +13674,17 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   coreLoop = {
     ...coreLoop,
     preDecisionOptionFrame: workflowContractPackets.preDecisionOptionFrame,
+    runtimeSelection,
+    fetchPacket: { ...coreLoop.fetchPacket, runtimeSelection },
+    modelSelection: coreLoop.stageRunnerBridgePacket?.modelSelection ?? machineExecution.modelSelection ?? modelSelection,
+    traceEvalControlPlane: { ...coreLoop.traceEvalControlPlane,
+      toolModelRetrievalHandoffMetadata: { ...coreLoop.traceEvalControlPlane.toolModelRetrievalHandoffMetadata,
+        model: coreLoop.stageRunnerBridgePacket?.modelSelection ?? machineExecution.modelSelection ?? modelSelection } },
   };
   let artifact = {
     schemaVersion: 1,
     runId: effectiveRunId,
+    ...(workContextSnapshot ? { workContext: workContextSnapshot, workBinding: workBindingFor(workContextSnapshot) } : {}),
     requestedRunId,
     overwriteAuthorized: allowOverwrite === true,
     reservation: durableStageRunnerEnabled
@@ -13581,6 +13699,8 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
           mode: allowOverwrite === true ? "explicit_overwrite" : "exclusive_wx",
         },
     taskFingerprint,
+    runtimeSelection,
+    modelSelection: coreLoop.stageRunnerBridgePacket?.modelSelection ?? machineExecution.modelSelection ?? modelSelection,
     productDesignPacket: productDesign,
     requirementsDiscoveryPacket: requirementsDiscovery,
     projectContextPacket: projectContext,
@@ -13739,6 +13859,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     },
     ...workflowContractPackets,
   };
+  artifact = projectWorkReceipt(artifact);
   // Prepare and budget the exact bytes before any primary artifact commit.
   // Projection construction can therefore never leave a newly committed run
   // behind an older latest pointer.
@@ -13855,7 +13976,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   const reviewedArtifact = executionReviewInput ? await applyPersistedOutcomeReview({ artifact: deliveredArtifact, input: executionReviewInput, projectRoot, jsonPath, outputDir, evaluatedReview: executionOutcomeReview }) : deliveredArtifact;
   if (executionReviewInput) await notifyReviewed(reviewedArtifact);
   await publishProgress(progressEvent({ runId: effectiveRunId, stage: "Delivery", status: "records_saved", reason: taskProgressReason(resolvedOutputLanguage, "delivery"), details: { source: "committed_run_artifacts" } }));
-  return currentCallNotice(reviewedArtifact);
+  return currentCallNotice(await readWorkOutcomeProjection({ artifact: reviewedArtifact, jsonPath, outputDir }));
   } catch (error) {
     durableBodyError = error;
     await publishProgress(progressEvent({ runId: effectiveRunId, stage: "Execution", status: "run_interrupted",
@@ -13926,6 +14047,7 @@ export async function readGovernedExecutionRun({
     );
   }
   artifact = await readProductReviewProjection({ artifact, projectRoot, jsonPath, outputDir });
+  artifact = await readWorkOutcomeProjection({ artifact, jsonPath, outputDir });
   const recordedMarkdown = artifact?.runReport?.markdownPath;
   const language = normalizeOutputLanguage(
     artifact?.resolvedOutputLanguage ?? artifact?.runReport?.language,
@@ -14020,6 +14142,8 @@ function rawPositionals() {
         "--previous-plan-challenge-run",
         "--design-input",
         "--outcome-review-input",
+        "--work-context-input",
+        "--work-outcome-input",
         "--local-tool-input",
         "--calculation-materials",
         "--calculation-method-inputs",
@@ -14029,6 +14153,7 @@ function rawPositionals() {
         "--lang",
         "--output-language",
         "--stage-runner-runtime",
+        "--stage-runner-model",
         "--stage-runner-orchestrator",
         "--stage-runner-timeout-ms",
         "--stage-runner-capacity",
@@ -14046,6 +14171,8 @@ function rawPositionals() {
 
 async function main() {
   if (process.argv.includes("--help")) {
+    process.stdout.write("Client/model configuration: --runtime auto resolves explicit configuration or current host evidence, then the labeled configured planning default. --stage-runner-runtime selects a compatible execution client; a conflicting explicit --runtime is rejected. --stage-runner-model <identifier> passes the exact configured model to a supported adapter without starting execution. Model/provider access remains host-owned; requested/applied/observed are separate and unavailable observations remain unknown. Changing client or model requires a fresh run/Fetch. Built-in subprocess protocols remain Codex and Claude; a discovery profile is not native support.\n\n");
+    process.stdout.write("Company Work context: --work-context-input <json-file> binds optional kim-work-context-v1 organization/Work/revision/scope and source/adoption/decision references to this run and its workers. A changed context requires a new run. --work-outcome-input <json-file>, with the original --run-id/--task/--work-context-input, appends kim-work-outcome-v1 business adoption/effect/reuse observations to an existing run without executing workers. Output separates produced, verified, adopted and effect. References are host data, not access grants, authenticated decisions or public knowledge writeback.\n\n");
     process.stdout.write("Product workflow: --requirements-discovery-input <json-file> proposes source-backed questions, recommendations and tradeoffs before design; --design-required requests a Thinking handoff when a design is absent; --design-input <json-file> consumes the resulting bound design; --outcome-review-input <json-file> attaches an independent review of current artifact bytes, including to an existing same-identity run without repeating Execution. Files are content, not native invocation proof, user answers or permissions. Default remains planned_only.\n\n");
     process.stdout.write("Calculation handoff: --calculation-materials <utf8-json-file> supplies complete materials (procurement max 262144 bytes; store rows max 65536 bytes with schemaVersion:1 and required rows, optional definitions/comparison); configure META_KIM_KIM_SERVICE_ROOT for the reviewed dependency. Add --execute-stage-dag for the existing read-only worker bridge. The selected AGENT.md determines the output contract; store definition conflicts retain row metrics without cross-period comparisons or attribution. Materials alone do not execute tools or models, waive route/choice gates, or establish a native invocation. The public API accepts dependencyCalculationInput={inputJson,dependencyRoot?,methodInputs?}; CLI --calculation-method-inputs <bounded-json-object-file> supplies the same private mapping. Optional methodInputs are an explicit unverified host mapping of the original materials for the selected professional contract, kept private with digest bindings. Current Critical/Fetch/Thinking is still required; request/intent/owner bindings are created internally.\n\n");
     process.stdout.write("Usage: node scripts/run-meta-theory-governed-execution.mjs --task <request> [--confirmed-intent <json-file>] [--local-tool-input <json-file>] [--execute-stage-dag]\n\n--local-tool-input binds {taskHash,intentDigest,input:{schemaVersion:1,workspaceRoot,target,rules?}}. It is planning input, not an execution flag or a native Permission grant. --execute-stage-dag requests execution through the existing bridge; confirmed host understanding, exact authorized scope and the reviewed local contract remain required. Caller-supplied CLI intent JSON remains advisory. A host may call the public runMetaTheoryGovernedExecution API with its existing confirmed understanding; the built-in local worker is then selected automatically without a callback. Local receipts do not prove native/model invocation or complete source security.\n");
@@ -14066,11 +14193,10 @@ async function main() {
   const artifactDirArg = argValue("--artifact-dir", null);
   const dbArg = argValue("--db", null);
   const durableDbArg = argValue("--durable-db", null);
-  // Route planning keeps its default; provenance must not inherit it. Reading the
-  // flag once and letting the default apply only to the route is what keeps a run
-  // nobody declared a host for from being recorded as that default vendor.
-  const declaredRuntimeArg = argValue("--runtime", process.env.META_KIM_RUNTIME ?? null);
-  const runtimeArg = declaredRuntimeArg ?? "codex";
+  // Preserve whether a client was explicitly selected. Auto is resolved by the
+  // shared configuration/current-host selector inside the governed entry.
+  const declaredRuntimeArg = argValue("--runtime", null);
+  const runtimeArg = declaredRuntimeArg ?? "auto";
   const osArg = argValue("--os", null);
   const cliOutputLanguage = argValue(
     "--output-language",
@@ -14080,7 +14206,7 @@ async function main() {
     process.argv.includes("--emit-conversation-notice") &&
     !process.argv.includes("--no-emit-conversation-notice");
   if (emitConversationProgress) process.stderr.on("error", () => {});
-  const runtime = normalizeRouteRuntime(runtimeArg);
+  const runtime = runtimeArg;
   const executeStageDag = process.argv.includes("--execute-stage-dag");
   const resumeStageDag = process.argv.includes("--resume-stage-dag");
   if (executeStageDag && resumeStageDag) {
@@ -14092,7 +14218,8 @@ async function main() {
   if (resumeStageDag && (!runIdArg || !taskArg)) {
     throw new Error("--resume-stage-dag requires explicit --run-id and --task");
   }
-  const stageRunnerRuntime = argValue("--stage-runner-runtime", runtime);
+  const stageRunnerRuntime = argValue("--stage-runner-runtime", null);
+  const stageRunnerModel = normalizeConfiguredModel(argValue("--stage-runner-model", null));
   const stageRunnerOrchestrator = argValue("--stage-runner-orchestrator", "native");
   const stageRunnerTimeoutMs = Number(argValue("--stage-runner-timeout-ms", "300000"));
   const stageRunnerCapacity = Number(argValue("--stage-runner-capacity", "0"));
@@ -14100,7 +14227,9 @@ async function main() {
     throw new Error("--stage-runner-timeout-ms must be a finite safety timeout >= 10000");
   }
   if (executeStageDag || resumeStageDag) {
-    normalizeStageRunnerRuntime(stageRunnerRuntime);
+    const detectedHost = detectHostRuntimeFromEnv(process.env);
+    normalizeStageRunnerRuntime(resolvePlanningRuntime({ requestedRuntime: runtime, stageRunnerRuntime,
+      configuredRuntime: process.env.META_KIM_RUNTIME, hostRuntime: detectedHost.runtime, hostBasis: detectedHost.basis }).runtime);
     resolveReadySetExecutor(stageRunnerOrchestrator);
   }
   const osTarget = normalizeOsTarget(osArg);
@@ -14132,6 +14261,7 @@ async function main() {
         {
           status: run.artifact.status,
           runId: run.runId,
+          ...(run.artifact.workReceipt ? { workReceipt: run.artifact.workReceipt } : {}),
           report: relative(run.paths.markdown),
           selection: run.selection,
         },
@@ -14176,6 +14306,8 @@ async function main() {
   const report = await runMetaTheoryGovernedExecution({
     task,
     confirmedIntent,
+    workContext: await readContentInput("--work-context-input"),
+    workOutcome: await readContentInput("--work-outcome-input"),
     criticalInput: await readContentInput("--critical-input"),
     thinkingInput: await readContentInput("--thinking-input"),
     governanceTaskFacts: await readContentInput("--governance-task-facts-input"),
@@ -14236,10 +14368,11 @@ async function main() {
       )
         ? "read_only"
         : "auto",
-    stageRunner: executeStageDag || resumeStageDag
+    stageRunner: executeStageDag || resumeStageDag || stageRunnerModel != null || stageRunnerRuntime != null
       ? {
-          enabled: true,
+          enabled: executeStageDag || resumeStageDag,
           runtime: stageRunnerRuntime,
+          model: stageRunnerModel,
           orchestrator: stageRunnerOrchestrator,
           durableMode: resumeStageDag ? "resume" : "fresh",
           durableDbPath: durableDbArg ? path.resolve(durableDbArg) : undefined,
@@ -14248,9 +14381,15 @@ async function main() {
         }
       : null,
   });
+  if (report.status === "stopped_by_user" && report.workContextStatus) {
+    process.stdout.write(JSON.stringify(report) + "\n");
+    return;
+  }
   if (report.preparation) {
     if (emitConversationProgress) process.stderr.write(renderPreparationNotice(report) + "\n");
     process.stdout.write(JSON.stringify({ status: report.preparation.status, runId: report.runId, executionAllowed: false,
+      runtimeSelection: report.runtimeSelection ?? null, modelSelection: report.modelSelection ?? null,
+      ...(report.workReceipt ? { workReceipt: report.workReceipt } : {}),
       nextAction: report.hostInvocationRequestPacket.nextAction, pendingDecisions: report.hostInvocationRequestPacket.pendingDecisions,
       inventoryDigest: report.fetchPacket.capabilityDiscovery?.inventoryDigest ?? null, input: report.paths.json,
       report: temporaryOutputRoot ? relative(report.paths.markdown) : report.paths.markdown,
@@ -14270,6 +14409,8 @@ async function main() {
               ? "stopped_by_user"
               : report.status,
         runId: report.runId,
+        runtimeSelection: report.runtimeSelection, modelSelection: report.modelSelection,
+        ...(report.workReceipt ? { workReceipt: report.workReceipt, workOutcome: report.paths.workOutcome ?? null } : {}),
         executionAllowed: false,
         planChallengeSatisfied:
           report.preDecisionOptionFrame?.planChallengeState?.planChallengeSatisfied === true,

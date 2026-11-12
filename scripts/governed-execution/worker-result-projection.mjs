@@ -1,5 +1,6 @@
 import { methodDeliveryMatches } from "./method-delivery.mjs";
 import { stageLaneNodeId } from "./stage-dag.mjs";
+import { workBindingsMatch } from "../../src/domain/governance/work-context.mjs";
 
 /** Read-only task-board notification from an existing committed kernel event.
  * The caller must obtain events from the current kernel, not an input receipt.
@@ -46,6 +47,7 @@ export function projectWorkflowWorkerResults({ runId, workerTaskPackets, planned
     const packet = packets.get(result?.taskPacketId);
     if (!packet || result.runId !== runId ||
       (result.ownerAgent ?? result.owner) !== (packet.ownerAgent ?? packet.owner) ||
+      !workBindingsMatch(result.workBinding, packet.workBinding) ||
       !["native_read_only_worker_result", "actual_local_tool_worker_result"].includes(result.resultKind)) return [];
     if (result.output?.deliveryEnvelope && !methodDeliveryMatches({ envelope: result.output.deliveryEnvelope,
       runId, packet, outputText: result.output.text })) return [];

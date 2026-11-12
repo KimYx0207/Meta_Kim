@@ -5,7 +5,7 @@ import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, promises as fsPromises } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -1317,6 +1317,10 @@ describe("55 - governed run identity, language, and chat surface", () => {
 
   test("exclusive reservation prevents concurrent explicit run creation", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-run-reservation-"));
+    const originalReadFile = fsPromises.readFile;
+    let releaseSecond;
+    const secondMayContinue = new Promise(resolve => { releaseSecond = resolve; });
+    let pending = [];
     try {
       const input = {
         task: "concurrent reservation check",
@@ -1324,15 +1328,40 @@ describe("55 - governed run identity, language, and chat surface", () => {
         stateDir: tempDir,
         dbPath: path.join(tempDir, "runs.sqlite"),
       };
-      const results = await Promise.allSettled([
+      const reservationPath = path.join(tempDir, "concurrent-run.reservation.json");
+      let reservationReads = 0;
+      let secondHeld = false;
+      fsPromises.readFile = async function (file, ...args) {
+        if (String(file) === reservationPath && ++reservationReads === 2) {
+          secondHeld = true;
+          await secondMayContinue;
+        }
+        return originalReadFile.call(this, file, ...args);
+      };
+      // Both callers enter before an artifact exists. Hold the second caller's
+      // first real reservation read until the first has committed its full pair,
+      // exercising the former late-arrival readback race deterministically.
+      pending = [
         runMetaTheoryGovernedExecution(input),
         runMetaTheoryGovernedExecution(input),
-      ]);
+      ];
+      const settled = Promise.allSettled(pending);
+      const first = await pending[0];
+      assert.equal(secondHeld, true);
+      releaseSecond();
+      const results = await settled;
       assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
       assert.equal(results.filter((result) => result.status === "rejected").length, 1);
       assert.match(results.find((result) => result.status === "rejected").reason.message, /reserved|already exists|reservation: transaction_in_progress/u);
       assert.equal(existsSync(path.join(tempDir, "concurrent-run.reservation.json")), true);
+      const bytes = readFileSync(first.paths.json, "utf8");
+      const reread = await runMetaTheoryGovernedExecution(input);
+      assert.equal(reread.runId, first.runId, "a later request may still read the existing same-binding preparation");
+      assert.equal(readFileSync(first.paths.json, "utf8"), bytes);
     } finally {
+      releaseSecond();
+      await Promise.allSettled(pending);
+      fsPromises.readFile = originalReadFile;
       await rm(tempDir, { recursive: true, force: true });
     }
   });

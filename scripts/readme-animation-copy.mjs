@@ -251,7 +251,7 @@ export const copy = {
   },
 };
 
-// Small structural labels shared by the seven diagrams in each locale.
+// Small structural labels shared by the diagrams in each locale.
 export const diagramLabels = {
  'zh-CN': {
   motionDescription:'图中文字和关系完整保留。动效展示一轮输入传递、任务进度和产出保留；停止动画或减少动效时仍可读完整流程。',
@@ -284,5 +284,44 @@ export const diagramLabels = {
   keepsWorking:'작업 계속',waitOnly:'관련 작업만 대기',join:'통합 조건: 각 작업에 검증 가능한 결과가 있음',
   alternatives:'현재 조건에 맞는 대응 선택',pauseCondition:'현재 결정을 이해할 시간이 필요하면 여백 추가',pauseInput:'요약, 남은 작업, 재개 조건 보존',resume:'조건이 명확해지면 계속',
   currentTask:'현재 작업 이어가기',reusable:'재사용할 방법 개선',evaluateEvidence:'실제 사례에서 효과와 다른 상황에 미치는 영향 비교',writeback:'복구 경로를 남기고 방법 갱신',
+ },
+};
+
+export const workContextCopy = {
+ 'zh-CN': {
+  title:'一件事，怎样跨会话继续',sub:'业务系统用同一事项标识，关联多次执行',
+  host:['公司业务系统维护事项',['目标、负责人、权限与主状态留在原系统','传入同一事项标识和上下文版本']],
+  runs:[['会话 A · 本次执行',['接收事项上下文','生成成果 v1','保留本次证据']],['会话 B · 后续执行',['传入同一事项','更新后的上下文','继续生成成果 v2']]],
+  receipt:['把执行回执交回业务系统',['每次执行绑定具体事项、上下文版本与成果','产出、核验、采用、效果分别说明']],
+  states:[['产出','本次实际生成了什么，文件是哪一版'],['核验','检查了哪些标准，有什么证据'],['采用','业务系统记录采用哪一版、谁决定、为什么'],['效果','后续观察及证据；没有观察就保持未知']],
+  candidate:['保留经验候选',['带上来源、条件与原因','记录直接复用、调整复用或不适用']],
+  footer:['采用和效果来自业务系统记录','经验先成为候选，再评估复用'],
+ },
+ en: {
+  title:'Continue one work item across sessions',sub:'The host links separate runs to the same work item',
+  host:['The company system owns the work',['Keep goals, owners, access and main status','Pass work and context references into each run']],
+  runs:[['Session A',['Receive context','Produce v1','Keep run evidence']],['Session B',['Pass updated context','For the same work item','Produce v2']]],
+  receipt:['Return a work receipt to the host',['Bind work, context revision and artifact references','Report each of the four outcomes separately']],
+  states:[['Produced','What this run created, with the exact version'],['Verified','Which checks ran and what evidence they found'],['Adopted','The host records the selected version, decision and reason'],['Effect','Later observations and evidence; unknown until supplied']],
+  candidate:['Keep a candidate lesson','Keep sources, conditions and reasons; record direct, adapted or unsuitable reuse'],
+  footer:'Adoption and effects come from host records. Evaluate lessons before reuse.',
+ },
+ 'ja-JP': {
+  title:'同じ仕事を、次の会話へ',sub:'業務システムが同じ仕事の識別子で複数の実行を結ぶ',
+  host:['会社の業務システムが管理',['目標、担当者、権限と主状態を保持','仕事の識別子と文脈の版を渡す']],
+  runs:[['会話 A · 今回の実行',['仕事の文脈を受け取る','成果 v1 を作成','今回の根拠を残す']],['会話 B · 次の実行',['同じ仕事の文脈を更新','次の実行に渡す','成果 v2 を作成']]],
+  receipt:['実行の記録を業務システムへ返す',['仕事、文脈の版と成果を結ぶ','四つの結果を分けて報告']],
+  states:[['作成',['今回作った成果と','そのファイルの版']],['検証','確認した基準と根拠'],['採用',['採用版と判断者を記録','理由も業務システムに']],['効果',['後日の観測と根拠','未観測は不明のまま']]],
+  candidate:['経験を候補として残す',['出典、条件と理由を付ける','利用、調整、不適用の判断を記録']],
+  footer:['採用と効果は業務システムの記録から','経験を評価してから再利用'],
+ },
+ 'ko-KR': {
+  title:'같은 일을 다음 대화로 이어가기',sub:'업무 시스템이 같은 업무 식별자로 여러 실행을 연결',
+  host:['회사 업무 시스템이 관리',['목표, 담당자, 권한과 주 상태를 보관','업무와 문맥 버전을 실행에 전달']],
+  runs:[['대화 A · 이번 실행',['업무 문맥 받기','결과 v1 생성','실행 근거 보존']],['대화 B · 다음 실행',['같은 업무의 새 문맥','다음 실행에 전달','결과 v2 생성']]],
+  receipt:['실행 기록을 업무 시스템에 반환',['업무, 문맥 버전과 결과를 연결','네 가지 결과를 구분하여 보고']],
+  states:[['생성',['생성한 결과와','정확한 파일 버전']],['검증','확인한 기준과 근거'],['채택',['채택 버전과 판단자','이유를 시스템에 기록']],['효과',['이후 관찰과 근거','아직 없으면 미확인']]],
+  candidate:['경험 후보를 보존',['출처, 조건과 이유 보존','직접 재사용 · 수정 재사용 · 부적합 판단']],
+  footer:['채택과 효과는 업무 시스템 기록을 사용','경험은 평가 후 재사용합니다'],
  },
 };

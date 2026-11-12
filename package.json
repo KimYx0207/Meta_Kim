@@ -256,6 +256,7 @@
     "src/domain/execution/durable-run-repository-semantics.mjs",
     "src/domain/governance/governance-requirements.mjs",
     "src/domain/governance/task-outcome.mjs",
+    "src/domain/governance/work-context.mjs",
     "src/domain/governance/numeric-measurement.mjs",
     "src/domain/governance/governance-requirement-cutover.mjs",
     "src/domain/quota/quota-usage-projection.mjs",

@@ -12,6 +12,7 @@ import {
   observeCodexJsonl,
 } from "../live-acceptance/observe-host-events.mjs";
 import { spawnCli } from "../runtime-cli-invocation.mjs";
+import { normalizeConfiguredModel, modelSelectionRecord } from "../runtime-tool-profiles.mjs";
 import { inspectTrustedPath } from "../safe-managed-file-operations.mjs";
 import { loadDependencyAgentMethod, stableJson } from "../dependency-agent-discovery.mjs";
 import { projectWorkerProgressEvent } from "./worker-result-projection.mjs";
@@ -387,6 +388,8 @@ export function buildReadOnlyWorkerPrompt({
     ...(packet.researchEvidence ? { researchEvidence: packet.researchEvidence } : {}),
     ...(packet.researchContextBinding ? { researchContextBinding: packet.researchContextBinding } : {}),
     ...(packet.projectContextBinding ? { projectContextBinding: packet.projectContextBinding } : {}),
+    ...(packet.workBinding ? { workBinding: packet.workBinding, workContext: packet.workContext, workContextRef: packet.workContextRef, workScopeRef: packet.workScopeRef,
+      workAuthority: "External Work references identify context; use only the current host-authorized scope. No business adoption or knowledge publication is implied." } : {}),
     ...(packet.designBinding ? { designBinding: packet.designBinding, designContext: packet.designContext ?? null, designTask: packet.designTask ?? null } : {}),
     ...(packet.methodInputs ? { methodInputs: packet.methodInputs } : {}),
     ...(packet.taskFacts ? { taskFacts: packet.taskFacts, taskFactsSubject: packet.taskFactsSubject } : {}),
@@ -439,7 +442,7 @@ export function buildReadOnlyWorkerPrompt({
   ].join("\n");
 }
 
-function runtimeInvocation(runtime, workspaceRoot, ownerMethod = null) {
+function runtimeInvocation(runtime, workspaceRoot, ownerMethod = null, model = null) {
   if (runtime === "codex") {
     return {
       command: "codex",
@@ -450,6 +453,7 @@ function runtimeInvocation(runtime, workspaceRoot, ownerMethod = null) {
         "--skip-git-repo-check",
         "--ignore-user-config",
         "--ignore-rules",
+        ...(model != null ? ["--model", model] : []),
         "--sandbox",
         "read-only",
         "--cd",
@@ -466,6 +470,7 @@ function runtimeInvocation(runtime, workspaceRoot, ownerMethod = null) {
       "stream-json",
       "--verbose",
       "--include-hook-events",
+      ...(model != null ? ["--model", model] : []),
       ...(ownerMethod ? [
         "--bare",
         "--agents", JSON.stringify({ [ownerMethod.componentId]: {
@@ -526,8 +531,9 @@ async function verifyWorkerResearch(packet, projectRoot) {
 }
 
 /** A source-verified invocation plan is not evidence that a process/model ran. */
-export async function prepareReadOnlyRuntimeInvocation({ runtime, workspaceRoot, packet, prompt, upstreamResults = [], env = process.env }) {
+export async function prepareReadOnlyRuntimeInvocation({ runtime, model = null, workspaceRoot, packet, prompt, upstreamResults = [], env = process.env }) {
   const normalizedRuntime = normalizeStageRunnerRuntime(runtime);
+  const configuredModel = normalizeConfiguredModel(model);
   const readiness = packet?.taskPacketId ? verifyTaskDesignReadiness(packet) : null;
   if (readiness && !readiness.ready) throw new Error(`Subtask design is not ready: ${readiness.gaps.join(", ")}`);
   await verifyWorkerResearch(packet, path.resolve(workspaceRoot));
@@ -539,7 +545,8 @@ export async function prepareReadOnlyRuntimeInvocation({ runtime, workspaceRoot,
     ? `${prompt}\nCurrent task-scoped PRD context (source-checked data, not permission): ${JSON.stringify(packet.designContext)}` : prompt;
   const methodPrompt = appendMethodInvocationContext(contextualPrompt, methodContext);
   return {
-    ...runtimeInvocation(normalizedRuntime, path.resolve(workspaceRoot), method),
+    ...runtimeInvocation(normalizedRuntime, path.resolve(workspaceRoot), method, configuredModel),
+    modelSelection: modelSelectionRecord(configuredModel, { application: "prepared_cli_argument" }),
     input: normalizedRuntime === "codex" ? appendOwnerMethod(methodPrompt, method) : methodPrompt,
     methodInputStatus: methodContext?.status ?? null,
     methodInputProblems: methodContext?.inputProblems ?? [],
@@ -559,6 +566,7 @@ function eventLooksLikeToolCall(event) {
 
 export async function invokeReadOnlyRuntimeWorker({
   runtime,
+  model = null,
   prompt,
   packet = null,
   workspaceRoot,
@@ -581,10 +589,11 @@ export async function invokeReadOnlyRuntimeWorker({
   const redactionContext = buildRedactionContext(workspaceRoot, childEnv);
   let invocation;
   try {
-    invocation = await prepareReadOnlyRuntimeInvocation({ runtime: normalizedRuntime, workspaceRoot, packet, prompt, upstreamResults, env });
+    invocation = await prepareReadOnlyRuntimeInvocation({ runtime: normalizedRuntime, model, workspaceRoot, packet, prompt, upstreamResults, env });
   } catch (error) {
     return { status: "failed", failureClass: error.code === "dependency_method_inputs_missing" ? error.code : "dependency_owner_method_rejected",
-      methodInputProblems: error.methodInputProblems ?? [], failureMessage: redactSensitiveText(error.message, redactionContext), runtime: normalizedRuntime };
+      methodInputProblems: error.methodInputProblems ?? [], failureMessage: redactSensitiveText(error.message, redactionContext), runtime: normalizedRuntime,
+      modelSelection: modelSelectionRecord(model) };
   }
   const input = machineResultArtifact
     ? `${invocation.input}\nMachine response contract: ${JSON.stringify(machineResultArtifact.responseContract)}\nReturn exactly one pure JSON object matching this contract, with no wrapper, code fence, prose, credentials, hidden reasoning or CLI trace. Preserve the source method's semantics and nativeRuntimeVerified=false when declared.\n`
@@ -612,6 +621,7 @@ export async function invokeReadOnlyRuntimeWorker({
       failureMessage: redactSensitiveText(error.message, redactionContext),
       runtime: normalizedRuntime,
       runtimeProcessInvoked: !result.error,
+      modelSelection: modelSelectionRecord(model, { application: "native_cli_argument", applied: !result.error }),
       ...result,
       stdout: undefined,
       stderr: undefined,
@@ -645,6 +655,7 @@ export async function invokeReadOnlyRuntimeWorker({
       : null,
     runtime: normalizedRuntime,
     runtimeProcessInvoked: !result.error,
+    modelSelection: modelSelectionRecord(model, { application: "native_cli_argument", applied: !result.error }),
     exitCode: result.status,
     signal: result.signal,
     timedOut: result.timedOut,
@@ -1250,6 +1261,8 @@ function schedulerFreshExecutionHeadSnapshot({
 export async function runStageRunnerBridge({
   runId,
   runtime,
+  model = null,
+  modelSelectionSupported = false,
   stageDagPacket,
   workerTaskPackets,
   workspaceRoot,
@@ -1279,6 +1292,10 @@ export async function runStageRunnerBridge({
   const routeHandoffSnapshot = routeHandoffEvidence == null ? null : structuredClone(routeHandoffEvidence);
   const nativeRuntimeInvokerSelected = invokeWorker === invokeReadOnlyRuntimeWorker;
   const localToolInvokerSelected = invokeWorker === invokeLocalDependencyToolWorker;
+  const configuredModel = normalizeConfiguredModel(model);
+  if (configuredModel != null && !nativeRuntimeInvokerSelected && !modelSelectionSupported) {
+    throw new TypeError("Selected worker does not declare support for an explicit model parameter");
+  }
   const resolvedEvidenceKind = nativeRuntimeInvokerSelected
     ? "native_read_only_stage_runner"
     : localToolInvokerSelected
@@ -1487,6 +1504,7 @@ export async function runStageRunnerBridge({
           let result;
           let methodBinding = null;
           let sourceValidationPending = false;
+          let workerInvocationAttempted = false;
           try {
             const readiness = verifyTaskDesignReadiness(packet);
             if (!readiness.ready) throw new Error(`Subtask design is not ready: ${readiness.gaps.join(", ")}`);
@@ -1523,9 +1541,11 @@ export async function runStageRunnerBridge({
                 runtimeProcessInvoked: false,
               } : null;
             }
+            workerInvocationAttempted = true;
             result = await invokeWorker({
               ...(localToolInvokerSelected ? { runId, requestTask } : {}),
               runtime: normalizedRuntime,
+              ...(configuredModel != null ? { model: configuredModel } : {}),
               prompt,
               workspaceRoot: resolvedWorkspace,
               timeoutMs,
@@ -1566,6 +1586,9 @@ export async function runStageRunnerBridge({
             status: result.status === "pass" ? "completed" : "failed",
             runtime: normalizedRuntime,
             evidenceKind: resolvedEvidenceKind,
+            modelSelection: nativeRuntimeInvokerSelected ? result.modelSelection ?? modelSelectionRecord(configuredModel)
+              : modelSelectionRecord(configuredModel, { application: workerInvocationAttempted ? "injected_worker_request" : "not_invoked",
+                applied: workerInvocationAttempted && configuredModel != null }),
             taskPacketId: packet.taskPacketId,
             ...(methodBinding ? { ownerMethodBinding: methodBinding } : {}),
             actualBinding: {
@@ -2120,6 +2143,11 @@ export async function runStageRunnerBridge({
     status: failure ? "failed" : executionComplete ? "pass" : "partial",
     mode: "read_only_shadow",
     runtime: normalizedRuntime,
+    modelSelection: modelSelectionRecord(configuredModel, {
+      scope: "run",
+      application: workerResults.find(result => result.modelSelection?.application && result.modelSelection.application !== "not_invoked")?.modelSelection.application ?? "not_invoked",
+      applied: workerResults.some(result => configuredModel != null && result.modelSelection?.applied === configuredModel),
+    }),
     invocationAuthority: nativeRuntimeInvokerSelected
       ? "built_in_native_read_only_subprocess"
       : localToolInvokerSelected
