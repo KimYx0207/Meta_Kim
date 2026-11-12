@@ -8,6 +8,12 @@
 
 </div>
 
+<p align="center">
+  <img src="docs/images/meta-kim-overview.webp" alt="Conceptual panorama of Meta_Kim collaboration: intent and evidence, a shared plan and specialist work, then usable outputs and inspection" width="1000">
+</p>
+
+*A conceptual view of collaboration: goals and materials enter on the left, specialist work shares one plan in the middle, and usable results are delivered and inspected on the right. Records beneath the workbench preserve context for what comes next. The animated diagrams below explain the mechanisms in detail.*
+
 ## You describe a goal. What happens next?
 
 > “I want a small booking app. Customers should choose a time on their phones, staff should manage bookings, and tapping twice should produce just one booking.”
@@ -63,6 +69,12 @@ For the booking app, that outline might contain:
 For example, “tapping twice should produce one booking” becomes an acceptance criterion assigned to booking creation. Responsibility for recognizing the same submission and maintaining capacity becomes part of the interface and shared-state agreements. The user journey and these responsibilities determine the module boundaries.
 
 **You can assess the whole approach before implementation details grow.** Exploration can retain open questions. Before a module is ready for execution, its required decisions and interfaces must be settled. A small repair reuses its accepted design and expands only the affected part.
+
+<p align="center">
+  <img src="docs/images/meta-kim-prd-scales.webp" alt="Two scales of the same PRD: system and module relationships on the left, the selected module developed in detail on the right" width="1000">
+</p>
+
+*The same PRD, from the whole system to the details. The left page preserves relationships among modules; the right develops the selected module’s user journey, states, interfaces and acceptance design. The repeated teal module with its terracotta corner links the two views. The next section explains how that design becomes executable work.*
 
 ## Second PRD pass: make each module ready to implement
 
@@ -397,7 +409,7 @@ If installation or client loading needs attention, `node bin/meta-kim.mjs doctor
 | Data and host adapters | `src/data/repositories/`, `src/infrastructure/` | Persist run and knowledge records; connect actual hosts through existing adapter protocols |
 | Presentation | `src/presentation/live/`, `src/presentation/run-surfaces/` | Show state, evidence and next actions without another model-selection policy |
 
-Extend the responsible layer: methods in canonical, client configuration and verified adapters for a new host, existing state for a new view. The business host retains the Work master record, organization permissions, external notifications and scheduled knowledge processing. `scripts/build-readme-animations.mjs` and localized copy generate the README diagrams; `--check` detects source drift. Titles, entry cards and endings are centered, and reduced motion retains the complete relationships.
+Extend the responsible layer: methods in canonical, client configuration and verified adapters for a new host, existing state for a new view. The business host retains the Work master record, organization permissions, external notifications and scheduled knowledge processing. `scripts/build-readme-animations.mjs` and localized copy generate the README’s animated SVG diagrams; `--check` detects source drift. Titles, entry cards and endings are centered, and reduced motion retains the complete relationships.
 
 Shared Agents, Skills and runtime assets are maintained in `canonical/`, with machine-readable configuration in `config/`. Client directories such as `.claude/`, `.codex/` and `.cursor/` are generated locally by `npm run meta:sync`. These runtime projections are excluded from GitHub source and kept local through `.gitignore`; the distribution package includes their shared sources.
 
