@@ -1,3 +1,4 @@
+import { liveUiLocale } from "../../src/presentation/live/live-ui-copy.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -133,6 +134,7 @@ function ordinaryOverviewHarness(language = "zh") {
   const render = new Function("runOverview", "makeElement", "clearChildren", "helpers", "currentLanguage", "selectNode", "openOverviewFeedback", "observeDeliverableRead", `
 const { resolveLiveRunOverview, liveTaskLifecycleCopy, liveWorkOverviewCopy, plainLiveTaskLabel, liveTaskDisplayLabel, liveRunTaskNodes, resolveLiveTaskLifecycle, normalizeLiveOwnerReport } = helpers;
 const selectedProjectId = "project-a";
+const localize = (value) => value;
 const formatSessionTime = (at) => at;
 const appendObservedTime = (parent, at) => { const time = makeElement("time"); time.dateTime = at; parent.append(time); return time; };
 ${shippedHelper(html, "deliverableOpenHref")}
@@ -1059,6 +1061,7 @@ function graphToolsHarness({ stored = null, canvas = { top: 40, height: 560, wid
       const GRAPH_TOOLS_EDGE_MARGIN = 8;
       const GRAPH_TOOLS_KEYBOARD_STEP = 12;
       const currentLanguage = "en";
+      const localize = (value) => value;
       let graphToolsPosition = null;
       ${html.slice(storageStart, storageEnd)}
       ${html.slice(controllerStart, controllerEnd)}
@@ -1276,18 +1279,18 @@ test("renders a complete local control-room shell with no external assets", () =
   assert.doesNotMatch(html, /<(?:script|link)[^>]+(?:unpkg|jsdelivr|fonts\.googleapis)/iu);
 });
 
-test("defaults to Chinese and provides a persistent English language switch", () => {
+test("defaults to Chinese without a preference and provides a persistent four-language selector", () => {
   const html = renderLiveControlRoomPage();
 
   assert.match(html, /<title>Meta_Kim Live · 控制中心<\/title>/u);
-  assert.match(html, /data-live-language-toggle/u);
+  assert.match(html, /data-live-language-select/u);
   assert.match(html, /data-i18n-en="Execution graph" data-i18n-zh="实时运行图">实时运行图/u);
   assert.match(html, /data-i18n-en="Inspector" data-i18n-zh="检查器">检查器/u);
   assert.match(html, /data-i18n-en="Replay timeline" data-i18n-zh="回放时间线">回放时间线/u);
   assert.match(html, /LANGUAGE_STORAGE_KEY\s*=\s*"meta-kim-live-language"/u);
   assert.match(html, /localStorage\?\.getItem\(LANGUAGE_STORAGE_KEY\)/u);
   assert.match(html, /localStorage\?\.setItem\(LANGUAGE_STORAGE_KEY, currentLanguage\)/u);
-  assert.match(html, /currentLanguage\s*=\s*currentLanguage\s*===\s*"zh"\s*\?\s*"en"\s*:\s*"zh"/u);
+  assert.match(html, /currentLanguage\s*=\s*selectedLanguage/u);
   assert.match(html, /window\.location\.reload\(\)/u);
 });
 
@@ -1671,9 +1674,11 @@ test("each run quantity has exactly one write site, and the surviving owner carr
   // The graph's new layer hint deliberately states its node/hidden-relation
   // scope. Its bilingual phrase is exercised in the controls behavior test;
   // every other surface must retain the single original count owner.
+  // Translation catalogs may contain this phrase for the graph's layer hint.
+  // Only executable write sites determine whether the ordinary counter repeats.
   const withoutLayerHint = html.replace(shippedHelper(html, "updateGraphRelationControls"), "");
-  assert.doesNotMatch(withoutLayerHint, /" nodes?"/u, "only the bilingual layer hint may name its node scope");
-  assert.doesNotMatch(html, /\^\(\\d\+\) nodes\?\$/u, "the node-phrase translation branch must stay retired with its producer");
+  const afterCopyCatalogs = withoutLayerHint.slice(withoutLayerHint.indexOf("let currentLanguage"));
+  assert.doesNotMatch(afterCopyCatalogs, /" nodes?"/u, "only the layer hint may produce its node scope");
 
   const eventWrite = /setText\(\s*contextEvents,([\s\S]*?)\n\s*\);/u.exec(html);
   assert.ok(eventWrite, "the events fact must keep a single multi-line write site");
@@ -3631,7 +3636,7 @@ test("preserves real edge state without replay evidence and uses interactive lis
   assert.match(html, /\.replay-current \.panel-note\s*\{[^}]*display:\s*none/su);
   assert.doesNotMatch(html, /\.workspace-grid\[data-inspector-open="true"\] \.replay-current\s*\{[^}]*display:\s*none/su);
   assert.doesNotMatch(html, /class="top-run-context"/u, "navigation does not repeat the task heading at any viewport");
-  assert.match(html, /data-live-open-sessions[\s\S]{0,500}data-live-language-toggle[\s\S]{0,500}data-live-open-help[\s\S]{0,500}data-live-open-info/u);
+  assert.match(html, /data-live-open-sessions[\s\S]{0,500}data-live-language-select[\s\S]{0,500}data-live-open-help[\s\S]{0,500}data-live-open-info/u);
   const rules = stylesheetRules(html);
   for (const selector of ["[data-live-graph-fit]", "[data-live-graph-zoom-out]", "[data-live-graph-zoom-in]"]) {
     assert.ok(!declaredValues(rules, { selector, property: "display" }).includes("none"), `${selector} remains available in the narrow graph`);
@@ -4073,7 +4078,7 @@ test("the run row carries its outcome, and every new label ships both languages"
     ["没有保存聊天标识的运行记录", "Run without a saved chat id"],
   ]) {
     assert.ok(
-      html.includes(`"${zh}" : "${en}"`),
+      html.includes(`"${zh}" : localize("${en}")`),
       `"${en}" needs a Chinese branch or the label ships untranslated`,
     );
   }
@@ -4396,12 +4401,13 @@ test("overview reuses guarded timestamp rendering with localized copy and no emp
   });
   for (const language of ["zh", "en"]) {
     const overview = makeElement("section");
-    const render = new Function("runOverview", "makeElement", "clearChildren", "resolveLiveRunOverview", "liveTaskLifecycleCopy", "DISPLAY_FORMAT", "currentLanguage", "workHelpers", `
+    const render = new Function("runOverview", "makeElement", "clearChildren", "resolveLiveRunOverview", "liveTaskLifecycleCopy", "DISPLAY_FORMAT", "currentLanguage", "workHelpers", "liveUiLocale", `
 const selectedProjectId = "";
+const localize = (value) => value;
 const { liveWorkOverviewCopy, plainLiveTaskLabel, liveTaskDisplayLabel, liveRunTaskNodes, resolveLiveTaskLifecycle, normalizeLiveOwnerReport } = workHelpers;
 ${serializeLiveTokenUsageResolvers()}
 ${["renderRunOverview", "appendObservedTime", "formatTime", "formatSessionTime", "display"].map((name) => shippedHelper(html, name)).join("\n")}
-return renderRunOverview;`)(overview, makeElement, (element) => { element.children = []; }, resolveLiveRunOverview, liveTaskLifecycleCopy, displayFormat, language, workOverviewHelpers);
+return renderRunOverview;`)(overview, makeElement, (element) => { element.children = []; }, resolveLiveRunOverview, liveTaskLifecycleCopy, displayFormat, language, workOverviewHelpers, liveUiLocale);
     const snapshot = { run: { id: "run-time", active: true, status: "active" }, nodes: [], replay: [
       { id: "call", eventType: "command_returned", label: "shell", at: "2026-10-22T09:00:00Z" },
     ] };
@@ -5269,7 +5275,7 @@ test("the run task summary reaches the screen and names an absent summary instea
 
   const helper = /function runTaskCopy\(task\) \{([\s\S]*?)\n  \}/u.exec(html);
   assert.ok(helper, "runTaskCopy() must ship as a named helper");
-  assert.match(helper[1], /"未保存任务摘要" : "No task summary saved"/u, "both locales must ship the absence copy");
+  assert.match(helper[1], /"未保存任务摘要" : localize\("No task summary saved"\)/u, "both locales must ship the absence copy");
 });
 
 // The absence branch is the one that carries the risk: 25 of these runs recorded
@@ -5327,9 +5333,12 @@ test("the first visit follows the browser locale, and a stored choice still wins
   for (const tag of ["zh", "zh-CN", "zh-Hans-CN", "zh-TW"]) {
     assert.equal(initialLanguage(null, [tag]), "zh", tag + " must open in Chinese");
   }
-  for (const tag of ["en", "en-US", "en-GB", "de-DE", "ja-JP"]) {
+  for (const tag of ["en", "en-US", "en-GB", "de-DE"]) {
     assert.equal(initialLanguage(null, [tag]), "en", tag + " must not open in Chinese");
   }
+
+  assert.equal(initialLanguage(null, ["ja-JP"]), "ja");
+  assert.equal(initialLanguage(null, ["ko-KR"]), "ko");
 
   assert.equal(initialLanguage(null, []), "zh",
     "a browser that states no locale must fall back to the shipped default");
@@ -6264,6 +6273,7 @@ test("shipped relation controls compose execution/all, one-hop focus and replay 
 let relationFocusActive = true;
 let selectedNodeId = "a";
 let currentLanguage = "zh";
+const localize = (value) => value;
 ${["updateGraphRelationControls", "updateGraphRelationPresentation", "setGraphRelationMode"].map((name) => shippedHelper(html, name)).join("\n")}
 return { setGraphRelationMode, updateGraphRelationPresentation, updateGraphRelationControls, setLanguage: (value) => { currentLanguage = value; } };`
   )(state, buttons, summary, { dataset: {} }, kinds, resolveGraphEdgePresentation);
@@ -7044,6 +7054,7 @@ function localFeedbackFormHarness(clipboard, language = "zh", draftOptions = {})
   const surfaces = new Map();
   const render = new Function("localFeedbackDrafts", "localFeedbackSurfaces", "makeElement", "clearChildren", "liveDeliverablesForNode", "buildLocalFeedbackText", "navigator", "currentLanguage", `
 const selectedProjectId = "project-a";
+const localize = (value) => value;
 ${shippedHelper(html, "renderLocalFeedback")}
 return renderLocalFeedback;`)(drafts, surfaces, element, (node) => { node.children = []; }, liveDeliverablesForNode, buildLocalFeedbackText, { clipboard }, language);
   const host = element("div");
@@ -7292,6 +7303,7 @@ test("the shipped feedback form survives snapshot paints and switching reference
   const render = new Function("localFeedbackDrafts", "localFeedbackSurfaces", "makeElement", "clearChildren", "liveDeliverablesForNode", "buildLocalFeedbackText", "navigator", `
 const currentLanguage = "zh";
 const selectedProjectId = "project-a";
+const localize = (value) => value;
 ${shippedHelper(html, "renderLocalFeedback")}
 return renderLocalFeedback;`)(drafts, surfaces, element, (node) => { node.children = []; }, liveDeliverablesForNode, buildLocalFeedbackText,
     { clipboard: { writeText: async (value) => copied.push(value) } });
@@ -7343,6 +7355,7 @@ test("overview feedback shortcuts synchronize an existing form target and preser
   const api = new Function("localFeedbackDrafts", "localFeedbackSurfaces", "makeElement", "clearChildren", "liveDeliverablesForNode", "buildLocalFeedbackText", `
 const currentLanguage = "zh";
 const selectedProjectId = "project-a";
+const localize = (value) => value;
 let currentSnapshot;
 let selectedNodeId = null;
 const host = makeElement("div");

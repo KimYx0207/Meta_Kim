@@ -436,5 +436,5 @@ test("only the known native run placeholder receives ordinary bilingual header c
   assert.equal(client({ ...run, title: "用户自己的任务标题" }, "zh"), "用户自己的任务标题");
   assert.equal(client({ ...run, title: "检查 turn 0 与原始目标" }, "zh"), "检查 turn 0 与原始目标");
   assert.equal(client({ title: run.title }, "zh"), run.title);
-  assert.match(renderLiveControlRoomPage(), /setText\(contextTitle, liveRunDisplayTitle\(snapshot\.run, currentLanguage\)\)/u);
+  assert.match(renderLiveControlRoomPage(), /setText\(contextTitle, liveRunDisplayTitle\(snapshot\.run, currentLanguage\), undefined, \{ record: snapshot\.run\.title === liveRunDisplayTitle\(snapshot\.run, currentLanguage\) \}\)/u);
 });

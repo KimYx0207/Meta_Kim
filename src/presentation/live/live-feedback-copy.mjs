@@ -1,5 +1,7 @@
+import { translateLiveUiCopy } from "./live-ui-copy.mjs";
+
 /** Foreground handoff copy shared by the Node helper and serialized Live page. */
-export const LIVE_FEEDBACK_COPY = Object.freeze({
+const BASE_FEEDBACK_COPY = Object.freeze({
   zh: Object.freeze({
     instruction: "请依据下面的反馈局部修订当前结果，保留已确认需求及不相关改动；修订后复查同一结果。",
     project: "项目：",
@@ -30,4 +32,11 @@ export const LIVE_FEEDBACK_COPY = Object.freeze({
     source: "Visible source reference: ",
     original: "User feedback, verbatim:",
   }),
+});
+
+export const LIVE_FEEDBACK_COPY = Object.freeze({
+  ...BASE_FEEDBACK_COPY,
+  ...Object.fromEntries(["ja", "ko"].map((language) => [language, Object.freeze(
+    Object.fromEntries(Object.entries(BASE_FEEDBACK_COPY.en).map(([key, value]) => [key, translateLiveUiCopy(value, language)])),
+  )])),
 });

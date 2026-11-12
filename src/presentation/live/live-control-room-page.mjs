@@ -7,6 +7,7 @@
  * compromised or malformed observer payload from becoming executable markup.
  */
 
+import { serializeLiveUiCopy } from "./live-ui-copy.mjs";
 import { LIVE_GRAPH_AVAILABILITY_REASONS } from "../../application/live/live-control-room-service.mjs";
 import {
   serializeConversationDiscoveryCopyForClient,
@@ -358,6 +359,7 @@ function normalizeControlConfig(value) {
 }
 
 const CLIENT_SCRIPT = String.raw`(() => {
+  ${serializeLiveUiCopy()}
   "use strict";
 
   const app = document.getElementById("live-app");
@@ -647,7 +649,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
    * A browser that states no locale at all falls to the shipped default.
    */
   function initialLanguage() {
-    const PAGE_LANGUAGES = ["zh", "en"];
+    const PAGE_LANGUAGES = ["zh", "en", "ja", "ko"];
     const DEFAULT_LANGUAGE = PAGE_LANGUAGES[0];
     let stored = null;
     try { stored = window.localStorage?.getItem(LANGUAGE_STORAGE_KEY); }
@@ -658,11 +660,18 @@ const CLIENT_SCRIPT = String.raw`(() => {
       : [window.navigator?.language];
     const stated = offered.map((tag) => String(tag || "").trim().toLowerCase()).filter(Boolean);
     if (!stated.length) return DEFAULT_LANGUAGE;
-    return stated[0].split("-")[0] === "zh" ? "zh" : "en";
+    return stated.map((tag) => tag.split("-")[0]).find((language) => PAGE_LANGUAGES.includes(language)) || "en";
   }
 
   function localize(value) {
+    // Product-owned fragments carry spacing needed when composing counters.
+    // Keep this exception restricted to the shipped catalog, never record text.
+    if (currentLanguage !== "zh" && typeof value === "string" && value !== value.trim()
+      && Object.prototype.hasOwnProperty.call(LIVE_UI_COPY.ja, value)) {
+      return currentLanguage === "en" ? value : translateLiveUiCopy(value, currentLanguage);
+    }
     const text = display(value);
+    if (currentLanguage === "ja" || currentLanguage === "ko") return translateLiveUiCopy(text, currentLanguage);
     if (currentLanguage === "en" || !text) return text;
     const direct = zhText.get(text);
     if (direct) return direct;
@@ -726,27 +735,32 @@ const CLIENT_SCRIPT = String.raw`(() => {
   }
 
   function applyLanguage() {
-    document.documentElement.lang = currentLanguage === "zh" ? "zh-CN" : "en";
-    document.title = currentLanguage === "zh" ? "Meta_Kim Live · 控制中心" : "Meta_Kim Live · Control room";
+    document.documentElement.lang = liveUiLocale(currentLanguage);
+    document.title = currentLanguage === "zh" ? "Meta_Kim Live · 控制中心" : localize("Meta_Kim Live · Control room");
     document.querySelectorAll("[data-i18n-en][data-i18n-zh]").forEach((element) => {
-      element.textContent = currentLanguage === "zh" ? element.dataset.i18nZh : element.dataset.i18nEn;
+      element.textContent = currentLanguage === "zh" ? element.dataset.i18nZh : localize(element.dataset.i18nEn);
     });
     document.querySelectorAll("[aria-label]").forEach((element) => {
       if (!element.dataset.i18nAriaEn) element.dataset.i18nAriaEn = element.getAttribute("aria-label") || "";
-      element.setAttribute("aria-label", currentLanguage === "zh" ? localize(element.dataset.i18nAriaEn) : element.dataset.i18nAriaEn);
+      element.setAttribute("aria-label", localize(element.dataset.i18nAriaEn));
     });
     // A control whose affordance is an icon carries its instruction in aria and
     // title only, so leaving titles English-only would hide that instruction
     // from a Chinese reader entirely. Unmapped text passes through unchanged.
     document.querySelectorAll("[title]").forEach((element) => {
       if (!element.dataset.i18nTitleEn) element.dataset.i18nTitleEn = element.getAttribute("title") || "";
-      element.setAttribute("title", currentLanguage === "zh" ? localize(element.dataset.i18nTitleEn) : element.dataset.i18nTitleEn);
+      element.setAttribute("title", localize(element.dataset.i18nTitleEn));
     });
-    const toggle = app.querySelector("[data-live-language-toggle]");
-    if (toggle) {
-      toggle.textContent = currentLanguage === "zh" ? "EN" : "中文";
-      toggle.setAttribute("aria-label", currentLanguage === "zh" ? "切换到英文" : "Switch to Chinese");
-      toggle.title = currentLanguage === "zh" ? "切换到英文" : "Switch to Chinese";
+    document.querySelectorAll("[placeholder]").forEach((element) => {
+      if (!element.dataset.i18nPlaceholderEn) element.dataset.i18nPlaceholderEn = element.getAttribute("placeholder") || "";
+      element.setAttribute("placeholder", currentLanguage === "zh" && element.dataset.i18nPlaceholderZh
+        ? element.dataset.i18nPlaceholderZh : localize(element.dataset.i18nPlaceholderEn));
+    });
+    const selector = app.querySelector("[data-live-language-select]");
+    if (selector) {
+      selector.value = currentLanguage;
+      selector.setAttribute("aria-label", currentLanguage === "zh" ? "界面语言" : localize("Interface language"));
+      selector.title = currentLanguage === "zh" ? "界面语言" : localize("Interface language");
     }
   }
 
@@ -1117,7 +1131,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (!element) return;
     element.dataset.i18nEn = english;
     element.dataset.i18nZh = chinese;
-    element.textContent = currentLanguage === "zh" ? chinese : english;
+    element.textContent = currentLanguage === "zh" ? chinese : localize(english);
   }
 
   function summarizeTerminalEvidence(value) {
@@ -1608,8 +1622,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
     while (element.firstChild) element.removeChild(element.firstChild);
   }
 
-  function setText(element, value, fallback) {
-    if (element) element.textContent = localize(display(value, fallback));
+  function setText(element, value, fallback, { record = false } = {}) {
+    if (element) element.textContent = record ? display(value, fallback) : localize(display(value, fallback));
   }
 
   /**
@@ -1625,10 +1639,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
     return label + " · " + display(value);
   }
 
-  function makeElement(tagName, className, value) {
+  function makeElement(tagName, className, value, { record = false } = {}) {
     const element = document.createElement(tagName);
     if (className) element.className = className;
-    if (value !== undefined) element.textContent = localize(display(value));
+    if (value !== undefined) element.textContent = record ? display(value) : localize(display(value));
     return element;
   }
 
@@ -1698,9 +1712,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
 
   function formatSessionTime(value) {
     const date = new Date(display(value, ""));
-    if (Number.isNaN(date.getTime())) return currentLanguage === "zh" ? "时间未知" : "Unknown time";
+    if (Number.isNaN(date.getTime())) return currentLanguage === "zh" ? "时间未知" : localize("Unknown time");
     try {
-      return new Intl.DateTimeFormat(currentLanguage === "zh" ? "zh-CN" : "en", {
+      return new Intl.DateTimeFormat(liveUiLocale(currentLanguage), {
         month: "2-digit",
         day: "2-digit",
         hour: "2-digit",
@@ -1708,7 +1722,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
         hour12: false,
       }).format(date);
     } catch {
-      return display(value, currentLanguage === "zh" ? "时间未知" : "Unknown time");
+      return display(value, currentLanguage === "zh" ? "时间未知" : localize("Unknown time"));
     }
   }
 
@@ -1733,10 +1747,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
   function runTaskCopy(task) {
     const text = display(task, "").trim();
     if (!text || text === "Governed execution") {
-      return currentLanguage === "zh" ? "未保存任务摘要" : "No task summary saved";
+      return currentLanguage === "zh" ? "未保存任务摘要" : localize("No task summary saved");
     }
     if (text === "[path omitted]" || text === "redacted") {
-      return currentLanguage === "zh" ? "任务摘要因含敏感内容未显示" : "Task summary withheld as sensitive";
+      return currentLanguage === "zh" ? "任务摘要因含敏感内容未显示" : localize("Task summary withheld as sensitive");
     }
     return text;
   }
@@ -1758,12 +1772,12 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (remainder && remainder[0].trim() && !separators.includes(remainder[0])) return text;
     let offset = 0;
     while (offset < remainder.length && (!remainder[offset].trim() || separators.includes(remainder[offset]))) offset += 1;
-    return remainder.slice(offset) || (currentLanguage === "zh" ? "暂无补充说明" : "No additional details");
+    return remainder.slice(offset) || (currentLanguage === "zh" ? "暂无补充说明" : localize("No additional details"));
   }
 
   function conversationLinkCopy(state, refusal, discovery) {
-    if (state === "verified") return currentLanguage === "zh" ? "已确认关联" : "Verified link";
-    if (state === "candidate") return currentLanguage === "zh" ? "可能相关 · 未验证" : "Possible match · unverified";
+    if (state === "verified") return currentLanguage === "zh" ? "已确认关联" : localize("Verified link");
+    if (state === "candidate") return currentLanguage === "zh" ? "可能相关 · 未验证" : localize("Possible match · unverified");
     // A recorded reason replaces the generic sentence rather than joining it: the
     // reason already says no link exists, and stacking both doubles the row for
     // no added fact.
@@ -1777,7 +1791,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     // No record in this history stored a conversation id, so no link was lost —
     // one was never written. Saying which is the difference between a reader
     // hunting for a broken link and a reader knowing there is nothing to find.
-    return currentLanguage === "zh" ? "这次运行没有保存聊天标识" : "No chat id was saved for this run";
+    return currentLanguage === "zh" ? "这次运行没有保存聊天标识" : localize("No chat id was saved for this run");
   }
 
   /**
@@ -1823,7 +1837,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
   function conversationChatIdentityCopy(record) {
     const ref = shortenIdentifier(conversationChatIdentityValue(record), DISPLAY_FORMAT.identifierShortForm);
     if (ref === "") return "";
-    return (currentLanguage === "zh" ? "聊天 " : "Chat ") + ref;
+    return (currentLanguage === "zh" ? "聊天 " : localize("Chat ")) + ref;
   }
 
   function nodeDisplayState(node) {
@@ -1863,7 +1877,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
 
   function sourceRuntimeLabel(value) {
     const runtime = display(value, "unavailable").toLowerCase();
-    if (runtime === "demo") return currentLanguage === "zh" ? "本地状态演示" : "Local state demo";
+    if (runtime === "demo") return currentLanguage === "zh" ? "本地状态演示" : localize("Local state demo");
     if (runtime === "claude") return "Claude Code";
     if (runtime === "codex") return "Codex";
     if (runtime === "zcode") return "ZCode";
@@ -1872,12 +1886,12 @@ const CLIENT_SCRIPT = String.raw`(() => {
     // The runtime is either absent from the record or a name this surface is not
     // allowed to attribute. Either way the honest statement is about the record,
     // not about a source that supposedly exists but cannot be identified.
-    return currentLanguage === "zh" ? "未记录运行来源" : "Runtime not recorded";
+    return currentLanguage === "zh" ? "未记录运行来源" : localize("Runtime not recorded");
   }
 
   function sessionDisplayTitle(session) {
     if (sessionIsIdentified(session)) return session.title;
-    return currentLanguage === "zh" ? "没有保存聊天标识的运行记录" : "Run without a saved chat id";
+    return currentLanguage === "zh" ? "没有保存聊天标识的运行记录" : localize("Run without a saved chat id");
   }
 
   function sessionShortId(session) {
@@ -2030,7 +2044,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
   }
 
   function stateCopy(status) {
-    if (status === "planned") return currentLanguage === "zh" ? "仅规划 · 尚未派发" : "Planned · not dispatched";
+    if (status === "planned") return currentLanguage === "zh" ? "仅规划 · 尚未派发" : localize("Planned · not dispatched");
     if (status === "live") return localize("Live");
     if (status === "in_doubt") return localize("In doubt");
     if (status === "completed") return localize("Completed");
@@ -2039,16 +2053,16 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (status === "failed") return localize("Failed");
     if (status === "blocked") return localize("Blocked");
     if (status === "skipped") return localize("Skipped");
-    if (status === "partial") return currentLanguage === "zh" ? "已执行并验证 · 未达发布标准" : "Executed and verified · below release bar";
-    if (status === "superseded") return currentLanguage === "zh" ? "被新任务替代" : "Replaced by a newer task";
-    if (status === "archived_legacy") return currentLanguage === "zh" ? "早期版本的归档记录" : "Archived record from an earlier version";
-    if (status === "unreported") return currentLanguage === "zh" ? "未收到执行回写" : "No execution report";
+    if (status === "partial") return currentLanguage === "zh" ? "已执行并验证 · 未达发布标准" : localize("Executed and verified · below release bar");
+    if (status === "superseded") return currentLanguage === "zh" ? "被新任务替代" : localize("Replaced by a newer task");
+    if (status === "archived_legacy") return currentLanguage === "zh" ? "早期版本的归档记录" : localize("Archived record from an earlier version");
+    if (status === "unreported") return currentLanguage === "zh" ? "未收到执行回写" : localize("No execution report");
     // Reserved for records that really do say nothing decisive. Every outcome the
     // record does name has its own branch above, so this reaching the screen means
     // the record is genuinely silent rather than merely unread.
-    if (status === "unknown") return currentLanguage === "zh" ? "记录不足以判断" : "Record is not enough to judge";
-    if (status === "cancelled") return currentLanguage === "zh" ? "已取消" : "Cancelled";
-    if (status === "active") return currentLanguage === "zh" ? "进行中" : "Running";
+    if (status === "unknown") return currentLanguage === "zh" ? "记录不足以判断" : localize("Record is not enough to judge");
+    if (status === "cancelled") return currentLanguage === "zh" ? "已取消" : localize("Cancelled");
+    if (status === "active") return currentLanguage === "zh" ? "进行中" : localize("Running");
     return localize("Stale");
   }
 
@@ -2079,7 +2093,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const dependencyButton = app.querySelector('[data-live-graph-relations="dependency"]');
     setTranslatedText(dependencyButton, planningOnly ? "Planned dependencies" : "Execution dependencies", planningOnly ? "规划依赖" : "执行依赖");
     setTranslatedText(contextEvidenceLabel, "Execution evidence", "执行证据");
-    setText(contextTitle, liveRunDisplayTitle(snapshot.run, currentLanguage));
+    setText(contextTitle, liveRunDisplayTitle(snapshot.run, currentLanguage), undefined, { record: snapshot.run.title === liveRunDisplayTitle(snapshot.run, currentLanguage) });
     if (contextTitle) contextTitle.title = snapshot.run.title;
 
     const shortRunId = shortenIdentifier(snapshot.run.id, DISPLAY_FORMAT.identifierShortForm);
@@ -2095,8 +2109,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
     setText(runWorkers, activeWorkers.size
       ? activeWorkers.size + " active worker" + (activeWorkers.size === 1 ? "" : "s")
       : "No active workers");
-    setText(contextTask, runTaskCopy(runTaskSupplement(snapshot.run.task, snapshot.run.title)));
-    if (planningOnly) setText(contextStage, currentLanguage === "zh" ? "尚未派发" : "Not dispatched");
+    setText(contextTask, runTaskCopy(runTaskSupplement(snapshot.run.task, snapshot.run.title)), undefined, { record: true });
+    if (planningOnly) setText(contextStage, currentLanguage === "zh" ? "尚未派发" : localize("Not dispatched"));
     else setText(contextStage, informativeValue(snapshot.run.stage, "Stage unconfirmed"), "Stage unconfirmed");
     const taskLifecycle = resolveLiveRunTaskLifecycle(snapshot);
     const taskState = liveTaskLifecycleCopy(taskLifecycle, currentLanguage);
@@ -2112,7 +2126,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       conversationLinkCopyFor(snapshot.run),
     ].filter((part) => part !== "");
     setText(contextSource, snapshot.run.demoMode
-      ? (currentLanguage === "zh" ? "演示数据 · 非真实运行" : "Demo data · not a real run")
+      ? (currentLanguage === "zh" ? "演示数据 · 非真实运行" : localize("Demo data · not a real run"))
       : contextSourceParts.join(" · "), "local observer");
     // The id lives in its own row rather than the source sentence because a
     // reader who wants to open that chat needs the whole value, and the sentence
@@ -2157,55 +2171,55 @@ const CLIENT_SCRIPT = String.raw`(() => {
       {
         id: "demo-owner",
         isMain: true,
-        label: currentLanguage === "zh" ? "任务已受理" : "Request accepted",
+        label: currentLanguage === "zh" ? "任务已受理" : localize("Request accepted"),
         kind: "main_agent",
         status: "completed",
         displayState: "completed",
         roleDisplayName: "operator",
         ownerAgent: "meta-warden",
-        summary: currentLanguage === "zh" ? "目标与验收标准已确认" : "Goal and acceptance criteria confirmed",
-        task: currentLanguage === "zh" ? "建立可验证的混合状态执行图" : "Build a verifiable mixed-state execution graph",
+        summary: currentLanguage === "zh" ? "目标与验收标准已确认" : localize("Goal and acceptance criteria confirmed"),
+        task: currentLanguage === "zh" ? "建立可验证的混合状态执行图" : localize("Build a verifiable mixed-state execution graph"),
         evidenceCount: 1,
       },
       {
         id: "demo-requirements",
         parentId: "demo-owner",
-        label: currentLanguage === "zh" ? "需求分析" : "Requirements analysis",
+        label: currentLanguage === "zh" ? "需求分析" : localize("Requirements analysis"),
         kind: "worker",
         status: "completed",
         displayState: "completed",
         roleDisplayName: "analysis",
         ownerAgent: "business-analyst",
-        summary: currentLanguage === "zh" ? "已完成 · 结果已回写" : "Completed · result written back",
-        task: currentLanguage === "zh" ? "确认业务目标和展示范围" : "Confirm goals and display scope",
+        summary: currentLanguage === "zh" ? "已完成 · 结果已回写" : localize("Completed · result written back"),
+        task: currentLanguage === "zh" ? "确认业务目标和展示范围" : localize("Confirm goals and display scope"),
         firstAt: "2026-08-31T00:00:01.000Z",
         evidenceCount: 2,
       },
       {
         id: "demo-plan",
         parentId: "demo-requirements",
-        label: currentLanguage === "zh" ? "执行编排" : "Execution orchestration",
+        label: currentLanguage === "zh" ? "执行编排" : localize("Execution orchestration"),
         kind: "workflow",
         status: "completed",
         displayState: "completed",
         roleDisplayName: "conductor",
         ownerAgent: "meta-conductor",
-        summary: currentLanguage === "zh" ? "串行主链 + 2 条并行执行分支" : "Serial spine with two parallel execution branches",
-        task: currentLanguage === "zh" ? "按真实依赖编排执行顺序" : "Orchestrate execution by real dependencies",
+        summary: currentLanguage === "zh" ? "串行主链 + 2 条并行执行分支" : localize("Serial spine with two parallel execution branches"),
+        task: currentLanguage === "zh" ? "按真实依赖编排执行顺序" : localize("Orchestrate execution by real dependencies"),
         evidenceCount: 1,
       },
       {
         id: "demo-running-ui",
         parentId: "demo-plan",
-        label: currentLanguage === "zh" ? "界面实现" : "UI implementation",
+        label: currentLanguage === "zh" ? "界面实现" : localize("UI implementation"),
         kind: "worker",
         status: "running",
         displayState: "active",
         active: true,
         roleDisplayName: "frontend",
         ownerAgent: "frontend-developer",
-        summary: currentLanguage === "zh" ? "执行中 · 正在还原界面" : "Running · implementing the interface",
-        task: currentLanguage === "zh" ? "实现节点布局与状态视觉" : "Implement node layout and state visuals",
+        summary: currentLanguage === "zh" ? "执行中 · 正在还原界面" : localize("Running · implementing the interface"),
+        task: currentLanguage === "zh" ? "实现节点布局与状态视觉" : localize("Implement node layout and state visuals"),
         firstAt: "2026-08-31T00:00:02.000Z",
         toolCount: 2,
         latestTool: "apply_patch",
@@ -2213,15 +2227,15 @@ const CLIENT_SCRIPT = String.raw`(() => {
       {
         id: "demo-running-test",
         parentId: "demo-plan",
-        label: currentLanguage === "zh" ? "状态验证" : "State verification",
+        label: currentLanguage === "zh" ? "状态验证" : localize("State verification"),
         kind: "worker",
         status: "running",
         displayState: "active",
         active: true,
         roleDisplayName: "test",
         ownerAgent: "test-automator",
-        summary: currentLanguage === "zh" ? "执行中 · 检查状态与连线" : "Running · checking states and edges",
-        task: currentLanguage === "zh" ? "验证动画只出现在真实执行分支" : "Verify animation only appears on active branches",
+        summary: currentLanguage === "zh" ? "执行中 · 检查状态与连线" : localize("Running · checking states and edges"),
+        task: currentLanguage === "zh" ? "验证动画只出现在真实执行分支" : localize("Verify animation only appears on active branches"),
         firstAt: "2026-08-31T00:00:03.000Z",
         toolCount: 1,
         latestTool: "browser",
@@ -2229,39 +2243,39 @@ const CLIENT_SCRIPT = String.raw`(() => {
       {
         id: "demo-queued",
         parentId: "demo-running-test",
-        label: currentLanguage === "zh" ? "独立审查" : "Independent review",
+        label: currentLanguage === "zh" ? "独立审查" : localize("Independent review"),
         kind: "worker",
         status: "queued",
         displayState: "queued",
         active: true,
         roleDisplayName: "review",
         ownerAgent: "meta-prism",
-        summary: currentLanguage === "zh" ? "排队 · 等待实现完成" : "Queued · waiting for implementation",
-        task: currentLanguage === "zh" ? "检查布局、状态真值和交互" : "Review layout, state truth, and interaction",
+        summary: currentLanguage === "zh" ? "排队 · 等待实现完成" : localize("Queued · waiting for implementation"),
+        task: currentLanguage === "zh" ? "检查布局、状态真值和交互" : localize("Review layout, state truth, and interaction"),
         firstAt: "2026-08-31T00:00:04.000Z",
       },
       {
         id: "demo-blocked",
         parentId: "demo-queued",
-        label: currentLanguage === "zh" ? "发布验收" : "Release acceptance",
+        label: currentLanguage === "zh" ? "发布验收" : localize("Release acceptance"),
         kind: "worker",
         status: "blocked",
         displayState: "blocked",
         roleDisplayName: "verify",
         ownerAgent: "meta-sentinel",
-        summary: currentLanguage === "zh" ? "已阻塞 · 等待审查证据" : "Blocked · waiting for review evidence",
-        statusReason: currentLanguage === "zh" ? "前置审查尚未完成" : "Prerequisite review has not completed",
-        task: currentLanguage === "zh" ? "完成最终发布验收" : "Complete final release acceptance",
+        summary: currentLanguage === "zh" ? "已阻塞 · 等待审查证据" : localize("Blocked · waiting for review evidence"),
+        statusReason: currentLanguage === "zh" ? "前置审查尚未完成" : localize("Prerequisite review has not completed"),
+        task: currentLanguage === "zh" ? "完成最终发布验收" : localize("Complete final release acceptance"),
         firstAt: "2026-08-31T00:00:05.000Z",
       },
     ];
     return {
       schemaVersion: "state-demo-v1",
-      source: { kind: "demo", label: currentLanguage === "zh" ? "本地状态演示" : "Local state demo" },
+      source: { kind: "demo", label: currentLanguage === "zh" ? "本地状态演示" : localize("Local state demo") },
       run: {
         id: "demo-mixed-states",
-        title: currentLanguage === "zh" ? "状态演示 · 完成、执行中、排队与阻塞" : "State demo · completed, running, queued, and blocked",
-        task: currentLanguage === "zh" ? "这是一条只用于验证界面状态和连线动画的演示数据，不是真实任务。" : "This is demo data for validating UI states and edge animation, not a real task.",
+        title: currentLanguage === "zh" ? "状态演示 · 完成、执行中、排队与阻塞" : localize("State demo · completed, running, queued, and blocked"),
+        task: currentLanguage === "zh" ? "这是一条只用于验证界面状态和连线动画的演示数据，不是真实任务。" : localize("This is demo data for validating UI states and edge animation, not a real task."),
         status: "live",
         displayState: "live",
         active: true,
@@ -2286,7 +2300,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
         { id: "demo-edge-7", from: "demo-queued", to: "demo-blocked", kind: "depends_on", status: "blocked" },
       ],
       evidence: [
-        { id: "demo-evidence-1", label: currentLanguage === "zh" ? "需求分析结果" : "Requirements result", status: "verified", nodeId: "demo-requirements", summary: currentLanguage === "zh" ? "演示完成态证据" : "Demo completion evidence" },
+        { id: "demo-evidence-1", label: currentLanguage === "zh" ? "需求分析结果" : localize("Requirements result"), status: "verified", nodeId: "demo-requirements", summary: currentLanguage === "zh" ? "演示完成态证据" : localize("Demo completion evidence") },
       ],
       replay: { events: [nodes[0], nodes[1], nodes[2], nodes[5], nodes[6], nodes[3], nodes[4]].map((node, index) => ({ id: "demo-event-" + index, nodeId: node.id, label: node.summary, status: node.status, kind: node.kind, visibility: "visible", timestamp: new Date(Date.now() - (nodes.length - index) * 15000).toISOString() })) },
       permissions: { readOnly: true, canMutate: false },
@@ -2357,22 +2371,22 @@ const CLIENT_SCRIPT = String.raw`(() => {
       const mode = button.dataset.liveGraphRelations;
       button.setAttribute("aria-pressed", String(mode === relationMode));
       button.dataset.active = String(mode === relationMode);
-      button.textContent = (currentLanguage === "zh"
+      button.textContent = localize((currentLanguage === "zh"
         ? mode === "all" ? "全部关系 " : "执行依赖 "
-        : mode === "all" ? "All relations " : "Dependencies ") + (mode === "all" ? plan.edges.length : plan.executionEdges.length);
+        : mode === "all" ? "All relations " : "Dependencies ") + (mode === "all" ? plan.edges.length : plan.executionEdges.length));
     }
     const hidden = plan.edges.length - plan.executionEdges.length;
-    const pieces = [plan.nodes.length + (currentLanguage === "zh" ? " 节点" : " nodes")];
+    const pieces = [plan.nodes.length + (currentLanguage === "zh" ? " 节点" : localize(" nodes"))];
     if (relationMode !== "all" && plan.executionEdges.length && plan.contextNodes.length) pieces.push(currentLanguage === "zh"
       ? plan.contextNodes.length + " 个组织节点已收起" : plan.contextNodes.length + " organization nodes collapsed");
     if (!plan.executionEdges.length) pieces.push(currentLanguage === "zh"
-      ? "尚无执行依赖记录；可查看全部关系" : "No execution dependencies recorded; view all relations");
+      ? "尚无执行依赖记录；可查看全部关系" : localize("No execution dependencies recorded; view all relations"));
     else if (relationMode !== "all" && hidden) pieces.push(currentLanguage === "zh"
       ? plan.structuralEdges.length + " 条归属已收起" : plan.structuralEdges.length + " ownership hidden");
     if (relationMode !== "all" && plan.otherEdges.length) pieces.push(currentLanguage === "zh"
       ? plan.otherEdges.length + " 条其他关系已收起" : plan.otherEdges.length + " other relations hidden");
-    if (plan.cyclic) pieces.push(currentLanguage === "zh" ? "存在循环依赖，位置不表示时序" : "Dependency cycle; positions do not imply order");
-    if (graphRelationSummary) graphRelationSummary.textContent = pieces.join(" · ");
+    if (plan.cyclic) pieces.push(currentLanguage === "zh" ? "存在循环依赖，位置不表示时序" : localize("Dependency cycle; positions do not imply order"));
+    if (graphRelationSummary) graphRelationSummary.textContent = pieces.map(localize).join(" · ");
     if (graph) graph.dataset.relationMode = relationMode;
   }
 
@@ -2978,8 +2992,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
     graphState.bandElements = [];
     for (const band of layout.bands || []) {
       const copy = band.group === "context"
-        ? currentLanguage === "zh" ? "归属 / 工作流，不代表时序" : "Ownership / workflow, not execution order"
-        : currentLanguage === "zh" ? "未参与执行依赖" : "Not linked to execution dependencies";
+        ? currentLanguage === "zh" ? "归属 / 工作流，不代表时序" : localize("Ownership / workflow, not execution order")
+        : currentLanguage === "zh" ? "未参与执行依赖" : localize("Not linked to execution dependencies");
       const label = makeElement("div", "graph-group-label", copy);
       label.style.left = band.x + "px";
       label.style.top = band.y + "px";
@@ -3470,7 +3484,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     graphToolsPosition = null;
     applyGraphToolsPosition();
     persistStoredPoint(GRAPH_TOOLS_STORAGE_KEY, null);
-    announceGraphTools(currentLanguage === "zh" ? "图控件已回到工具条" : "Graph controls docked to the bar");
+    announceGraphTools(currentLanguage === "zh" ? "图控件已回到工具条" : localize("Graph controls docked to the bar"));
   }
 
   /** Keep a floating cluster reachable after the canvas viewport changes size. */
@@ -3742,7 +3756,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const nodeTools = selected ? currentSnapshot.toolCalls.filter((item) => item.nodeId === selected.id) : [];
     const nodeEvents = selected ? currentSnapshot.replay.filter((item) => item.nodeId === selected.id) : [];
     const toolCount = selected ? Math.max(selected.toolCount, nodeTools.length) : 0;
-    setText(selectedNodeLabel, selected ? liveTaskDisplayLabel(selected, currentLanguage) : "Select a node to inspect provenance", "Select a node to inspect provenance");
+    setText(selectedNodeLabel, selected ? liveTaskDisplayLabel(selected, currentLanguage) : "Select a node to inspect provenance", "Select a node to inspect provenance", { record: Boolean(selected && !selected.nativeTaskCaption) });
     setText(selectedNodeEvidence, selected ? linked.length + " linked evidence item" + (linked.length === 1 ? "" : "s") + " · " + nodeTools.length + " tools · " + nodeEvents.length + " events" : "Evidence stays visible in the drawer", "Evidence stays visible in the drawer");
     setText(selectedNodeStatus, selected ? nodeStateCopy(selected, currentSnapshot.run.id) : "");
     if (selectedNodeStatus) selectedNodeStatus.dataset.taskState = selected ? resolveLiveNodeTaskLifecycle(selected, currentSnapshot).state : "";
@@ -3758,9 +3772,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (selectedNodeDuration) selectedNodeDuration.hidden = !duration;
     setText(selectedNodeTools, labeledFact("Tools", selected ? toolCount + (usefulNodeMeta(selected.latestTool) ? " · " + selected.latestTool : "") : ""));
     setText(selectedNodeTokens, selected
-      ? (currentLanguage === "zh" ? "输入 · " : "Input · ") + formatLiveTokenCount(selected.inputTokens, currentLanguage)
-        + (currentLanguage === "zh" ? " / 输出 · " : " / Output · ") + formatLiveTokenCount(selected.outputTokens, currentLanguage)
-        + (currentLanguage === "zh" ? " / 合计 · " : " / Total · ") + formatLiveTokenCount(selected.totalTokens, currentLanguage)
+      ? (currentLanguage === "zh" ? "输入 · " : localize("Input · ")) + localize(formatLiveTokenCount(selected.inputTokens, currentLanguage))
+        + (currentLanguage === "zh" ? " / 输出 · " : localize(" / Output · ")) + localize(formatLiveTokenCount(selected.outputTokens, currentLanguage))
+        + (currentLanguage === "zh" ? " / 合计 · " : localize(" / Total · ")) + localize(formatLiveTokenCount(selected.totalTokens, currentLanguage))
       : labeledFact("Tokens", ""));
     if (selectedNodeLoadout) {
       const loadout = selected?.loadout || {};
@@ -3776,8 +3790,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
       }).join(" | ");
       setText(selectedNodeLoadout, labeledFact("Loadout", selected ? detail : ""));
     }
-    setText(selectedNodeSummary, selected ? selected.summary : "Select a node to inspect its execution summary.", "Select a node to inspect its execution summary.");
-    setText(selectedNodeEvidenceDetail, selected?.terminalEvidence || linked[0]?.detail || selected?.statusReason || (selected ? "No terminal evidence is linked to this node yet." : "Evidence details appear when a node is selected."), "Evidence details appear when a node is selected.");
+    setText(selectedNodeSummary, selected ? selected.summary : "Select a node to inspect its execution summary.", "Select a node to inspect its execution summary.", { record: Boolean(selected) });
+    setText(selectedNodeEvidenceDetail, selected?.terminalEvidence || linked[0]?.detail || selected?.statusReason || (selected ? "No terminal evidence is linked to this node yet." : "Evidence details appear when a node is selected."), "Evidence details appear when a node is selected.", { record: Boolean(selected?.terminalEvidence || linked[0]?.detail || selected?.statusReason) });
     setText(selectedNodeProvenance, labeledFact("Source", selected ? (provenance?.reasoningExcerpt || (selected.parentId ? "spawned by " + selected.parentId : "run root")) : ""));
     setText(selectedNodePrompt, labeledFact("Prompt era", selected && activePrompt ? activePrompt.label + " · " + activePrompt.excerpt : ""));
     renderInspectorHistory({ selected, linked, prompts, nodeTools, nodeEvents });
@@ -3815,7 +3829,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       const label = makeElement("span", "evidence-kind", kindText === "" ? labelText : kindText + " · " + labelText);
       top.append(label);
       appendObservedTime(top, item.at);
-      const detail = makeElement("p", "evidence-detail", item.detail);
+      const detail = makeElement("p", "evidence-detail", item.detail, { record: true });
       const footer = makeElement("div", "history-footer");
       footer.append(makeElement("span", "evidence-status evidence-status-" + nodeClass(normalizedNodeStatus(item.status)), item.status));
       if (item.sourceRef) footer.append(makeElement("span", "history-source", item.sourceRef));
@@ -3863,11 +3877,11 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (scheduling) {
       const capacity = scheduling.capacity || {};
       const capacityParts = [
-        Number.isFinite(capacity.maxParallelAgents) ? (currentLanguage === "zh" ? "上限 " : "limit ") + capacity.maxParallelAgents : "",
-        Number.isFinite(capacity.requestedParallelAgents) ? (currentLanguage === "zh" ? "申请 " : "requested ") + capacity.requestedParallelAgents : "",
-        Number.isFinite(capacity.runtimeCapacity) ? (currentLanguage === "zh" ? "运行时容量 " : "runtime capacity ") + capacity.runtimeCapacity : "",
+        Number.isFinite(capacity.maxParallelAgents) ? (currentLanguage === "zh" ? "上限 " : localize("limit ")) + capacity.maxParallelAgents : "",
+        Number.isFinite(capacity.requestedParallelAgents) ? (currentLanguage === "zh" ? "申请 " : localize("requested ")) + capacity.requestedParallelAgents : "",
+        Number.isFinite(capacity.runtimeCapacity) ? (currentLanguage === "zh" ? "运行时容量 " : localize("runtime capacity ")) + capacity.runtimeCapacity : "",
         capacity.capacitySourceKind,
-        capacity.throttled ? (currentLanguage === "zh" ? "申请数超过上限，已受限" : "requested above limit; throttled") : "",
+        capacity.throttled ? (currentLanguage === "zh" ? "申请数超过上限，已受限" : localize("requested above limit; throttled")) : "",
         scheduling.declaredWaveCount > scheduling.waveCount
           ? (currentLanguage === "zh"
             ? "记录 " + scheduling.declaredWaveCount + " 个波次，可显示 " + scheduling.waveCount + " 个"
@@ -3878,11 +3892,11 @@ const CLIENT_SCRIPT = String.raw`(() => {
         schedulingRows.push({
           id: "scheduling-capacity",
           kind: "scheduling_capacity",
-          label: currentLanguage === "zh" ? "并行容量" : "Parallel capacity",
+          label: currentLanguage === "zh" ? "并行容量" : localize("Parallel capacity"),
           detail: capacityParts,
           at: "",
           status: "planned",
-          sourceRef: currentLanguage === "zh" ? "计划 · 记录的容量配置，非观测执行" : "planned · recorded capacity configuration",
+          sourceRef: currentLanguage === "zh" ? "计划 · 记录的容量配置，非观测执行" : localize("planned · recorded capacity configuration"),
           nodeId: selected?.id || "",
         });
       }
@@ -3893,16 +3907,16 @@ const CLIENT_SCRIPT = String.raw`(() => {
           schedulingRows.push({
             id: wave.waveId,
             kind: "scheduling_wave",
-            label: (currentLanguage === "zh" ? "波次 " : "Wave ") + wave.waveIndex + "/" + scheduling.waveCount,
+            label: (currentLanguage === "zh" ? "波次 " : localize("Wave ")) + wave.waveIndex + "/" + scheduling.waveCount,
             detail: [
               wave.mode,
-              Number.isFinite(wave.declaredParallelCount) ? wave.declaredParallelCount + (currentLanguage === "zh" ? " 个声明并行" : " declared in parallel") : "",
-              wave.mergeOwner ? (currentLanguage === "zh" ? "合并负责人 " : "merge owner ") + wave.mergeOwner : "",
-              wave.mappedCount + "/" + declared + (currentLanguage === "zh" ? " 个成员对应到图上节点" : " members resolve to graph nodes"),
+              Number.isFinite(wave.declaredParallelCount) ? wave.declaredParallelCount + (currentLanguage === "zh" ? " 个声明并行" : localize(" declared in parallel")) : "",
+              wave.mergeOwner ? (currentLanguage === "zh" ? "合并负责人 " : localize("merge owner ")) + wave.mergeOwner : "",
+              wave.mappedCount + "/" + declared + (currentLanguage === "zh" ? " 个成员对应到图上节点" : localize(" members resolve to graph nodes")),
             ].filter(Boolean).join(" · "),
             at: "",
             status: "planned",
-            sourceRef: currentLanguage === "zh" ? "计划 · 声明顺序，非观测执行" : "planned · declared order, not observed execution",
+            sourceRef: currentLanguage === "zh" ? "计划 · 声明顺序，非观测执行" : localize("planned · declared order, not observed execution"),
             nodeId: selected?.id || "",
           });
         });
@@ -4115,10 +4129,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
       top.title = [statusCopy, nodeStateDetailCopy(node, snapshot.run.id)].filter(Boolean).join(" · ");
       if (node.declaredNotStarted === true) {
         const declaredChip = makeElement("span", "node-declared-chip",
-          currentLanguage === "zh" ? "声明未执行" : "declared, not started");
+          currentLanguage === "zh" ? "声明未执行" : localize("declared, not started"));
         declaredChip.title = currentLanguage === "zh"
           ? "只在任务包中声明过，尚无任何可信调用证据"
-          : "Declared in the task packet only; no trusted invocation evidence yet";
+          : localize("Declared in the task packet only; no trusted invocation evidence yet");
         top.append(declaredChip);
       }
       const nodeWave = waveByNodeId.get(node.id);
@@ -4127,7 +4141,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
         // is display:none in the current card layout, so a wave annotation put
         // there would exist in the DOM and be invisible on screen.
         const waveBadge = makeElement("span", "node-wave-badge",
-          (currentLanguage === "zh" ? "波" : "W") + nodeWave.waveIndex + "/" + totalWaveCount + (currentLanguage === "zh" ? " 计划" : " plan"));
+          (currentLanguage === "zh" ? "波" : localize("W")) + nodeWave.waveIndex + "/" + totalWaveCount + (currentLanguage === "zh" ? " 计划" : localize(" plan")));
         waveBadge.title = currentLanguage === "zh"
           ? "计划并行波次 " + nodeWave.waveIndex + "/" + totalWaveCount + " · 声明顺序，不是观测到的执行顺序"
           : "Planned parallel wave " + nodeWave.waveIndex + "/" + totalWaveCount + " · declared order, not observed execution";
@@ -4137,15 +4151,15 @@ const CLIENT_SCRIPT = String.raw`(() => {
         card.dataset.waveIndex = String(nodeWave.waveIndex);
         top.append(waveBadge);
       }
-      const heading = makeElement("span", "node-title", node.nativeTaskCaption ? liveTaskDisplayLabel(node, currentLanguage) : graphNodeReadingLabel(node));
+      const heading = makeElement("span", "node-title", node.nativeTaskCaption && ["ja", "ko"].includes(currentLanguage) ? localize(liveTaskDisplayLabel(node, currentLanguage)) : graphNodeReadingLabel(node), { record: true });
       heading.title = node.label;
-      const summary = makeElement("span", "node-summary", node.ownerReport ? "" : node.summary);
+      const summary = makeElement("span", "node-summary", node.ownerReport ? "" : node.summary, { record: true });
       summary.title = node.summary;
       summary.hidden = Boolean(node.ownerReport);
       const identity = makeElement("button", "node-identity-row node-identity-button");
       identity.type = "button";
       identity.setAttribute("aria-label", node.label + ", " + [nodeStateCopy(node, snapshot.run.id), nodeStateDetailCopy(node, snapshot.run.id)].filter(Boolean).join(" · ") + ", " + node.toolCount + " tools, "
-        + (currentLanguage === "zh" ? "输出 token " : "output tokens ") + formatLiveTokenCount(node.outputTokens, currentLanguage));
+        + (currentLanguage === "zh" ? "输出 token " : localize("output tokens ")) + localize(formatLiveTokenCount(node.outputTokens, currentLanguage)));
       const glyph = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       glyph.setAttribute("class", "node-glyph");
       glyph.setAttribute("viewBox", "0 0 40 40");
@@ -4167,22 +4181,22 @@ const CLIENT_SCRIPT = String.raw`(() => {
       identity.addEventListener("click", () => selectNode(node.id, { inspectorTab: "summary" }));
       identity.addEventListener("keydown", (event) => handleNodeKeydown(event, node.id));
       const ownerLine = makeElement("div", "node-owner-line");
-      if (usefulNodeMeta(node.role)) ownerLine.append(makeElement("span", "node-owner-role", (currentLanguage === "zh" ? "角色 · " : "Role · ") + node.role));
-      if (usefulNodeMeta(node.agent)) ownerLine.append(makeElement("span", "node-owner-agent", (currentLanguage === "zh" ? "AI 执行者 · " : "AI worker · ") + node.agent));
+      if (usefulNodeMeta(node.role)) ownerLine.append(makeElement("span", "node-owner-role", (currentLanguage === "zh" ? "角色 · " : localize("Role · ")) + node.role));
+      if (usefulNodeMeta(node.agent)) ownerLine.append(makeElement("span", "node-owner-agent", (currentLanguage === "zh" ? "AI 执行者 · " : localize("AI worker · ")) + node.agent));
       const outgoingRelations = graphEdges.filter((edge) => edge.from === node.id);
       const ownershipOnly = outgoingRelations.length > 0 && outgoingRelations.every((edge) => edge.kind === "contains");
       const proof = makeElement("div", "node-proof", ownershipOnly
-        ? (currentLanguage === "zh" ? "结构归属关系 · 不代表所有任务同时执行" : "Structural ownership · does not mean every task runs at once")
+        ? (currentLanguage === "zh" ? "结构归属关系 · 不代表所有任务同时执行" : localize("Structural ownership · does not mean every task runs at once"))
         : node.statusReason || (
           publicState === "unreported"
-          ? (currentLanguage === "zh" ? "结构已规划，但没有可信执行回写" : "Structurally planned; no trusted execution report")
+          ? (currentLanguage === "zh" ? "结构已规划，但没有可信执行回写" : localize("Structurally planned; no trusted execution report"))
           : publicState === "queued"
-            ? (currentLanguage === "zh" ? "当前运行活跃，等待执行" : "Active run; waiting to execute")
+            ? (currentLanguage === "zh" ? "当前运行活跃，等待执行" : localize("Active run; waiting to execute"))
             : node.evidenceCount
               ? "observed · " + node.evidenceCount + " evidence"
-              : (currentLanguage === "zh" ? "暂无可信证据" : "No trusted evidence linked")
+              : (currentLanguage === "zh" ? "暂无可信证据" : localize("No trusted evidence linked"))
         ));
-      const task = taskLine === "" ? null : makeElement("p", "node-task", taskLine);
+      const task = taskLine === "" ? null : makeElement("p", "node-task", taskLine, { record: true });
       if (task) task.title = sourceTaskLine || node.label;
       const meta = makeElement("div", "node-meta activity-chips");
       const role = makeElement("span", "node-meta-item activity-chip chip-role", node.role);
@@ -4195,7 +4209,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       model.title = localize("Model");
       const tools = makeElement("span", "node-meta-item activity-chip chip-tools", node.toolCount + " tools" + (usefulNodeMeta(node.latestTool) ? " · " + node.latestTool : ""));
       tools.title = localize("Tool activity");
-      const tokens = makeElement("span", "node-meta-item activity-chip chip-tokens", (currentLanguage === "zh" ? "输出 " : "Out ") + formatLiveTokenCount(node.outputTokens, currentLanguage));
+      const tokens = makeElement("span", "node-meta-item activity-chip chip-tokens", (currentLanguage === "zh" ? "输出 " : localize("Out ")) + localize(formatLiveTokenCount(node.outputTokens, currentLanguage)));
       tokens.title = localize("Output tokens");
       const evidence = makeElement("span", "node-meta-item activity-chip chip-evidence", node.evidenceCount + " evidence");
       evidence.title = localize("Observed evidence");
@@ -4204,7 +4218,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
         .map((value) => Number(value) || 0)
         .reduce((sum, value) => sum + value, 0);
       const loadoutChip = makeElement("span", "node-meta-item activity-chip chip-loadout", loadoutTotal + " loadout");
-      loadoutChip.title = "Declared capability loadout";
+      loadoutChip.title = localize("Declared capability loadout");
       if (usefulNodeMeta(role.textContent)) meta.append(role);
       if (usefulNodeMeta(agent.textContent)) meta.append(agent);
       if (usefulNodeMeta(runtime.textContent)) meta.append(runtime);
@@ -4216,7 +4230,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       if (usefulNodeMeta(node.firstAt) && usefulNodeMeta(node.lastAt)) meta.append(makeElement("span", "node-meta-item activity-chip chip-duration", formatDuration(node.firstAt, node.lastAt)));
       if (!meta.childElementCount) meta.hidden = true;
       const capabilityStrip = makeElement("div", "node-capability-strip");
-      capabilityStrip.setAttribute("aria-label", currentLanguage === "zh" ? "节点能力与调用概况" : "Node capability and call summary");
+      capabilityStrip.setAttribute("aria-label", currentLanguage === "zh" ? "节点能力与调用概况" : localize("Node capability and call summary"));
       const capabilityLabels = { agent: "Agent", skill: "Skill", mcp: "MCP", command: "Command", runtime_tool: "Tool", hook: "Hook", plugin: "Plugin", memory_graph: "Memory/Graph", dependency: "Dependency" };
       const capabilityRecords = (node.capabilityTruth || []).map((truth) => {
         const kind = truth.kind;
@@ -4240,10 +4254,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
         button.dataset.capabilityKind = record.kind;
         button.dataset.capabilityState = record.state;
         const stateLabel = record.state === "observed"
-          ? (currentLanguage === "zh" ? "已观测" : "observed")
+          ? (currentLanguage === "zh" ? "已观测" : localize("observed"))
           : record.state === "planned"
-            ? (currentLanguage === "zh" ? "计划" : "planned")
-            : (currentLanguage === "zh" ? "未记录" : "not recorded");
+            ? (currentLanguage === "zh" ? "计划" : localize("planned"))
+            : (currentLanguage === "zh" ? "未记录" : localize("not recorded"));
         const value = record.names[0] || (record.count ? String(record.count) : stateLabel);
         const remainder = Math.max(0, record.count - (record.names[0] ? 1 : 0));
         button.append(
@@ -4497,9 +4511,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
       );
       const copy = item.lastElementChild;
       copy.append(makeElement("span", "stage-step-name", localize(stageName)), makeElement("span", "stage-step-state", state === "planned"
-        ? (currentLanguage === "zh" ? "规划步骤" : "Planned step")
-        : state === "observed" ? (currentLanguage === "zh" ? "已观察执行" : "Execution observed")
-        : state === "unproven" ? (currentLanguage === "zh" ? "未记录" : "Not recorded") : localize(state)));
+        ? (currentLanguage === "zh" ? "规划步骤" : localize("Planned step"))
+        : state === "observed" ? (currentLanguage === "zh" ? "已观察执行" : localize("Execution observed"))
+        : state === "unproven" ? (currentLanguage === "zh" ? "未记录" : localize("Not recorded")) : localize(state)));
       stageRail.append(item);
     });
   }
@@ -4526,10 +4540,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
       entry.tabIndex = 0;
       const top = makeElement("div", "evidence-item-top");
       top.append(makeElement("span", "evidence-kind", isPlanningEvidence(item)
-        ? (currentLanguage === "zh" ? "规划占位" : "Planning placeholder") : item.label));
+        ? (currentLanguage === "zh" ? "规划占位" : localize("Planning placeholder")) : item.label));
       appendObservedTime(top, item.at);
       const detail = makeElement("p", "evidence-detail", isPlanningEvidence(item)
-        ? (currentLanguage === "zh" ? "仅声明待执行检查，尚无实际执行结果。" : "A check was declared; no actual execution result is recorded.") : item.detail);
+        ? (currentLanguage === "zh" ? "仅声明待执行检查，尚无实际执行结果。" : localize("A check was declared; no actual execution result is recorded.")) : item.detail);
       const status = makeElement("span", "evidence-status evidence-status-" + item.status.toLowerCase().replace(/[^a-z0-9_-]/gu, "-"), item.status);
       entry.append(top, detail, status);
       entry.addEventListener("click", () => selectNode(item.nodeId));
@@ -4556,10 +4570,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
       return totals;
     }, { skills: 0, mcp: 0, tools: 0, commands: 0 });
     const loadoutCopy = [
-      ["skills", currentLanguage === "zh" ? "技能" : "skills"],
+      ["skills", currentLanguage === "zh" ? "技能" : localize("skills")],
       ["mcp", "MCP"],
-      ["tools", currentLanguage === "zh" ? "工具" : "tools"],
-      ["commands", currentLanguage === "zh" ? "命令" : "commands"],
+      ["tools", currentLanguage === "zh" ? "工具" : localize("tools")],
+      ["commands", currentLanguage === "zh" ? "命令" : localize("commands")],
     ].filter(([key]) => loadoutTotals[key] > 0).map(([key, label]) => loadoutTotals[key] + " " + label).join(" · ");
     const countGroup = (entries) => entries
       .filter(([key]) => Number.isSafeInteger(session[key]) && session[key] >= 0)
@@ -4581,13 +4595,13 @@ const CLIENT_SCRIPT = String.raw`(() => {
       infoFacts.append(row);
     });
     if (session.lastPromptSummary === "Prompt summary withheld") {
-      infoFacts.append(makeElement("p", "panel-note", currentLanguage === "zh" ? "未记录可显示的提示词摘要。" : "No displayable prompt summary was recorded."));
+      infoFacts.append(makeElement("p", "panel-note", currentLanguage === "zh" ? "未记录可显示的提示词摘要。" : localize("No displayable prompt summary was recorded.")));
     } else if (usefulNodeMeta(session.lastPromptSummary)) {
       const prompt = makeElement("div", "info-fact-prompt");
       prompt.append(makeElement("span", "info-fact-label", localize("Prompt summary")), makeElement("p", "info-fact-value", session.lastPromptSummary));
       infoFacts.append(prompt);
     }
-    if (!infoFacts.children.length) infoFacts.append(makeElement("p", "panel-empty", currentLanguage === "zh" ? "此记录没有更多会话信息。" : "No additional session information was recorded."));
+    if (!infoFacts.children.length) infoFacts.append(makeElement("p", "panel-empty", currentLanguage === "zh" ? "此记录没有更多会话信息。" : localize("No additional session information was recorded.")));
   }
 
   function appendOperationalRow(container, label, value, state = "unavailable") {
@@ -4602,7 +4616,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const project = projectForSelection();
     const repository = snapshot.repository || {};
     setText(repositoryTitle, repository.name?.state === "observed" ? repository.name.summary : project?.displayName || "Registered project", "Registered project");
-    setText(repositoryBoundary, currentLanguage === "zh" ? "当前项目的运行记录" : "Run records for this project");
+    setText(repositoryBoundary, currentLanguage === "zh" ? "当前项目的运行记录" : localize("Run records for this project"));
     if (repositoryBoundary) repositoryBoundary.title = project?.projectId || "";
     clearChildren(repositoryFacts);
     const availableFacts = [
@@ -4612,7 +4626,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       ["Diff", repository.diff],
     ].filter(([, fact]) => fact?.state === "observed" && usefulNodeMeta(fact.summary));
     for (const [label, fact] of availableFacts) appendOperationalRow(repositoryFacts, localize(label), fact.summary, fact.state);
-    if (!availableFacts.length) repositoryFacts?.append(makeElement("p", "panel-empty repository-empty", currentLanguage === "zh" ? "此记录没有仓库信息" : "No repository information was recorded for this run."));
+    if (!availableFacts.length) repositoryFacts?.append(makeElement("p", "panel-empty repository-empty", currentLanguage === "zh" ? "此记录没有仓库信息" : localize("No repository information was recorded for this run.")));
     clearChildren(repositorySessions);
     const foldedAway = Number(project?.omittedSessionCount) > 0
       ? Number(project.omittedSessionCount)
@@ -4641,7 +4655,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       row.dataset.runId = session.runId;
       row.dataset.active = session.runId === selectedRunId ? "true" : "false";
       row.title = sessionDisplayTitle(session);
-      const title = makeElement("span", "workspace-child-title", sessionDisplayTitle(session));
+      const title = makeElement("span", "workspace-child-title", sessionDisplayTitle(session), { record: true });
       title.title = sessionDisplayTitle(session);
       row.append(
         title,
@@ -4686,7 +4700,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const sessions = project?.sessions || [];
     const visible = sessions.filter((session) => session.runId === selectedRunId || sessionIsIdentified(session)).slice(0, 24);
     if (!visible.length) {
-      workspaceSessionList?.append(makeElement("p", "workspace-session-note", currentLanguage === "zh" ? "还没有保存标题和聊天标识的任务。" : "No tasks with a saved title and chat identity yet."));
+      workspaceSessionList?.append(makeElement("p", "workspace-session-note", currentLanguage === "zh" ? "还没有保存标题和聊天标识的任务。" : localize("No tasks with a saved title and chat identity yet.")));
       return;
     }
     visible.forEach((session) => {
@@ -4696,7 +4710,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       button.dataset.running = session.active ? "true" : "false";
       button.title = sessionDisplayTitle(session);
       button.append(
-        makeElement("span", "workspace-session-title", sessionDisplayTitle(session)),
+        makeElement("span", "workspace-session-title", sessionDisplayTitle(session), { record: true }),
         makeElement("span", "workspace-session-meta", sessionRowMeta(session)),
       );
       button.addEventListener("click", () => switchSelection(selectedProjectId, session.runId, { updateUrl: true }));
@@ -4724,8 +4738,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
       const nodes = grouped.get(key);
       if (!nodes.length) {
         const message = key === workspaceColumnForStatus(resolveLiveRunTaskLifecycle(snapshot).state) && !snapshot.nodes.length
-          ? (currentLanguage === "zh" ? "当前只采集到运行状态，尚无工作项明细。" : "Only run status is available; work-item telemetry has not been captured.")
-          : (currentLanguage === "zh" ? "暂无工作项" : "No work items");
+          ? (currentLanguage === "zh" ? "当前只采集到运行状态，尚无工作项明细。" : localize("Only run status is available; work-item telemetry has not been captured."))
+          : (currentLanguage === "zh" ? "暂无工作项" : localize("No work items"));
         list.append(makeElement("p", "work-board-empty", message));
       }
       nodes.forEach((node) => {
@@ -4739,7 +4753,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
         const tags = makeElement("span", "work-item-tags");
         appendWorkspaceTag(tags, nodeStateDetailCopy(node, snapshot.run.id));
         appendWorkspaceTag(tags, node.agent, "work-item-tag-owner");
-        const title = makeElement("h3", "work-item-title", liveTaskDisplayLabel(node, currentLanguage));
+        const title = makeElement("h3", "work-item-title", node.nativeTaskCaption && ["ja", "ko"].includes(currentLanguage) ? localize(liveTaskDisplayLabel(node, currentLanguage)) : liveTaskDisplayLabel(node, currentLanguage), { record: true });
         title.title = liveTaskDisplayLabel(node, currentLanguage);
         // The projection's generic missing-brief warning belongs in task details,
         // where it remains intact, rather than repeating on every work card.
@@ -4816,7 +4830,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       const list = makeElement("ol", "run-work-list");
       entries.forEach(({ node }) => {
         const row = makeElement("li", "run-work-item");
-        const title = makeElement("span", "", liveTaskDisplayLabel(node, currentLanguage));
+        const title = makeElement("span", "", node.nativeTaskCaption && ["ja", "ko"].includes(currentLanguage) ? localize(liveTaskDisplayLabel(node, currentLanguage)) : liveTaskDisplayLabel(node, currentLanguage), { record: true });
         title.title = liveTaskDisplayLabel(node, currentLanguage);
         const action = makeElement("button", "run-overview-action run-work-detail", copy.detailLink);
         action.type = "button";
@@ -4839,7 +4853,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (available) {
       const output = item("result", copy.output);
       overview.result.items.forEach((available) => {
-        const link = makeElement("a", "run-overview-value run-overview-result", plainLiveTaskLabel(available.label, currentLanguage));
+        const link = makeElement("a", "run-overview-value run-overview-result", plainLiveTaskLabel(available.label, currentLanguage), { record: true });
         link.href = deliverableOpenHref(available);
         link.addEventListener("click", () => { void observeDeliverableRead(available); });
         link.target = "_blank";
@@ -4874,12 +4888,12 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (observed) {
       const activity = item("activity", copy.activity);
       activity.className += " run-overview-activity";
-      const label = makeElement("p", "run-overview-value", plainLiveTaskLabel(observed.label, currentLanguage));
+      const label = makeElement("p", "run-overview-value", plainLiveTaskLabel(observed.label, currentLanguage), { record: true });
       label.title = observed.label;
       activity.append(label);
       if (observed.at) {
         const time = appendObservedTime(activity, observed.at);
-        if (time) { time.className = "run-overview-note"; time.textContent = copy.latest + formatSessionTime(observed.at); time.title = observed.at; }
+        if (time) { time.className = "run-overview-note"; time.textContent = localize(copy.latest) + formatSessionTime(observed.at); time.title = observed.at; }
       } else activity.append(makeElement("p", "run-overview-note", copy.unknownTime));
     }
     if (typeof runDiagnostics !== "undefined" && runDiagnostics) renderRunDiagnostics(snapshot, project, runDiagnostics);
@@ -4911,7 +4925,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       parent.append(element);
       return element;
     };
-    const task = item("task", zh ? "当前任务" : "Current task");
+    const task = item("task", zh ? "当前任务" : localize("Current task"));
     const taskState = liveTaskLifecycleCopy(overview.taskLifecycle, currentLanguage);
     line(task, taskState.label);
     if (overview.task?.label) line(task, overview.task.label, "run-overview-note");
@@ -4923,51 +4937,51 @@ const CLIENT_SCRIPT = String.raw`(() => {
       action.type = "button";
       action.addEventListener("click", () => selectNode(inspectTask.nodeId, { inspectorTab: "summary" }));
       task.append(action);
-      if (overview.task?.moreCount) line(task, (zh ? "另有 " : "+ ") + overview.task.moreCount + (zh ? " 项正在执行" : " active tasks"), "run-overview-note");
+      if (overview.task?.moreCount) line(task, (zh ? "另有 " : localize("+ ")) + overview.task.moreCount + (zh ? " 项正在执行" : localize(" active tasks")), "run-overview-note");
     }
     if (overview.ownerReported) line(task, liveTaskLifecycleCopy({ detail: "native_unconfirmed" }, currentLanguage).detail, "run-overview-note");
-    const tokenCoverage = line(task, (zh ? "输出计量 " : "Output measured ") + coverage.outputMeasuredNodeCount + "/" + coverage.nodeCount, "run-overview-note");
+    const tokenCoverage = line(task, (zh ? "输出计量 " : localize("Output measured ")) + coverage.outputMeasuredNodeCount + "/" + coverage.nodeCount, "run-overview-note");
     tokenCoverage.dataset.liveTokenCoverage = "";
-    tokenCoverage.title = zh ? "仅统计当前运行中已报告输出 token 数的节点；其余节点未计量，0 也是有效计量。" : "Nodes in this run with an observed output token count; other nodes are not measured. Zero is measured.";
+    tokenCoverage.title = zh ? "仅统计当前运行中已报告输出 token 数的节点；其余节点未计量，0 也是有效计量。" : localize("Nodes in this run with an observed output token count; other nodes are not measured. Zero is measured.");
 
-    const blocker = item("blocker", overview.blocker?.kind === "status" ? (zh ? "状态说明" : "Status detail") : (zh ? "阻塞原因" : "Blocker"));
-    line(blocker, (overview.blocker?.kind === "status" && overview.taskLifecycle?.state === "completed" ? taskState.detail : overview.blocker?.label) || (overview.blocker?.kind === "blocked" ? (zh ? "已报告阻塞，原因未提供" : "Blocked; reason not reported")
-      : overview.state === "empty" || overview.state === "planned" ? (zh ? "尚无执行阻塞记录" : "No execution blocker recorded")
-        : (zh ? "未报告阻塞" : "No blocker reported")));
-    if (overview.blocker?.nodeLabel) line(blocker, overview.blocker.nodeLabel + (overview.blocker.moreCount ? (zh ? " · 另有 " : " · + ") + overview.blocker.moreCount : ""), "run-overview-note");
+    const blocker = item("blocker", overview.blocker?.kind === "status" ? (zh ? "状态说明" : localize("Status detail")) : (zh ? "阻塞原因" : localize("Blocker")));
+    line(blocker, (overview.blocker?.kind === "status" && overview.taskLifecycle?.state === "completed" ? taskState.detail : overview.blocker?.label) || (overview.blocker?.kind === "blocked" ? (zh ? "已报告阻塞，原因未提供" : localize("Blocked; reason not reported"))
+      : overview.state === "empty" || overview.state === "planned" ? (zh ? "尚无执行阻塞记录" : localize("No execution blocker recorded"))
+        : (zh ? "未报告阻塞" : localize("No blocker reported"))));
+    if (overview.blocker?.nodeLabel) line(blocker, overview.blocker.nodeLabel + (overview.blocker.moreCount ? (zh ? " · 另有 " : localize(" · + ")) + overview.blocker.moreCount : ""), "run-overview-note");
     if (overview.blocker?.nodeId) {
-      const action = makeElement("button", "run-overview-action", zh ? "查看阻塞" : "Inspect blocker");
+      const action = makeElement("button", "run-overview-action", zh ? "查看阻塞" : localize("Inspect blocker"));
       action.type = "button";
       action.addEventListener("click", () => selectNode(overview.blocker.nodeId, { inspectorTab: "summary" }));
       blocker.append(action);
     }
 
-    const activity = item("activity", zh ? "执行活动" : "Execution activity");
+    const activity = item("activity", zh ? "执行活动" : localize("Execution activity"));
     if (overview.execution) {
       const summary = overview.execution;
       const returned = line(activity, zh ? "已返回 " + summary.returnedAgentCount + " · 尚未确认返回 " + summary.unconfirmedAgentCount + " · 待验收" : summary.returnedAgentCount + " returned · " + summary.unconfirmedAgentCount + " return unconfirmed · acceptance pending");
       returned.dataset.liveExecutionSummary = "";
-      line(activity, (zh ? "工具返回 " : "Tool returns ") + summary.returnedToolCount + (zh ? " · 失败 " : " · failed ") + summary.failedToolCount, "run-overview-note");
-      if (snapshot.run?.observationCoverage?.state === "partial") line(activity, zh ? "部分来源超出读取范围；以上仅为已观察数量。" : "Some sources were outside the read bounds; these are observed counts only.", "run-overview-note");
+      line(activity, (zh ? "工具返回 " : localize("Tool returns ")) + summary.returnedToolCount + (zh ? " · 失败 " : localize(" · failed ")) + summary.failedToolCount, "run-overview-note");
+      if (snapshot.run?.observationCoverage?.state === "partial") line(activity, zh ? "部分来源超出读取范围；以上仅为已观察数量。" : localize("Some sources were outside the read bounds; these are observed counts only."), "run-overview-note");
     } else if (nativeActivity) {
-      const action = makeElement("button", "run-overview-action", zh ? "查看实际执行记录" : "View actual execution");
+      const action = makeElement("button", "run-overview-action", zh ? "查看实际执行记录" : localize("View actual execution"));
       action.type = "button";
       action.dataset.liveNativeActivity = nativeActivity.runId;
       action.addEventListener("click", () => { void switchSelection(selectedProjectId, nativeActivity.runId, { updateUrl: true }); });
       activity.append(action);
-      line(activity, zh ? "打开本项目已观测会话的独立记录；不会将本规划标为完成。" : "Open this project's observed conversation as a separate record; this plan stays unchanged.", "run-overview-note");
+      line(activity, zh ? "打开本项目已观测会话的独立记录；不会将本规划标为完成。" : localize("Open this project's observed conversation as a separate record; this plan stays unchanged."), "run-overview-note");
     }
     const observed = overview.activity.item;
-    line(activity, observed?.label || (zh ? "尚无实际执行记录" : "No execution activity observed"));
+    line(activity, observed?.label || (zh ? "尚无实际执行记录" : localize("No execution activity observed")));
     if (observed?.at) {
       const time = appendObservedTime(activity, observed.at);
       if (time) {
         time.className = "run-overview-note";
-        time.textContent = (zh ? "最近记录 · " : "Latest timed record · ") + formatSessionTime(observed.at);
+        time.textContent = (zh ? "最近记录 · " : localize("Latest timed record · ")) + formatSessionTime(observed.at);
         time.title = observed.at;
       }
-    } else line(activity, zh ? "活动时间未知" : "Activity time unknown", "run-overview-note");
-    if (overview.activity.undatedCount && observed?.at) line(activity, (zh ? "另有 " : "") + overview.activity.undatedCount + (zh ? " 条活动时间未知" : " activities have unknown time"), "run-overview-note");
+    } else line(activity, zh ? "活动时间未知" : localize("Activity time unknown"), "run-overview-note");
+    if (overview.activity.undatedCount && observed?.at) line(activity, (zh ? "另有 " : "") + overview.activity.undatedCount + (zh ? " 条活动时间未知" : localize(" activities have unknown time")), "run-overview-note");
     if (observed?.detail) activity.title = observed.detail;
   }
 
@@ -5006,22 +5020,22 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (compactEmpty && !deliverables.length) {
       parent?.append(makeElement("p", "panel-note live-deliverable-empty", currentLanguage === "zh"
         ? "未附可打开的文件；已完成不代表已通过验收。"
-        : "No openable file was attached; completed work still needs acceptance."));
+        : localize("No openable file was attached; completed work still needs acceptance.")));
       return;
     }
     for (const item of deliverables) {
       const row = makeElement("article", "live-deliverable");
       row.dataset.deliverableId = item.id;
-      const link = makeElement("a", "live-deliverable-link", (currentLanguage === "zh" ? "打开成品 · " : "Open result · ") + item.label);
+      const link = makeElement("a", "live-deliverable-link", (currentLanguage === "zh" ? "打开成品 · " : localize("Open result · ")) + item.label);
       link.href = deliverableOpenHref(item);
       link.addEventListener("click", () => { void observeDeliverableRead(item); });
       link.target = "_blank";
       link.rel = "noopener noreferrer";
       row.append(link, makeElement("span", "panel-note", item.availability === "available"
-        ? currentLanguage === "zh" ? "有产出内容 · 仍需核对结果" : "Output present · review still needed"
-        : currentLanguage === "zh" ? "已声明路径 · 打开时核对是否可用" : "Declared reference · availability checked when opened"));
+        ? currentLanguage === "zh" ? "有产出内容 · 仍需核对结果" : localize("Output present · review still needed")
+        : currentLanguage === "zh" ? "已声明路径 · 打开时核对是否可用" : localize("Declared reference · availability checked when opened")));
       if (item.kind !== "external") {
-        const download = makeElement("a", "live-deliverable-download", currentLanguage === "zh" ? "下载文件" : "Download file");
+        const download = makeElement("a", "live-deliverable-download", currentLanguage === "zh" ? "下载文件" : localize("Download file"));
         download.href = deliverableOpenHref(item) + "&download=1";
         row.append(download);
       }
@@ -5029,10 +5043,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
     }
     if (!deliverables.length) parent?.append(makeElement("p", "panel-empty", currentLanguage === "zh"
       ? "尚未保存可打开的成品；执行日志和验证证据仍可在下方核对。"
-      : "No openable result was saved; inspect execution and verification evidence below."));
+      : localize("No openable result was saved; inspect execution and verification evidence below.")));
     parent?.append(makeElement("p", "panel-note", currentLanguage === "zh"
       ? "已完成表示工作已结束；结果核对与用户验收另行确认。"
-      : "Completed means the work has ended; result review and user acceptance are confirmed separately."));
+      : localize("Completed means the work has ended; result review and user acceptance are confirmed separately.")));
   }
 
   /** Reuse the same form across snapshot paints so live updates do not eat input. */
@@ -5073,9 +5087,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
       view.refreshStorageNotice = () => {
         const saved = localFeedbackDrafts.persistence(view.context);
         storageNotice.textContent = saved.state === "saved"
-          ? currentLanguage === "zh" ? "草稿已保存在本浏览器，刷新后可恢复。" : "Draft saved in this browser; it can be restored after reload."
-          : currentLanguage === "zh" ? "草稿尚未持久化，仅保留在本页面内存；请先复制，避免刷新后丢失。" : "Draft is not saved persistently and remains in page memory; copy it before reloading.";
-        if (saved.reason === "corrupt_storage") storageNotice.textContent += currentLanguage === "zh" ? " 原有存储数据异常，已保留原记录。" : " Existing stored data is unreadable and has been preserved.";
+          ? currentLanguage === "zh" ? "草稿已保存在本浏览器，刷新后可恢复。" : localize("Draft saved in this browser; it can be restored after reload.")
+          : currentLanguage === "zh" ? "草稿尚未持久化，仅保留在本页面内存；请先复制，避免刷新后丢失。" : localize("Draft is not saved persistently and remains in page memory; copy it before reloading.");
+        if (saved.reason === "corrupt_storage") storageNotice.textContent += currentLanguage === "zh" ? " 原有存储数据异常，已保留原记录。" : localize(" Existing stored data is unreadable and has been preserved.");
       };
       localFeedbackSurfaces.set(surface, view);
       target.addEventListener("change", () => {
@@ -5122,13 +5136,13 @@ const CLIENT_SCRIPT = String.raw`(() => {
           await navigator.clipboard.writeText(value);
           if (view.copyAttempt !== attempt || localFeedbackDrafts.key(view.context) !== contextKey || draft.prepared !== value) return;
           view.noticePrepared = value;
-          notice.textContent = currentLanguage === "zh" ? "已复制，尚未提交；请粘贴到负责此运行的 Codex 对话继续修订。" : "Copied, not submitted; paste into the Codex conversation responsible for this run to continue revising.";
+          notice.textContent = currentLanguage === "zh" ? "已复制，尚未提交；请粘贴到负责此运行的 Codex 对话继续修订。" : localize("Copied, not submitted; paste into the Codex conversation responsible for this run to continue revising.");
         } catch {
           if (view.copyAttempt !== attempt || localFeedbackDrafts.key(view.context) !== contextKey || draft.prepared !== value) return;
           view.noticePrepared = value;
           prepared.focus({ preventScroll: true });
           prepared.select();
-          notice.textContent = currentLanguage === "zh" ? "剪贴板不可用，尚未提交；已选中反馈文本，请手动复制后粘贴到负责此运行的 Codex 对话。" : "Clipboard unavailable, not submitted; the feedback text is selected. Copy it manually and paste into the Codex conversation responsible for this run.";
+          notice.textContent = currentLanguage === "zh" ? "剪贴板不可用，尚未提交；已选中反馈文本，请手动复制后粘贴到负责此运行的 Codex 对话。" : localize("Clipboard unavailable, not submitted; the feedback text is selected. Copy it manually and paste into the Codex conversation responsible for this run.");
         }
       });
     }
@@ -5146,18 +5160,18 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const selection = localFeedbackDrafts.selected(base);
     if (selection && !choices.some((item) => item.value === selection)) {
       const isDeliverable = selection.startsWith("deliverable:");
-      choices.push({ value: selection, label: currentLanguage === "zh" ? "原引用（本次快照未包含）" : "Previous reference (absent from this snapshot)",
+      choices.push({ value: selection, label: currentLanguage === "zh" ? "原引用（本次快照未包含）" : localize("Previous reference (absent from this snapshot)"),
         ...(isDeliverable ? { deliverableId: selection.slice(12) } : { evidenceId: selection.slice(9) }) });
     }
     const context = { ...base, ...(choices.find((item) => item.value === selection) || {}) };
     const selectionKey = JSON.stringify([base, choices, currentLanguage]);
     if (view.selectionKey !== selectionKey) {
       clearChildren(view.target);
-      const option = makeElement("option", "", currentLanguage === "zh" ? "当前工作，未指定成品或证据" : "Current work, no result or evidence selected");
+      const option = makeElement("option", "", currentLanguage === "zh" ? "当前工作，未指定成品或证据" : localize("Current work, no result or evidence selected"));
       option.value = "";
       view.target.append(option);
       for (const item of choices) {
-        const option = makeElement("option", "", item.label + " · " + item.value);
+        const option = makeElement("option", "", item.label + " · " + item.value, { record: true });
         option.value = item.value;
         view.target.append(option);
       }
@@ -5170,27 +5184,27 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const draft = localFeedbackDrafts.get(context);
     if (view.raw.value !== draft.original) view.raw.value = draft.original;
     if (view.prepared.value !== draft.prepared) view.prepared.value = draft.prepared;
-    view.heading.textContent = currentLanguage === "zh" ? "局部反馈" : "Feedback on this result";
+    view.heading.textContent = currentLanguage === "zh" ? "局部反馈" : localize("Feedback on this result");
     view.contextCopy.textContent = (selected?.label || snapshot.run.title) + " · " + base.runId + (base.nodeId ? " · " + base.nodeId : "");
     if (context.deliverableId) view.contextCopy.textContent += currentLanguage === "zh" ? " · 本次读取版本：" + (context.contentVersion || "未知") : " · Version read this time: " + (context.contentVersion || "unknown");
     const revisions = localFeedbackDrafts.matching(context, snapshot.revisionReview?.items);
     view.revisionStatus.textContent = revisions.length ? revisions.map((item) => {
-      const label = item.state === "recorded" ? currentLanguage === "zh" ? "已登记问题 · 待修订" : "Finding recorded · revision pending"
-          : item.state === "verification_unconfirmed" || item.state === "verified" ? currentLanguage === "zh" ? "复验待确认 · 已有复验记录，执行来源未确认；尚未确认用户验收" : "Recheck awaiting confirmation; owner record exists, execution provenance and user acceptance remain unconfirmed"
-            : currentLanguage === "zh" ? "负责人已回报 · 待复验" : "Owner reported · awaiting recheck";
+      const label = item.state === "recorded" ? currentLanguage === "zh" ? "已登记问题 · 待修订" : localize("Finding recorded · revision pending")
+          : item.state === "verification_unconfirmed" || item.state === "verified" ? currentLanguage === "zh" ? "复验待确认 · 已有复验记录，执行来源未确认；尚未确认用户验收" : localize("Recheck awaiting confirmation; owner record exists, execution provenance and user acceptance remain unconfirmed")
+            : currentLanguage === "zh" ? "负责人已回报 · 待复验" : localize("Owner reported · awaiting recheck");
       return (item.summary || item.findingId) + " · " + label
-        + (item.requiredChange ? "\n" + (currentLanguage === "zh" ? "下一步：" : "Next: ") + item.requiredChange : "");
-    }).join("\n") : currentLanguage === "zh" ? "尚未收到修订/复验回写" : "No revision or verification report received yet";
-    view.targetCopy.textContent = currentLanguage === "zh" ? "反馈对应的成品或证据" : "Result or evidence being reviewed";
-    view.rawCopy.textContent = currentLanguage === "zh" ? "你的反馈原话" : "Your feedback, verbatim";
-    view.prepare.textContent = currentLanguage === "zh" ? "整理反馈文本" : "Prepare feedback text";
-    view.preparedCopy.textContent = currentLanguage === "zh" ? "可编辑的反馈文本" : "Editable feedback text";
-    view.copy.textContent = currentLanguage === "zh" ? "复制反馈" : "Copy feedback";
+        + (item.requiredChange ? "\n" + (currentLanguage === "zh" ? "下一步：" : localize("Next: ")) + item.requiredChange : "");
+    }).join("\n") : currentLanguage === "zh" ? "尚未收到修订/复验回写" : localize("No revision or verification report received yet");
+    view.targetCopy.textContent = currentLanguage === "zh" ? "反馈对应的成品或证据" : localize("Result or evidence being reviewed");
+    view.rawCopy.textContent = currentLanguage === "zh" ? "你的反馈原话" : localize("Your feedback, verbatim");
+    view.prepare.textContent = currentLanguage === "zh" ? "整理反馈文本" : localize("Prepare feedback text");
+    view.preparedCopy.textContent = currentLanguage === "zh" ? "可编辑的反馈文本" : localize("Editable feedback text");
+    view.copy.textContent = currentLanguage === "zh" ? "复制反馈" : localize("Copy feedback");
     view.prepare.disabled = !draft.original.trim();
     view.copy.disabled = !draft.prepared.trim();
     view.idleNotice = currentLanguage === "zh"
       ? "反馈尚未提交。复制后粘贴到负责此运行的 Codex 对话继续修订。"
-      : "Feedback is not submitted. Copy, then paste into the Codex conversation responsible for this run to continue revising.";
+      : localize("Feedback is not submitted. Copy, then paste into the Codex conversation responsible for this run to continue revising.");
     view.refreshStorageNotice();
     // A copy receipt belongs to one target and one exact text, including edits
     // made in the other feedback surface before this snapshot paint.
@@ -5216,32 +5230,32 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const selected = snapshot.nodes.find((node) => node.id === selectedNodeId) || null;
     const hero = makeElement("section", "workspace-detail-hero");
     const detailTitle = selected ? liveTaskDisplayLabel(selected, currentLanguage) : snapshot.run.title;
-    const detailSummary = selected?.summary || snapshot.run.task || (currentLanguage === "zh" ? "这条运行没有保存可读的任务说明。" : "This run did not preserve a readable task brief.");
+    const detailSummary = selected?.summary || snapshot.run.task || (currentLanguage === "zh" ? "这条运行没有保存可读的任务说明。" : localize("This run did not preserve a readable task brief."));
     const tags = makeElement("div", "workspace-detail-tags");
     appendWorkspaceTag(tags, selected ? nodeStateCopy(selected, snapshot.run.id) : liveTaskLifecycleCopy(resolveLiveRunTaskLifecycle(snapshot), currentLanguage).label, "work-item-tag-owner");
     appendWorkspaceTag(tags, selected ? nodeStateDetailCopy(selected, snapshot.run.id) : liveTaskLifecycleCopy(resolveLiveRunTaskLifecycle(snapshot), currentLanguage).detail);
     appendWorkspaceTag(tags, selected?.agent || snapshot.sessionInfo?.runtime);
     appendWorkspaceTag(tags, selected?.latestTool, "work-item-tag-tool");
-    hero.append(makeElement("h3", "", detailTitle), makeElement("p", "", detailSummary), tags);
+    hero.append(makeElement("h3", "", detailTitle, { record: true }), makeElement("p", "", detailSummary, { record: Boolean(selected?.summary || snapshot.run.task) }), tags);
     workspaceDetail?.append(hero);
 
     const factsSection = makeElement("section", "workspace-detail-section");
-    factsSection.append(makeElement("h3", "", currentLanguage === "zh" ? "运行信息" : "Run information"));
+    factsSection.append(makeElement("h3", "", currentLanguage === "zh" ? "运行信息" : localize("Run information")));
     const facts = makeElement("div", "workspace-detail-list");
-    if (usefulNodeMeta(selected?.agent)) appendWorkspaceDetailRow(facts, currentLanguage === "zh" ? "负责人" : "Owner", selected.agent);
+    if (usefulNodeMeta(selected?.agent)) appendWorkspaceDetailRow(facts, currentLanguage === "zh" ? "负责人" : localize("Owner"), selected.agent);
     const runtime = selected?.runtime || snapshot.sessionInfo?.runtime;
-    if (usefulNodeMeta(runtime)) appendWorkspaceDetailRow(facts, currentLanguage === "zh" ? "运行时" : "Runtime", runtime);
-    appendWorkspaceDetailRow(facts, currentLanguage === "zh" ? "当前阶段" : "Stage", informativeValue(snapshot.run.stage, "Stage unconfirmed"));
-    if (usefulNodeMeta(selected?.latestTool)) appendWorkspaceDetailRow(facts, currentLanguage === "zh" ? "当前工具" : "Current tool", selected.latestTool);
-    if (usefulNodeMeta(selected?.parentId)) appendWorkspaceDetailRow(facts, currentLanguage === "zh" ? "上级工作项" : "Depends on", selected.parentId);
+    if (usefulNodeMeta(runtime)) appendWorkspaceDetailRow(facts, currentLanguage === "zh" ? "运行时" : localize("Runtime"), runtime);
+    appendWorkspaceDetailRow(facts, currentLanguage === "zh" ? "当前阶段" : localize("Stage"), informativeValue(snapshot.run.stage, "Stage unconfirmed"));
+    if (usefulNodeMeta(selected?.latestTool)) appendWorkspaceDetailRow(facts, currentLanguage === "zh" ? "当前工具" : localize("Current tool"), selected.latestTool);
+    if (usefulNodeMeta(selected?.parentId)) appendWorkspaceDetailRow(facts, currentLanguage === "zh" ? "上级工作项" : localize("Depends on"), selected.parentId);
     factsSection.append(facts);
     workspaceDetail?.append(factsSection);
 
     const relevantEvents = (selected ? snapshot.replay.filter((event) => event.nodeId === selected.id) : snapshot.replay).slice(-8).reverse();
     const activitySection = makeElement("section", "workspace-detail-section");
-    activitySection.append(makeElement("h3", "", currentLanguage === "zh" ? "最新活动" : "Latest activity"));
+    activitySection.append(makeElement("h3", "", currentLanguage === "zh" ? "最新活动" : localize("Latest activity")));
     const activity = makeElement("div", "workspace-detail-list");
-    if (!relevantEvents.length) activity.append(makeElement("p", "panel-empty", currentLanguage === "zh" ? "尚未采集到工具、交接或评审活动。" : "No tool, handoff, or review activity has been captured."));
+    if (!relevantEvents.length) activity.append(makeElement("p", "panel-empty", currentLanguage === "zh" ? "尚未采集到工具、交接或评审活动。" : localize("No tool, handoff, or review activity has been captured.")));
     relevantEvents.forEach((event) => {
       const item = makeElement("article", "workspace-activity");
       item.dataset.kind = event.kind;
@@ -5249,7 +5263,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       const kindCopy = localize(display(event.kind, "").replaceAll("_", " "));
       const observedAt = formatTime(event.at);
       copy.append(
-        makeElement("strong", "", event.label),
+        makeElement("strong", "", event.label, { record: true }),
         makeElement("span", "", [kindCopy, observedAt].filter((part) => part !== "").join(" · ")),
       );
       item.append(copy);
@@ -5260,10 +5274,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
 
     const linkedEvidence = selected ? snapshot.evidence.filter((item) => item.nodeId === selected.id) : snapshot.evidence;
     const outputSection = makeElement("section", "workspace-detail-section");
-    outputSection.append(makeElement("h3", "", currentLanguage === "zh" ? "产出与证据" : "Outputs and evidence"));
+    outputSection.append(makeElement("h3", "", currentLanguage === "zh" ? "产出与证据" : localize("Outputs and evidence")));
     const outputs = makeElement("div", "workspace-detail-list");
     appendLiveDeliverables(outputs, snapshot, selected);
-    if (snapshot.repository.diff?.state === "observed") appendWorkspaceDetailRow(outputs, currentLanguage === "zh" ? "代码变更" : "Changes", snapshot.repository.diff.summary);
+    if (snapshot.repository.diff?.state === "observed") appendWorkspaceDetailRow(outputs, currentLanguage === "zh" ? "代码变更" : localize("Changes"), snapshot.repository.diff.summary);
     // The projection may omit the kind while still carrying a row label.
     // Preferring the kind and falling back to the label keeps a real name in the
     // label column instead of discarding it and printing the placeholder there.
@@ -5272,7 +5286,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       localize(display(usefulNodeMeta(item.kind) ? item.kind : item.label, "")),
       item.detail,
     ));
-    if (!outputs.children.length) outputs.append(makeElement("p", "panel-empty", currentLanguage === "zh" ? "尚未关联交付物或验证证据。" : "No deliverable or verification evidence is linked yet."));
+    if (!outputs.children.length) outputs.append(makeElement("p", "panel-empty", currentLanguage === "zh" ? "尚未关联交付物或验证证据。" : localize("No deliverable or verification evidence is linked yet.")));
     outputSection.append(outputs);
     workspaceDetail?.append(outputSection);
     renderLocalFeedback(workspaceDetail, snapshot, selected, "workspace");
@@ -5284,7 +5298,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (!snapshot.nodes.length || (!snapshot.replay.length && !snapshot.evidence.length)) {
       workspaceDetail?.append(makeElement("p", "workspace-telemetry-warning", currentLanguage === "zh"
         ? "这是一条旧式状态记录：只能确认运行阶段和更新时间，无法还原参与的 Agent、工具过程和产出。新运行会保存这些信息。"
-        : "This is a legacy status-only record. It confirms stage and update time, but cannot reconstruct agents, tools, or outputs. New runs preserve that telemetry."));
+        : localize("This is a legacy status-only record. It confirms stage and update time, but cannot reconstruct agents, tools, or outputs. New runs preserve that telemetry.")));
     }
   }
 
@@ -5293,8 +5307,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const selectedSession = project?.sessions.find((session) => session.runId === selectedRunId) || null;
     const workspaceData = snapshot.workspace || {};
     const session = snapshot.sessionInfo || {};
-    setText(workspaceTitle, workspaceData.name?.state === "observed" ? workspaceData.name.summary : selectedSession?.title || snapshot.run.title, "Observed workspace");
-    setText(workspaceBoundary, (session.workerCount || snapshot.nodes.length) + (currentLanguage === "zh" ? " 个工作节点" : " work nodes") + " · " + localize(informativeValue(snapshot.run.stage, "Stage unconfirmed")) + " · " + liveTaskLifecycleCopy(resolveLiveRunTaskLifecycle(snapshot), currentLanguage).label, "Workspace telemetry unavailable");
+    setText(workspaceTitle, workspaceData.name?.state === "observed" ? workspaceData.name.summary : selectedSession?.title || snapshot.run.title, "Observed workspace", { record: true });
+    setText(workspaceBoundary, (session.workerCount || snapshot.nodes.length) + (currentLanguage === "zh" ? " 个工作节点" : localize(" work nodes")) + " · " + localize(informativeValue(snapshot.run.stage, "Stage unconfirmed")) + " · " + liveTaskLifecycleCopy(resolveLiveRunTaskLifecycle(snapshot), currentLanguage).label, "Workspace telemetry unavailable");
     clearChildren(workspaceFacts);
     appendOperationalRow(workspaceFacts, "Work items", String(snapshot.nodes.length), snapshot.nodes.length ? "observed" : "unavailable");
     appendOperationalRow(workspaceFacts, "Events", String(snapshot.replay.length), snapshot.replay.length ? "observed" : "unavailable");
@@ -5379,7 +5393,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       item.append(marker);
       const observedAt = formatTime(event.at);
       if (observedAt !== "") item.append(makeElement("span", "replay-event-time", observedAt));
-      item.append(makeElement("span", "replay-event-label", event.label));
+      item.append(makeElement("span", "replay-event-label", event.label, { record: true }));
       item.tabIndex = 0;
       item.setAttribute("role", "button");
       item.setAttribute("aria-label", localize("Replay " + event.label));
@@ -5876,7 +5890,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       [
         ...selectableSessions.map((session) => ({
           value: session.runId,
-          label: (session.runId === selectedRunId && !sessionIsIdentified(session) ? (currentLanguage === "zh" ? "当前运行 · " : "Current run · ") : session.active ? "Live · " : "")
+          label: (session.runId === selectedRunId && !sessionIsIdentified(session) ? (currentLanguage === "zh" ? "当前运行 · " : localize("Current run · ")) : session.active ? "Live · " : "")
             + formatSessionTime(session.updatedAt)
             + " · " + sessionDisplayTitle(session)
             + " · " + localize(informativeValue(session.currentStage, "Stage unconfirmed"))
@@ -5914,7 +5928,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       formatSessionTime(session.updatedAt),
     ].join(" ").toLocaleLowerCase().includes(query));
     if (!matchingSessions.length) {
-      sessionList.append(makeElement("p", "panel-empty", currentLanguage === "zh" ? "没有找到匹配的运行记录" : "No matching run records"));
+      sessionList.append(makeElement("p", "panel-empty", currentLanguage === "zh" ? "没有找到匹配的运行记录" : localize("No matching run records")));
       return;
     }
     const orderedSessions = sessionGroups(matchingSessions).ordered;
@@ -5925,10 +5939,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (!identifiedSessions.length && unlinkedSessions.length && !shouldShowUnlinked) {
       const empty = makeElement("section", "session-identity-empty");
       empty.append(
-        makeElement("strong", "", currentLanguage === "zh" ? "还没有可识别的聊天记录" : "No identifiable chat records yet"),
+        makeElement("strong", "", currentLanguage === "zh" ? "还没有可识别的聊天记录" : localize("No identifiable chat records yet")),
         makeElement("p", "", currentLanguage === "zh"
           ? "这些运行要么只登记了启动，要么没有保存聊天标题和会话标识，因此无法按标题告诉你对应的是哪次聊天。"
-          : "These runs either only recorded an activation or did not preserve a chat title and conversation identifier, so they cannot be located by title."),
+          : localize("These runs either only recorded an activation or did not preserve a chat title and conversation identifier, so they cannot be located by title.")),
       );
       const reveal = makeElement("button", "session-unlinked-toggle", currentLanguage === "zh"
         ? "仍要查看 " + unlinkedSessions.length + " 条次要运行记录"
@@ -5950,10 +5964,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
         const groupHeading = makeElement("div", "session-group-heading");
         groupHeading.append(
           makeElement("strong", "", group === "identified"
-            ? (currentLanguage === "zh" ? "可识别的聊天 / 任务" : "Identified chats / tasks")
+            ? (currentLanguage === "zh" ? "可识别的聊天 / 任务" : localize("Identified chats / tasks"))
             : "Background run records"),
           makeElement("span", "", group === "identified"
-            ? (currentLanguage === "zh" ? "可按标题定位" : "Locate by title")
+            ? (currentLanguage === "zh" ? "可按标题定位" : localize("Locate by title"))
             : "Activation only, or no chat link"),
         );
         sessionList.append(groupHeading);
@@ -5965,7 +5979,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       card.dataset.active = session.runId === selectedRunId ? "true" : "false";
       card.dataset.identity = group;
       card.dataset.recordOrigin = sessionRecordOrigin(session);
-      const heading = makeElement("span", "session-card-title", sessionDisplayTitle(session));
+      const heading = makeElement("span", "session-card-title", sessionDisplayTitle(session), { record: true });
       const sourceLabel = sourceRuntimeLabel(session.sourceRuntime);
       const activity = makeElement("span", "session-card-activity", sourceLabel + " · " + conversationLinkCopyFor(session));
       activity.dataset.linkState = session.conversationLinkState;
@@ -5978,7 +5992,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       timeFact.title = timeCopy.hint;
       facts.append(
         timeFact,
-        makeElement("span", "", (currentLanguage === "zh" ? "运行 ID " : "Run ID ") + sessionShortId(session)),
+        makeElement("span", "", (currentLanguage === "zh" ? "运行 ID " : localize("Run ID ")) + sessionShortId(session)),
         makeElement("span", "", localize(informativeValue(session.currentStage, "Stage unconfirmed"))),
         makeElement("span", "", session.workerCount === null ? "No worker report" : session.workerCount + " workers"),
         makeElement("span", "", session.eventCount === null ? "No event report" : session.eventCount + " events"),
@@ -5992,12 +6006,12 @@ const CLIENT_SCRIPT = String.raw`(() => {
       const open = makeElement("button", "session-card-open");
       open.type = "button";
       open.title = sessionDisplayTitle(session);
-      const summary = makeElement("span", "session-card-summary", timeCopy.text + " · " + sourceLabel + (session.active ? (currentLanguage === "zh" ? " · 实时" : " · Live") : ""));
+      const summary = makeElement("span", "session-card-summary", timeCopy.text + " · " + sourceLabel + (session.active ? (currentLanguage === "zh" ? " · 实时" : localize(" · Live")) : ""));
       open.append(heading, summary);
       open.addEventListener("click", () => switchSelection(selectedProjectId, session.runId, { updateUrl: true }));
       const details = makeElement("details", "session-card-details");
       details.open = expandedSessionRecords.has(session.runId);
-      details.append(makeElement("summary", "", currentLanguage === "zh" ? "详情" : "Details"), activity, facts);
+      details.append(makeElement("summary", "", currentLanguage === "zh" ? "详情" : localize("Details")), activity, facts);
       details.addEventListener("toggle", () => {
         if (details.open) expandedSessionRecords.add(session.runId);
         else expandedSessionRecords.delete(session.runId);
@@ -6019,7 +6033,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       });
       sessionList.append(reveal);
     } else if (unlinkedSessions.length && showUnlinkedSessions && !query) {
-      const hide = makeElement("button", "session-unlinked-toggle", currentLanguage === "zh" ? "收起这些运行记录" : "Hide these runs");
+      const hide = makeElement("button", "session-unlinked-toggle", currentLanguage === "zh" ? "收起这些运行记录" : localize("Hide these runs"));
       hide.type = "button";
       hide.addEventListener("click", () => {
         showUnlinkedSessions = false;
@@ -6130,8 +6144,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
     disconnectEvents();
     abortController?.abort();
     if (!project) {
-      showEmpty(currentLanguage === "zh" ? "等待当前项目登记，保留当前任务链接。" : "Waiting for this project to be registered; keeping the current task link.");
-      setHubStatus(currentLanguage === "zh" ? "等待当前项目" : "Waiting for current project");
+      showEmpty(currentLanguage === "zh" ? "等待当前项目登记，保留当前任务链接。" : localize("Waiting for this project to be registered; keeping the current task link."));
+      setHubStatus(currentLanguage === "zh" ? "等待当前项目" : localize("Waiting for current project"));
       return;
     }
     if (!selectedRunId) {
@@ -6140,8 +6154,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
       return;
     }
     if (!project.sessions.some((session) => session.runId === selectedRunId)) {
-      showEmpty(currentLanguage === "zh" ? "等待当前运行记录；记录出现后会自动显示。" : "Waiting for this run record; it will appear automatically when available.");
-      setHubStatus(currentLanguage === "zh" ? "等待当前运行记录" : "Waiting for current run record");
+      showEmpty(currentLanguage === "zh" ? "等待当前运行记录；记录出现后会自动显示。" : localize("Waiting for this run record; it will appear automatically when available."));
+      setHubStatus(currentLanguage === "zh" ? "等待当前运行记录" : localize("Waiting for current run record"));
       return;
     }
     showEmpty("Loading the selected run…");
@@ -6271,7 +6285,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
             task: genericTask && !sessionIsIdentified(selectedSession)
               ? (currentLanguage === "zh"
                   ? "这条运行记录没有保存聊天标题或首条用户消息，只能按时间和运行 ID 定位。"
-                  : "This run did not preserve a chat title or first user message; locate it by time and run ID.")
+                  : localize("This run did not preserve a chat title or first user message; locate it by time and run ID."))
               : inputRun?.task,
             stage: selectedSession.currentStage || inputRun?.stage,
             status: selectedSession.active ? "live" : inputRun?.status,
@@ -6638,8 +6652,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
   app.querySelector("[data-live-share-copy-pr]")?.addEventListener("click", () => copyShareValue("pr"));
   app.querySelector("[data-live-share-copy-readme]")?.addEventListener("click", () => copyShareValue("readme"));
   contextChatCopy?.addEventListener("click", () => void copyChatIdentity());
-  app.querySelector("[data-live-language-toggle]")?.addEventListener("click", () => {
-    currentLanguage = currentLanguage === "zh" ? "en" : "zh";
+  app.querySelector("[data-live-language-select]")?.addEventListener("change", (event) => {
+    const selectedLanguage = event.target.value;
+    if (!["zh", "en", "ja", "ko"].includes(selectedLanguage)) return;
+    currentLanguage = selectedLanguage;
     try { window.localStorage?.setItem(LANGUAGE_STORAGE_KEY, currentLanguage); } catch {}
     window.location.reload();
   });
@@ -6857,7 +6873,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const snapshotText = initialElement?.textContent?.trim();
   if (demoMode === "states") {
     renderSnapshot(buildStateDemoSnapshot());
-    setHubStatus(currentLanguage === "zh" ? "演示数据 · 不连接真实项目或聊天" : "Demo data · not connected to a real project or chat");
+    setHubStatus(currentLanguage === "zh" ? "演示数据 · 不连接真实项目或聊天" : localize("Demo data · not connected to a real project or chat"));
     updateConnection("live", "State demo");
   } else if (snapshotText && snapshotText !== "null") {
     try {
@@ -7720,7 +7736,7 @@ export function renderLiveControlRoomPage({
       </div>
 
       <details class="work-view-menu"><summary class="topbar-button" data-i18n-en="Other views" data-i18n-zh="其他视图">其他视图</summary><div class="work-view-switcher" role="group" aria-label="Views and help"><div class="work-view-tabs" role="tablist" aria-label="Optional work surface views"><button class="work-view-tab" id="work-view-run" type="button" role="tab" aria-controls="run-view" aria-selected="true" data-live-work-view="run" data-i18n-en="Flow map" data-i18n-zh="流程图">流程图</button><button class="work-view-tab" id="work-view-workspace" type="button" role="tab" aria-controls="workspace-view" aria-selected="false" tabindex="-1" data-live-work-view="workspace" data-i18n-en="Workspace" data-i18n-zh="工作台">工作台</button><button class="work-view-tab" id="work-view-repository" type="button" role="tab" aria-controls="repository-view" aria-selected="false" tabindex="-1" data-live-work-view="repository" data-i18n-en="Repository" data-i18n-zh="仓库">仓库</button></div><div class="work-view-utilities" role="group" aria-label="Help and session information"><button class="topbar-button" type="button" data-live-open-help data-i18n-en="Help" data-i18n-zh="使用帮助">使用帮助</button><button class="topbar-button" type="button" data-live-open-info data-i18n-en="Session info" data-i18n-zh="运行信息">运行信息</button></div></div></details>
-      <div class="topbar-actions"><div class="connection" aria-live="polite"><span class="connection-dot" data-live-connection-dot aria-hidden="true"></span><span data-live-connection data-i18n-en="Connecting…" data-i18n-zh="正在连接…">正在连接…</span></div><button class="topbar-button" type="button" data-live-open-sessions data-i18n-en="Run records" data-i18n-zh="运行记录">运行记录</button><button class="topbar-button" type="button" data-live-language-toggle aria-label="Switch to English">EN</button><button class="topbar-button" type="button" data-live-open-help aria-label="Help" title="Help">?</button><button class="topbar-button" type="button" data-live-open-info aria-label="Session info" title="Session info">i</button></div>
+      <div class="topbar-actions"><div class="connection" aria-live="polite"><span class="connection-dot" data-live-connection-dot aria-hidden="true"></span><span data-live-connection data-i18n-en="Connecting…" data-i18n-zh="正在连接…">正在连接…</span></div><button class="topbar-button" type="button" data-live-open-sessions data-i18n-en="Run records" data-i18n-zh="运行记录">运行记录</button><select class="topbar-button" data-live-language-select aria-label="Interface language"><option value="zh">中文</option><option value="en">English</option><option value="ja">日本語</option><option value="ko">한국어</option></select><button class="topbar-button" type="button" data-live-open-help aria-label="Help" title="Help">?</button><button class="topbar-button" type="button" data-live-open-info aria-label="Session info" title="Session info">i</button></div>
     </header>
     <main class="main" id="live-main" tabindex="-1">
       <div class="sr-only" data-live-region aria-live="polite"></div>
@@ -7829,7 +7845,7 @@ export function renderLiveControlRoomPage({
           <p class="run-record-guide" data-i18n-en="Find saved runs by project, title, or date. Open Details to check the chat link and run ID." data-i18n-zh="按项目、标题或日期查找运行；聊天关联和运行编号在“详情”中查看。">按项目、标题或日期查找运行；聊天关联和运行编号在“详情”中查看。</p>
           <section class="hub-switcher" aria-label="Meta_Kim project and run record selection">
             <label class="hub-field" for="live-project-select"><span data-i18n-en="Project" data-i18n-zh="项目">项目</span><select class="hub-select" id="live-project-select" data-live-project-select aria-label="Choose a Meta_Kim project"><option value="">正在加载已登记项目…</option></select></label>
-            <label class="hub-field hub-search" for="live-session-search"><span data-i18n-en="Search title, date, or run ID" data-i18n-zh="搜索标题、日期或运行 ID">搜索标题、日期或运行 ID</span><input class="hub-select" id="live-session-search" data-live-session-search type="search" maxlength="120" autocomplete="off" placeholder="例如：课程、08/30、E126426F"></label>
+            <label class="hub-field hub-search" for="live-session-search"><span data-i18n-en="Search title, date, or run ID" data-i18n-zh="搜索标题、日期或运行 ID">搜索标题、日期或运行 ID</span><input class="hub-select" id="live-session-search" data-live-session-search type="search" maxlength="120" autocomplete="off" placeholder="Search title, date, or run ID" data-i18n-placeholder-zh="搜索标题、日期或运行 ID"></label>
             <details class="hub-record-picker"><summary data-i18n-en="Choose by run ID" data-i18n-zh="按运行编号选择">按运行编号选择</summary><label class="hub-field" for="live-session-select"><span data-i18n-en="Current run record" data-i18n-zh="当前运行记录">当前运行记录</span><select class="hub-select" id="live-session-select" data-live-session-select aria-label="Choose a governed run record" disabled><option value="">请先选择项目</option></select></label></details>
             <p class="hub-status" data-live-hub-status role="status" aria-live="polite">正在加载本地项目目录…</p>
           </section>

@@ -2,7 +2,7 @@ import { LIVE_FEEDBACK_COPY } from "./live-feedback-copy.mjs";
 
 /** Build a local handoff without altering the user's feedback or claiming delivery. */
 export function buildLocalFeedbackText(context, original, language = "zh") {
-  const copy = LIVE_FEEDBACK_COPY[language === "zh" ? "zh" : "en"];
+  const copy = LIVE_FEEDBACK_COPY[language] || LIVE_FEEDBACK_COPY.en;
   const lines = [copy.instruction];
   if (context.projectId) lines.push(copy.project + context.projectId);
   lines.push(copy.run + context.runId);
