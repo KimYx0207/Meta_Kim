@@ -6,7 +6,13 @@
 import { JA_COPY } from "./live-ui-copy.ja.mjs";
 import { KO_COPY } from "./live-ui-copy.ko.mjs";
 
-export const LIVE_UI_COPY = Object.freeze({ ja: JA_COPY, ko: KO_COPY });
+// Canonical stage identifiers stay in the records; these are display labels.
+export const LIVE_UI_COPY = Object.freeze({
+  en: Object.freeze({ critical: "Goal", fetch: "Research", thinking: "Design", execution: "Execution",
+    review: "Review", "meta-review": "Meta-review", verification: "Checks", evolution: "Learning",
+    evidence: "Evidence", verified: "Verified" }),
+  ja: JA_COPY, ko: KO_COPY,
+});
 
 const LIVE_UI_PATTERNS = Object.freeze([
   ["^Run ([A-Z0-9-]+)$", "Run {id}", ["id"]],
@@ -52,6 +58,7 @@ export function translateLiveUiCopy(value, language) {
   if (Object.prototype.hasOwnProperty.call(copy, text)) return copy[text];
   const trimmed = text.trim();
   if (Object.prototype.hasOwnProperty.call(copy, trimmed)) return copy[trimmed];
+  if (language === "en") return text;
   for (const [pattern, key, fields] of LIVE_UI_PATTERNS) {
     const match = text.match(new RegExp(pattern, "u"));
     if (!match || !Object.prototype.hasOwnProperty.call(copy, key)) continue;

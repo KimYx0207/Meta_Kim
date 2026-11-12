@@ -51,7 +51,7 @@ test("compact node titles and status remain visible outside desktop-only media r
     assert.match(sharedCss, new RegExp(`\\.graph-canvas\\[data-semantic-zoom="cell"\\] \\.node-card \\.${child}[^{}]*\\{[^}]*visibility:\\s*visible`, "u"));
   }
   assert.match(sharedCss, /\.node-card \.node-title \{[^}]*font-size:\s*var\(--cell-title-fs\)/u);
-  assert.match(sharedCss, /--cell-title-fs:[^;}]*calc\(var\(--fs-body\) \/ var\(--camera-scale\)\)/u);
+  assert.match(sharedCss, /--cell-title-fs:[^;}]*calc\(var\(--fs-entity-body\) \/ var\(--camera-scale\)\)/u);
   assert.match(sharedCss, /\.node-card \.node-card-top \{[^}]*font-size:[^;]*calc\(11px \/ var\(--camera-scale\)\)/u);
   assert.match(sharedCss, /\.node-card \.node-state-short \{\s*display:\s*inline/u);
 });

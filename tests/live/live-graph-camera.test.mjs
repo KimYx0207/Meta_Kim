@@ -360,7 +360,7 @@ test("the cell rendering sizes its title and container from the on-screen floor,
 
   assert.match(
     html,
-    /--cell-title-fs:\s*max\(var\(--fs-entity-body\),\s*calc\(var\(--min-onscreen-text-px\)\s*\/\s*var\(--camera-scale\)\),\s*calc\(var\(--fs-body\)\s*\/\s*var\(--camera-scale\)\)\)/u,
+    /--cell-title-fs:\s*max\(var\(--fs-entity-body\),\s*calc\(var\(--min-onscreen-text-px\)\s*\/\s*var\(--camera-scale\)\),\s*calc\(var\(--fs-entity-body\)\s*\/\s*var\(--camera-scale\)\)\)/u,
     "the cell title must be the larger of its ladder step and the counter-scaled floor",
   );
   assert.match(

@@ -165,7 +165,7 @@ export const KO_COPY = Object.freeze({
   "Last observed {value}": "마지막 관찰 {value}",
   "Latest activity": "최근 활동",
   "Latest timed record · ": "시각이 기록된 최근 항목 · ",
-  "Live": "Live",
+  "Live": "실시간",
   "Live execution": "실시간 실행",
   "Live execution graph": "실시간 실행 그래프",
   "Live execution workspace": "실시간 실행 작업 공간",
@@ -597,5 +597,7 @@ export const KO_COPY = Object.freeze({
   "no evidence linked": "연결된 근거 없음",
   "{count} organization nodes collapsed": "조직 노드 {count}개 접힘",
   "{count} ownership hidden": "담당 관계 {count}개 숨김",
-  "{count} other relations hidden": "기타 관계 {count}개 숨김"
+  "{count} other relations hidden": "기타 관계 {count}개 숨김",
+  "evidence": "근거",
+  "verified": "검증됨"
 });

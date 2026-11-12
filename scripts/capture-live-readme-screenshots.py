@@ -38,6 +38,43 @@ def digest(file: Path) -> str:
     return hashlib.sha256(file.read_bytes()).hexdigest()
 
 
+def title_readability(page, language: str) -> list[dict]:
+    """Measure actual laid-out text; do not alter the document for a screenshot."""
+    records = page.evaluate("""() => {
+      const graph = document.querySelector('[data-live-graph]');
+      const scale = Number(getComputedStyle(graph).getPropertyValue('--camera-scale')) || 1;
+      return [...document.querySelectorAll('.node-card:not([hidden]) .node-title')].map(title => {
+        const bounds = title.getBoundingClientRect();
+        const card = title.closest('.node-card').getBoundingClientRect();
+        const words = [];
+        const walker = document.createTreeWalker(title, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          for (const match of node.textContent.matchAll(/[A-Za-z]{4,}/g)) {
+            const range = document.createRange();
+            range.setStart(node, match.index); range.setEnd(node, match.index + match[0].length);
+            const rects = [...range.getClientRects()].filter(rect => rect.width > 0 && rect.height > 0);
+            words.push({ word: match[0], lines: new Set(rects.map(rect => Math.round(rect.top * 2) / 2)).size,
+              clipped: rects.some(rect => rect.left < Math.max(bounds.left, card.left) - 1
+                || rect.right > Math.min(bounds.right, card.right) + 1
+                || rect.bottom > Math.min(bounds.bottom, card.bottom) + 1) });
+          }
+        }
+        return { nodeId: title.closest('.node-card').dataset.nodeId, title: title.textContent,
+          onScreenFontPx: Number((parseFloat(getComputedStyle(title).fontSize) * scale).toFixed(2)), words };
+      });
+    }""")
+    if not records:
+        raise RuntimeError("No visible task titles were measured")
+    for record in records:
+        if record["onScreenFontPx"] < 13:
+            raise RuntimeError("The demo task title is too small for the README: " + record["nodeId"])
+        if language == "en":
+            for word in record["words"]:
+                if word["lines"] != 1 or word["clipped"]:
+                    raise RuntimeError("A task-title word is split or clipped: " + record["nodeId"] + " / " + word["word"])
+    return records
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=ROOT / "browser-artifacts" / "readme")
@@ -129,16 +166,23 @@ for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, async () => { awa
                                     page.locator('[data-live-inspector-panel="evidence"]').wait_for(state="visible")
                                     if evidence:
                                         assert evidence in page.locator('[data-live-inspector-panel="evidence"]').inner_text()
+                                    if language != "en":
+                                        evidence_text = page.locator('[data-live-inspector-panel="evidence"]').inner_text()
+                                        if "evidence ·" in evidence_text or "verified" in evidence_text:
+                                            raise RuntimeError("Evidence UI type or status is not localized")
                                     steps += ["Click the Requirements analysis demo node", "Open the Evidence tab"]
                                     page.mouse.move(1590, 1090)
                                 if page_errors:
                                     raise RuntimeError("Live page error: " + page_errors[0])
                                 file = output / f"meta-kim-live-{view}{suffix}.png"
+                                page.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+                                readability = title_readability(page, language)
                                 page.screenshot(path=str(file), full_page=False, animations="disabled")
                                 provenance["screenshots"].append({
                                     "file": file.name, "language": language, "htmlLanguage": html_language,
                                     "urlPath": "/?demo=states", "viewport": VIEWPORT, "view": view,
                                     "actions": list(steps), "sha256": digest(file),
+                                    "titleReadability": readability,
                                     "description": "Built-in demonstration of task states" if view == "task" else "The selected demo task's recorded demonstration evidence",
                                 })
                                 (output / f"visible-text-{language}-{view}.txt").write_text(page.locator("body").inner_text(), encoding="utf-8")

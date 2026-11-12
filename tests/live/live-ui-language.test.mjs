@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { renderLiveControlRoomPage } from "../../src/presentation/live/live-control-room-page.mjs";
-import { LIVE_UI_COPY, serializeLiveUiCopy, translateLiveUiCopy } from "../../src/presentation/live/live-ui-copy.mjs";
+import { LIVE_UI_COPY, liveUiLocale, serializeLiveUiCopy, translateLiveUiCopy } from "../../src/presentation/live/live-ui-copy.mjs";
 import { buildLocalFeedbackText } from "../../src/presentation/live/live-feedback-draft.mjs";
 
 function shippedHelper(name) {
@@ -47,7 +47,8 @@ test("the shipped language selector exposes four real choices", () => {
 test("Japanese and Korean cover the actual UI labels and preserve every placeholder", () => {
   assert.deepEqual(Object.keys(LIVE_UI_COPY.ja).sort(), Object.keys(LIVE_UI_COPY.ko).sort());
   const placeholders = (value) => [...value.matchAll(/\{[A-Za-z]+\}/gu)].map(([match]) => match).sort();
-  for (const [language, copy] of Object.entries(LIVE_UI_COPY)) {
+  for (const language of ["ja", "ko"]) {
+    const copy = LIVE_UI_COPY[language];
     for (const [key, translated] of Object.entries(copy)) {
       assert.ok(typeof translated === "string" && translated.length > 0, language + " / " + key);
       assert.deepEqual(placeholders(translated), placeholders(key), language + " / " + key);
@@ -56,6 +57,33 @@ test("Japanese and Korean cover the actual UI labels and preserve every placehol
     for (const [, label] of html.matchAll(/data-i18n-en="([^"]+)"/gu)) {
       assert.ok(Object.hasOwn(copy, label), language + " misses shipped label: " + label);
     }
+  }
+});
+
+test("stage labels and evidence type/status are reader-facing copy, not raw machine keys", () => {
+  const stages = { critical: "Goal", fetch: "Research", thinking: "Design", execution: "Execution",
+    review: "Review", "meta-review": "Meta-review", verification: "Checks", evolution: "Learning" };
+  const english = new Function("currentLanguage", "LIVE_UI_COPY", "translateLiveUiCopy", "DISPLAY_FORMAT", "zhText",
+    shippedHelper("display") + shippedHelper("localize") + "\nreturn localize;")(
+    "en", LIVE_UI_COPY, translateLiveUiCopy, { emptyPlaceholder: "—" }, new Map(),
+  );
+  for (const [id, label] of Object.entries(stages)) assert.equal(english(id), label);
+  for (const language of ["ja", "ko"]) {
+    assert.notEqual(translateLiveUiCopy("evidence", language), "evidence");
+    assert.notEqual(translateLiveUiCopy("verified", language), "verified");
+    assert.equal(translateLiveUiCopy("evidence · 原始标题", language), LIVE_UI_COPY[language].evidence + " · 原始标题");
+  }
+});
+
+test("the short update clock follows the selected UI language", () => {
+  const at = "2026-11-12T16:07:15.000Z";
+  for (const language of ["zh", "en", "ja", "ko"]) {
+    const formatTime = new Function("currentLanguage", "liveUiLocale", "DISPLAY_FORMAT",
+      shippedHelper("display") + shippedHelper("formatTime") + "\nreturn formatTime;")(
+      language, liveUiLocale, { emptyPlaceholder: "—" },
+    );
+    assert.equal(formatTime(at), new Intl.DateTimeFormat(liveUiLocale(language), { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(at)));
+    assert.equal(formatTime(null), "");
   }
 });
 

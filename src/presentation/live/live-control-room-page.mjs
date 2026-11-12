@@ -505,6 +505,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
     "verification": "验收",
     "Verification": "验收",
     "evolution": "经验沉淀",
+    "evidence": "证据",
+    "verified": "已验证",
     "Evolution": "经验沉淀",
     "Live execution": "Meta_Kim 治理运行",
     "local observer": "本地观察器",
@@ -672,7 +674,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
     }
     const text = display(value);
     if (currentLanguage === "ja" || currentLanguage === "ko") return translateLiveUiCopy(text, currentLanguage);
-    if (currentLanguage === "en" || !text) return text;
+    if (currentLanguage === "en") return translateLiveUiCopy(text, currentLanguage);
+    if (!text) return text;
     const direct = zhText.get(text);
     if (direct) return direct;
     let match = text.match(/^Run ([A-Z0-9-]+)$/u);
@@ -1658,7 +1661,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const date = new Date(text);
     if (!Number.isNaN(date.getTime())) {
       try {
-        return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(date);
+        return new Intl.DateTimeFormat(liveUiLocale(currentLanguage), { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(date);
       } catch {
         return text;
       }
@@ -3826,7 +3829,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       entry.setAttribute("role", "listitem");
       const top = makeElement("div", "evidence-item-top");
       const labelText = display(item.label, "");
-      const label = makeElement("span", "evidence-kind", kindText === "" ? labelText : kindText + " · " + labelText);
+      const label = makeElement("span", "evidence-kind", kindText === "" ? labelText : localize(kindText) + " · " + labelText, { record: true });
       top.append(label);
       appendObservedTime(top, item.at);
       const detail = makeElement("p", "evidence-detail", item.detail, { record: true });
@@ -4151,7 +4154,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
         card.dataset.waveIndex = String(nodeWave.waveIndex);
         top.append(waveBadge);
       }
-      const heading = makeElement("span", "node-title", node.nativeTaskCaption && ["ja", "ko"].includes(currentLanguage) ? localize(liveTaskDisplayLabel(node, currentLanguage)) : graphNodeReadingLabel(node), { record: true });
+      const heading = makeElement("span", "node-title", node.nativeTaskCaption
+        ? (["ja", "ko"].includes(currentLanguage) ? localize(liveTaskDisplayLabel(node, currentLanguage)) : liveTaskDisplayLabel(node, currentLanguage))
+        : graphNodeReadingLabel(node), { record: true });
       heading.title = node.label;
       const summary = makeElement("span", "node-summary", node.ownerReport ? "" : node.summary, { record: true });
       summary.title = node.summary;
@@ -7223,7 +7228,7 @@ button { color: inherit; }
 .node-wave-badge { flex: 0 0 auto; margin-left: auto; padding: 0 var(--sp-hairline); border-radius: 3px; color: #9aa7bd; background: rgba(154,167,189,.1); font: inherit; }
 .node-card[data-wave-index] .node-status { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @keyframes active-node-pulse { 0%,100% { box-shadow: 0 0 0 1px rgba(88,212,207,.25), 0 0 22px rgba(88,212,207,.14), 0 10px 28px rgba(0,0,0,.42); } 50% { box-shadow: 0 0 0 2px rgba(88,212,207,.55), 0 0 38px rgba(88,212,207,.28), 0 10px 30px rgba(0,0,0,.46); } }
-.node-title { margin: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--clamp-lines-title); overflow: hidden; white-space: normal; font-weight: var(--weight-semibold); font-size: var(--fs-entity-title); line-height: var(--lh-snug); overflow-wrap: anywhere; }
+.node-title { margin: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--clamp-lines-title); overflow: hidden; white-space: normal; font-weight: var(--weight-semibold); font-size: var(--fs-entity-title); line-height: var(--lh-snug); overflow-wrap: normal; word-break: normal; }
 .node-summary { margin: 0; display: -webkit-box; overflow: hidden; color: var(--muted); font-size: var(--fs-entity-body); line-height: var(--lh-normal); -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .node-task { min-width: 0; margin: 0; overflow: hidden; color: var(--completion-bright); font-size: var(--fs-label); line-height: var(--lh-flat); font-family: var(--font-ui); text-overflow: ellipsis; white-space: nowrap; }
 .node-identity-row { min-width: 0; display: grid; grid-template-columns: 48px minmax(0,1fr); gap: var(--sp-default); align-items: center; }
@@ -7239,7 +7244,7 @@ button { color: inherit; }
 .chip-runtime { color: var(--green); }
 .chip-tools { color: #7cc7ef; }.chip-tokens { color: #8ecae6; }.chip-evidence { color: var(--completion-bright); }.chip-loadout { color: #9fb8e8; }
 .node-connection, .node-progress { display: none; }
-.graph-canvas[data-semantic-zoom="cell"] .node-card { --cell-title-fs: max(var(--fs-entity-body), calc(var(--min-onscreen-text-px) / var(--camera-scale)), calc(var(--fs-body) / var(--camera-scale))); height: 140px !important; min-height: 140px !important; padding: 0; overflow: visible; border: 0; background: transparent; box-shadow: none; }
+.graph-canvas[data-semantic-zoom="cell"] .node-card { --cell-title-fs: max(var(--fs-entity-body), calc(var(--min-onscreen-text-px) / var(--camera-scale)), calc(var(--fs-entity-body) / var(--camera-scale))); height: 140px !important; min-height: 140px !important; padding: 0; overflow: visible; border: 0; background: transparent; box-shadow: none; }
 .graph-canvas[data-semantic-zoom="cell"] .node-card::after { display: none; content: none; }
 /* Compact graph cells keep their title and status at every viewport width.
  * Their text compensates for camera scale; narrow panes use this same renderer. */
