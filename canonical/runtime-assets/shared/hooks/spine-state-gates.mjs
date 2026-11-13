@@ -582,6 +582,10 @@ export function checkPreExecutionReadiness(state) {
   }
 
   const missing = collectPreExecutionReadinessGaps(state);
+  if (state.liveWorkspace && (state.liveWorkspace.schemaVersion !== "meta-kim-live-workspace-state-v1" ||
+      state.liveWorkspace.runId !== state.runId || state.liveWorkspace.designStatus !== "accepted")) {
+    missing.push("current Live design outline and module human reviews");
+  }
   return {
     met: missing.length === 0,
     missing,

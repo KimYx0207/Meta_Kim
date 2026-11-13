@@ -17,6 +17,13 @@ export const HOST_ANSWER_CLAIM_ADAPTERS = Object.freeze({
 // Compatibility name for consumers that only need the closed adapter registry.
 export const HOST_RECEIPT_ADAPTERS = HOST_ANSWER_CLAIM_ADAPTERS;
 
+// Local Live review is deliberately not a native surface. Its bounded claim
+// records an explicit local UI action; native challenge/host-return adapters
+// continue to accept only HOST_ANSWER_CLAIM_ADAPTERS.
+export const LOCAL_REVIEW_CLAIM_ADAPTERS = Object.freeze({
+  live_local_review: Object.freeze({ runtime: "meta_kim_live", surface: "local_project_review" }),
+});
+
 const LEGAL_TRANSITIONS = Object.freeze({
   pending: new Set(["presented", "skipped", "invalidated"]),
   presented: new Set(["host_answer_claimed", "skipped", "invalidated"]),
@@ -188,8 +195,11 @@ function normalizeNativeSurface(value) {
 function optionSetDigest(decision) { return digest(decision.options); }
 function evidenceSetDigest(decision) { return digest(decision.evidence); }
 function adapter(source) {
-  if (typeof source !== "string" || !hasOwn(HOST_ANSWER_CLAIM_ADAPTERS, source)) fail("claim.source must be an exact registered host adapter");
-  return { source, ...HOST_ANSWER_CLAIM_ADAPTERS[source] };
+  if (typeof source !== "string") fail("claim.source must be an exact registered host adapter");
+  const registered = hasOwn(HOST_ANSWER_CLAIM_ADAPTERS, source) ? HOST_ANSWER_CLAIM_ADAPTERS[source]
+    : hasOwn(LOCAL_REVIEW_CLAIM_ADAPTERS, source) ? LOCAL_REVIEW_CLAIM_ADAPTERS[source] : null;
+  if (!registered) fail("claim.source must be an exact registered host adapter");
+  return { source, ...registered };
 }
 
 function normalizeClaim(value, decision, { expectedRevision, claimedAt, presentedAt } = {}) {
@@ -298,6 +308,18 @@ export function assertValidDecision(decision) {
 function action(value, keys, label) { exactKeys(value, keys, label); return value; }
 
 export function buildHostAnswerClaim(decision, input = {}) {
+  if (!hasOwn(HOST_ANSWER_CLAIM_ADAPTERS, input.source)) fail("native host claims require an exact registered host adapter");
+  return buildAnswerClaim(decision, input);
+}
+
+/** A local UI action is a distinct, non-authorizing Decision claim. The
+ * application must bind it to the current project, material and spine CAS. */
+export function buildLocalReviewClaim(decision, input = {}) {
+  if (input.source !== "live_local_review" || decision.nativeSurface !== null) fail("local review cannot impersonate a native decision surface");
+  return buildAnswerClaim(decision, input);
+}
+
+function buildAnswerClaim(decision, input = {}) {
   assertValidDecision(decision); if (decision.status !== "presented") fail("claims require a presented decision");
   action(input, ["source", "requestRef", "claimRef", "issuedAt", "expiresAt", "claimedAt", "selectedOptionId", "answerDigest"], "buildHostAnswerClaim input");
   const host = adapter(input.source);

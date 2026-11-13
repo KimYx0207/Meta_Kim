@@ -24,11 +24,23 @@ Read stages 01–08 from top to bottom. The dark section establishes the goal an
 
 The outcome should be concrete: for this example, a working booking page, a management view, the relevant source, instructions for running it, and checks for normal bookings, repeated submissions and fully booked time slots. The booking app below is a running example of how the pieces connect.
 
-To use it, open your project in your AI client and describe the result in your own words, together with existing materials and constraints. Make choices and provide feedback in that conversation. **Live is the panel for inspecting tasks, progress and evidence.** The screenshot shows what it presents; setup and launch instructions follow below.
+Open your project in your AI client and describe the result, existing materials and constraints. **Live is the single visual workspace for continuing project work:** inspect all eight stages, read both PRD passes, accept the current version or submit module feedback. The current AI host performs the next step.
 
 ![The actual Meta_Kim Live interface showing task relationships and workflow progress](docs/images/meta-kim-live-task.png)
 
 *The running Live interface with built-in workflow demonstration data. In Live, open a task to inspect its details. The animated diagrams below use the booking example to explain the operating model.*
+
+## Read, review and continue in Live
+
+| Your task | Live entry | Durable result |
+| --- | --- | --- |
+| Understand the current step | Work and the eight-stage strip | Existing run state and next action |
+| Review the first system decomposition | PRD → System overview | Acceptance, revision or return bound to the outline and design context |
+| Review detailed module designs | PRD → Module detail and module navigation | Actual text, dependencies, version and per-module review |
+| Correct a design | Feedback below the current artifact | Full feedback and a work order; affected old approvals become invalid |
+| Check progress and evidence | Records, Run map and task details | Claims, file evidence and verification records |
+
+Accepting the outline makes the next module available to the host; accepting a module advances to the next item. **Recorded, host claimed, file reported and verified are distinct states.** An absent host leaves the request waiting. See [the unified workspace and host protocol](docs/live-workspace.md) for registration, continuation, revision and bounded material loading.
 
 ## A mind map of the whole system
 
@@ -273,7 +285,7 @@ Open the working project in the client you configured. Send an ordinary message:
 
 Give the assistant the existing project and any constraints that matter. Review the important choices it presents, then let it work through the plan. You can ask what is changing, why it is changing and how the result will be checked. You do not need to remember an activation command.
 
-### 3. Open Live and inspect the work
+### 3. Open Live to inspect, review and continue
 
 From the Meta_Kim checkout, run:
 
@@ -283,13 +295,13 @@ node bin/meta-kim.mjs live --project-root "/path/to/your-project"
 
 Open the local URL printed by the command. Live reads that project's saved task and execution records. To explore the interface before you have project records, add `?demo=states` to the URL for the built-in demo shown here.
 
-**Start with the task map** at the top of this page. Follow the connections to see what depends on what and which work is in progress. **Click a task**, then choose **Evidence** in its detail panel to inspect the recorded output and checks.
+The default **Work** view shows the stages and next action. Use **PRD** for the system outline and module detail. To inspect dependencies and task evidence, open **Run map**, select a task, and choose **Evidence**. Only registered materials and existing run records appear in the workspace.
 
 ![A selected task in Meta_Kim Live with its details and recorded evidence](docs/images/meta-kim-live-detail.png)
 
 *The built-in demo after selecting a task and opening its evidence. The panel helps explain the task's state through its records.*
 
-Use the language selector for Chinese, English, Japanese or Korean. Live remembers the interface language and preserves the original wording of your tasks. Give new instructions and feedback in your AI client; use Live to follow and inspect the recorded work.
+Use the language selector for Chinese, English, Japanese or Korean. Live remembers the interface language and preserves original task and feedback text. Review registered system/module files and submit feedback directly in Live; the current AI host continues through durable work orders. Other native-client decisions retain their existing surfaces.
 
 <a id="clients"></a>
 
@@ -419,7 +431,6 @@ Shared Agents, Skills and runtime assets are maintained in `canonical/`, with ma
 
 ## Contact
 
-![Contact QR](docs/images/contact-qr.png)
 
 GitHub <a href="https://github.com/KimYx0207">KimYx0207</a> |
 X <a href="https://x.com/KimYx0207">@KimYx0207</a> |
@@ -428,18 +439,6 @@ WeChat Official Account: <strong>老金带你玩AI</strong>
 
 Feishu knowledge base:
 <a href="https://my.feishu.cn/wiki/OhQ8wqntFihcI1kWVDlcNdpznFf">long-term updates</a>
-
-### Buy me a coffee
-
-If Meta_Kim has been useful, support the project with a coffee.
-
-<table align="center">
-<tr><th>WeChat Pay</th><th>Alipay</th></tr>
-<tr>
-<td align="center"><img src="docs/images/wechat-pay.jpg" width="260" alt="WeChat Pay QR"></td>
-<td align="center"><img src="docs/images/alipay.jpg" width="260" alt="Alipay QR"></td>
-</tr>
-</table>
 
 ### Method basis
 

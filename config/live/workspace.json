@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "meta-kim-live-workspace-policy-v1",
+  "modulePageSize": 32,
+  "requestPageSize": 32,
+  "stageEvidenceLimit": 12,
+  "maxEvidenceRefChars": 1024,
+  "stageSummaryChars": 240,
+  "maxArchiveBytes": 16777216,
+  "maxModules": 512,
+  "materialPageBytes": 16384,
+  "maxMaterialBytes": 33554432,
+  "maxDesignBytes": 8388608,
+  "maxFeedbackBytes": 65536,
+  "maxRequests": 4096,
+  "maxReviews": 2048,
+  "maxWorkspaceStateBytes": 8388608,
+  "maxOverviewBytes": 262144,
+  "reviewValidityMs": 604800000,
+  "hostLeaseMs": 300000,
+  "choices": [
+    { "id": "accept", "label": "采纳当前版本" },
+    { "id": "revise", "label": "要求修改" },
+    { "id": "return", "label": "退回重新设计" }
+  ]
+}

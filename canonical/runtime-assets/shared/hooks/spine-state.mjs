@@ -9,6 +9,7 @@ import {
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { join, dirname, resolve, relative, isAbsolute } from "node:path";
 import { atomicWriteJson, withFileLock } from "./spine-state-utils.mjs";
+import { liveRecordOrigin } from "./live-record-origin.mjs";
 import {
   CONVERSATION_BINDING_MATCH_BASIS,
   CONVERSATION_BINDING_REFUSAL_REASONS,
@@ -270,7 +271,12 @@ function ownEnumerableDataField(value, key) {
   return descriptor.value;
 }
 
-function resolveSpineStateRoute(cwd, state = null) {
+function resolveSpineStateRoute(cwd, state = null, options = {}) {
+  const explicitProfile = ownEnumerableDataField(options, "profile");
+  if (explicitProfile !== undefined) {
+    const profile = validateCanonicalStateProfile(explicitProfile);
+    return { filePath: join(resolveCanonicalProfileStateDir(cwd, profile), "spine", SPINE_STATE_FILE), profile };
+  }
   const stateProfile =
     ownEnumerableDataField(state, "profile") ||
     ownEnumerableDataField(state, "stateProfile");
@@ -967,6 +973,18 @@ async function writeMetaRunStatusUnlocked(cwd, state, profile, options = {}) {
   if (await shouldMaterializeRunDirectory(paths.runStatus, envelope)) {
     await safeAtomicWriteJson(cwd, paths.runStatus, envelope);
   }
+  // Recoverable PRIVATE history projection. It is deliberately absent from
+  // status.json/public envelopes and can never resume or mutate an old run.
+  if (state.liveWorkspace?.schemaVersion === "meta-kim-live-workspace-state-v1" && state.liveWorkspace.runId === state.runId) {
+    await safeAtomicWriteJson(cwd, join(dirname(paths.runStatus), "workspace.private.json"), {
+      schemaVersion: "meta-kim-live-workspace-archive-v1", profile, runId: state.runId,
+      active: false, archivedProjection: true, currentStage: state.currentStage,
+      recordOrigin: liveRecordOrigin(state),
+      stages: state.stages, hostCheckpointRevision: state.hostCheckpointRevision || 0,
+      ...(state.hostStageReports ? { hostStageReports: state.hostStageReports } : {}),
+      updatedAt: state.updatedAt, liveWorkspace: state.liveWorkspace,
+    });
+  }
   if (options.skipActivePointer !== true) {
     await safeAtomicWriteJson(cwd, paths.activeRun, envelope);
   }
@@ -1222,15 +1240,15 @@ async function reconcileLegacyRunStatusesUnlocked(cwd, { profile } = {}) {
     : report;
 }
 
-export async function readSpineState(cwd) {
-  const filePath = spineStatePath(cwd);
+export async function readSpineState(cwd, options = {}) {
+  const filePath = resolveSpineStateRoute(cwd, null, options).filePath;
   const record = await readJsonObject(cwd, filePath);
   const state = record.status === "valid" ? stripRawPromptFields(record.value) : null;
   return isValidSpineState(state) && state.active !== false ? state : null;
 }
 
-export async function readSpineStateIncludingInactive(cwd) {
-  const filePath = spineStatePath(cwd);
+export async function readSpineStateIncludingInactive(cwd, options = {}) {
+  const filePath = resolveSpineStateRoute(cwd, null, options).filePath;
   const record = await readJsonObject(cwd, filePath);
   const state = record.status === "valid" ? stripRawPromptFields(record.value) : null;
   return isValidSpineState(state) ? state : null;
@@ -1245,7 +1263,7 @@ export async function writeSpineState(cwd, state, options = {}) {
   // Route only from the already validated null-prototype boundary copy. Reading
   // routing fields from the caller object first would execute accessors or
   // inherit Object.prototype pollution before the JSON boundary can reject it.
-  const { filePath, profile } = resolveSpineStateRoute(cwd, safeState);
+  const { filePath, profile } = resolveSpineStateRoute(cwd, safeState, options);
   validateRunId(safeState?.runId);
   if (!isValidSpineState(safeState)) {
     throw new TypeError("Invalid Meta_Kim spine state schema or stage map.");
@@ -1839,6 +1857,7 @@ export function createMetaRunStatusEnvelope(state, options = {}) {
 
   return {
     schemaVersion: RUN_STATUS_SCHEMA_VERSION,
+    recordOrigin: liveRecordOrigin(safeState),
     active,
     lifecycleStatus,
     runId,

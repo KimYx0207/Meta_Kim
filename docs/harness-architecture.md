@@ -110,6 +110,8 @@ The native host may return an immediate pending state or wait for the answer asy
 
 The Live page reads a bounded projection with public node identities. It distinguishes a pending human gate from independent work and prevents the run from looking complete merely because its workers returned. This is a saved-state view; real-time execution still requires fresh kernel/host observation. Raw artifact paths, questions and private task identifiers do not cross this projection.
 
+The default Hub also exposes a separate **private workspace** for exact-version system/module PRD review and feedback. It reads the same spine state and content-addressed project material, requires the instance workspace token even for document reads, and does not add private text to the public projection or share export. A current-host pull CLI registers files, claims work and reports file evidence. Its durable receipts are not native invocation or completion certification. Normal Thinking observes this design gate; existing native-human gates retain their own authority. See [Live workspace](live-workspace.md) for the UI, persistence, budgets and host protocol.
+
 ## Professional depth is explicit and evaluated separately
 
 A reusable professional package needs domain concepts, diagnosis, decision rules, required inputs, output checks, common failure modes, escalation boundaries and authored positive/negative cases. Existing specialist methods and deterministic helpers remain useful; absence of a `method.json` alone does not prove a package lacks knowledge.

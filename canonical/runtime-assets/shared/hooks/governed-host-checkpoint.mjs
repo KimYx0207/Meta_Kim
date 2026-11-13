@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { resolveProjectRoot } from "./project-root.mjs";
 import { publicTaskBinding } from "./governed-task-reference.mjs";
 import { completeStage, readSpineState, STAGE_ORDER, writeSpineState } from "./spine-state.mjs";
+import { inspectLiveWorkspaceGate } from "./live-workspace-gate.mjs";
 import { TASK_PROGRESS_POLICY, checkedTaskProgress, taskProgressGoal, taskProgressRoute, taskProgressEvidenceBasis, projectTaskProgress, recordTaskProgress, recordTaskProgressCorrection,
   taskProgressHasActiveAttempt, taskProgressDependencyReadiness } from "./task-progress.mjs";
 
@@ -391,7 +392,9 @@ function checkpointInspection(state) {
     revision: state.hostCheckpointRevision || 0, evidenceLevel: "owner_reported", publicReadyAuthority: false,
     expectedRevision: state.hostCheckpointRevision || 0, expectedStage: state.currentStage, expectedStatus: state.stages[state.currentStage].status,
     progressCoverage: state.taskProgressLedger ? "reported_attempts_only" : "not_observed",
-    goalCriteria: state.criticalRecord ? taskProgressGoal(state.criticalRecord).criteria : [] };
+    goalCriteria: state.criticalRecord ? taskProgressGoal(state.criticalRecord).criteria : [],
+    workspaceNextAction: state.liveWorkspace?.nextAction || null,
+    workspaceDesignStatus: state.liveWorkspace?.designStatus || "not_registered" };
 }
 
 function currentTaskReferences(state) {
@@ -676,7 +679,9 @@ export async function checkpointGovernedHost(options) {
     return packet.progressPolicyId === TASK_PROGRESS_POLICY.id && !packet.acceptanceCriterionIds.every((id) =>
       result.progressObservations?.some((observation) => observation.criterionId === id && observation.classification === "progress"));
   }).map((result) => result.taskPacketId) : [];
-  const effectiveCompleting = completing && taskCorrections.length === 0 && incompleteTaskCriteria.length === 0;
+  const workspaceGate = options.stage === "thinking" && completing
+    ? await inspectLiveWorkspaceGate(state, root) : { ready: true };
+  const effectiveCompleting = completing && taskCorrections.length === 0 && incompleteTaskCriteria.length === 0 && workspaceGate.ready;
   const report = { stage: options.stage, ownerAgent: request.ownerAgent, summary: request.summary, evidenceRefs: request.evidenceRefs,
     status: completing && !effectiveCompleting ? "in_progress" : request.status, evidenceLevel: "owner_reported", nativeInvocationVerified: false, recordedAt: new Date().toISOString() };
   const next = structuredClone(state);
@@ -715,13 +720,20 @@ export async function checkpointGovernedHost(options) {
     expectedStage: state.currentStage, expectedStageStatus: state.stages[state.currentStage].status, expectedCheckpointRevision: state.hostCheckpointRevision || 0 });
   requireValue(write.written === true, `checkpoint_write_rejected:${write.reason}`);
   return { written: true, runId: state.runId, currentStage: updated.currentStage, revision: next.hostCheckpointRevision,
-    taskCorrections, incompleteTaskCriteria, evidenceLevel: "owner_reported", nativeInvocationVerified: false, publicReadyAuthority: false };
+    taskCorrections, incompleteTaskCriteria, workspaceGate, evidenceLevel: "owner_reported", nativeInvocationVerified: false, publicReadyAuthority: false };
 }
 
 export function buildGovernedHostHandoff({ state, projectRoot, adapterPath, skillPath, language = "zh-CN" }) {
   const conversationId = state?.sourceConversation?.conversationId;
   const verified = state?.conversationLinkState === "verified" && text(conversationId);
   const command = `node ${JSON.stringify(adapterPath)} --project-root ${JSON.stringify(projectRoot)} --run-id ${JSON.stringify(state.runId)}${verified ? ` --conversation-id ${JSON.stringify(conversationId)}` : " --conversation-id <verified-conversation-required>"} --stage <current-stage> --input <project-local-JSON-file-or->`;
+  const workspace = state?.liveWorkspace?.schemaVersion === "meta-kim-live-workspace-state-v1" ? state.liveWorkspace : null;
+  const workspaceHandoff = workspace ? JSON.stringify(typeof workspace.profile === "string" && workspace.profile.length > 0 ? { nextAction: workspace.nextAction,
+    hostEntry: workspace.hostEntry, profile: workspace.profile, arguments: ["--project-root", projectRoot, "--profile", workspace.profile, "--run-id", state.runId,
+      "--conversation-id", verified ? conversationId : "verified-conversation-required", "--inspect"],
+    rule: "Use the installed current-host pull CLI with this exact profile, inspect fresh CAS, claim the exact request once, perform actual work and report file evidence. Never replay an in-doubt claim or treat a local review as provider execution." }
+    : { status: "unavailable", reason: "workspace_profile_unbound", nextAction: workspace.nextAction,
+      rule: "The workspace has no exact persisted profile. Re-register it through the verified current profile before using its host pull port; never probe or fall back to another profile." }) : null;
   if (language !== "zh-CN") return [
     "Meta_Kim host execution handoff: backstage instructions, not a user-facing rewritten prompt or a completion receipt.",
     `Continue existing runId=${state.runId}; project=${projectRoot}; current stage=${state.currentStage}; conversation=${verified ? conversationId : "unverified; gather binding evidence before writing"}. Do not mint a parallel run or substitute a historical task.`,
@@ -729,6 +741,8 @@ export function buildGovernedHostHandoff({ state, projectRoot, adapterPath, skil
     `Write stage records through ${adapterPath}. Use --inspect for the current template or --template <stage> for lightweight input.`,
     "For review or feedback rework, inspect fresh revision/stage/status, then explicitly --return-to fetch|thinking|execution with findings and that CAS. Preserve the same run; use fresh taskPacketIds linked by replacesTaskPacketId. --template-return describes the input.",
     "New Thinking packets use task-progress-v1: bind current criterion IDs and hash-verified project evidence. Before dispatch, register running through --observe-task with fresh CAS; report that same attempt/result through execution checkpoint. A task_replan_required needs scoped --correct-task after Thinking, not a global reset. --template-progress and --template-correction show the shapes. Legacy packets are explicitly not_observed.",
+    "For a software architecture/PRD design, publish the existing structured softwareDesign with the installed scripts/live-workspace-host.mjs --publish-design port during Thinking. Present the outline in Live first; then follow the persisted module nextAction. Do not replace human review with an owner completion report.",
+    ...(workspaceHandoff ? [`Current private Live workspace handoff: ${workspaceHandoff}`] : []),
     `Invocation: ${command}`,
     "Record the actual goal, acceptance and unresolved decisions, then actual evidence and capability discovery, then the Thinking route and workerTaskPackets. Execute, review and verify those same work orders. Checkpoint after each stage, not a fabricated retrospective pass.",
     "Records remain owner_reported. Native worker returns require actual host evidence; JSON, booleans, a planned-only runner or tool exits cannot certify the eight stages, user acceptance or public-ready.",
@@ -740,6 +754,8 @@ export function buildGovernedHostHandoff({ state, projectRoot, adapterPath, skil
     `阶段记录通过 ${adapterPath} 写回同一任务。先用 --inspect 读取当前模板，或 --template <stage> 获取轻量输入。`,
     "审查或反馈需要返工时，先inspect取得revision/stage/status，再用--return-to fetch|thinking|execution提交发现与这组CAS；沿用同一run，新工单用replacesTaskPacketId关联旧版。--template-return提供输入模板。",
     "新Thinking工单绑定task-progress-v1、当前criterion ID和项目内真实证据hash。派工前用--observe-task及新鲜CAS登记running；执行checkpoint回写同一attempt与真实结果。单任务需改路时，主控完成Thinking后用--correct-task，不全局重置；--template-progress/--template-correction提供输入。旧工单明确为not_observed。",
+    "软件架构/PRD设计在Thinking阶段通过已安装包的scripts/live-workspace-host.mjs --publish-design登记既有softwareDesign；先把系统模块大纲交Live人审，再按持久化nextAction逐模块细化。不能用主控的complete报告代替人审。",
+    ...(workspaceHandoff ? [`当前私有Live工作区接续：${workspaceHandoff}`] : []),
     `调用：${command}`,
     "先记录真实目标、标准和未决项，再记录实际检索及能力发现，再提交Thinking方案与workerTaskPackets，随后按同一工单执行、审查、验证并记录结果。每阶段完成后立刻checkpoint，不能最后补写一套假通过。",
     "这些是owner_reported阶段/结果；原生调用返回仍须真实宿主证据，不能用JSON、布尔值、planned-only runner或工具退出推断八阶段通过、用户验收或public-ready。",

@@ -8,6 +8,9 @@
  */
 
 import { serializeLiveUiCopy } from "./live-ui-copy.mjs";
+import { serializeLiveWorkspaceClient } from "./live-workspace-client.mjs";
+import { LIVE_WORKSPACE_CSS } from "./live-workspace-styles.mjs";
+import { renderLiveWorkspaceNavigation, renderLiveWorkspaceSurface, renderLiveWorkspaceMobileToggle } from "./live-workspace-view.mjs";
 import { LIVE_GRAPH_AVAILABILITY_REASONS } from "../../application/live/live-control-room-service.mjs";
 import {
   serializeConversationDiscoveryCopyForClient,
@@ -234,6 +237,7 @@ const GRAPH_READABILITY_SOURCE = serializeGraphReadabilityResolvers();
 const LOCAL_FEEDBACK_SOURCE = serializeLocalFeedbackResolvers();
 const RUN_OVERVIEW_SOURCE = serializeLiveRunOverviewResolvers();
 const TOKEN_USAGE_SOURCE = serializeLiveTokenUsageResolvers();
+const WORKSPACE_CLIENT_SOURCE = serializeLiveWorkspaceClient();
 
 /**
  * Which run the page opens on when the URL names none.
@@ -358,6 +362,13 @@ function normalizeControlConfig(value) {
   };
 }
 
+function normalizeWorkspaceConfig(value) {
+  const token = normalizeControlToken(value?.controlToken);
+  return value?.enabled === true && value.controlHeader === "x-meta-kim-workspace-token" && token
+    ? { enabled: true, controlHeader: value.controlHeader, controlToken: token }
+    : { enabled: false };
+}
+
 const CLIENT_SCRIPT = String.raw`(() => {
   ${serializeLiveUiCopy()}
   "use strict";
@@ -388,6 +399,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
   ${LOCAL_FEEDBACK_SOURCE}
   ${RUN_OVERVIEW_SOURCE}
   ${TOKEN_USAGE_SOURCE}
+  ${WORKSPACE_CLIENT_SOURCE}
 
   const DEFAULT_SELECTION = ${DEFAULT_SELECTION_LITERAL};
   ${DEFAULT_SELECTION_SOURCE}
@@ -407,6 +419,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const initialElement = document.getElementById("live-initial-snapshot");
   const initialCatalogElement = document.getElementById("live-initial-catalog");
   const controlConfigElement = document.getElementById("live-control-config");
+  const workspaceConfigElement = document.getElementById("live-workspace-config");
+  let liveWorkspaceController = null;
   const reducedMotion = window.matchMedia
     ? window.matchMedia("(prefers-reduced-motion: reduce)")
     : { matches: false };
@@ -3357,6 +3371,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (workspaceView) workspaceView.hidden = currentWorkView !== "workspace";
     if (graphPanel) graphPanel.hidden = currentWorkView !== "run";
     workspace?.setAttribute("data-work-view", currentWorkView);
+    if (app.dataset) app.dataset.workView = currentWorkView;
+    if (typeof liveWorkspaceController !== "undefined") liveWorkspaceController?.show(currentWorkView);
     if (currentWorkView !== "run") setInspectorOpen(false);
     if (persist) {
       persistStoredChoice(WORK_VIEW_STORAGE_KEY, currentWorkView);
@@ -5308,6 +5324,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
   }
 
   function renderWorkspaceView(snapshot) {
+    if (typeof liveWorkspaceController !== "undefined" && liveWorkspaceController) {
+      syncUnifiedWorkspace(snapshot);
+      return;
+    }
     const project = projectForSelection();
     const selectedSession = project?.sessions.find((session) => session.runId === selectedRunId) || null;
     const workspaceData = snapshot.workspace || {};
@@ -5320,6 +5340,28 @@ const CLIENT_SCRIPT = String.raw`(() => {
     renderWorkspaceSessions(project, selectedSession);
     renderWorkspaceBoard(snapshot);
     renderWorkspaceDetail(snapshot);
+  }
+
+  function syncUnifiedWorkspace(snapshot = currentSnapshot) {
+    if (!liveWorkspaceController) return;
+    const project = projectForSelection();
+    const selectedSession = project?.sessions?.find((item) => item.runId === selectedRunId);
+    liveWorkspaceController.update({
+      snapshot,
+      project,
+      selection: { projectId: selectedProjectId, runId: selectedRunId || snapshot?.run?.id || "" },
+      origin: demoMode ? "demo" : sessionRecordOrigin(selectedSession),
+      tasks: snapshot ? liveRunTaskNodes(snapshot).map((node) => ({
+        id: node.id, title: liveTaskDisplayLabel(node, currentLanguage), summary: node.summary,
+        owner: node.agent || node.ownerAgent, runtime: node.runtime, model: node.model,
+        status: resolveLiveTaskLifecycle(node, snapshot.run.id).state,
+        statusLabel: nodeStateCopy(node, snapshot.run.id), source: node,
+      })) : [],
+      fallbackStages: STAGE_ORDER.map((id) => ({
+        id, label: localize(id), status: snapshot?.run?.stageProgressEvidence === "native_execution_only" && id === "execution" ? "observed" : "unknown",
+        summary: localize("Not recorded"), evidenceLevel: snapshot?.run?.stageProgressEvidence || "unreported",
+      })),
+    });
   }
 
   /**
@@ -6263,6 +6305,11 @@ const CLIENT_SCRIPT = String.raw`(() => {
     }
     setText(app.querySelector("[data-live-empty] .empty-title"), title);
     if (message) setText(app.querySelector("[data-live-empty-message]"), message, "Waiting for a run snapshot");
+    if (typeof liveWorkspaceController !== "undefined" && liveWorkspaceController && currentWorkView === "workspace") {
+      if (workspace) workspace.hidden = false;
+      if (emptyState) emptyState.hidden = true;
+      syncUnifiedWorkspace(null);
+    }
   }
 
   function hideEmpty() {
@@ -6867,7 +6914,20 @@ const CLIENT_SCRIPT = String.raw`(() => {
 
   applyLanguage();
   for (const panel of app.querySelectorAll(".share-panel, .control-panel")) infoTools?.append(panel);
-  currentWorkView = safeStoredChoice(WORK_VIEW_STORAGE_KEY, WORK_VIEWS, "run");
+  let workspaceConfig = { enabled: false };
+  try { workspaceConfig = JSON.parse(workspaceConfigElement?.textContent || "null") || workspaceConfig; } catch {}
+  liveWorkspaceController = createLiveWorkspaceController({
+    app, config: workspaceConfig, policy: LIVE_WORKSPACE_UI_POLICY,
+    language: () => currentLanguage,
+    showLegacyView: (view) => setWorkView(view, { persist: false }),
+    openProjects: () => setDialogOpen(sessionsDialog, true),
+    openGraph: (nodeId) => {
+      setWorkView("run", { persist: false });
+      if (nodeId) { selectedNodeId = nodeId; updateSelectedNodeVisuals(); setInspectorOpen(true); }
+    },
+    taskOutputs: appendLiveDeliverables,
+  });
+  currentWorkView = liveWorkspaceController?.initialView || safeStoredChoice(WORK_VIEW_STORAGE_KEY, WORK_VIEWS, "run");
   graphToolsPosition = safeStoredPoint(GRAPH_TOOLS_STORAGE_KEY);
   applyGraphToolsPosition();
   setWorkView(currentWorkView, { persist: false });
@@ -6923,6 +6983,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       snapshotCoalesceTimer = null;
     }
     stopReplay();
+    liveWorkspaceController?.dispose();
     abortController?.abort();
     if (eventSource) eventSource.close();
   }, { once: true });
@@ -7705,6 +7766,7 @@ export function renderLiveControlRoomPage({
   commandCapabilities = null,
   controlHeader = null,
   controlToken = null,
+  workspaceConfig = null,
 } = {}) {
   const safeSnapshotEndpoint = normalizeEndpoint(snapshotEndpoint, DEFAULT_SNAPSHOT_ENDPOINT);
   const safeEventsEndpoint = normalizeEndpoint(eventsEndpoint, DEFAULT_EVENTS_ENDPOINT);
@@ -7719,6 +7781,7 @@ export function renderLiveControlRoomPage({
   const initialJson = safeJsonForHtml(snapshot);
   const initialCatalogJson = safeJsonForHtml(catalog);
   const controlConfigJson = safeJsonForHtml(safeControlConfig);
+  const workspaceConfigJson = safeJsonForHtml(normalizeWorkspaceConfig(workspaceConfig));
 
   return `<!doctype html>
 <html lang="zh-CN">
@@ -7726,15 +7789,16 @@ export function renderLiveControlRoomPage({
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#121212">
-  <meta name="description" content="Meta_Kim Live 只读实时运行控制中心">
+  <meta name="description" content="Meta_Kim Live 统一工作空间：模块、PRD、执行与版本记录">
   <link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCAzMiAzMic+PHJlY3Qgd2lkdGg9JzMyJyBoZWlnaHQ9JzMyJyByeD0nOCcgZmlsbD0nIzA3MGIxNicvPjxwYXRoIGQ9J004IDIyVjEwaDRsNCA1IDQtNWg0djEyaC00di02bC00IDUtNC01djZ6JyBmaWxsPScjNmVlN2ZmJy8+PC9zdmc+">
   <title>Meta_Kim Live · 控制中心</title>
-  <style>${GRAPH_FIRST_CSS}</style>
+  <style>${GRAPH_FIRST_CSS}${LIVE_WORKSPACE_CSS}</style>
 </head>
 <body>
   <a class="skip-link" id="skip-to-content" href="#live-main" data-i18n-en="Skip to content" data-i18n-zh="跳到主要内容">跳到主要内容</a>
-  <div id="live-app" class="shell" data-snapshot-endpoint="${escapeHtml(safeSnapshotEndpoint)}" data-events-endpoint="${escapeHtml(safeEventsEndpoint)}" data-projects-endpoint="${escapeHtml(safeProjectsEndpoint)}" data-replay-endpoint="${escapeHtml(safeReplayEndpoint)}" data-share-endpoint="${escapeHtml(safeShareEndpoint)}" data-control-endpoint="${escapeHtml(safeControlEndpoint)}">
+  <div id="live-app" class="shell" data-unified-workspace="true" data-work-view="workspace" data-snapshot-endpoint="${escapeHtml(safeSnapshotEndpoint)}" data-events-endpoint="${escapeHtml(safeEventsEndpoint)}" data-projects-endpoint="${escapeHtml(safeProjectsEndpoint)}" data-replay-endpoint="${escapeHtml(safeReplayEndpoint)}" data-share-endpoint="${escapeHtml(safeShareEndpoint)}" data-control-endpoint="${escapeHtml(safeControlEndpoint)}">
     <header class="topbar" aria-label="Meta_Kim Live header">
+      ${renderLiveWorkspaceMobileToggle()}
       <div class="brand">
         <img class="brand-mark" src="/assets/meta-kim-k-mark.png" alt="" aria-hidden="true" width="30" height="30">
         <p class="brand-title">Meta_Kim Live</p>
@@ -7743,6 +7807,7 @@ export function renderLiveControlRoomPage({
       <details class="work-view-menu"><summary class="topbar-button" data-i18n-en="Other views" data-i18n-zh="其他视图">其他视图</summary><div class="work-view-switcher" role="group" aria-label="Views and help"><div class="work-view-tabs" role="tablist" aria-label="Optional work surface views"><button class="work-view-tab" id="work-view-run" type="button" role="tab" aria-controls="run-view" aria-selected="true" data-live-work-view="run" data-i18n-en="Flow map" data-i18n-zh="流程图">流程图</button><button class="work-view-tab" id="work-view-workspace" type="button" role="tab" aria-controls="workspace-view" aria-selected="false" tabindex="-1" data-live-work-view="workspace" data-i18n-en="Workspace" data-i18n-zh="工作台">工作台</button><button class="work-view-tab" id="work-view-repository" type="button" role="tab" aria-controls="repository-view" aria-selected="false" tabindex="-1" data-live-work-view="repository" data-i18n-en="Repository" data-i18n-zh="仓库">仓库</button></div><div class="work-view-utilities" role="group" aria-label="Help and session information"><button class="topbar-button" type="button" data-live-open-help data-i18n-en="Help" data-i18n-zh="使用帮助">使用帮助</button><button class="topbar-button" type="button" data-live-open-info data-i18n-en="Session info" data-i18n-zh="运行信息">运行信息</button></div></div></details>
       <div class="topbar-actions"><div class="connection" aria-live="polite"><span class="connection-dot" data-live-connection-dot aria-hidden="true"></span><span data-live-connection data-i18n-en="Connecting…" data-i18n-zh="正在连接…">正在连接…</span></div><button class="topbar-button" type="button" data-live-open-sessions data-i18n-en="Run records" data-i18n-zh="运行记录">运行记录</button><select class="topbar-button" data-live-language-select aria-label="Interface language"><option value="zh">中文</option><option value="en">English</option><option value="ja">日本語</option><option value="ko">한국어</option></select><button class="topbar-button" type="button" data-live-open-help aria-label="Help" title="Help">?</button><button class="topbar-button" type="button" data-live-open-info aria-label="Session info" title="Session info">i</button></div>
     </header>
+    ${renderLiveWorkspaceNavigation()}
     <main class="main" id="live-main" tabindex="-1">
       <div class="sr-only" data-live-region aria-live="polite"></div>
       <section class="run-context" aria-label="Run context">
@@ -7774,21 +7839,7 @@ export function renderLiveControlRoomPage({
       <section class="workspace-grid" data-inspector-open="false" aria-label="Live execution workspace">
         <section class="work-surface-view repository-view" id="repository-view" role="tabpanel" aria-labelledby="work-view-repository" data-live-repository-view hidden><header class="work-surface-header"><div><span class="context-kicker" data-i18n-en="Repository" data-i18n-zh="仓库">仓库</span><h2 data-live-repository-title>已登记项目</h2><p data-live-repository-boundary>仓库边界不可用</p></div><span class="surface-state" data-i18n-en="Observed catalog" data-i18n-zh="已观测目录">已观测目录</span></header><div class="repository-layout"><section class="operational-section" aria-labelledby="repository-facts-title"><h3 id="repository-facts-title" data-i18n-en="Repository facts" data-i18n-zh="仓库事实">仓库事实</h3><div class="operational-list" data-live-repository-facts></div></section><section class="operational-section" aria-labelledby="repository-workspaces-title"><h3 id="repository-workspaces-title" data-i18n-en="Workspace sessions" data-i18n-zh="工作区会话">工作区会话</h3><div class="workspace-children" data-live-repository-sessions></div></section></div></section>
         <section class="work-surface-view workspace-view" id="workspace-view" role="tabpanel" aria-labelledby="work-view-workspace" data-live-workspace-view hidden>
-          <div class="company-workspace">
-            <aside class="company-session-rail" aria-labelledby="workspace-sessions-title">
-              <header class="company-rail-header"><div class="company-header-heading"><span class="context-kicker" data-i18n-en="Chats" data-i18n-zh="任务与会话">任务与会话</span><h2 id="workspace-sessions-title" data-i18n-en="Recent work" data-i18n-zh="最近工作">最近工作</h2></div><button class="workspace-secondary-button" type="button" data-live-workspace-open-sessions data-i18n-en="All runs" data-i18n-zh="全部运行">全部运行</button></header>
-              <div class="workspace-session-list" data-live-workspace-session-list role="list" aria-label="Recent governed work"></div>
-            </aside>
-            <main class="company-board-shell">
-              <header class="company-board-header"><div class="company-header-heading"><span class="context-kicker" data-i18n-en="Workspace" data-i18n-zh="工作台">工作台</span><h2 data-live-workspace-title>正在等待任务</h2><p data-live-workspace-boundary>等待真实运行数据</p></div><div class="company-board-actions"><span class="surface-state" data-i18n-en="Run-scoped" data-i18n-zh="运行范围">运行范围</span><button class="workspace-secondary-button" type="button" data-live-workspace-open-run-map data-i18n-en="Run map" data-i18n-zh="查看运行图">查看运行图</button></div></header>
-              <div class="company-board" data-live-workspace-board aria-label="Run work-item board"></div>
-            </main>
-            <aside class="company-context-panel" aria-labelledby="workspace-detail-title">
-              <header class="company-context-header"><span class="context-kicker" data-i18n-en="Selected work" data-i18n-zh="当前任务">当前任务</span><h2 id="workspace-detail-title" data-i18n-en="Task details" data-i18n-zh="任务详情">任务详情</h2></header>
-              <div class="company-context-body" data-live-workspace-detail></div>
-            </aside>
-          </div>
-          <div class="sr-only" data-live-workspace-facts></div>
+          ${renderLiveWorkspaceSurface()}
         </section>
         <section class="graph-panel" id="run-view" role="tabpanel" aria-labelledby="work-view-run" data-live-run-view aria-label="Run view">
           <div class="graph-stage" data-live-graph-viewport>
@@ -7864,6 +7915,7 @@ export function renderLiveControlRoomPage({
   <script type="application/json" id="live-initial-snapshot">${initialJson}</script>
   <script type="application/json" id="live-initial-catalog">${initialCatalogJson}</script>
   <script type="application/json" id="live-control-config">${controlConfigJson}</script>
+  <script type="application/json" id="live-workspace-config">${workspaceConfigJson}</script>
   <script>${CLIENT_SCRIPT}</script>
 </body>
 </html>`;

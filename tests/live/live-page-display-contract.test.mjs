@@ -260,9 +260,10 @@ test("every stylesheet the module declares is actually injected into the page", 
     "a declared-but-never-injected stylesheet is dead weight that still reads as though it shipped",
   );
   assert.ok(
-    source.includes("<style>" + String.fromCharCode(36) + "{" + declared[0] + "}</style>"),
+    source.includes("<style>" + String.fromCharCode(36) + "{" + declared[0] + "}"),
     "positive control: the declared stylesheet must reach the document, not only be mentioned",
   );
+  assert.ok(source.includes(String.fromCharCode(36) + "{LIVE_WORKSPACE_CSS}</style>"), "the workspace stylesheet joins the same real style element");
   assert.equal(
     source.includes("const PAGE_CSS = String.raw" + backtick),
     false,

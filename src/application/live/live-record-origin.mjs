@@ -19,9 +19,10 @@
  * definition. Two independent definitions would let the directory and the detail
  * view disagree about whether the same file is real.
  */
-export const LIVE_DEFAULT_RECORD_ORIGIN = "governed_run";
-export const LIVE_ACCEPTANCE_FIXTURE_RECORD_ORIGIN = "acceptance_fixture";
-export const LIVE_DEMO_RECORD_ORIGIN = "demo";
+export {
+  LIVE_DEFAULT_RECORD_ORIGIN, LIVE_ACCEPTANCE_FIXTURE_RECORD_ORIGIN, LIVE_DEMO_RECORD_ORIGIN,
+  LIVE_RECORD_ORIGINS, liveRecordOrigin, liveRecordIsGovernedRun,
+} from "../../../canonical/runtime-assets/shared/hooks/live-record-origin.mjs";
 
 /**
  * Declaration order is the weight order the selection policy validates against,
@@ -29,19 +30,3 @@ export const LIVE_DEMO_RECORD_ORIGIN = "demo";
  * rather than repeating the literals, so a producer that stamps a record and the
  * reader that ranks it cannot drift apart.
  */
-export const LIVE_RECORD_ORIGINS = Object.freeze([
-  LIVE_DEFAULT_RECORD_ORIGIN,
-  LIVE_ACCEPTANCE_FIXTURE_RECORD_ORIGIN,
-  LIVE_DEMO_RECORD_ORIGIN,
-]);
-
-export function liveRecordOrigin(record) {
-  const declared = record?.recordOrigin
-    || record?.run?.recordOrigin
-    || record?.session?.recordOrigin;
-  return LIVE_RECORD_ORIGINS.includes(declared) ? declared : LIVE_DEFAULT_RECORD_ORIGIN;
-}
-
-export function liveRecordIsGovernedRun(record) {
-  return liveRecordOrigin(record) === LIVE_DEFAULT_RECORD_ORIGIN;
-}

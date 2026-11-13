@@ -25,10 +25,12 @@ import {
 } from "./live-hub-project-catalog.mjs";
 import { renderLiveControlRoomPage } from "../../presentation/live/live-control-room-page.mjs";
 import { createLiveNativeBindings } from "./live-native-bindings.mjs";
+import { createLiveWorkspaceService } from "../../application/live/live-workspace-service.mjs";
 
 const LOOPBACK_HOST = "127.0.0.1";
 const DEFAULT_PORT = 0;
 const CONTROL_HEADER = "x-meta-kim-control-token";
+const WORKSPACE_HEADER = "x-meta-kim-workspace-token";
 const DEFAULT_MAX_JSON_BYTES = 256 * 1024;
 const CONTROL_ACTIONS = Object.freeze(["pause", "resume", "reassign", "handoff"]);
 const BRAND_MARK_PNG = readFileSync(new URL("../../presentation/live/assets/meta-kim-k-mark.png", import.meta.url));
@@ -548,6 +550,9 @@ export function createLiveControlRoomServer(options = {}) {
         projectRoot: repoRoot,
       });
   const enableControl = !globalHub && options.enableControl === true;
+  const workspaceEnabled = options.workspaceEnabled !== false;
+  const workspaceToken = workspaceEnabled ? randomBytes(32).toString("base64url") : null;
+  const workspaceServices = new Map();
   const exposure = controlExposure(options, enableControl);
   const controlToken = enableControl
     ? (typeof options.controlToken === "string" && options.controlToken.length >= 16
@@ -731,7 +736,8 @@ export function createLiveControlRoomServer(options = {}) {
   };
 
   const resolveHubSelection = async (parsed) => {
-    if (!globalHub) return { service, projectId: null, runId: parsed.searchParams.get("runId") || null };
+    if (!globalHub) return { service, projectId: null, runId: parsed.searchParams.get("runId") || null,
+      projectRoot: options.projectRoot || process.cwd() };
     const requestedProjectId = parsed.searchParams.get("projectId");
     const requestedRunId = parsed.searchParams.get("runId");
     const catalog = await publicHubCatalog({ requestedProjectId, requestedRunId });
@@ -761,7 +767,7 @@ export function createLiveControlRoomServer(options = {}) {
       projectServices.clear();
       projectServices.set(cacheKey, selectedService);
     }
-    return { service: selectedService, projectId, runId, catalog };
+    return { service: selectedService, projectId, runId, catalog, projectRoot: internalProject.repoRoot };
   };
 
   const publishSnapshotChange = async () => {
@@ -817,7 +823,57 @@ export function createLiveControlRoomServer(options = {}) {
         profile: hubProfile,
         singleton: globalHub,
         readOnly: !exposure.enabled,
+        readOnlyScope: "runtime_dispatch",
+        workspace: { enabled: workspaceEnabled, localReview: workspaceEnabled, providerExecution: false },
       });
+      return;
+    }
+
+    if (["/api/workspace", "/api/workspace/material", "/api/workspace/reviews", "/api/workspace/feedback", "/api/workspace/requests"].includes(parsed.pathname)) {
+      if (!workspaceEnabled || request.headers[WORKSPACE_HEADER] !== workspaceToken) {
+        jsonResponse(response, 403, safeError("workspace_token_required")); return;
+      }
+      const write = ["/api/workspace/reviews", "/api/workspace/feedback"].includes(parsed.pathname);
+      if (request.method !== (write ? "POST" : "GET")) {
+        response.setHeader("allow", write ? "POST" : "GET");
+        jsonResponse(response, 405, safeError("method_not_allowed")); return;
+      }
+      if (write && (!requestHasSameOrigin(request, server) || !String(request.headers["content-type"] || "").toLowerCase().startsWith("application/json"))) {
+        jsonResponse(response, 403, safeError("workspace_same_origin_json_required")); return;
+      }
+      try {
+        // Private routes never fall back to another selected project or run.
+        if (!parsed.searchParams.get("runId") || globalHub && !parsed.searchParams.get("projectId")) {
+          jsonResponse(response, 400, safeError("workspace_exact_selection_required")); return;
+        }
+        const selection = await resolveHubSelection(parsed);
+        if (!selection.service || !selection.projectRoot || selection.invalidProject || selection.invalidRun) {
+          jsonResponse(response, 404, safeError("workspace_selection_unavailable")); return;
+        }
+        const key = `${selection.projectRoot}:${hubProfile}:${selection.projectId || ""}`;
+        let workspace = workspaceServices.get(key);
+        if (!workspace) {
+          workspace = createLiveWorkspaceService({ projectRoot: selection.projectRoot, profile: hubProfile, projectId: selection.projectId });
+          workspaceServices.clear(); workspaceServices.set(key, workspace);
+        }
+        const query = { runId: selection.runId, cursor: parsed.searchParams.get("cursor"),
+          artifactId: parsed.searchParams.get("artifactId"), version: parsed.searchParams.get("version"),
+          commandId: parsed.searchParams.get("commandId"), nonce: parsed.searchParams.get("nonce") };
+        let result;
+        if (write) {
+          const body = await readJsonBody(request, maxJsonBytes);
+          if (body?.runId !== selection.runId) { jsonResponse(response, 409, safeError("workspace_run_binding_conflict")); return; }
+          result = parsed.pathname.endsWith("/reviews") ? await workspace.review(body) : await workspace.feedback(body);
+        } else if (parsed.pathname.endsWith("/material")) result = await workspace.getMaterial(query);
+        else if (parsed.pathname.endsWith("/requests")) result = await workspace.getRequests(query);
+        else result = await workspace.getOverview(query);
+        jsonResponse(response, 200, result);
+      } catch (error) {
+        const status = Number.isInteger(error.status) && error.status >= 400 && error.status <= 499 ? error.status
+          : error.code === "LIVE_REQUEST_BODY_TOO_LARGE" ? 413 : 400;
+        jsonResponse(response, status, { error: /^workspace_[a-z0-9_]+$/u.test(error.code || "") ? error.code : "workspace_request_unavailable",
+          completionVerified: false });
+      }
       return;
     }
 
@@ -1086,6 +1142,7 @@ export function createLiveControlRoomServer(options = {}) {
         commandCapabilities: exposure.capabilities,
         controlHeader: exposure.enabled ? CONTROL_HEADER : null,
         controlToken: exposure.enabled ? controlToken : null,
+        workspaceConfig: { enabled: workspaceEnabled, controlHeader: WORKSPACE_HEADER, controlToken: workspaceToken },
       });
       textResponse(response, 200, body, "text/html; charset=utf-8");
       return;

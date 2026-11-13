@@ -37,6 +37,8 @@ jobs:
           sudo apt-get install -y fonts-noto-cjk
       - name: Capture actual Live controls and task details
         run: python scripts/capture-live-readme-screenshots.py --output browser-artifacts/readme
+      - name: Verify the unified workspace through real Hub HTTP and host CLI
+        run: python scripts/verify-live-workspace-browser.py --output browser-artifacts/workspace
       - name: Preserve raw screenshots and capture records
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -44,4 +46,12 @@ jobs:
           name: live-readme-screenshots
           path: browser-artifacts/readme/
           if-no-files-found: error
+          retention-days: 14
+      - name: Preserve unified workspace screenshots and integration evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: live-workspace-browser
+          path: browser-artifacts/workspace/
+          if-no-files-found: warn
           retention-days: 14

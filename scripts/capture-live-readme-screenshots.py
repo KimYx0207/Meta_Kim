@@ -83,6 +83,12 @@ def main() -> None:
     output.mkdir(parents=True, exist_ok=True)
     source_files = [
         "src/presentation/live/live-control-room-page.mjs",
+        "src/presentation/live/live-workspace-client.mjs",
+        "src/presentation/live/live-workspace-renderer.mjs",
+        "src/presentation/live/live-workspace-model.mjs",
+        "src/presentation/live/live-workspace-copy.mjs",
+        "src/presentation/live/live-workspace-view.mjs",
+        "src/presentation/live/live-workspace-styles.mjs",
         "src/presentation/live/live-ui-copy.mjs",
         "src/presentation/live/live-ui-copy.ja.mjs",
         "src/presentation/live/live-ui-copy.ko.mjs",
@@ -148,6 +154,7 @@ for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, async () => { awa
                                 with page.expect_navigation(wait_until="networkidle"):
                                     page.locator('[data-live-language-select]').select_option(language)
                             page.wait_for_function("language => document.documentElement.lang === language", arg=html_language)
+                            page.locator('[data-live-workspace-nav="graph"]').click()
                             page.locator('.node-card[data-node-id="demo-requirements"] .node-identity-button').wait_for()
                             if title:
                                 assert title in page.locator('[data-live-context-title]').inner_text()
@@ -158,7 +165,7 @@ for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, async () => { awa
                             page.locator('[data-live-language-select]').blur()
                             page.mouse.move(1590, 1090)
                             page.evaluate("document.fonts.ready")
-                            steps = ["Open /?demo=states", f"Choose {language} using the language selector", "Expand the eight-stage flow", "Fit the graph to the viewport"]
+                            steps = ["Open /?demo=states", f"Choose {language} using the language selector", "Open the run map from the unified workspace navigation", "Expand the eight-stage flow", "Fit the graph to the viewport"]
                             for view in ("task", "detail"):
                                 if view == "detail":
                                     page.locator('.node-card[data-node-id="demo-requirements"] .node-identity-button').click()

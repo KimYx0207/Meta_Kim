@@ -125,6 +125,7 @@ docs/**
 !docs/native-cli-observation.md
 !docs/graphify-managed-lifecycle.md
 !docs/harness-architecture.md
+!docs/live-workspace.md
 !docs/dependency-baseline.md
 !docs/images/
 !docs/images/**

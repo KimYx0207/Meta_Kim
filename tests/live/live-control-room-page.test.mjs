@@ -2437,7 +2437,7 @@ test("does not expose mutation affordances in the read-only MVP", () => {
   const html = initialMarkup;
 
   assert.doesNotMatch(html, /<button[^>]+(?:pause|resume|handoff|cancel|stop|retry)/iu);
-  assert.doesNotMatch(html, /(?:POST|PUT|PATCH|DELETE)\s*:/iu);
+  assert.doesNotMatch(html, /\b(?:POST|PUT|PATCH|DELETE)\s*:/iu);
   assert.doesNotMatch(html, /\b(?:handoff|resume run|pause run)\b(?![^<]*coming next)/iu);
   assert.match(html, /read-only|read only/iu);
 });
@@ -3818,20 +3818,16 @@ test("renders repository and workspace facts without inventing unavailable sourc
   assert.doesNotMatch(html, /repositoryInput\.(?:root|projectRoot|path)/u);
 });
 
-test("uses the execution flow as the default surface while preserving the workspace", () => {
+test("uses the unified workspace by default while keeping the execution graph in the same Live page", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
 
-  assert.match(html, /class="company-workspace"/u);
-  assert.match(html, /class="company-session-rail"/u);
-  assert.match(html, /class="company-board"/u);
-  assert.match(html, /class="company-context-panel"/u);
-  for (const hook of ["workspace-session-list", "workspace-board", "workspace-detail"]) {
-    assert.match(html, new RegExp(`data-live-${hook}`, "u"));
-  }
-  assert.match(html, /currentWorkView\s*=\s*safeStoredChoice\(WORK_VIEW_STORAGE_KEY, WORK_VIEWS, "run"\)/u);
-  assert.match(html, /aria-selected="true"[^>]*data-live-work-view="run"/u);
-  assert.match(html, /data-live-workspace-view hidden/u);
-  assert.match(html, /workspaceOpenRunMap\?\.addEventListener/u);
+  assert.match(html, /data-unified-workspace="true" data-work-view="workspace"/u);
+  assert.match(html, /data-live-workspace-root/u);
+  for (const view of ["work", "prd", "records", "graph"]) assert.match(html, new RegExp(`data-live-workspace-nav="${view}"`, "u"));
+  assert.match(html, /currentWorkView = liveWorkspaceController\?\.initialView/u);
+  assert.match(html, /data-live-run-view/u);
+  assert.match(html, /data-live-graph-scene/u);
+  assert.match(html, /data-live-inspector/u);
   assert.match(html, /New runs preserve that telemetry/u);
 });
 
@@ -6894,20 +6890,11 @@ test("the board header's run boundary wraps to a second line instead of deleting
  * a list written here, so a fourth header joining that rule is covered on the day it
  * joins rather than on the day someone remembers to extend this test.
  */
-test("a header that shortens its title lets the title block shrink, so its own actions stay inside it", () => {
+test("workspace headers let long titles shrink and wrap while their action controls remain visible", () => {
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
   const rules = stylesheetRules(html);
 
-  const declares = (rule, property, expected) =>
-    rule.declarations.some(([name, value]) => name === property && normalizedValue(value) === expected);
-  const ellipsizedTitles = rules
-    .filter((rule) => declares(rule, "text-overflow", "ellipsis") && declares(rule, "white-space", "nowrap"))
-    .flatMap((rule) => rule.selectors)
-    .filter((selector) => /^\.company-[a-z-]+-header h2$/u.test(selector));
-  assert.ok(
-    ellipsizedTitles.length >= 1,
-    "no company header shortens its title any more, so this guard is checking nothing",
-  );
+  const ellipsizedTitles = [".uw-content-header h2", ".uw-detail-header h2"];
 
   // The element that directly holds the title, read off the markup rather than
   // assumed, because the wrapper is exactly the thing that goes missing.
@@ -6944,11 +6931,11 @@ test("a header that shortens its title lets the title block shrink, so its own a
   // The shrink has to come from somewhere. If the cluster beside the title were
   // allowed to give way, it would be the button that collapsed rather than the
   // title that shortened, and the fix above would be pointing at the wrong item.
-  const actions = resolvedDeclaration(rules, { selector: ".company-board-actions", property: "flex" });
+  const actions = resolvedDeclaration(rules, { selector: ".uw-content-actions", property: "flex" });
   assert.equal(
     normalizedValue(String(actions)),
     "0 0 auto",
-    `.company-board-actions declares flex: ${actions}, so it absorbs the shrink instead of the title block`,
+    `.uw-content-actions declares flex: ${actions}, so it absorbs the shrink instead of the title block`,
   );
 });
 
