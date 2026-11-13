@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "kimService": {
     "repository": "KimYx0207/Kim_Service",
-    "commit": "58e32603e7da93839e5f73cbdfdeecfb60373a0f"
+    "commit": "0f764266fc5bacb6a90d5e06f937a95aa3944b66"
   },
   "graphify": {
     "package": "graphifyy",
