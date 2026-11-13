@@ -266,7 +266,7 @@ try {
     $KimCli = Join-Path $KimPrefix 'node_modules/meta-kim/bin/meta-kim.mjs'
     $KimCliVersion = & node $KimCli --version
     if ($LASTEXITCODE -ne 0) { throw 'CLI 版本检查失败' }
-    if (($KimCliVersion -join "`n").Trim() -notmatch '^3\.12\.1$') { throw ('CLI 版本不符：' + $KimCliVersion) }
+    if (($KimCliVersion -join "`n").Trim() -ne '3.13.0') { throw ('CLI 版本不符：' + $KimCliVersion) }
     Write-Host ('Meta_Kim 版本：' + $KimCliVersion)
     New-Item -ItemType Directory -Force -Path (Join-Path $KimProject '.meta-kim'),(Join-Path $KimProject '.codex') | Out-Null
     $KimUtf8 = New-Object System.Text.UTF8Encoding($false)
