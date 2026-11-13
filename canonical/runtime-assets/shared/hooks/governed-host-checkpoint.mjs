@@ -680,7 +680,7 @@ export async function checkpointGovernedHost(options) {
       result.progressObservations?.some((observation) => observation.criterionId === id && observation.classification === "progress"));
   }).map((result) => result.taskPacketId) : [];
   const workspaceGate = options.stage === "thinking" && completing
-    ? await inspectLiveWorkspaceGate(state, root) : { ready: true };
+    ? await inspectLiveWorkspaceGate(state, root, { workerTaskPackets: record.workerTaskPackets }) : { ready: true };
   const effectiveCompleting = completing && taskCorrections.length === 0 && incompleteTaskCriteria.length === 0 && workspaceGate.ready;
   const report = { stage: options.stage, ownerAgent: request.ownerAgent, summary: request.summary, evidenceRefs: request.evidenceRefs,
     status: completing && !effectiveCompleting ? "in_progress" : request.status, evidenceLevel: "owner_reported", nativeInvocationVerified: false, recordedAt: new Date().toISOString() };

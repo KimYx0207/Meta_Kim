@@ -203,7 +203,7 @@ For upgrade, keep sentinel custom configuration and one user-owned Skill, instal
 
 ## Windows 11：完整 PowerShell 安装、更新和配置保留检查
 
-下面这段在 **v3.12.1 和 V1.16 正式发布且附件齐全之后**使用。若下载返回 404 或校验失败，立即停止，不改成旧版本继续。需要先安装 Node.js 24 和 Codex CLI；只运行无模型安装/检查，不登录、不改真实用户的全局配置或项目信任。无需填写路径，全部放进自动创建的独立临时目录。关闭 PowerShell 后目录仍保留，便于查看日志和产物。
+下面这段在 **v3.13.0 和 V1.16 正式发布且附件齐全之后**使用。若下载返回 404 或校验失败，立即停止，不改成旧版本继续。需要先安装 Node.js 24 和 Codex CLI；只运行无模型安装/检查，不登录、不改真实用户的全局配置或项目信任。无需填写路径，全部放进自动创建的独立临时目录。关闭 PowerShell 后目录仍保留，便于查看日志和产物。
 
 这段使用正式下载包，核对各自 Release 附带的 `SHA256SUMS.txt`，再安装、登记 Service 来源、更新，并确认自定义文件和共享配置字段仍在。发布者提供的 checksum 用于校核下载一致性，不代替签名认证。此命令段经过流程和语法检查，**未在本次 Linux 环境冒充 Windows 实测**。
 
@@ -219,7 +219,7 @@ $KimIsolatedHome = Join-Path $KimTestRoot 'isolated-home'
 New-Item -ItemType Directory -Force -Path $KimDownloads,$KimPrefix,$KimProject,$KimIsolatedHome | Out-Null
 
 $KimAssets = @(
-    @{ Name='meta-kim-3.12.1.tgz'; Base='https://github.com/KimYx0207/Meta_Kim/releases/download/v3.12.1'; Sums='meta-SHA256SUMS.txt' },
+    @{ Name='meta-kim-3.13.0.tgz'; Base='https://github.com/KimYx0207/Meta_Kim/releases/download/v3.13.0'; Sums='meta-SHA256SUMS.txt' },
     @{ Name='Kim_Service-V1.16.zip'; Base='https://github.com/KimYx0207/Kim_Service/releases/download/V1.16'; Sums='service-SHA256SUMS.txt' }
 )
 foreach ($KimItem in $KimAssets) {
@@ -261,7 +261,7 @@ try {
     [Environment]::SetEnvironmentVariable('META_KIM_SKIP_OPTIONAL_TOOLS', '1', 'Process')
     [Environment]::SetEnvironmentVariable('META_KIM_DISABLE_SIBLING_DEP_PROBE', '1', 'Process')
     Set-Location -LiteralPath $KimProject
-    & npm.cmd install --global=false --prefix $KimPrefix --ignore-scripts --no-audit --no-fund (Join-Path $KimDownloads 'meta-kim-3.12.1.tgz')
+    & npm.cmd install --global=false --prefix $KimPrefix --ignore-scripts --no-audit --no-fund (Join-Path $KimDownloads 'meta-kim-3.13.0.tgz')
     if ($LASTEXITCODE -ne 0) { throw 'npm 安装失败' }
     $KimCli = Join-Path $KimPrefix 'node_modules/meta-kim/bin/meta-kim.mjs'
     $KimCliVersion = & node $KimCli --version

@@ -1,10 +1,9 @@
 /**
  * e2e-eight-stage-live.test.mjs
  *
- * 真实的端到端功能测试：对8阶段主流程进行实际执行验证。
- * 每个阶段：给定真实输入 → 模拟系统处理 → 产生真实产物 → 验证产物
- *
- * 不同于静态检查测试（只grep文件），这个测试模拟系统在实际场景下的行为。
+ * Synthetic scenario and canonical-contract regression for the eight-stage vocabulary.
+ * These assertions read fixtures and documents; they do not execute the native
+ * eight-stage lifecycle, invoke models, display a native card, or prove delivery.
  */
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
@@ -610,7 +609,7 @@ describe("Stage 8: Evolution — Pattern Capture & Writeback", () => {
 // 完整8阶段链路端到端验证
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-describe("End-to-End: Complete 8-Stage Spine Integration", () => {
+describe("Synthetic contract coverage: eight-stage spine", () => {
   test("8阶段顺序严格：Critical永远第1，Evolution永远最后", () => {
     const stages = [
       "Critical",
@@ -661,7 +660,7 @@ describe("End-to-End: Complete 8-Stage Spine Integration", () => {
     }
   });
 
-  test("valid-run.json fixture是完整的端到端产物", async () => {
+  test("valid-run.json synthetic fixture contains the required packet shapes", async () => {
     const { fileExists } = await import("./_helpers.mjs");
     const fixturePath = "tests/fixtures/run-artifacts/valid-run.json";
     const exists = await fileExists(fixturePath);
@@ -698,18 +697,5 @@ describe("End-to-End: Complete 8-Stage Spine Integration", () => {
     }
   });
 
-  test("每个E2E场景都能找到对应的验证逻辑（共8个，每阶段1个）", () => {
-    const e2eIds = [
-      "E2E-01",
-      "E2E-02",
-      "E2E-03",
-      "E2E-04",
-      "E2E-05",
-      "E2E-06",
-      "E2E-07",
-      "E2E-08",
-    ];
-    // 场景数据在顶部E2E_SCENARIOS常量中定义
-    assert.equal(e2eIds.length, 8, "Must have exactly 8 E2E scenarios");
-  });
+
 });

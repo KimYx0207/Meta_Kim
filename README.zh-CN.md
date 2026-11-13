@@ -34,6 +34,8 @@
 
 ## 在 Live 中看清内容，并推动下一步
 
+八阶段是治理执行主线，十一个业务环节用于规划、修订、反馈和收口，两者不是两套互相替代的阶段。实际覆盖及未验证部分见[主控闭环核验](docs/verification/meta-flow-closure.md)。新增 [WorkBuddy](docs/workbuddy.md) 与[豆包工作](docs/doubao-work.md) 的完整 Skill 导出入口；原生客户端验收按文档单独记录。
+
 | 你要做的事 | Live 中的入口 | 会留下什么 |
 | --- | --- | --- |
 | 看当前阶段和接下来做什么 | 工作、八阶段 | 原运行的阶段状态和下一步 |
@@ -268,7 +270,7 @@ Meta_Kim 把计划、发现、进度、决定、产物和检查记录保存在�
 
 ## 在自己的项目里开始
 
-先准备 **Node.js 22.13.0+**、Git，以及已经配置好模型连接的 AI 客户端。当前版本：**[v3.12.1](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.12.1)**。
+先准备 **Node.js 22.13.0+**、Git，以及已经配置好模型连接的 AI 客户端。当前版本：**[v3.13.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.13.0)**。
 
 ### 1. 安装 Meta_Kim
 

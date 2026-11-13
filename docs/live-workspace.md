@@ -167,3 +167,13 @@ Live is the single visual workspace for a continuing Meta_Kim project: eight sta
 The current host registers actual files with `live-workspace-host.mjs`, pulls the next work order, and returns file-backed evidence. Local reviews reuse the Decision domain and bind project/run, artifact hash, design context and revision. Changed dependencies invalidate affected reviews. Existing native-human gates and execution verification remain separate. `waiting_host`, `host_claimed` and `host_reported` do not certify native model execution or final completion.
 
 Full materials stay on disk while the UI reads bounded, hash-bound pages. Policy is centralized in `config/live/workspace.json`; presentation, application, domain and storage are separate. Historic runs are read-only. Private documents require the instance workspace token and do not enter public snapshots or share payloads. See the command examples and layer map above for integration. The actual browser acceptance workflow records its fixture origin and tests desktop, tablet and phone layouts without claiming model quality or all-client certification.
+
+## 已审阅任务如何接入宿主执行
+
+八阶段是执行主干：Critical → Fetch → Thinking → Execution → Review → Meta-Review → Verification → Evolution。十一阶段是 `workflow-contract.json` 的业务流程投影：direction、planning、execution、review、meta_review、revision、verify、summary、feedback、evolve、mirror；它们不是另一套可跳过主干关口的调度器。十一项字段齐全或发卡计划已生成，都不证明实际执行或原生卡片已经出现。
+
+Live 的 `taskSlices` 使用已有 PRD 任务合同。每个任务应有唯一 `id`、实际 `outcome`、当前 `criterionIds`、具体 `verification` 和合法无环 `dependsOn`，并通过模块 `taskIds` 归属到模块。任务依赖跨模块时，登记会把对应模块依赖加入现有模块图；模块大纲顺序仍必须先依赖后消费者。任务及其传递依赖的完整合同进入模块的可分页审阅材料。外部 Markdown 原文保留，并追加明确标注的任务合同；原始来源与审阅快照分别验证哈希。改变任务范围、验证步骤或上游任务会改变相关材料版本，保留无关模块的原审阅。旧版本没有覆盖任务合同的票不能冒充对新合同的批准；没有任务的旧大纲票仍按原兼容规则保留。
+
+Thinking 完成时，宿主为每个已登记任务提交一个 worker packet，`roleInstanceId` 使用原 `taskSlices.id`，`dependsOn` 使用相应 worker 的 `taskPacketId`，`acceptanceCriterionIds` 对应原 `criterionIds`。`progressBasisEvidence` 必须包含本次领取上下文中的完整 `design.ref` / `design.sha256`；它证明当前任务依据，不能替代运行结果。漏任务、多出无关任务、依赖或验收标准不一致、未引用当前 PRD，都会停在 Thinking 并返回 `live_design_worker_task_binding_missing`。这沿用已有 worker、进度和回执权威，不创建第二个队列。无任务的 exploration 仍可用于讨论，不据此声称交付完成。
+
+本轮可重跑的实际 CLI 记录入口见 [`verification/meta-flow-probe.mjs`](verification/meta-flow-probe.mjs)，结论和合成身份边界见 [`verification/meta-flow-closure.md`](verification/meta-flow-closure.md)。

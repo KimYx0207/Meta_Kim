@@ -34,6 +34,8 @@ Open your project in your AI client and describe the result, existing materials 
 
 ## Read, review and continue in Live
 
+The eight stages govern execution; eleven business phases describe planning, revision, feedback and closure. See [workflow verification](docs/verification/meta-flow-closure.md) for actual coverage and remaining native checks. [WorkBuddy](docs/workbuddy.md) and [Doubao Work](docs/doubao-work.md) now have complete Skill export entrypoints, with native client acceptance recorded separately.
+
 | Your task | Live entry | Durable result |
 | --- | --- | --- |
 | Understand the current step | Work and the eight-stage strip | Existing run state and next action |
@@ -268,7 +270,7 @@ Use optional `workContext` in the ordinary API or CLI `--work-context-input`; ap
 
 ## Start with your own project
 
-You need **Node.js 22.13.0+**, Git and an AI client with its model connection configured. Current release: **[v3.12.1](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.12.1)**.
+You need **Node.js 22.13.0+**, Git and an AI client with its model connection configured. Current release: **[v3.13.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.13.0)**.
 
 ### 1. Install Meta_Kim
 

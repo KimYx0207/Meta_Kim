@@ -1,7 +1,7 @@
 {
   "$schema": "./contracts/runtime-compatibility-catalog.schema.json",
   "schemaVersion": 1,
-  "lastReviewedAt": "2026-11-10",
+  "lastReviewedAt": "2026-11-13",
   "decisionBoundary": {
     "noAutoPromotionFromDependencyInstall": true,
     "noAutoPromotionFromGenericSkillPath": true,
@@ -36,6 +36,38 @@
     ]
   },
   "products": [
+    {
+      "id": "workbuddy",
+      "label": "WorkBuddy",
+      "tier": "beta_compatibility",
+      "formalProjection": { "inSyncManifest": false, "hasRuntimeProfile": false, "hasProjectionLayout": false, "isDefaultTarget": false },
+      "genericCompatibility": { "skillPath": null, "agentPath": null, "hookConfig": null, "mcpConfig": null, "status": "partial" },
+      "compatibilitySurfaces": ["skill_workflow"],
+      "dependencyInstall": { "ecc": { "support": "not_applicable", "mode": "not_applicable", "evidenceRef": null } },
+      "evidence": [
+        { "type": "official_docs", "ref": "https://www.workbuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/Skills-Market", "claim": "The desktop client documents local Skill upload. CodeBuddy CLI discovery paths are not assumed to apply to WorkBuddy desktop." },
+        { "type": "official_docs", "ref": "https://open.workbuddy.cn/docs/skill", "claim": "The platform documents Skill metadata and complete resources; exported instructions do not prove installation or execution." },
+        { "type": "local_file", "ref": "config/desktop-hosts.json", "claim": "The opt-in desktop exporter owns metadata, limits, official-source links and unverified native state for this host." }
+      ],
+      "decision": "Offer an opt-in Skill ZIP with complete selected methods and provenance. No formal sync projection, native expert registration, MCP registration, Hook enforcement or stage-runner authority is implied.",
+      "nextAction": "Export the selected component with scripts/build-desktop-skill-package.mjs, import it in the actual desktop client, and follow docs/workbuddy.md to record discovery, invocation, recovery and update evidence."
+    },
+    {
+      "id": "doubao",
+      "label": "豆包工作 / Doubao Work",
+      "tier": "beta_compatibility",
+      "formalProjection": { "inSyncManifest": false, "hasRuntimeProfile": false, "hasProjectionLayout": false, "isDefaultTarget": false },
+      "genericCompatibility": { "skillPath": null, "agentPath": null, "hookConfig": null, "mcpConfig": null, "status": "partial" },
+      "compatibilitySurfaces": ["skill_workflow"],
+      "dependencyInstall": { "ecc": { "support": "not_applicable", "mode": "not_applicable", "evidenceRef": null } },
+      "evidence": [
+        { "type": "official_docs", "ref": "https://www.feishu.cn/content/article/7677519271848610746", "claim": "Official product documentation describes local Skill import and custom instructions with scripts, reference documents and templates." },
+        { "type": "official_docs", "ref": "https://open.doubao.com/document/doubao-developer-guide/skill-integration-guide", "claim": "Public developer Skill submission has explicit archive limits and separate enterprise certification and review requirements." },
+        { "type": "local_file", "ref": "config/desktop-hosts.json", "claim": "The portable Skill exporter uses conservative published submission limits; local import and native execution still require actual client evidence." }
+      ],
+      "decision": "Offer a local-import Skill ZIP with complete selected methods and provenance. It is not a published marketplace Skill, a registered Work Partner, an apps-plugin integration, or a native Meta runtime.",
+      "nextAction": "Export with --host doubao and follow docs/doubao-work.md. Verify import, resource loading, real output, restart and upgrade in the user's client before recording native acceptance."
+    },
     {
       "id": "claude",
       "label": "Claude Code",

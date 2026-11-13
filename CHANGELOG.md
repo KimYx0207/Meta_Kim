@@ -6,7 +6,13 @@ User-facing changes for each release. Detailed test results live in the linked v
 
 ## [Unreleased]
 
-## [3.12.1] - 2026-11-14
+## [3.13.0] - 2026-11-14
+
+### Desktop Skill import and PRD task continuity
+
+- Export complete, individually selected method ZIPs for WorkBuddy and Doubao Work. Both repositories share one exporter with version/source checks, preserved resources and hashes, fresh output directories and read-only verification. Export is not native installation or execution acceptance. See [WorkBuddy](docs/workbuddy.md) and [Doubao Work](docs/doubao-work.md).
+- Include detailed task scope, dependencies and acceptance criteria in Live review material, and bind Execution work packets to those reviewed tasks. Preserve historical decisions and unrelated module reviews during upgrade while requiring review of affected task contracts.
+- Explain the eight governance stages and eleven business phases separately, correct static-scenario test claims, and record public host CLI claim, real-file receipts, restart and idempotent replay. See [workflow verification](docs/verification/meta-flow-closure.md) for the exact boundaries.
 
 ### Repair source changes, host receipts and packaged upgrades
 

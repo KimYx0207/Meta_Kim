@@ -188,19 +188,61 @@ export function createLiveWorkspaceService(options) {
     const design = { mode: "exploration", userJourneys: [], interfaces: [], sharedState: [], taskSlices: [], ...input.design };
     workspaceRequire(["exploration", "delivery"].includes(design.mode), "workspace_design_mode_invalid");
     const criteria = state.criticalRecord ? new Set(taskProgressGoal(state.criticalRecord).criteria.map(item => item.criterionId)) : new Set();
+    workspaceRequire(Array.isArray(design.taskSlices) && design.taskSlices.every(object), "workspace_tasks_invalid");
+    const taskIds = new Set(design.taskSlices.map(task => task.id));
+    workspaceRequire(taskIds.size === design.taskSlices.length && [...taskIds].every(identifier), "workspace_task_identity_invalid");
+    const tasksById = new Map(design.taskSlices.map(task => [task.id, task]));
+    for (const task of design.taskSlices) {
+      workspaceRequire(typeof task.outcome === "string" && task.outcome.trim() &&
+        Array.isArray(task.criterionIds) && task.criterionIds.length > 0 && new Set(task.criterionIds).size === task.criterionIds.length && task.criterionIds.every(id => criteria.has(id)) &&
+        Array.isArray(task.verification) && task.verification.length > 0 && task.verification.every(check =>
+          object(check) && task.criterionIds.includes(check.criterionId) && typeof check.procedure === "string" && check.procedure.trim() &&
+          typeof check.expectedEvidence === "string" && check.expectedEvidence.trim()), "workspace_task_contract_invalid");
+      workspaceRequire(Array.isArray(task.dependsOn || []) && new Set(task.dependsOn || []).size === (task.dependsOn || []).length &&
+        (task.dependsOn || []).every(id => taskIds.has(id) && id !== task.id),
+        "workspace_task_dependency_invalid");
+    }
+    const taskClosure = ids => {
+      const seen = new Set(), visiting = new Set();
+      const visit = id => {
+        workspaceRequire(!visiting.has(id), "workspace_task_dependency_cycle");
+        if (seen.has(id)) return;
+        visiting.add(id);
+        for (const dependency of tasksById.get(id).dependsOn || []) visit(dependency);
+        visiting.delete(id); seen.add(id);
+      };
+      ids.forEach(visit);
+      return [...seen].sort().map(id => tasksById.get(id));
+    };
+    taskClosure([...taskIds]);
     const software = normalizeSoftwareDesign({ input: design.softwareDesign, design,
       settledDecisionIds: new Set(design.settledDecisionRefs || []), criterionIds: criteria });
     workspaceRequire(software && software.modules.length > 0 && software.modules.length <= policy.maxModules, "workspace_modules_invalid");
     workspaceRequire(software.modules.every(module => identifier(module.id)), "workspace_module_identity_invalid");
     const moduleIds = new Set(software.modules.map(module => module.id));
+    for (const module of software.modules) {
+      const contracts = taskClosure(module.taskIds);
+      if (contracts.length) {
+        workspaceRequire(Array.isArray(module.dependsOn || []), "workspace_module_dependency_invalid");
+        module.taskContracts = contracts;
+        const upstream = contracts.filter(task => !module.taskIds.includes(task.id));
+        module.dependsOn = [...new Set([...(module.dependsOn || []), ...software.modules.filter(other => other.id !== module.id &&
+          upstream.some(task => other.taskIds.includes(task.id))).map(other => other.id)])];
+      }
+      else delete module.taskContracts;
+    }
+    workspaceRequire([...taskIds].every(id => software.modules.some(module => module.taskIds.includes(id))), "workspace_task_module_missing");
+
     for (const module of software.modules) workspaceRequire(Array.isArray(module.dependsOn || []) &&
       (module.dependsOn || []).every(id => moduleIds.has(id) && id !== module.id), "workspace_module_dependency_invalid");
     const order = new Map(software.architecture.moduleIds.map((id, index) => [id, index]));
     for (const module of software.modules) workspaceRequire((module.dependsOn || []).every(id => order.get(id) < order.get(module.id)),
       "workspace_module_order_must_follow_dependencies");
+    const designBytes = Buffer.from(JSON.stringify({ ...design, softwareDesign: software }, null, 2) + "\n");
+    workspaceRequire(designBytes.length <= policy.maxDesignBytes, "workspace_design_input_invalid");
     const previous = state.liveWorkspace ? workspaceFor(state) : null;
     const at = now();
-    const workspace = { schemaVersion: LIVE_WORKSPACE_STATE_SCHEMA, runId, profile: repository.profile, generation: (previous?.generation || 0) + 1,
+    const workspace = { schemaVersion: LIVE_WORKSPACE_STATE_SCHEMA, taskContractVersion: 1, runId, profile: repository.profile, generation: (previous?.generation || 0) + 1,
       projectBinding: workspaceDigest([repository.projectRoot, repository.profile]),
       hostEntry: fileURLToPath(new URL("../../../scripts/live-workspace-host.mjs", import.meta.url)),
       createdAt: previous?.createdAt || at, updatedAt: at, materials: {}, modules: [],
@@ -209,7 +251,8 @@ export function createLiveWorkspaceService(options) {
     workspaceRequire(object(materialRefs) && (!materialRefs.modules || object(materialRefs.modules)), "workspace_material_refs_invalid");
     const sourceFormat = ref => /\.md$/iu.test(ref) ? "markdown" : /\.json$/iu.test(ref) ? "json" : "text";
     const material = async (targetId, value, sourceRef) => {
-      const stored = sourceRef ? await repository.putSource(runId, sourceRef, sourceFormat(sourceRef))
+      const stored = sourceRef ? await repository.putSource(runId, sourceRef, sourceFormat(sourceRef),
+        value.taskContracts?.length ? "\n\n---\nReviewed task contracts (including dependencies):\n" + JSON.stringify(value.taskContracts, null, 2) + "\n" : "")
         : await repository.putBytes(runId, Buffer.from(JSON.stringify(value, null, 2) + "\n"), "json");
       const item = { ...stored, artifactId: `material:${workspaceDigest([workspace.projectBinding, runId, targetId]).slice(0, 32)}` };
       workspace.materials[item.artifactId] = item;
@@ -279,7 +322,7 @@ export function createLiveWorkspaceService(options) {
         dependsOn: module.dependsOn || [], taskIds: module.taskIds || [] });
     }
     workspace.designVersion = workspaceVersion(workspaceDigest({ outlineBasis, materials: Object.values(workspace.materials).map(item => [item.artifactId, item.sha256]) }));
-    const storedDesign = await repository.putBytes(runId, Buffer.from(JSON.stringify({ ...design, softwareDesign: software }, null, 2) + "\n"), "json");
+    const storedDesign = await repository.putBytes(runId, designBytes, "json");
     workspace.designRef = storedDesign;
     for (const request of workspace.requests) {
       const target = workspace.materials[request.artifactId];
@@ -338,7 +381,8 @@ export function createLiveWorkspaceService(options) {
     }
     const selectedModules = progress.modules.slice(offset, offset + policy.modulePageSize);
     const ids = new Set([workspace.architecture.decisionId, ...selectedModules.map(module => module.decisionId).filter(Boolean)]);
-    const invalidMaterials = new Set();
+    const invalidMaterials = new Set(workspace.taskContractVersion === 1 ? [] :
+      workspace.modules.filter(module => module.taskIds?.length).map(module => module.artifactId));
     // Global readiness/nextAction covers the complete design even when this
     // response contains only one module page. Hash checks do not load full
     // bodies into the response or discard any prior review records.
@@ -495,6 +539,8 @@ export function createLiveWorkspaceService(options) {
         "workspace_dependency_review_required", 409);
     }
     if (request.kind === "continue_governed_run") {
+      workspaceRequire(workspace.taskContractVersion === 1 || !workspace.modules.some(module => module.taskIds?.length),
+        "workspace_task_review_required", 409);
       workspaceRequire(deriveWorkspaceProgress(workspace, Date.parse(now())).designStatus === "accepted", "workspace_design_review_pending", 409);
       // Continuing the spine consumes the entire accepted design, not only
       // the outline material carried by the generated work order.

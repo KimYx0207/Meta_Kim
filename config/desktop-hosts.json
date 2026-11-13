@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "hosts": {
+    "workbuddy": {
+      "displayName": "WorkBuddy",
+      "deliveryMode": "upload_skill_zip",
+      "renderer": "workbuddy",
+      "userDiscoveryPath": null,
+      "projectDiscoveryPath": null,
+      "limits": { "archiveBytes": 33554432, "unpackedBytes": 33554432, "entries": 4096, "fileBytes": 8388608, "basis": "local_export_safety_limits_not_official_host_limits" },
+      "support": { "skillImportDocumented": true, "agentPluginDocumented": true, "mcpDocumented": true, "hooksDocumented": true, "agentRegistrationImplemented": false, "mcpRegistrationImplemented": false, "hookRegistrationImplemented": false, "installed": false, "nativeInvocationVerified": false, "nativeExecutionVerified": false },
+      "reviewedOn": "2026-11-13",
+      "officialSources": [
+        "https://open.workbuddy.cn/docs/skill",
+        "https://open.workbuddy.cn/docs/expert",
+        "https://open.workbuddy.cn/docs/expert-team",
+        "https://open.workbuddy.cn/docs/connector",
+        "https://www.workbuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/Skills-Market",
+        "https://www.workbuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/Plug-In"
+      ]
+    },
+    "doubao": {
+      "displayName": "豆包工作 / Doubao Work",
+      "deliveryMode": "upload_skill_zip",
+      "renderer": "doubao",
+      "userDiscoveryPath": null,
+      "projectDiscoveryPath": null,
+      "limits": { "archiveBytes": 16000000, "unpackedBytes": 16000000, "entries": 1024, "fileBytes": 2000000, "basis": "official_developer_skill_submission_limits_used_conservatively_for_local_import" },
+      "support": { "skillImportDocumented": true, "agentPluginDocumented": false, "mcpDocumented": false, "hooksDocumented": false, "agentRegistrationImplemented": false, "mcpRegistrationImplemented": false, "hookRegistrationImplemented": false, "installed": false, "nativeInvocationVerified": false, "nativeExecutionVerified": false },
+      "reviewedOn": "2026-11-13",
+      "officialSources": [
+        "https://www.feishu.cn/content/article/7677519271848610746",
+        "https://open.doubao.com/document/doubao-developer-guide/skill-integration-guide",
+        "https://open.doubao.com/apps-plugin/docs/skill-development/overview"
+      ]
+    }
+  }
+}

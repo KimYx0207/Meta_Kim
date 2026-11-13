@@ -1,6 +1,6 @@
 {
   "name": "meta-kim",
-  "version": "3.12.1",
+  "version": "3.13.0",
   "description": "General agent governance for evidence-backed decisions, capability discovery, orchestration and outcome verification across domains, with primary Claude Code/Codex projections and opt-in compatibility adapters.",
   "private": true,
   "type": "module",
@@ -215,7 +215,8 @@
     "meta:verify:governance": "npm run meta:verify:governance:core && npm run meta:open-source-boundary:validate && npm run meta:test:integration",
     "meta:verify:governance:core": "npm run meta:governance:validate && npm run meta:runtime:validate && npm run meta:os:check && npm run meta:deps:check && npm run meta:deps:compat && npm run meta:deps:absorption:validate && npm run meta:planning:validate && npm run meta:providers:validate && npm run meta:route:validate && npm run meta:intent:validate && npm run meta:prompt:validate && npm run meta:prd:prompt-first-flow:validate && npm run meta:prd:prompt-first-live:validate && npm run meta:prd:default-execution:validate && npm run meta:prd:product-experience:validate && npm run meta:fitness:validate && npm run meta:fitness:ablation:validate && npm run meta:prd:stage-runtime-control:validate && npm run meta:prd:asset-sedimentation:validate && npm run meta:prd:research-native:validate && npm run meta:prd:prompt-architecture:validate && npm run meta:prd:smooth-capability:validate && npm run meta:prd:runtime-priority:validate && npm run meta:prd:source-map:validate && npm run meta:prd:all-dossiers:validate && npm run meta:public-assets:validate && npm run meta:foundational:validate && npm run meta:hook:validate && npm run meta:runtime:safety:validate && npm run meta:test:governance",
     "meta:test:ci": "node scripts/run-local-verification.mjs --isolated",
-    "meta:test:setup:cross-platform": "node --test tests/setup/codex-config-merge.test.mjs tests/setup/mcp-memory-process-control.test.mjs tests/setup/managed-dependency-source.test.mjs tests/setup/global-discovery-runtime-homes.test.mjs tests/setup/runtime-cli-probe.test.mjs tests/setup/runtime-cli-binding-probe.test.mjs tests/setup/safe-managed-file-operations.test.mjs tests/setup/mcp-runtime-resource-contract.test.mjs"
+    "meta:test:setup:cross-platform": "node --test tests/setup/codex-config-merge.test.mjs tests/setup/mcp-memory-process-control.test.mjs tests/setup/managed-dependency-source.test.mjs tests/setup/global-discovery-runtime-homes.test.mjs tests/setup/runtime-cli-probe.test.mjs tests/setup/runtime-cli-binding-probe.test.mjs tests/setup/safe-managed-file-operations.test.mjs tests/setup/mcp-runtime-resource-contract.test.mjs",
+    "meta:desktop:export": "node scripts/build-desktop-skill-package.mjs"
   },
   "keywords": [
     "claude-code",
@@ -393,7 +394,14 @@
     "src/presentation/live/live-workspace-styles.mjs",
     "src/presentation/live/live-workspace-view.mjs",
     "docs/live-workspace.md",
-    "docs/verification/host-install-upgrade-20261114.md"
+    "docs/verification/host-install-upgrade-20261114.md",
+    "src/infrastructure/distribution/desktop-skill-package.mjs",
+    "src/infrastructure/distribution/desktop-skill-renderers.mjs",
+    "src/infrastructure/distribution/desktop-skill-zip.mjs",
+    "docs/workbuddy.md",
+    "docs/doubao-work.md",
+    "docs/verification/meta-flow-closure.md",
+    "docs/verification/meta-flow-probe.mjs"
   ],
   "author": "KimYx0207",
   "license": "Apache-2.0",

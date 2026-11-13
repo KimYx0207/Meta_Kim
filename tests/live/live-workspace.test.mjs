@@ -632,3 +632,99 @@ test("legacy accepted Decisions survive unchanged registration but never a depen
   assert.ok(changed.design.modules.every(module => module.status === "awaiting_human"));
   assert.ok(changed.design.modules.every(module => module.decisionId !== before.modules.find(item => item.id === module.id).decisionId));
 });
+
+function taskBoundDesign() {
+  const input = designInput({ full: true });
+  const criterionId = taskProgressGoal(critical).criteria[0].criterionId;
+  input.design.taskSlices = ['alpha', 'beta'].map(id => ({ id: `task-${id}`, outcome: `Inspect ${id}`, scopeFiles: [`outputs/${id}.txt`],
+    criterionIds: [criterionId], dependsOn: [], verification: [{ criterionId, procedure: `Read ${id}`, expectedEvidence: 'Actual file hash' }] }));
+  for (const module of input.design.softwareDesign.modules) module.taskIds = [`task-${module.id}`];
+  return input;
+}
+
+test('synthetic Live task contract change invalidates only affected module reviews', async t => {
+  const f = await fixture(t), input = taskBoundDesign();
+  await f.publish(input); await f.vote('outline'); await f.vote('alpha'); await f.vote('beta');
+  const before = await f.overview();
+  input.design.taskSlices[0].verification[0].procedure = 'Read bytes and validate actual identity';
+  await f.publish(input);
+  const after = await f.overview();
+  assert.notEqual(after.design.modules[0].decisionId, before.design.modules[0].decisionId);
+  assert.equal(after.design.modules[0].status, 'awaiting_human');
+  assert.equal(after.design.modules[1].status, 'accepted');
+});
+
+test('synthetic Live gate binds proposed worker tasks to reviewed task dependencies and criteria', async t => {
+  const f = await fixture(t), input = taskBoundDesign();
+  input.design.taskSlices[1].dependsOn = ['task-alpha'];
+  await f.publish(input); await f.vote('outline'); await f.vote('alpha'); await f.vote('beta');
+  const state = await readSpineState(f.root);
+  const packets = input.design.taskSlices.map(task => ({ taskPacketId: `worker-${task.id}`, roleInstanceId: task.id,
+    acceptanceCriterionIds: task.criterionIds, progressBasisEvidence: [state.liveWorkspace.designRef], dependsOn: task.dependsOn.map(id => `worker-${id}`) }));
+  const gate = workerTaskPackets => inspectLiveWorkspaceGate(state, f.root, { workerTaskPackets });
+  assert.equal((await gate([])).ready, false);
+  assert.equal((await gate(packets)).ready, true);
+  assert.equal((await gate(packets.map(p => ({ ...p, progressBasisEvidence: [] })))).ready, false);
+  assert.equal((await gate(packets.map(p => ({ ...p, dependsOn: [] })))).ready, false);
+  assert.equal((await gate(packets.map(p => ({ ...p, acceptanceCriterionIds: [] })))).ready, false);
+  assert.equal((await gate([...packets, { taskPacketId: 'unrelated', roleInstanceId: 'unrelated' }])).ready, false);
+});
+
+test('synthetic task-bound external material exposes reviewed contracts and preserves source drift checks', async t => {
+  const f = await fixture(t), input = taskBoundDesign();
+  input.design.taskSlices[1].dependsOn = ['task-alpha'];
+  await writeFile(path.join(f.root, 'outputs/alpha.md'), '# Actual alpha source\n');
+  input.materialRefs = { modules: { alpha: 'outputs/alpha.md' } };
+  await f.publish(input);
+  const view = await f.overview(), alpha = view.design.modules[0];
+  const page = await f.service.getMaterial({ runId: f.runId, artifactId: alpha.artifactId, version: alpha.version });
+  assert.match(page.text, /Actual alpha source/); assert.match(page.text, /Reviewed task contracts/); assert.match(page.text, /Read alpha/);
+  assert.deepEqual(view.design.modules[1].dependsOn, ['alpha']);
+  await f.vote('outline'); await f.vote('alpha'); await f.vote('beta');
+  assert.equal((await inspectLiveWorkspaceGate(await readSpineState(f.root), f.root)).ready, true);
+  input.design.taskSlices[0].scopeFiles = ['outputs/changed.txt'];
+  await f.publish(input);
+  const changed = await f.overview();
+  assert.notEqual(changed.design.modules[0].version, alpha.version);
+  assert.equal(changed.design.modules[1].status, 'awaiting_human');
+  await f.vote('alpha'); await f.vote('beta');
+  await writeFile(path.join(f.root, 'outputs/alpha.md'), '# Changed source\n');
+  assert.equal((await inspectLiveWorkspaceGate(await readSpineState(f.root), f.root)).reason, 'live_design_material_changed');
+});
+
+test('synthetic task graph rejects duplicate identities and cycles before any registration', async t => {
+  const f = await fixture(t), input = taskBoundDesign();
+  input.design.taskSlices[1].id = input.design.taskSlices[0].id;
+  await assert.rejects(f.publish(input), { code: 'workspace_task_identity_invalid' });
+  const cyclic = taskBoundDesign();
+  cyclic.design.taskSlices[0].dependsOn = ['task-beta']; cyclic.design.taskSlices[1].dependsOn = ['task-alpha'];
+  await assert.rejects(f.publish(cyclic), { code: 'workspace_task_dependency_cycle' });
+  assert.equal((await f.overview()).revision, 0);
+});
+
+test('synthetic legacy task reviews remain historical while only task modules request supplementary review', async t => {
+  const f = await fixture(t), input = taskBoundDesign();
+  input.design.taskSlices.pop(); input.design.softwareDesign.modules[1].taskIds = [];
+  await f.publish(input); await f.vote('outline'); await f.vote('alpha'); await f.vote('beta');
+  const state = await readSpineState(f.root), oldReviews = JSON.stringify(state.liveWorkspace.reviews);
+  delete state.liveWorkspace.taskContractVersion;
+  await f.service.repository.writeState(await readSpineState(f.root), state);
+  const view = await f.overview();
+  assert.equal(view.design.architecture.status, 'accepted');
+  assert.equal(view.design.modules[0].status, 'material_changed');
+  assert.equal(view.design.modules[1].status, 'accepted');
+  assert.equal(view.nextAction.kind, 'refresh_design_material');
+  assert.equal((await inspectLiveWorkspaceGate(state, f.root)).reason, 'live_design_task_review_required');
+  assert.equal(JSON.stringify((await readSpineState(f.root)).liveWorkspace.reviews), oldReviews);
+});
+
+
+test('synthetic task verification rejects null and primitive checks with the workspace input error', async t => {
+  const f = await fixture(t);
+  for (const check of [null, false, 7, 'read file']) {
+    const input = taskBoundDesign();
+    input.design.taskSlices[0].verification = [check];
+    await assert.rejects(f.publish(input), { code: 'workspace_task_contract_invalid', status: 400 });
+  }
+  assert.equal((await f.overview()).revision, 0);
+});

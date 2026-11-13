@@ -260,7 +260,9 @@
       "betaCompatibilityTargets": [
         "deepseek-harness",
         "qoder",
-        "trae"
+        "trae",
+        "workbuddy",
+        "doubao"
       ],
       "candidateProbeTargets": [
         "kiro",

@@ -57,7 +57,7 @@ export function createLiveWorkspaceRepository({ projectRoot, profile = "default"
     await inspect(ref, sha256);
     return { ref, sha256, bytes: bytes.length, format };
   }
-  async function putSource(runId, sourceRef, format = "text") {
+  async function putSource(runId, sourceRef, format = "text", appendix = "") {
     const source = await inspect(sourceRef);
     const ref = `.meta-kim/work/live-workspace/${workspaceBytesDigest(Buffer.from(runId))}/materials/${source.sha256}.txt`;
     await ensureParent(ref);
@@ -66,6 +66,12 @@ export function createLiveWorkspaceRepository({ projectRoot, profile = "default"
     await chmod(trusted(ref), 0o600);
     await inspect(ref, source.sha256);
     await inspect(sourceRef, source.sha256);
+    if (appendix) {
+      const bytes = await readFile(trusted(ref));
+      workspaceRequire(workspaceBytesDigest(bytes) === source.sha256, "workspace_material_changed", 409);
+      const stored = await putBytes(runId, Buffer.concat([bytes, Buffer.from(appendix)]), "text");
+      return { ...stored, sourceRef, sourceSha256: source.sha256, sourceBytes: source.bytes };
+    }
     return { ref, sourceRef, sourceSha256: source.sha256, ...source, format };
   }
   async function verifyMaterial(material, { requireSourceCurrent = true } = {}) {
