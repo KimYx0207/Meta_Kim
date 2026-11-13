@@ -41,8 +41,8 @@ def main() -> None:
             environment.pop(key, None)
         base_command = ["node", str(FIXTURE), "--project-root", str(project), "--registry-root", str(registry)]
 
-        def action(name):
-            result = subprocess.run([*base_command, "--action", name], cwd=ROOT, env=environment, text=True, capture_output=True, timeout=45, check=False)
+        def action(name, command=None):
+            result = subprocess.run([*(command or base_command), "--action", name], cwd=ROOT, env=environment, text=True, capture_output=True, timeout=45, check=False)
             if result.returncode:
                 raise RuntimeError(result.stderr or result.stdout)
             return json.loads(result.stdout)
@@ -166,11 +166,71 @@ def main() -> None:
                     expect(page.locator("[data-uw-nav-open]")).to_have_attribute("aria-expanded", "false")
                     expect(page.locator("[data-live-workspace-material]")).to_contain_text("资料收集：详细设计")
                     capture("live-workspace-mobile.png", "Mobile module with native navigation controls")
+                    mobile_feedback = page.locator("[data-live-workspace-feedback]")
+                    mobile_feedback.scroll_into_view_if_needed()
+                    expect(mobile_feedback).to_be_in_viewport(ratio=1)
+                    mobile_feedback.fill("移动端验收：输入内容保留在当前草稿。")
+                    expect(mobile_feedback).to_have_value("移动端验收：输入内容保留在当前草稿。")
+                    mobile_submit = page.locator("[data-live-workspace-submit-feedback]")
+                    mobile_submit.scroll_into_view_if_needed()
+                    expect(mobile_submit).to_be_in_viewport(ratio=1)
+                    expect(mobile_submit).to_be_enabled()
+                    capture("live-workspace-mobile-feedback.png", "Mobile feedback controls reached by normal scrolling")
                     evidence["checks"].append("1440 / 1024 / 390 layouts have no document horizontal overflow; mobile navigation and readable PRD verified")
+                    evidence["checks"].append("Mobile feedback input and submit control are reachable by normal scrolling; typed draft is retained")
+                    context.close()
+
+                    # Capture actual localized product views, including localized
+                    # declared sample data, so each README keeps its own language.
+                    evidence["localizedFixtures"] = {}
+                    for language, browser_locale in (("en", "en-US"), ("ja", "ja-JP"), ("ko", "ko-KR")):
+                        localized_command = ["node", str(FIXTURE), "--project-root", str(Path(temporary) / ("workspace-" + language)),
+                                             "--registry-root", str(Path(temporary) / ("registry-" + language)), "--locale", language]
+                        localized_fixture = action("init", localized_command)
+                        evidence["localizedFixtures"][language] = {key: localized_fixture[key] for key in
+                            ("locale", "recordOrigin", "outlineHeading", "moduleHeading", "outlineSha256", "outlineBytes")}
+                        with (output / ("workspace-server-" + language + ".log")).open("w", encoding="utf-8") as localized_log:
+                            localized_server = subprocess.Popen([*localized_command, "--action", "serve"], cwd=ROOT, env=environment,
+                                                                stdout=subprocess.PIPE, stderr=localized_log, text=True)
+                            try:
+                                assert localized_server.stdout is not None
+                                localized_address = json.loads(localized_server.stdout.readline())
+                                localized_location = localized_address["url"] + "/?" + urlencode({"projectId": localized_fixture["projectId"], "runId": localized_fixture["runId"]})
+                                localized_context = browser.new_context(viewport={"width": 1440, "height": 1000}, locale=browser_locale,
+                                                                        reduced_motion="reduce", device_scale_factor=1)
+                                page = localized_context.new_page()
+                                page.set_default_timeout(20_000)
+                                page.on("pageerror", lambda error: errors.append(str(error)))
+                                page.goto(localized_location, wait_until="networkidle")
+                                if page.locator("[data-live-language-select]").input_value() != language:
+                                    with page.expect_navigation(wait_until="networkidle"):
+                                        page.locator("[data-live-language-select]").select_option(language)
+                                expect(page.locator("[data-live-workspace-module]")).to_have_count(4)
+                                capture("live-workspace-desktop." + language + ".png", "Localized Work / " + language)
+                                page.locator('[data-live-workspace-nav="prd"]').click()
+                                expect(page.locator("[data-live-workspace-material]")).to_contain_text(localized_fixture["outlineHeading"])
+                                capture("live-workspace-prd." + language + ".png", "Localized system outline / " + language)
+                                with page.expect_response(lambda response: "/api/workspace/reviews?" in response.url and response.request.method == "POST") as localized_approval:
+                                    page.locator('[data-live-workspace-review-choice="accept"]').click()
+                                assert localized_approval.value.status == 200
+                                assert action("inspect", localized_command)["nextAction"]["moduleId"] == "alpha"
+                                action("advance", localized_command)
+                                page.locator("[data-uw-refresh]").click()
+                                page.locator('[data-live-workspace-module="alpha"]').click()
+                                expect(page.locator("[data-live-workspace-material]")).to_contain_text(localized_fixture["moduleHeading"])
+                                capture("live-workspace-module." + language + ".png", "Localized module after host file report / " + language)
+                                localized_context.close()
+                            finally:
+                                localized_server.terminate()
+                                try:
+                                    localized_server.wait(timeout=10)
+                                except subprocess.TimeoutExpired:
+                                    localized_server.kill()
+                                    localized_server.wait(timeout=5)
+                    evidence["checks"].append("English, Japanese and Korean UI and sample materials: real outline approval, host CLI file report and localized module screenshots")
                     if errors:
                         raise RuntimeError("Browser error: " + errors[0])
                     evidence["checks"].append("No browser page errors")
-                    context.close()
                     browser.close()
                     evidence["result"] = "passed"
             except Exception as error:

@@ -1,0 +1,173 @@
+{
+  "schemaVersion": 1,
+  "locales": {
+    "zh": {
+      "publicSummary": { "title": "产品协作工作台 · 验收样例", "task": "先审阅系统模块大纲，再逐项完成详细设计。" },
+      "architecture": { "title": "产品协作工作台", "summary": "从资料到交付，在一个工作区持续推进。" },
+      "modules": {
+        "alpha": { "title": "资料收集", "purpose": "保留输入原文、来源与版本，支持完整回查。" },
+        "beta": { "title": "需求拆分", "purpose": "将目标拆成可审阅、可修订的模块。" },
+        "gamma": { "title": "交付跟踪", "purpose": "展示实际进度、文件证据与待处理问题。" },
+        "delta": { "title": "复盘沉淀", "purpose": "记录采用版本与原因，复用已验证的方法。" }
+      },
+      "outline": {
+        "heading": "产品协作工作台：系统模块大纲",
+        "notice": "确定性验收样例。页面读取真实本地记录，本样例没有调用模型。",
+        "goalHeading": "目标与使用者",
+        "goalBody": "让负责人从同一个工作区查看目标、模块、交付和需要判断的事项。每次采纳都绑定当前文件版本。",
+        "modulesHeading": "模块边界",
+        "interactionHeading": "交互与反馈",
+        "interactionBody": "先展示系统全貌，再进入单个模块。修改意见保留原文；版本变化时，旧的采纳不会自动沿用。",
+        "dataHeading": "数据与配置",
+        "dataBody": "完整材料留在项目中。页面先读取索引，再按需加载内容；模型和运行时由宿主配置。",
+        "criteriaHeading": "验收标准",
+        "criteriaBody": "每个阶段可查看；模块可单独审阅；接续有工作单和文件证据；未运行的步骤明确显示等待状态。",
+        "itemHeading": "需求条目 {number}",
+        "itemBody": "资料原文与摘要分别保存。操作失败时保留已输入的修改意见，并提供明确的重试入口。来源和版本必须可核对，中文与 emoji 🧭 不应丢失。",
+        "endHeading": "长材料验收末尾",
+        "endBody": "FINAL_MATERIAL_PAGE_REACHED · 原文完整保留。",
+        "moduleSeparator": "："
+      },
+      "alpha": {
+        "heading": "资料收集：详细设计",
+        "sections": [
+          { "heading": "使用场景", "body": "负责人导入访谈记录、需求描述或已有方案，并保留完整原文。" },
+          { "heading": "页面与状态", "body": "待导入、处理中、可审阅和需要补充分别展示。输入失败时不清空内容。" },
+          { "heading": "数据边界", "body": "原文独立保存，页面按需读取。摘要只是索引，不替代原始材料。" },
+          { "heading": "验收证据", "body": "本文件由确定性验收脚本写出，没有调用模型。" }
+        ],
+        "implementationNotes": "输入、原文存储和只读展示分层。",
+        "businessRules": ["先保存完整原文，再生成处理结果。", "错误保留用户输入并展示原因。"],
+        "pendingBehavior": "等待资料",
+        "readyBehavior": "原文已保存",
+        "receiptSummary": "确定性验收文件；没有调用模型。"
+      }
+    },
+    "en": {
+      "publicSummary": { "title": "Product collaboration workspace · Acceptance example", "task": "Review the system module outline, then complete each module's detailed design." },
+      "architecture": { "title": "Product collaboration workspace", "summary": "Keep work moving from source material to delivery in one workspace." },
+      "modules": {
+        "alpha": { "title": "Data collection", "purpose": "Preserve the original input, its source and version for complete traceability." },
+        "beta": { "title": "Requirements breakdown", "purpose": "Break the goal into modules that can be reviewed and revised independently." },
+        "gamma": { "title": "Delivery tracking", "purpose": "Show actual progress, file evidence and unresolved issues." },
+        "delta": { "title": "Learning and reuse", "purpose": "Record the adopted version and rationale, and reuse verified methods." }
+      },
+      "outline": {
+        "heading": "Product collaboration workspace: System module outline",
+        "notice": "Deterministic acceptance example. This page reads actual local records; no model was called for this example.",
+        "goalHeading": "Goal and users",
+        "goalBody": "Let the owner review goals, modules, deliverables and decisions in one workspace. Every acceptance is bound to the current file version.",
+        "modulesHeading": "Module boundaries",
+        "interactionHeading": "Interaction and feedback",
+        "interactionBody": "Show the whole system before opening an individual module. Preserve feedback verbatim; a changed version does not automatically inherit an earlier acceptance.",
+        "dataHeading": "Data and configuration",
+        "dataBody": "Keep complete materials in the project. Read the index first and load content as needed; the host configures the model and runtime.",
+        "criteriaHeading": "Acceptance criteria",
+        "criteriaBody": "Every stage is visible; modules can be reviewed independently; continuation has work orders and file evidence; steps that have not run explicitly show a waiting state.",
+        "itemHeading": "Requirement item {number}",
+        "itemBody": "Store original materials separately from summaries. If an operation fails, preserve entered feedback and provide a clear retry action. Sources and versions must be verifiable; multilingual text and emoji 🧭 must remain intact.",
+        "endHeading": "End of the long-material acceptance example",
+        "endBody": "FINAL_MATERIAL_PAGE_REACHED · The complete original is preserved.",
+        "moduleSeparator": ": "
+      },
+      "alpha": {
+        "heading": "Data collection: Detailed design",
+        "sections": [
+          { "heading": "Usage scenario", "body": "The owner imports interview notes, requirements or an existing proposal while preserving the complete original." },
+          { "heading": "Pages and states", "body": "Distinguish awaiting import, processing, ready for review and more information needed. A failed input operation must not clear the content." },
+          { "heading": "Data boundaries", "body": "Store the original separately and read it on demand. A summary is an index; it does not replace the source material." },
+          { "heading": "Acceptance evidence", "body": "This file was written by a deterministic acceptance script. No model was called." }
+        ],
+        "implementationNotes": "Separate input, original-material storage and read-only presentation into layers.",
+        "businessRules": ["Save the complete original before producing a processing result.", "Preserve user input on error and explain the cause."],
+        "pendingBehavior": "Waiting for materials",
+        "readyBehavior": "Original saved",
+        "receiptSummary": "Deterministic acceptance file; no model invocation."
+      }
+    },
+    "ja": {
+      "publicSummary": { "title": "プロダクト共同作業スペース · 受け入れ検証サンプル", "task": "システムのモジュール構成案をレビューし、その後で各モジュールの詳細設計を進めます。" },
+      "architecture": { "title": "プロダクト共同作業スペース", "summary": "資料の収集から成果物の引き渡しまで、一つのワークスペースで継続して進めます。" },
+      "modules": {
+        "alpha": { "title": "資料収集", "purpose": "入力された原文、出典、バージョンを保持し、すべてを後から確認できるようにします。" },
+        "beta": { "title": "要件分解", "purpose": "目標を、個別にレビューや修正ができるモジュールに分解します。" },
+        "gamma": { "title": "成果物の進捗管理", "purpose": "実際の進捗、証拠となるファイル、未解決の課題を表示します。" },
+        "delta": { "title": "振り返りと知識の蓄積", "purpose": "採用したバージョンと理由を記録し、検証済みの方法を再利用します。" }
+      },
+      "outline": {
+        "heading": "プロダクト共同作業スペース：システムのモジュール構成案",
+        "notice": "固定データによる受け入れ検証用サンプルです。画面は実際のローカル記録を読み込みます。このサンプルではモデルを呼び出していません。",
+        "goalHeading": "目標と利用者",
+        "goalBody": "担当者が一つのワークスペースで目標、モジュール、成果物、判断が必要な事項を確認できるようにします。採用の判断は、その時点のファイルバージョンに紐づきます。",
+        "modulesHeading": "モジュールの境界",
+        "interactionHeading": "操作とフィードバック",
+        "interactionBody": "まずシステム全体を示し、その後で個別のモジュールを開きます。修正意見は原文のまま保持し、バージョンが変わった際に以前の採用判断を自動で引き継ぎません。",
+        "dataHeading": "データと設定",
+        "dataBody": "資料の全文はプロジェクト内に保持します。画面は最初に索引を読み、必要に応じて内容を読み込みます。モデルとランタイムはホスト側で設定します。",
+        "criteriaHeading": "受け入れ基準",
+        "criteriaBody": "各段階を確認できること。モジュールを個別にレビューできること。作業の接続に作業指示とファイル証拠があること。未実行の手順は待機状態として明示すること。",
+        "itemHeading": "要件項目 {number}",
+        "itemBody": "資料の原文と要約は別々に保存します。操作が失敗しても入力済みの修正意見を保持し、再試行の方法を明示します。出典とバージョンを照合でき、多言語の文字や絵文字 🧭 が失われないことを確認します。",
+        "endHeading": "長文資料の受け入れ検証：末尾",
+        "endBody": "FINAL_MATERIAL_PAGE_REACHED · 原文は全文保持されています。",
+        "moduleSeparator": "："
+      },
+      "alpha": {
+        "heading": "資料収集：詳細設計",
+        "sections": [
+          { "heading": "利用場面", "body": "担当者がインタビュー記録、要件の説明、既存の提案を取り込み、原文を全文保持します。" },
+          { "heading": "画面と状態", "body": "取り込み待ち、処理中、レビュー可能、情報の追加が必要な状態を分けて表示します。入力処理が失敗しても内容を消去しません。" },
+          { "heading": "データの境界", "body": "原文は独立して保存し、必要に応じて画面から読み込みます。要約は索引であり、元の資料の代わりにはなりません。" },
+          { "heading": "受け入れ検証の証拠", "body": "このファイルは固定データを使う受け入れ検証スクリプトが作成しました。モデルは呼び出していません。" }
+        ],
+        "implementationNotes": "入力、原文の保存、読み取り専用の表示を層ごとに分離します。",
+        "businessRules": ["原文を全文保存してから処理結果を生成します。", "エラー時も入力内容を保持し、原因を表示します。"],
+        "pendingBehavior": "資料待ち",
+        "readyBehavior": "原文を保存済み",
+        "receiptSummary": "固定データによる受け入れ検証用ファイルです。モデルは呼び出していません。"
+      }
+    },
+    "ko": {
+      "publicSummary": { "title": "제품 협업 워크스페이스 · 인수 검증 예시", "task": "시스템 모듈 개요를 검토한 뒤 각 모듈의 상세 설계를 차례로 진행합니다." },
+      "architecture": { "title": "제품 협업 워크스페이스", "summary": "자료 수집부터 산출물 전달까지 하나의 워크스페이스에서 계속 진행합니다." },
+      "modules": {
+        "alpha": { "title": "자료 수집", "purpose": "입력 원문, 출처, 버전을 보존하여 전체 이력을 확인할 수 있게 합니다." },
+        "beta": { "title": "요구사항 분해", "purpose": "목표를 개별적으로 검토하고 수정할 수 있는 모듈로 나눕니다." },
+        "gamma": { "title": "산출물 진행 관리", "purpose": "실제 진행 상황, 증거 파일, 미해결 문제를 표시합니다." },
+        "delta": { "title": "회고와 지식 축적", "purpose": "채택한 버전과 이유를 기록하고 검증된 방법을 재사용합니다." }
+      },
+      "outline": {
+        "heading": "제품 협업 워크스페이스: 시스템 모듈 개요",
+        "notice": "고정 데이터로 수행하는 인수 검증 예시입니다. 화면은 실제 로컬 기록을 읽으며, 이 예시에서는 모델을 호출하지 않았습니다.",
+        "goalHeading": "목표와 사용자",
+        "goalBody": "담당자가 하나의 워크스페이스에서 목표, 모듈, 산출물, 판단이 필요한 사항을 확인하도록 합니다. 모든 채택 결정은 당시 파일 버전에 연결됩니다.",
+        "modulesHeading": "모듈 경계",
+        "interactionHeading": "상호작용과 피드백",
+        "interactionBody": "시스템 전체를 먼저 보여 준 다음 개별 모듈을 엽니다. 수정 의견은 원문 그대로 보존하며, 버전이 바뀌면 이전 채택 결정을 자동으로 이어받지 않습니다.",
+        "dataHeading": "데이터와 설정",
+        "dataBody": "자료 전문은 프로젝트에 보관합니다. 화면은 색인을 먼저 읽고 필요한 내용을 불러옵니다. 모델과 런타임은 호스트에서 설정합니다.",
+        "criteriaHeading": "인수 기준",
+        "criteriaBody": "각 단계를 확인할 수 있어야 합니다. 모듈을 개별적으로 검토할 수 있어야 합니다. 작업을 이어갈 때 작업 지시와 증거 파일이 있어야 합니다. 아직 실행하지 않은 단계는 대기 상태로 명확하게 표시해야 합니다.",
+        "itemHeading": "요구사항 항목 {number}",
+        "itemBody": "자료 원문과 요약은 따로 저장합니다. 작업이 실패해도 입력한 수정 의견을 보존하고 재시도 방법을 명확하게 제공합니다. 출처와 버전을 확인할 수 있어야 하며, 다국어 문자와 이모지 🧭 가 손실되지 않아야 합니다.",
+        "endHeading": "긴 자료 인수 검증의 마지막 부분",
+        "endBody": "FINAL_MATERIAL_PAGE_REACHED · 원문 전체가 보존되었습니다.",
+        "moduleSeparator": ": "
+      },
+      "alpha": {
+        "heading": "자료 수집: 상세 설계",
+        "sections": [
+          { "heading": "사용 시나리오", "body": "담당자가 인터뷰 기록, 요구사항 설명, 기존 제안을 가져오면서 원문 전체를 보존합니다." },
+          { "heading": "화면과 상태", "body": "가져오기 대기, 처리 중, 검토 가능, 추가 정보 필요 상태를 구분하여 표시합니다. 입력 처리에 실패해도 내용을 지우지 않습니다." },
+          { "heading": "데이터 경계", "body": "원문은 별도로 저장하고 필요할 때 화면에서 읽습니다. 요약은 색인이며 원자료를 대신하지 않습니다." },
+          { "heading": "인수 검증 증거", "body": "이 파일은 고정 데이터를 사용하는 인수 검증 스크립트가 작성했습니다. 모델은 호출하지 않았습니다." }
+        ],
+        "implementationNotes": "입력, 원문 저장, 읽기 전용 표시를 계층별로 분리합니다.",
+        "businessRules": ["원문 전체를 저장한 뒤 처리 결과를 생성합니다.", "오류가 발생해도 사용자 입력을 보존하고 원인을 표시합니다."],
+        "pendingBehavior": "자료 대기 중",
+        "readyBehavior": "원문 저장 완료",
+        "receiptSummary": "고정 데이터로 수행한 인수 검증 파일입니다. 모델은 호출하지 않았습니다."
+      }
+    }
+  }
+}

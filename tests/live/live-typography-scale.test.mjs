@@ -477,23 +477,19 @@ test("the graph and its node titles outrank the compact run identity at measured
   // thing on screen. This measures the ratio the report was written against.
   for (const viewportWidth of [1693, 2048, 2560]) {
     const { heroPx, applied } = appliedTextSizes(css, scale, viewportWidth);
-
-    // The denominator has to be unambiguous, so exactly one selector may carry the
-    // top tier. Note that this counts SELECTORS, not elements: the tier used to sit
-    // on `.context-fact strong`, which satisfied this assertion as a single entry
-    // while the band rendered six of them, so six counters were simultaneously the
-    // largest text on screen with this test green. `.run-context-title` is one
-    // element as well as one selector, which is what makes the ratio below mean
-    // something.
-    const heroSelectors = [...applied]
+    // The reading workspace and graph are mutually exclusive views. Its heading
+    // is explicitly CSS-scoped to that view; it must not weaken the original
+    // graph hierarchy or make a graph metric eligible for the display tier.
+    const graphApplied = new Map([...applied].filter(([selector]) => !selector.includes('[data-work-view="workspace"]')));
+    const heroSelectors = [...graphApplied]
       .filter(([, size]) => size.value === "var(--fs-hero)")
       .map(([selector]) => selector);
     assert.deepEqual(heroSelectors, [], "the execution surface must not spend space on a hero heading");
-    const runTitle = applied.get('.run-context-title').pixels;
-    assert.ok(applied.get('.graph-canvas-title').pixels > runTitle);
-    assert.ok(applied.get('.node-title').pixels > runTitle);
+    const runTitle = graphApplied.get('.run-context-title').pixels;
+    assert.ok(graphApplied.get('.graph-canvas-title').pixels > runTitle);
+    assert.ok(graphApplied.get('.node-title').pixels > runTitle);
 
-    const contenders = [...applied].filter(([, size]) => size.value !== "var(--fs-hero)");
+    const contenders = [...graphApplied].filter(([, size]) => size.value !== "var(--fs-hero)");
     const biggest = contenders.reduce((best, entry) => (entry[1].pixels > best[1].pixels ? entry : best));
     const ratio = biggest[1].pixels / heroPx;
     assert.ok(
@@ -501,6 +497,14 @@ test("the graph and its node titles outrank the compact run identity at measured
       `at ${viewportWidth}px, ${biggest[0]} renders ${biggest[1].pixels.toFixed(2)}px against a ${heroPx.toFixed(2)}px top tier (ratio ${ratio.toFixed(4)})`,
     );
   }
+});
+
+test("the reading workspace reserves the shared display tier for its view-scoped project heading", () => {
+  const scale = loadLiveTypographyScale();
+  const css = stylesheetOf(renderLiveControlRoomPage());
+  const { applied } = appliedTextSizes(css, scale, 1440);
+  const heroSelectors = [...applied].filter(([, size]) => size.value === "var(--fs-hero)").map(([selector]) => selector);
+  assert.deepEqual(heroSelectors, ['.shell[data-work-view="workspace"] .uw-overview h1']);
 });
 
 test("adjacent tiers are separated enough to read as different levels", () => {

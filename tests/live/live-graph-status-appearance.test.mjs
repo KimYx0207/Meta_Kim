@@ -451,8 +451,12 @@ test("reduced motion removes route animations while preserving line state and co
   view.renderGraph(snapshotFixture());
   assert.equal(descendants(view.env.edgeLayer, "animateMotion").length, 0);
   assert.equal(view.env.graphState.edgeElements.get("edge-working").dataset.taskState, "in_progress");
-  const reducedRule = css.slice(css.lastIndexOf("@media (prefers-reduced-motion: reduce)"));
+  const reducedRule = extractMediaBlocks(css)
+    .filter((block) => block.condition === "(prefers-reduced-motion: reduce)")
+    .map((block) => block.body).join("\n");
   assert.match(reducedRule, /\.edge-flow-particle[^}]*display:\s*none/u, "changing the OS preference also hides existing SVG motion immediately");
+  assert.match(reducedRule, /\.uw-skeleton span\s*\{[^}]*animation:\s*none/u, "the workspace also stops its loading animation");
+  assert.match(reducedRule, /\.uw-workspace[^}]*transition-duration:\s*0s/u, "the workspace keeps OS motion preference changes effective");
   for (const state of ["not_started", "in_progress", "completed"]) {
     const ink = resolveValue(rule('.edge[data-task-state="' + state + '"]').stroke, rootTokens);
     assert.ok(contrast(ink, "#0e151f") >= 3, state + " line remains visible without glow");

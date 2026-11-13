@@ -1,9 +1,8 @@
-import { readFileSync } from "node:fs";
+import workspacePolicy from "../../../config/live/workspace.json" with { type: "json" };
 
 /** One package policy for both host ingestion and private HTTP projection. */
 export function loadLiveWorkspacePolicy() {
-  const policy = JSON.parse(readFileSync(new URL("../../../config/live/workspace.json", import.meta.url), "utf8"));
-  return normalizeLiveWorkspacePolicy(policy);
+  return normalizeLiveWorkspacePolicy(workspacePolicy);
 }
 
 export function normalizeLiveWorkspacePolicy(policy) {

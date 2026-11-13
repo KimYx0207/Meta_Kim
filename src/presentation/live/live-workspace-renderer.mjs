@@ -20,6 +20,11 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
   const text = (name, value) => { const node = find(name); if (node) node.textContent = String(value ?? ""); };
   const replace = (node, ...children) => { if (node) node.replaceChildren(...children); };
   const label = (status) => copy(workspaceStatusKey(status));
+  const displayVersion = (value) => {
+    const full = String(value ?? "");
+    const digest = /^(sha256:)?([a-f0-9]{64})$/i.exec(full);
+    return digest ? (digest[1] || "") + digest[2].slice(0, 12) + "…" + digest[2].slice(-8) : full;
+  };
   const button = (title, action, attributes = {}, secondary = false) => {
     const node = e("button", "uw-button" + (secondary ? " secondary" : ""), title);
     node.type = "button";
@@ -64,11 +69,17 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
   function renderHeader() {
     const snapshot = state.snapshot;
     root.dataset.workspaceRevision = state.workspace?.revision == null ? "" : String(state.workspace.revision);
-    text("title", snapshot?.run?.title || state.project?.displayName || copy("projectEmpty"));
+    const title = snapshot?.run?.title || state.project?.displayName || copy("projectEmpty");
+    const subtitle = snapshot?.run?.task || state.workspace?.nextAction?.summary || (state.workspace ? copy("noReviews") : copy("chooseRun"));
+    text("title", title);
     text("project-label", state.project?.displayName || copy("workspace"));
-    text("next", snapshot?.run?.task || state.workspace?.nextAction?.summary || (state.workspace ? copy("noReviews") : copy("chooseRun")));
+    text("next", subtitle);
+    find("next").hidden = !subtitle || String(subtitle).trim() === String(title).trim();
     text("status", snapshot?.run?.status ? label(snapshot.run.status) : copy("waitingRun"));
-    text("update", [state.workspace?.source?.version ? copy("version") + " " + state.workspace.source.version : "", state.lastReadAt ? new Date(state.lastReadAt).toLocaleTimeString(state.language === "zh" ? "zh-CN" : state.language, { hour: "2-digit", minute: "2-digit" }) : ""].filter(Boolean).join(" · "));
+    const fullVersion = String(state.workspace?.source?.version ?? "");
+    text("update", [fullVersion ? copy("version") + " " + displayVersion(fullVersion) : "", state.lastReadAt ? new Date(state.lastReadAt).toLocaleTimeString(state.language === "zh" ? "zh-CN" : state.language, { hour: "2-digit", minute: "2-digit" }) : ""].filter(Boolean).join(" · "));
+    find("update").title = fullVersion;
+    find("update").dataset.version = fullVersion;
     text("data-state", copy(state.loading && !state.workspace ? "loading" : state.error ? "stale" : state.workspace ? "fresh" : "partial"));
     text("source", copy("footer"));
     text("read-state", state.workspace?.capabilities?.host?.mode === "current_host_pull" ? copy("hostBoundary") : "");
@@ -305,9 +316,14 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
     const article = e("article", "uw-document");
     article.dataset.liveWorkspaceArtifact = item.artifactId || item.id;
     const header = e("header", "uw-document-header");
-    header.append(e("h3", "", item.title || item.id), e("span", "uw-version", copy("version") + " " + (item.version ?? copy("unknown"))), e("span", "uw-source-ref", item.artifactId || item.id), e("span", "uw-source-ref", label(item.status)));
+    const fullVersion = String(item.version ?? copy("unknown"));
+    const version = e("span", "uw-version", copy("version") + " " + displayVersion(fullVersion));
+    version.title = fullVersion;
+    version.dataset.version = fullVersion;
+    version.setAttribute("aria-label", copy("version") + " " + fullVersion);
+    header.append(e("h3", "", item.title || item.id), version, e("span", "uw-source-ref", item.artifactId || item.id), e("span", "uw-source-ref", label(item.status)));
     article.append(header);
-    if (item.purpose || item.summary) article.append(section(copy("overview"), item.purpose || item.summary));
+    if (item.purpose || item.summary) article.append(section(copy(item.kind === "module" ? "moduleSummary" : "overview"), item.purpose || item.summary));
     if (item.dependsOn?.length) article.append(section(copy("dependsOn"), item.dependsOn.join(" · ")));
     renderReview(article, item);
     const material = state.material;

@@ -279,7 +279,7 @@ You can also install without keeping a checkout: `npx --yes github:KimYx0207/Met
 
 ### 2. Open your project and describe the result
 
-Open the working project in the client you configured. Send an ordinary message:
+Open the working project in the client you configured. Describe your goal in your own words: who will use the result, what should change, the materials already available and any constraints. For example:
 
 > “Review this project's sign-up flow. Make it easier to use on a phone, preserve the current data fields, and show me the changed flow with its checks.”
 

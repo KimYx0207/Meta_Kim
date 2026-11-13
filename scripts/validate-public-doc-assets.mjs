@@ -9,7 +9,9 @@ const README_LOCALES = new Map([
   ["README.ja-JP.md", "ja-JP"],
   ["README.ko-KR.md", "ko-KR"],
 ]);
-const REQUIRED_PUBLIC_IMAGES = [
+// Keep shipped support assets available and tracked; README authors may choose
+// whether to display them. Every image that is referenced is still validated.
+const SHIPPED_SUPPORT_IMAGES = [
   "docs/images/contact-qr.png",
   "docs/images/wechat-pay.jpg",
   "docs/images/alipay.jpg",
@@ -65,8 +67,7 @@ for (const [file, locale] of README_LOCALES) {
   }
 }
 
-for (const image of REQUIRED_PUBLIC_IMAGES) {
-  assert(referenced.has(image), `${image} must remain referenced by README files`);
+for (const image of SHIPPED_SUPPORT_IMAGES) {
   await fs.access(repoPath(image));
   assert(gitTracked(image), `${image} must be tracked as a public README asset`);
 }

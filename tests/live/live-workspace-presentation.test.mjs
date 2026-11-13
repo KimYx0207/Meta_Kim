@@ -5,6 +5,7 @@ import { setImmediate } from "node:timers/promises";
 import { createLiveWorkspaceController, LIVE_WORKSPACE_UI_POLICY } from "../../src/presentation/live/live-workspace-client.mjs";
 import { LIVE_WORKSPACE_MESSAGES, workspaceStatusKey, workspaceArtifactItems, workspaceMaterialIdentity, workspaceMaterialMatches, workspaceMaterialReady, workspaceReviewForArtifact, workspaceCommandMessage } from "../../src/presentation/live/live-workspace-model.mjs";
 import { renderLiveControlRoomPage } from "../../src/presentation/live/live-control-room-page.mjs";
+import { createLiveWorkspaceRenderer } from "../../src/presentation/live/live-workspace-renderer.mjs";
 
 const token = "workspace-test-token-123456789";
 const architecture = { id: "outline", artifactId: "prd:outline", version: 1, sha256: "a".repeat(64), title: "系统总纲" };
@@ -321,4 +322,70 @@ test("capacity refusal is explicit, preserves the draft, and is not treated as u
   assert.match(h.state.command.message, /容量已满/);
   assert.equal(h.state.drafts.get("draft"), "保留原文");
   assert.equal(h.calls.filter((call) => call.url.pathname.endsWith("/requests")).length, 0);
+});
+
+// Minimal DOM storage for exercising the production renderer, without a browser
+// or a second implementation of its presentation decisions.
+function presentationHarness({ language = "zh", mode = "overview" } = {}) {
+  class Element {
+    constructor(tag = "div") { this.tagName = tag; this.children = []; this.dataset = {}; this.attributes = new Map(); this.hidden = false; this.scrollTop = 0; this.textContent = ""; }
+    append(...nodes) { this.children.push(...nodes); }
+    replaceChildren(...nodes) { this.children = nodes; }
+    setAttribute(name, value) { this.attributes.set(name, String(value)); }
+    addEventListener() {}
+    querySelectorAll() { return []; }
+  }
+  const nodes = new Map();
+  const doc = { createElement: (tag) => new Element(tag), activeElement: null };
+  const root = new Element(); root.ownerDocument = doc;
+  root.querySelector = (selector) => { if (!nodes.has(selector)) nodes.set(selector, new Element()); return nodes.get(selector); };
+  const fullVersion = "sha256:" + "0123456789abcdef".repeat(4);
+  const outline = { ...architecture, version: fullVersion, summary: "完整系统的范围" };
+  const detail = { ...module("alpha"), version: fullVersion, purpose: "模块负责的范围" };
+  const state = { snapshot: { run: { title: "同一任务", task: "同一任务", status: "running" } }, project: { displayName: "项目" },
+    workspace: workspace({ source: { version: fullVersion }, design: { architecture: outline, modules: [detail], totalModules: 1 }, reviews: [], stages: [] }),
+    view: "prd", prdMode: mode, selectedModuleId: "alpha", drafts: new Map(), selectionKey: "project:run", language, tasks: [], canWrite: false };
+  const selected = mode === "overview" ? outline : detail;
+  state.material = { ...readMaterial(selected), text: "完整正文", totalBytes: 12, loadedBytes: 12 };
+  const renderer = createLiveWorkspaceRenderer({ app: { querySelector: () => null }, root, state, copy: (key) => LIVE_WORKSPACE_MESSAGES[language][key] || key, actions: {} });
+  return { state, renderer, fullVersion, node: (name) => root.querySelector("[data-uw-" + name + "]"), article: () => root.querySelector("[data-uw-content]").children[0] };
+}
+
+test("rendered version labels are compact while full material bindings and accessible titles remain exact", () => {
+  const h = presentationHarness();
+  const originalIdentity = workspaceMaterialIdentity(h.state.workspace.design.architecture);
+  h.renderer.render();
+  assert.ok(h.node("update").textContent.length < 45);
+  assert.equal(h.node("update").title, h.fullVersion);
+  const version = h.article().children[0].children.find((node) => node.className === "uw-version");
+  assert.ok(version.textContent.length < 45);
+  assert.equal(version.title, h.fullVersion);
+  assert.equal(version.attributes.get("aria-label"), LIVE_WORKSPACE_MESSAGES.zh.version + " " + h.fullVersion);
+  const body = h.article().children.find((node) => node.className === "uw-document-body");
+  assert.equal(body.dataset.version, h.fullVersion);
+  assert.equal(workspaceMaterialIdentity(h.state.workspace.design.architecture), originalIdentity);
+  h.state.workspace.source.version = "release-2026.11-beta";
+  h.renderer.render();
+  assert.match(h.node("update").textContent, /release-2026\.11-beta/);
+});
+
+test("rendered overview suppresses only a subtitle equal to its title and restores a distinct next action", () => {
+  const h = presentationHarness();
+  h.renderer.render();
+  assert.equal(h.node("next").hidden, true);
+  h.state.snapshot.run.task = "请审阅新的系统边界";
+  h.renderer.render();
+  assert.equal(h.node("next").hidden, false);
+  assert.equal(h.node("next").textContent, "请审阅新的系统边界");
+});
+
+test("rendered module summaries use module-specific headings in all four languages", () => {
+  for (const [language, expected] of Object.entries({ zh: "模块说明", en: "Module summary", ja: "モジュール概要", ko: "모듈 설명" })) {
+    const h = presentationHarness({ language, mode: "module" });
+    h.renderer.render();
+    assert.equal(h.article().children[1].children[0].textContent, expected, language);
+    h.state.prdMode = "overview";
+    h.renderer.render();
+    assert.equal(h.article().children[1].children[0].textContent, LIVE_WORKSPACE_MESSAGES[language].overview, language);
+  }
 });

@@ -1,6 +1,7 @@
 /** Presentation vocabulary and bounded selectors. This module never decides completion. */
 export const LIVE_WORKSPACE_MESSAGES = Object.freeze({
   zh: {
+    moduleSummary: "模块说明",
     summaryExcerpt: "摘要", evidenceMore: "另有 {count} 条引用未在本摘要中列出。",
     bindingPending: "提交已记录，正在同步当前工作版本。同步完成后可继续提交；若等待较久，可核实原请求。",
     loadMoreRecords: "加载更多记录", refreshRecords: "刷新记录", loadedRecords: "已载请求", recordsChanged: "记录版本已更新，已保留载入的记录。请刷新记录后继续翻页。",
@@ -26,6 +27,7 @@ export const LIVE_WORKSPACE_MESSAGES = Object.freeze({
     stage: "阶段", status: "状态", owner: "负责人", runtime: "执行器", model: "模型", dependsOn: "依赖模块", source: "来源", version: "版本", evidence: "证据", outputs: "产物", openGraph: "在运行图中查看", events: "事件", decision: "决定", request: "请求", stageDetails: "阶段详情", nextAction: "下一步", refreshError: "工作记录读取失败。保留上次内容，你可以重试。", materialConflict: "材料版本已变化。当前内容不再追加新页，请刷新后读取新版本。", materialSourceMismatch: "材料版本或来源不一致，已停止显示；请刷新当前工作。", retry: "重试读取", footer: "同一工作 · 版本可追溯 · 结果以验证为准", demo: "演示数据", fixture: "验收样例 · 非真实运行", taskCount: "项任务", moduleCount: "个模块", loadUnavailable: "这一页读取失败，已保留已有内容。", hostBoundary: "当前执行器接续模式", notSubmitting: "未提交", inputRequired: "请先填写修改意见。", result: "结果", original: "意见原文", receipt: "回执", itemTotal: "总计", page: "页", projectEmpty: "还没有可读取的项目", projectEmptyNote: "选择已登记项目；它的真实运行、系统模块和产物会显示在这里。",
   },
   en: {
+    moduleSummary: "Module summary",
     summaryExcerpt: "Summary excerpt", evidenceMore: "{count} additional references are not included in this summary.",
     bindingPending: "The submission is recorded. Syncing the current work version before another submission; verify the original request if the wait continues.",
     loadMoreRecords: "Load more records", refreshRecords: "Refresh records", loadedRecords: "Requests loaded", recordsChanged: "The record version changed. Loaded records are preserved; refresh before continuing through history.",
@@ -51,6 +53,7 @@ export const LIVE_WORKSPACE_MESSAGES = Object.freeze({
     stage: "Stage", status: "Status", owner: "Owner", runtime: "Runtime", model: "Model", dependsOn: "Dependencies", source: "Source", version: "Version", evidence: "Evidence", outputs: "Outputs", openGraph: "View in run map", events: "Events", decision: "Decision", request: "Request", stageDetails: "Stage details", nextAction: "Next step", refreshError: "Could not refresh work records. The last content is preserved; retry when ready.", materialConflict: "The material version changed. New pages will not be appended; refresh to read the new version.", materialSourceMismatch: "The material identity or version does not match. Refresh the current work.", retry: "Retry reading", footer: "One work item · traceable versions · verified outcomes", demo: "Demo data", fixture: "Acceptance fixture · not a real run", taskCount: "tasks", moduleCount: "modules", loadUnavailable: "This page could not be read. Existing content is preserved.", hostBoundary: "Current-host continuation", notSubmitting: "Not submitted", inputRequired: "Enter your feedback first.", result: "Result", original: "Original feedback", receipt: "Receipt", itemTotal: "Total", page: "page", projectEmpty: "No readable project yet", projectEmptyNote: "Select a registered project to see its real runs, system modules and artifacts.",
   },
   ja: {
+    moduleSummary: "モジュール概要",
     summaryExcerpt: "要約", evidenceMore: "この要約には含まれていない参照が他に {count} 件あります。",
     bindingPending: "送信は記録済みです。次の送信の前に現在の作業バージョンを同期しています。待ち時間が長い場合は元のリクエストを確認してください。",
     loadMoreRecords: "さらに記録を読み込む", refreshRecords: "記録を更新", loadedRecords: "読み込み済みリクエスト", recordsChanged: "記録の版が更新されました。読み込み済みの内容は保持されています。記録を更新してから続きを読み込んでください。",
@@ -76,6 +79,7 @@ export const LIVE_WORKSPACE_MESSAGES = Object.freeze({
     stage: "段階", status: "状態", owner: "担当者", runtime: "実行環境", model: "モデル", dependsOn: "依存モジュール", source: "出典", version: "版", evidence: "根拠", outputs: "成果物", openGraph: "実行図で表示", events: "イベント", decision: "判断", request: "リクエスト", stageDetails: "段階の詳細", nextAction: "次の手順", refreshError: "作業記録を読み込めませんでした。前回の内容を保持しています。再試行できます。", materialConflict: "資料の版が変更されました。新しいページは追加しません。更新して新しい版を読み込んでください。", materialSourceMismatch: "資料の版または出典が一致しません。現在の作業を更新してください。", retry: "読み取りを再試行", footer: "同じ作業・追跡可能な版・検証に基づく結果", demo: "デモデータ", fixture: "検証用サンプル・実際の実行ではありません", taskCount: "件のタスク", moduleCount: "モジュール", loadUnavailable: "このページを読み込めませんでした。既存の内容は保持されています。", hostBoundary: "現在の実行ホストによる続行", notSubmitting: "未送信", inputRequired: "まず修正意見を入力してください。", result: "結果", original: "意見の原文", receipt: "受領記録", itemTotal: "合計", page: "ページ", projectEmpty: "読み取れるプロジェクトはまだありません", projectEmptyNote: "登録済みプロジェクトを選択すると、実際の実行、システムモジュール、成果物が表示されます。",
   },
   ko: {
+    moduleSummary: "모듈 설명",
     summaryExcerpt: "요약", evidenceMore: "이 요약에 포함되지 않은 참조가 {count}개 더 있습니다.",
     bindingPending: "제출이 기록되었습니다. 다음 제출 전에 현재 작업 버전을 동기화합니다. 오래 기다려야 한다면 원래 요청을 확인해 주세요.",
     loadMoreRecords: "기록 더 불러오기", refreshRecords: "기록 새로 고침", loadedRecords: "불러온 요청", recordsChanged: "기록 버전이 변경되었습니다. 불러온 기록은 유지됩니다. 기록을 새로 고친 후 다음 페이지를 읽어 주세요.",
