@@ -1,0 +1,157 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "3a69a975421c149180012aa605971cf61e881322",
+  "workflowRun": "https://github.com/KimYx0207/Meta_Kim/actions/runs/43422793689",
+  "capturedAt": "2026-11-13T12:10:12.263928+00:00",
+  "captureKind": "actual browser screenshot",
+  "recordOrigin": "acceptance_fixture",
+  "transport": "actual default Hub HTTP + browser UI + production host CLI",
+  "modelCalled": false,
+  "nativeInvocationVerified": false,
+  "completionVerified": false,
+  "browserVersion": "151.0.7922.34",
+  "checks": [
+    "Eight actual stages; stage detail keyboard close returns focus",
+    "Long Unicode PRD loaded through 2 real bounded pages",
+    "UI outline approval → host CLI claim → actual file report → module approval → next module",
+    "Refresh retains draft; submitted feedback remains recorded after reload and never claims execution completion",
+    "1440 / 1024 / 390 layouts have no document horizontal overflow; mobile navigation and readable PRD verified",
+    "Mobile feedback input and submit control are reachable by normal scrolling; typed draft is retained",
+    "English, Japanese and Korean UI and sample materials: real outline approval, host CLI file report and localized module screenshots",
+    "No browser page errors"
+  ],
+  "screenshots": [
+    {
+      "file": "meta-kim-workspace.en.png",
+      "language": "en",
+      "sourceScreenshot": "live-workspace-desktop.en.png",
+      "sha256": "dfbecb852ca99afff299a650e6f050c3104e01695b8417dd1bf133795297e42c",
+      "view": "Localized Work / en",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "meta-kim-prd-outline.en.png",
+      "language": "en",
+      "sourceScreenshot": "live-workspace-prd.en.png",
+      "sha256": "413d9a62dd194bc72304e154b5e8b1828f2c45edb40bfc9c6967a3d836d582fb",
+      "view": "Localized system outline / en",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "meta-kim-prd-module.en.png",
+      "language": "en",
+      "sourceScreenshot": "live-workspace-module.en.png",
+      "sha256": "141a941671674871aa5789e918819f805966db5bd2a9a9dca2b8fd1dfe9fdcf3",
+      "view": "Localized module after host file report / en",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "meta-kim-workspace.zh-CN.png",
+      "language": "zh-CN",
+      "sourceScreenshot": "live-workspace-desktop.png",
+      "sha256": "f36856fa59093ceb39b8eabca1ee393bb6a10f907870dba7ecd258799ee6f837",
+      "view": "Work / eight stages",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "meta-kim-prd-outline.zh-CN.png",
+      "language": "zh-CN",
+      "sourceScreenshot": "live-workspace-prd.png",
+      "sha256": "bc314f3b5a3a2807f077b7547d1538d4d7f8178ee3b3f7f74c5d7fb16f409a8e",
+      "view": "System outline / version-bound review",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "meta-kim-prd-module.zh-CN.png",
+      "language": "zh-CN",
+      "sourceScreenshot": "live-workspace-module.png",
+      "sha256": "8897e26ec1c6c7bbffc6dcff38f081d8e40b565154836e289f028b83a0d1539f",
+      "view": "Module detail after real host file report",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "meta-kim-workspace.ja-JP.png",
+      "language": "ja-JP",
+      "sourceScreenshot": "live-workspace-desktop.ja.png",
+      "sha256": "3ddd8592a89a28df39a0822fd6c110e98df7ef9598ccea6a244a9c18b16e54aa",
+      "view": "Localized Work / ja",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "meta-kim-prd-outline.ja-JP.png",
+      "language": "ja-JP",
+      "sourceScreenshot": "live-workspace-prd.ja.png",
+      "sha256": "95f974590c9041b697c6271d6a2612b7677bbb1782029854e2c50253efac39b8",
+      "view": "Localized system outline / ja",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "meta-kim-prd-module.ja-JP.png",
+      "language": "ja-JP",
+      "sourceScreenshot": "live-workspace-module.ja.png",
+      "sha256": "803b50ef387b2756ba0094af5e0028092fb126271f322b1d5b091de5b405ac60",
+      "view": "Localized module after host file report / ja",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "meta-kim-workspace.ko-KR.png",
+      "language": "ko-KR",
+      "sourceScreenshot": "live-workspace-desktop.ko.png",
+      "sha256": "29732519273118584e99d630284f30588eaf86354ab239c7a6ae473c4e7325eb",
+      "view": "Localized Work / ko",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "meta-kim-prd-outline.ko-KR.png",
+      "language": "ko-KR",
+      "sourceScreenshot": "live-workspace-prd.ko.png",
+      "sha256": "580dd7c394c7816a0919f0cce00ab06c5889dc0cc353163b5b1a40207dfe4aba",
+      "view": "Localized system outline / ko",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    },
+    {
+      "file": "meta-kim-prd-module.ko-KR.png",
+      "language": "ko-KR",
+      "sourceScreenshot": "live-workspace-module.ko.png",
+      "sha256": "6379928b630a2db357924136e3f1e5c4bcf3f96bfa897e9a32225da24090f34b",
+      "view": "Localized module after host file report / ko",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      }
+    }
+  ]
+}

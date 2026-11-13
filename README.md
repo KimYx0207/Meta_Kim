@@ -26,9 +26,11 @@ The outcome should be concrete: for this example, a working booking page, a mana
 
 Open your project in your AI client and describe the result, existing materials and constraints. **Live is the single visual workspace for continuing project work:** inspect all eight stages, read both PRD passes, accept the current version or submit module feedback. The current AI host performs the next step.
 
-![The actual Meta_Kim Live interface showing task relationships and workflow progress](docs/images/meta-kim-live-task.png)
+<p align="center">
+  <img src="docs/images/meta-kim-workspace.en.png" alt="The actual Meta_Kim Live workspace with the eight stages and the next system-outline review" width="1200">
+</p>
 
-*The running Live interface with built-in workflow demonstration data. In Live, open a task to inspect its details. The animated diagrams below use the booking example to explain the operating model.*
+*Actual Live workspace with a clearly marked acceptance sample. The browser uses the real Hub, review controls and current-host CLI; the sample does not call a model. Open PRD to read the system outline and individual module designs.*
 
 ## Read, review and continue in Live
 
@@ -92,6 +94,12 @@ Read the two design passes from left to right, then follow the arrows down to ta
 
 [Open the scalable diagram](docs/images/prd-to-tasks.en.svg)
 
+<p align="center">
+  <img src="docs/images/meta-kim-prd-outline.en.png" alt="Actual Live system-outline view with version-bound adoption, request-changes and return controls" width="1200">
+</p>
+
+*In Live, the first pass appears under PRD → System overview. Read the actual material and record your judgment against its current version. This screenshot uses the same labeled acceptance sample.*
+
 ## Second PRD pass: make each module ready to implement
 
 Once the direction is settled, the AI develops each module's detailed design and synthesizes it into the same PRD. Modules continue to share the concepts, state and interfaces established above.
@@ -119,6 +127,12 @@ The detailed design also connects each requirement to implementation and a check
 Each worker receives **the current system baseline, its complete relevant module design, settled decisions and interfaces, required outputs and acceptance criteria**. Frontend and backend work share agreed fields and states before proceeding within their own scopes.
 
 If you later change the rule for releasing capacity after cancellation, related decisions, modules and dependencies identify the affected tasks. Valid completed work remains useful while changes focus on their actual impact.
+
+<p align="center">
+  <img src="docs/images/meta-kim-prd-module.en.png" alt="Actual Live module-detail view after a real current-host file report, with module summary and review controls" width="1200">
+</p>
+
+*The second pass appears under PRD → Module design. This capture follows a real outline approval and current-host file report; adopting a module makes the next one available. The text shown is an acceptance sample.*
 
 ## Eight stages: what each step produces for the next
 
