@@ -8,6 +8,14 @@
 
 </div>
 
+## Meta_Kim은 무엇이며 무엇을 할 수 있나요?
+
+**Meta_Kim은 기존 AI 클라이언트 안에서 사용하는 Agent 거버넌스와 작업 편성 프레임워크입니다.** 목표를 조사, 계획, 전문 작업, 검증한 결과물과 이어 갈 수 있는 진행 기록으로 연결합니다. 공통 방법, 아홉 관리 역할과 로컬 Live 작업 공간이 각 단계를 연결합니다.
+
+업무 문제 조사, 보고서나 콘텐츠 제작, 기존 제품 개선과 소프트웨어 개발에 사용할 수 있습니다. Agent는 실제 자료와 제약을 바탕으로 적합한 방법과 도구를 선택하고 결과를 제작한 뒤 피드백에 따라 개선합니다. Meta_Kim이 작업을 조직하고 사용 가능한 전문 역량이 실제 작업을 맡습니다. 필요하면 Kim Service의 전문 방법을 연결할 수 있습니다.
+
+일상적인 표현으로는 **요구 분해 → 검색 → 연구 → 방법 검토 → 제작**입니다. Critical, Fetch(검색과 연구), Thinking, Execution에 대응하며 Review, Meta-Review, Verification, Evolution이 이어집니다. 아래에서는 예약 앱을 사례로 요청이 설계, 작업, 실제 파일과 검수 결과가 되는 과정을 설명합니다.
+
 <p align="center">
   <img src="docs/images/system-panorama.ko-KR.svg" alt="Meta_Kim 시스템 흐름: 8단계, 의존성에 따른 실행, 사람의 판단, 수정 경로와 기록 위치" width="1200">
 </p>
@@ -34,7 +42,7 @@ AI 클라이언트에서 프로젝트를 열고 요청, 기존 자료와 제약�
 
 ## Live에서 읽고 검토하고 다음으로 이어가기
 
-8개 단계는 실행 거버넌스를, 11개 업무 단계는 계획·수정·피드백·마무리를 설명합니다. 실제 검증 범위는 [흐름 검증 기록](docs/verification/meta-flow-closure.md)에서 확인할 수 있습니다. [WorkBuddy](docs/workbuddy.md)와 [Doubao Work](docs/doubao-work.md)용 완전한 Skill 내보내기를 지원하며 네이티브 클라이언트 검증은 별도로 기록합니다.
+8개 단계는 실행을 구성하고 11개 업무 단계는 계획·수정·피드백·마무리를 설명합니다. Live에서 현재 자료를 읽고 판단을 기록한 뒤 다음 작업을 이어 갈 수 있습니다.
 
 작업 화면에서 현재 단계와 다음 행동을 확인하고, PRD에서 시스템 개요와 모듈 상세를 전환합니다. 현재 파일 버전에 대해 채택, 수정 요청 또는 반려를 기록할 수 있습니다. 모듈을 채택하면 호스트가 다음 작업을 받을 수 있습니다. 기록과 실행 지도에서는 결과와 근거를 확인합니다.
 
@@ -264,7 +272,7 @@ Meta_Kim은 계획, 발견, 진행 상황, 결정, 결과물과 검사 기록을
 
 ## 내 프로젝트에서 시작하기
 
-**Node.js 22.13.0+**, Git, 모델 연결을 설정한 AI 클라이언트가 필요합니다. 현재 공개 버전은 **[v3.13.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.13.0)** 입니다.
+**Node.js 22.13.0+**, Git, 모델 연결을 설정한 AI 클라이언트가 필요합니다. 현재 공개 버전은 **[v3.13.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.13.0)** 입니다. 버전별 변경과 이전 안내는 별도의 [CHANGELOG.ko-KR.md](CHANGELOG.ko-KR.md)에서 관리합니다.
 
 ### 1. Meta_Kim 설치하기
 
@@ -353,6 +361,65 @@ node bin/meta-kim.mjs live --project-root "/path/to/your-project"
 
 새 클라이언트·운영체제·모델 연결 정보가 없는 이전 실행은 과거 근거로 보관합니다. 추가 실행에는 새 `runId`와 현재 기능·맥락 확인을 사용하며 이전 모델을 추측하지 않습니다. 새 형식의 실행을 재개하면 원래 모델 인수 기록을 유지하고, 채택이나 업무 효과 관측만 추가할 때 worker를 다시 실행하지 않습니다.
 
+## WorkBuddy 또는 Doubao Work에 완전한 방법 가져오기
+
+**완전한 Skill 패키지를 내보낸 뒤 클라이언트 화면에서 가져옵니다.** `meta-theory` 원문, 참고 자료, 아홉 관리 역할, 공개 설정 계약, 라이선스와 SHA-256 출처 기록을 보존합니다.
+
+**사용 조건:** 방법을 가져오는 경로이며 실제 실행은 클라이언트의 모델, 도구와 권한을 사용합니다. Meta CLI와 Live 기능에는 별도로 설치한 Meta 런타임이 필요합니다. 패키지 내보내기와 로컬 무결성 확인은 구현되어 있으며 가져오기, 실행과 작업 재개는 아래 절차로 자신의 작업에서 확인합니다.
+
+Meta_Kim **v3.13.0** 소스 체크아웃 또는 정식 소스 배포의 압축을 푼 디렉터리와 **Node.js 22.13.0+**를 준비하세요. 루트에서 터미널을 열고 운영체제에 맞는 코드를 실행하면 두 클라이언트의 패키지를 만들고 확인합니다. 출력 디렉터리는 새 경로여야 합니다. 명령이 실패하면 오류를 해결한 뒤 가져오세요.
+
+**Windows · PowerShell**
+
+```powershell
+$KimExportRoot = Join-Path ([IO.Path]::GetTempPath()) ('meta-skills-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $KimExportRoot -ErrorAction Stop | Out-Null
+foreach ($KimHost in @('workbuddy', 'doubao')) {
+    $KimOutput = Join-Path $KimExportRoot $KimHost
+    node scripts/build-desktop-skill-package.mjs --host $KimHost --component meta-theory --output $KimOutput
+    if ($LASTEXITCODE -ne 0) { throw "Export failed: $KimHost" }
+    node scripts/build-desktop-skill-package.mjs --host $KimHost --component meta-theory --output $KimOutput --check
+    if ($LASTEXITCODE -ne 0) { throw "Verification failed: $KimHost" }
+    Write-Host (Join-Path $KimOutput 'meta-theory.zip')
+}
+```
+
+**macOS / Linux · Bash**
+
+```bash
+kimExportRoot="$(cd "$(mktemp -d)" && pwd -P)"
+for kimHost in workbuddy doubao; do
+  node scripts/build-desktop-skill-package.mjs --host "$kimHost" --component meta-theory --output "$kimExportRoot/$kimHost" || break
+  node scripts/build-desktop-skill-package.mjs --host "$kimHost" --component meta-theory --output "$kimExportRoot/$kimHost" --check || break
+  printf '%s\n' "$kimExportRoot/$kimHost/meta-theory.zip"
+done
+```
+
+결과는 `<출력>/workbuddy/meta-theory.zip`과 `<출력>/doubao/meta-theory.zip`이며 명령이 절대 경로를 표시합니다. 각 디렉터리에는 압축을 푼 Skill과 `desktop-package.json`도 있습니다. `--check`는 ZIP, 파일 트리, 소스와 해시를 읽기 전용으로 비교합니다. 한 클라이언트만 사용할 때는 해당 생성과 확인 명령만 실행하세요.
+
+1. **가져오기:** WorkBuddy에서 “专家·技能·连接器 → 技能 → 添加技能 → 上传技能”을 열고 해당 ZIP을 선택합니다. Doubao Work는 현재 버전의 로컬 Skill 가져오기(보통 “技能·连接器·伙伴” 안)에서 ZIP을 선택합니다. 폴더를 요구하면 `SKILL.md`, `source/`, `package-provenance.json`이 모두 있는 압축 해제된 `meta-theory`를 선택합니다.
+2. **발견 확인:** Skill을 활성화하고 새 작업에 아래 문장을 입력합니다. 이름이 목록에 보이는 것뿐 아니라 원문과 참고 자료가 읽히는지 확인합니다.
+3. **실행 확인:** 작은 실제 작업을 제공하고 파일과 검증 결과를 확인합니다. 입력이나 도구가 부족하면 클라이언트가 명시하도록 하고 다음 작업을 진행합니다.
+4. **계속하기와 업데이트:** 입력 버전, 완료한 결과와 다음 행동을 저장하고 다시 열 때 확인합니다. 업데이트 전 개인 설정과 수정한 Skill을 보관하고 새 디렉터리로 내보내 검증한 뒤 클라이언트의 업데이트나 가져오기를 사용합니다. 같은 이름의 교체와 재시작 후 복구는 실제 클라이언트에서 확인합니다.
+
+```text
+가져온 meta-theory Skill, package-provenance.json, 원래 방법의 진입점과 관련 자료를 읽으세요.
+버전, 실제로 읽은 자료, 사용 가능한 파일·스크립트·도구 기능을 보고하세요.
+그 방법으로 제 작업을 수행하고 결과, 검증, 미완료 작업과 다음 행동을 저장하세요.
+자료, 권한 또는 Meta CLI가 없으면 명시하세요.
+가져오기 성공, 실제 실행과 결과 검증을 구분하세요.
+```
+
+전문 방법을 추가하려면 대응하는 **Kim_Service V1.16** 소스를 준비합니다. 그 루트에서 래퍼를 사용해 Agent 또는 Skill을 하나씩 내보냅니다. 절대 경로를 실제 경로로 바꾸세요.
+
+```bash
+node scripts/build-desktop-skill-package.mjs --meta-root "/absolute/Meta_Kim" --host workbuddy --component reliability-engineer --output "/absolute/new-reliability-method"
+```
+
+같은 명령에 `--check`를 추가해 확인한 뒤 가져옵니다. Doubao Work에는 `--host doubao`와 다른 새 출력 디렉터리를 사용하세요. Service는 선택한 Agent 또는 Skill을 완전한 전문 방법으로 읽고 필요한 Meta 버전과 확인 가능한 의존성 버전 근거를 비교합니다.
+
+공식 진입점, 패키지 크기 제한, 정식 소스 해시 확인과 추가 점검은 필요할 때 [WorkBuddy 상세](docs/workbuddy.md) · [Doubao Work 상세](docs/doubao-work.md)를 참고하세요.
+
 ## 전문적인 방법이 필요할 때 Kim Service 연결하기
 
 Meta_Kim은 작업을 조직합니다. **Kim Service는 설계, 분석, 콘텐츠 제작 같은 일에 재사용할 전문적인 방법과 자료를 제공합니다.** 연결하면 작업 방법을 고를 때 이 자료들도 검토할 수 있습니다. 실제 작업은 현재 클라이언트에서 사용할 수 있는 도구로 진행합니다.
@@ -440,7 +507,6 @@ node setup.mjs --check
 공통 Agent, Skill과 실행 리소스는 `canonical/`에서, 기계가 읽는 설정은 `config/`에서 관리합니다. `.claude/`, `.codex/`, `.cursor/` 같은 클라이언트별 디렉터리는 `npm run meta:sync`로 로컬에 생성합니다. 생성물은 `.gitignore`로 GitHub 소스에서 제외하고 로컬에 유지하며, 배포 패키지에는 공통 원본 소스를 포함합니다.
 
 ## 연락처
-
 
 GitHub <a href="https://github.com/KimYx0207">KimYx0207</a> |
 X <a href="https://x.com/KimYx0207">@KimYx0207</a> |

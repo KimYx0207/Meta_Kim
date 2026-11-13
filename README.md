@@ -8,6 +8,14 @@
 
 </div>
 
+## What Meta_Kim is and what it can do
+
+**Meta_Kim is a governance and orchestration framework for AI agents, used inside your existing AI client.** It turns a goal into research, a plan, specialist work, checked deliverables and saved progress. Shared methods, nine governance roles and the local Live workspace keep those steps connected.
+
+Use it to investigate a business problem, create a report or content, improve an existing product, or build software. The agent works from your actual materials and constraints, selects suitable methods and tools, produces the deliverable, and continues from feedback. Meta_Kim organizes the work; available specialist capabilities, including optional Kim Service methods, carry out the tasks.
+
+In everyday terms: **break down the request → search → research → think → make**. These map to Critical, Fetch (search and research), Thinking and Execution, followed by Review, Meta-Review, Verification and Evolution. The booking example below follows this complete journey from a request to designs, tasks, working files and acceptance checks.
+
 <p align="center">
   <img src="docs/images/system-panorama.en.svg" alt="Meta_Kim system flow with eight stages, dependency routing, human decisions, revision paths, and saved records" width="1200">
 </p>
@@ -34,7 +42,7 @@ Open your project in your AI client and describe the result, existing materials 
 
 ## Read, review and continue in Live
 
-The eight stages govern execution; eleven business phases describe planning, revision, feedback and closure. See [workflow verification](docs/verification/meta-flow-closure.md) for actual coverage and remaining native checks. [WorkBuddy](docs/workbuddy.md) and [Doubao Work](docs/doubao-work.md) now have complete Skill export entrypoints, with native client acceptance recorded separately.
+The eight stages organize execution; eleven business phases describe planning, revision, feedback and closure. In Live you can read the current material, review it and continue the next task.
 
 | Your task | Live entry | Durable result |
 | --- | --- | --- |
@@ -270,7 +278,7 @@ Use optional `workContext` in the ordinary API or CLI `--work-context-input`; ap
 
 ## Start with your own project
 
-You need **Node.js 22.13.0+**, Git and an AI client with its model connection configured. Current release: **[v3.13.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.13.0)**.
+You need **Node.js 22.13.0+**, Git and an AI client with its model connection configured. Current release: **[v3.13.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.13.0)**. Version history and migration notes are maintained separately in [CHANGELOG.md](CHANGELOG.md).
 
 ### 1. Install Meta_Kim
 
@@ -359,6 +367,66 @@ Installation projections, host continuation and native command bridges have sepa
 
 Older runs without the new client, operating-system and model binding remain historical evidence. Further execution uses a new `runId` and fresh capability/context evidence, without guessing the historical model. Resuming a newly bound run preserves its original model-parameter record; appending business adoption or effect observations does not rerun workers.
 
+## Use complete methods in WorkBuddy or Doubao Work
+
+**Export one complete Skill package and import it through the client's interface.** The package preserves the `meta-theory` source, references, nine governance roles, public configuration contracts, licenses and SHA-256 provenance.
+
+**Usage conditions:** this is a method import route; actual execution uses the client's available model, tools and permissions. Meta CLI and Live features need a separately installed Meta runtime. Package export and local integrity checks are implemented; client import, execution and continuation are checked in your own task using the steps below.
+
+Start from the Meta_Kim **v3.13.0** source checkout or unpacked source release, with **Node.js 22.13.0+**. Open a terminal in that root directory. Run the block for your operating system to export and check both hosts; each output directory must be new. If a command fails, fix the reported problem before importing anything.
+
+**Windows · PowerShell**
+
+```powershell
+$KimExportRoot = Join-Path ([IO.Path]::GetTempPath()) ('meta-skills-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $KimExportRoot -ErrorAction Stop | Out-Null
+foreach ($KimHost in @('workbuddy', 'doubao')) {
+    $KimOutput = Join-Path $KimExportRoot $KimHost
+    node scripts/build-desktop-skill-package.mjs --host $KimHost --component meta-theory --output $KimOutput
+    if ($LASTEXITCODE -ne 0) { throw "Export failed: $KimHost" }
+    node scripts/build-desktop-skill-package.mjs --host $KimHost --component meta-theory --output $KimOutput --check
+    if ($LASTEXITCODE -ne 0) { throw "Verification failed: $KimHost" }
+    Write-Host (Join-Path $KimOutput 'meta-theory.zip')
+}
+```
+
+**macOS / Linux · Bash**
+
+```bash
+kimExportRoot="$(cd "$(mktemp -d)" && pwd -P)"
+for kimHost in workbuddy doubao; do
+  node scripts/build-desktop-skill-package.mjs --host "$kimHost" --component meta-theory --output "$kimExportRoot/$kimHost" || break
+  node scripts/build-desktop-skill-package.mjs --host "$kimHost" --component meta-theory --output "$kimExportRoot/$kimHost" --check || break
+  printf '%s\n' "$kimExportRoot/$kimHost/meta-theory.zip"
+done
+```
+
+The resulting files are `<output>/workbuddy/meta-theory.zip` and `<output>/doubao/meta-theory.zip`; the commands print their absolute paths. Each directory also contains the unpacked Skill and `desktop-package.json`. `--check` reads back the ZIP, file tree, source and hashes without writing. To use just one client, run the corresponding export and check commands only.
+
+1. **Import:** in WorkBuddy, open “专家·技能·连接器 → 技能 → 添加技能 → 上传技能” and select its ZIP. In Doubao Work, open the current client's local Skill import entry, usually in “技能·连接器·伙伴”, and select its ZIP. If it requests a directory, choose the unpacked `meta-theory` directory with `SKILL.md`, `source/` and `package-provenance.json` intact.
+2. **Check discovery:** enable the Skill, start a new task and use the prompt below. Confirm the original entry and references are readable; merely seeing a Skill name is insufficient.
+3. **Check execution:** provide a small real task and inspect its actual files and checks. Ask the client to report any missing inputs or tools before continuing.
+4. **Continue and update:** save input versions, completed outputs and the next action; reopen the task and verify those records before continuing. For upgrades, preserve your settings and modified Skills, export to a new directory, check it and use the client's update/import control. Same-name replacement and restart recovery require observation in your client.
+
+```text
+Read the imported meta-theory Skill, package-provenance.json and its original
+method entry and relevant references. Report the version, resources actually
+read, and available file, script and tool capabilities. Then use those methods
+for my task and save the outputs, checks, unfinished work and next action.
+If resources, permissions or the Meta CLI are missing, list the gap explicitly.
+Keep import success, actual execution and verified results separate.
+```
+
+To add specialist methods, use the paired **Kim_Service V1.16** source. From its root, export one Agent or Skill at a time through its wrapper (replace the absolute paths):
+
+```bash
+node scripts/build-desktop-skill-package.mjs --meta-root "/absolute/Meta_Kim" --host workbuddy --component reliability-engineer --output "/absolute/new-reliability-method"
+```
+
+Repeat the same command with `--check` before importing; use `--host doubao` and a different new output directory for Doubao Work. Service loads the selected Agent or Skill as a complete professional method and checks its required Meta version and available dependency revision evidence.
+
+Official entry points, package limits, release-source hash verification and additional checks: [WorkBuddy details](docs/workbuddy.md) · [Doubao Work details](docs/doubao-work.md).
+
 ## Add Kim Service when the job needs specialist methods
 
 Meta_Kim organizes the work. **Kim Service supplies reusable specialist methods and materials** for tasks such as design, analysis and content delivery. Connecting it lets Meta_Kim consider those methods when selecting how a task should be done; the task still runs through the tools available in your client.
@@ -446,7 +514,6 @@ Extend the responsible layer: methods in canonical, client configuration and ver
 Shared Agents, Skills and runtime assets are maintained in `canonical/`, with machine-readable configuration in `config/`. Client directories such as `.claude/`, `.codex/` and `.cursor/` are generated locally by `npm run meta:sync`. These runtime projections are excluded from GitHub source and kept local through `.gitignore`; the distribution package includes their shared sources.
 
 ## Contact
-
 
 GitHub <a href="https://github.com/KimYx0207">KimYx0207</a> |
 X <a href="https://x.com/KimYx0207">@KimYx0207</a> |

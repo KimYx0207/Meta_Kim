@@ -8,6 +8,14 @@
 
 </div>
 
+## Meta_Kim 是什么，能做什么
+
+**Meta_Kim 是运行在现有 AI 客户端中的 Agent 治理与任务编排框架。** 它把一个目标变成调研、方案、专业任务、经过检查的交付物和可持续的进度记录。共享方法、九个治理角色和本地 Live 工作区让这些步骤前后衔接。
+
+你可以用它研究业务问题、制作报告或内容、改进已有产品，也可以开发软件。Agent 从你的真实资料和约束出发，选择合适的方法与工具，制作成果，再根据反馈继续改进。Meta_Kim 组织工作，可用的专业能力完成具体任务，Kim Service 提供可选的专业方法。
+
+用日常说法就是：**拆解需求 → 搜索资料 → 研究问题 → 思考方案 → 制作交付**。它们对应 Critical、Fetch（搜索与研究）、Thinking、Execution，随后接上 Review、Meta-Review、Verification、Evolution。下面用预约工具走完这条工作链，说明一句需求怎样变成设计、任务、实际文件和验收结果。
+
 <p align="center">
   <img src="docs/images/system-panorama.zh-CN.svg" alt="Meta_Kim 系统运行图：八阶段主线、依赖调度、人的决定、问题回退和过程记录" width="1200">
 </p>
@@ -34,7 +42,7 @@
 
 ## 在 Live 中看清内容，并推动下一步
 
-八阶段是治理执行主线，十一个业务环节用于规划、修订、反馈和收口，两者不是两套互相替代的阶段。实际覆盖及未验证部分见[主控闭环核验](docs/verification/meta-flow-closure.md)。新增 [WorkBuddy](docs/workbuddy.md) 与[豆包工作](docs/doubao-work.md) 的完整 Skill 导出入口；原生客户端验收按文档单独记录。
+八阶段组织执行过程，十一个业务环节描述规划、修订、反馈和收口。在 Live 中，你可以阅读当前材料、审阅结果，再推动下一项工作。
 
 | 你要做的事 | Live 中的入口 | 会留下什么 |
 | --- | --- | --- |
@@ -270,7 +278,7 @@ Meta_Kim 把计划、发现、进度、决定、产物和检查记录保存在�
 
 ## 在自己的项目里开始
 
-先准备 **Node.js 22.13.0+**、Git，以及已经配置好模型连接的 AI 客户端。当前版本：**[v3.13.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.13.0)**。
+先准备 **Node.js 22.13.0+**、Git，以及已经配置好模型连接的 AI 客户端。当前版本：**[v3.13.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.13.0)**。 版本变化和迁移说明独立维护在 [CHANGELOG.zh-CN.md](CHANGELOG.zh-CN.md)。
 
 ### 1. 安装 Meta_Kim
 
@@ -359,6 +367,64 @@ node bin/meta-kim.mjs live --project-root "/path/to/your-project"
 
 旧版本的运行记录若缺少新的客户端、操作系统与模型绑定，仍保留为历史依据；进一步执行使用新 `runId`，重新获取当前能力与上下文，不推测历史模型。新版运行的恢复保留原模型参数记录；仅追加业务采用或效果观察时不重跑 worker。
 
+## 在 WorkBuddy 或豆包工作中导入完整方法
+
+**先导出一个完整 Skill 包，再通过客户端界面导入。** 包里保留 `meta-theory` 原文、参考资料、九个治理角色、公开配置契约、许可证和 SHA-256 来源记录。
+
+**使用条件：** 这是方法导入路线，实际执行使用客户端已有的模型、工具和权限；Meta CLI 和 Live 功能需要另行安装 Meta 运行时。包导出和本地完整性核验已实现，客户端导入、执行和续做按下面步骤在自己的任务中核对。
+
+准备 Meta_Kim **v3.13.0** 源码目录或正式源码解压目录，以及 **Node.js 22.13.0+**。在该根目录打开终端，按操作系统复制下面一组命令，即可生成并核验两个客户端的导入包；每个输出目录都必须是新目录。任何命令报错时先处理错误，不导入不完整产物。
+
+**Windows · PowerShell**
+
+```powershell
+$KimExportRoot = Join-Path ([IO.Path]::GetTempPath()) ('meta-skills-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $KimExportRoot -ErrorAction Stop | Out-Null
+foreach ($KimHost in @('workbuddy', 'doubao')) {
+    $KimOutput = Join-Path $KimExportRoot $KimHost
+    node scripts/build-desktop-skill-package.mjs --host $KimHost --component meta-theory --output $KimOutput
+    if ($LASTEXITCODE -ne 0) { throw "Export failed: $KimHost" }
+    node scripts/build-desktop-skill-package.mjs --host $KimHost --component meta-theory --output $KimOutput --check
+    if ($LASTEXITCODE -ne 0) { throw "Verification failed: $KimHost" }
+    Write-Host (Join-Path $KimOutput 'meta-theory.zip')
+}
+```
+
+**macOS / Linux · Bash**
+
+```bash
+kimExportRoot="$(cd "$(mktemp -d)" && pwd -P)"
+for kimHost in workbuddy doubao; do
+  node scripts/build-desktop-skill-package.mjs --host "$kimHost" --component meta-theory --output "$kimExportRoot/$kimHost" || break
+  node scripts/build-desktop-skill-package.mjs --host "$kimHost" --component meta-theory --output "$kimExportRoot/$kimHost" --check || break
+  printf '%s\n' "$kimExportRoot/$kimHost/meta-theory.zip"
+done
+```
+
+生成文件分别为 `<输出目录>/workbuddy/meta-theory.zip` 和 `<输出目录>/doubao/meta-theory.zip`，命令会显示绝对路径。每个目录还包含解压后的 Skill 和 `desktop-package.json`。`--check` 只读回比较 ZIP、文件树、来源和哈希，不写入文件。只使用一个客户端时，只运行对应的生成与核验命令即可。
+
+1. **导入：** WorkBuddy 打开「专家·技能·连接器 → 技能 → 添加技能 → 上传技能」，选择对应 ZIP。豆包工作打开当前版本的本地技能导入入口，通常位于「技能·连接器·伙伴」，选择对应 ZIP；若要求目录，选择解压后的 `meta-theory`，完整保留 `SKILL.md`、`source/` 和 `package-provenance.json`。
+2. **检查发现：** 启用 Skill，新开任务，发送下方提示词。确认原方法入口和参考资料确实可读，不能只看列表里出现了名称。
+3. **检查执行：** 提供一个小型真实任务，检查实际文件和检验结果。若缺少输入或工具，让客户端明确列出，再继续处理。
+4. **续做与升级：** 保存输入版本、已完成产物和下一步，重新打开任务后先核对记录。升级时保留个人配置和修改过的 Skill，导出到新目录，核验后再使用客户端的更新或导入入口。同名替换、重启恢复是否生效，以本机观察为准。
+
+```text
+请读取刚导入的 meta-theory Skill、package-provenance.json、原方法入口和相关参考资料。
+先报告版本、实际读到的资源，以及当前可用的文件、脚本和工具能力。
+再用这些方法处理我的任务，保存实际产物、检查结果、未完成事项和下一步。
+缺少资源、权限或 Meta CLI 时明确列出，不把导入成功、实际执行和结果验证混为一谈。
+```
+
+需要专业方法时，准备配对的 **Kim_Service V1.16** 源码。在它的根目录使用薄入口，每次导出一个 Agent 或 Skill；把下面的绝对路径替换为实际目录：
+
+```bash
+node scripts/build-desktop-skill-package.mjs --meta-root "/absolute/Meta_Kim" --host workbuddy --component reliability-engineer --output "/absolute/new-reliability-method"
+```
+
+原命令加上 `--check` 读回核验后再导入。豆包工作使用 `--host doubao` 和另一个新输出目录。Service 将选中的 Agent 或 Skill 作为完整专业方法加载，并核对要求的 Meta 版本及可取得的依赖版本证据。
+
+官方入口、包大小限制、正式源码哈希校验和补充检查可按需查阅：[WorkBuddy 细节](docs/workbuddy.md) · [豆包工作细节](docs/doubao-work.md)。
+
 ## 需要专业方法时，接上 Kim Service
 
 Meta_Kim 负责组织工作，**Kim Service 提供可复用的专业方法和材料**，用于设计、分析、内容交付等具体任务。接入之后，Meta_Kim 选择任务执行方法时，就能把这些能力纳入考虑；实际工作仍通过当前客户端已有的工具执行。
@@ -446,7 +512,6 @@ node setup.mjs --check
 共用的 Agent、Skill 和运行资源维护在 `canonical/` 中，机器可读配置位于 `config/`。`.claude/`、`.codex/`、`.cursor/` 等客户端目录由 `npm run meta:sync` 在本地生成，由 `.gitignore` 管理并保留在本地，不提交到 GitHub 源码；发布包携带对应的共用源文件。
 
 ## 联系方式
-
 
 GitHub <a href="https://github.com/KimYx0207">KimYx0207</a> |
 X <a href="https://x.com/KimYx0207">@KimYx0207</a> |
