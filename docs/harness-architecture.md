@@ -43,7 +43,54 @@ The architecture view settles the system boundary, actual technology/version bas
 
 Architecture exploration can have an empty module outline while choices remain open. Delivery requires concrete task coverage and consistent interface/state ownership. Workers receive only the relevant module, settled decision values, source-bound professional knowledge and current upstream materials. Changed decisions invalidate affected tasks through existing dependency relationships; they do not restart the whole interview.
 
+The current automation boundary is narrower than a complete module-design product. An exploration-only outline does not automatically emit a mandatory human review, and there is no persisted per-module design cursor. The ordinary current-host Thinking checkpoint records a design frame and work orders; it does not automatically connect that outline to the structured design runner's artifact flows. The host still prepares module details before the whole design can satisfy delivery validation. A selected module and the shared architecture are scoped by relevance, but their combined text has no separate hard context budget yet.
+
+In the structured design path, first delivery with implementation tasks requires reviewable system-plan and PRD producers. Missing producers/flows return design gaps; actual review requests bind the produced artifact and its current bytes before related implementation can proceed. This is not a default review after every module. The native human-answer consumer in this path is currently connected for Codex; another client's declared question surface does not prove equivalent response consumption. See [design projection](../scripts/governed-execution/product-design.mjs), [software design validation](../src/domain/design/software-design.mjs), and [human milestone consumption](../scripts/governed-execution/plan-challenge-host-continuation.mjs).
+
+## Bounded planning diagnostics
+
+Large planning files remain complete on disk. The first-party planning Hook checks all three files for identity, hash drift and completion conditions before preparing context. The CLI returns `findings.md` content only when explicitly requested; it is never automatically added to model context.
+
+### Inspect or resume
+
+Use the existing projected `planning-continuity.mjs` with the same project, runtime and run identifier that owns the plan:
+
+```sh
+node canonical/runtime-assets/shared/hooks/planning-continuity.mjs doctor --project-root /path/to/project --runtime codex --run-id run-1
+node canonical/runtime-assets/shared/hooks/planning-continuity.mjs resume --project-root /path/to/project --runtime codex --run-id run-1
+```
+
+The CLI emits `meta-kim-planning-cli-v1`: bounded diagnostics, exact checklist totals, an explicitly labelled preview, file hashes/sizes, and the current structural progress when recovery is healthy. It does not print full file bodies or the event ledger. In particular, an omitted or previewed checklist item still participates in completion checks. A valid summary cannot turn an unfinished or drifted plan into completed work.
+
+The existing JavaScript library API remains compatible: `inspectPlanningContinuity()` still returns complete records and checklist arrays for programmatic checks. Use the CLI for a bounded diagnostic response; serializing the complete library result into a model prompt defeats this boundary.
+
+### Read the required part
+
+```sh
+node canonical/runtime-assets/shared/hooks/planning-continuity.mjs read --project-root /path/to/project --runtime codex --run-id run-1 --file findings.md --offset 0 --length 2000
+```
+
+`read` permits only `task_plan.md`, `findings.md` and `progress.md` within the bound plan. Its `range` identifies the exact excerpt and its `nextRead` carries the next offset and the file's SHA-256. Offsets use UTF-16 code units; always reuse `nextRead.offset` so a surrogate pair remains intact. Follow-up pages must pass `--sha256` with that returned hash. If the file changes, continuation is refused; start again from offset zero to inspect the new version.
+
+An explicit read can inspect a changed file for diagnosis. It does not attest those changes, authorize recovery, complete a task or expose the contents automatically on future prompts. The source text is returned as data. If an individual page exceeds the configured output byte budget, the CLI refuses it with a smaller-length instruction instead of silently cutting the page.
+
+These limits bound returned text and model context. File inspection and hashing still read each complete file into process memory; this is not streaming I/O or a constant-memory solution for arbitrarily large files.
+
+### Configure context budgets
+
+All defaults and valid ranges live in the standalone Hook's `CONTEXT_LIMITS` table, so installed projections require no additional configuration file dependency. Set a JSON object in `META_KIM_PLANNING_CONTEXT_LIMITS`, or pass an explicit override:
+
+```sh
+node canonical/runtime-assets/shared/hooks/planning-continuity.mjs doctor --project-root /path/to/project --runtime codex --run-id run-1 --context-limits '{"projectionChars":3000,"previewItems":4,"pageChars":2000,"cliBytes":16000}'
+```
+
+Keys are `projectionChars`, `projectionLines`, `previewItems`, `previewChars`, `pageChars`, and `cliBytes`. Precedence is defaults, environment, then explicit options. Unknown keys, invalid numbers and values outside the defined ranges are rejected. These settings only change presentation and pagination; they cannot weaken hash, run binding, control-pattern or completion checks. If an unusually large metadata response exceeds the byte limit, `counts_and_refs` reports the omission and keeps the full-data completion result.
+
+New Stop ledger events retain completion facts and checklist counts, so each Stop does not copy thousands of task descriptions back into the authority file. Existing historical events and planning files are preserved.
+
 ## A human wait affects its branch
+
+The following describes configured human milestones in the structured durable path. The explicit stage runner remains read-only shadow execution; these control-flow guarantees do not establish a background service, arbitrary client support, or an automatic end-to-end implementation and deployment pipeline.
 
 ```mermaid
 flowchart TD

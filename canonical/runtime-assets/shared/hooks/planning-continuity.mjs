@@ -24,8 +24,38 @@ export const AUTO_CONTEXT_FILES = Object.freeze(["task_plan.md", "progress.md"])
 export const MAX_STOP_BLOCKS = 2;
 
 const MAX_LEDGER_EVENTS = 200;
-const MAX_CONTEXT_LINES = 48;
-const MAX_CONTEXT_CHARS = 5000;
+// Keep output policy in this standalone projected Hook. Configuration changes
+// presentation budgets only; attestation and completion still inspect all data.
+const CONTEXT_LIMITS = Object.freeze({
+  projectionChars: { default: 5000, min: 512, max: 24000 },
+  projectionLines: { default: 48, min: 1, max: 400 },
+  previewItems: { default: 6, min: 0, max: 20 },
+  previewChars: { default: 160, min: 2, max: 1000 },
+  pageChars: { default: 4000, min: 2, max: 24000 },
+  cliBytes: { default: 24000, min: 4096, max: 131072 },
+});
+
+export function planningContextLimits(options = {}) {
+  const parse = (value) => {
+    if (value === undefined || value === "") return {};
+    let parsed;
+    try { parsed = typeof value === "string" ? JSON.parse(value) : value; }
+    catch { throw new Error("planning_context_limits_invalid_json"); }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("planning_context_limits_invalid_object");
+    for (const [key, limit] of Object.entries(parsed)) {
+      const rule = Object.hasOwn(CONTEXT_LIMITS, key) ? CONTEXT_LIMITS[key] : null;
+      if (!rule || !Number.isSafeInteger(limit) || limit < rule.min || limit > rule.max) {
+        throw new Error(`planning_context_limit_invalid:${key}`);
+      }
+    }
+    return parsed;
+  };
+  return {
+    ...Object.fromEntries(Object.entries(CONTEXT_LIMITS).map(([key, rule]) => [key, rule.default])),
+    ...parse(process.env.META_KIM_PLANNING_CONTEXT_LIMITS),
+    ...parse(options.contextLimits),
+  };
+}
 const CONTROL_PATTERNS = Object.freeze([
   /ignore (?:all )?(?:previous|prior|above) instructions/iu,
   /disregard (?:all )?(?:previous|prior|above) instructions/iu,
@@ -282,13 +312,13 @@ function boundedText(value, limit, { latest = false } = {}) {
   return value.slice(start, end);
 }
 
-function structuralBody(records, context) {
+function structuralBody(records, context, limits = planningContextLimits()) {
   const selected = [];
   const binding = planningBinding(context);
   if (binding) selected.push(binding);
   // Reserve room for both files: a long historic task plan must not crowd the
   // latest recovery status and next action out of the bounded projection.
-  const fileBudget = Math.max(0, Math.floor((MAX_CONTEXT_CHARS - binding.length - 2) / AUTO_CONTEXT_FILES.length));
+  const fileBudget = Math.max(0, Math.floor((limits.projectionChars - binding.length - 2) / AUTO_CONTEXT_FILES.length));
   for (const record of records) {
     if (!AUTO_CONTEXT_FILES.includes(record.file) || record.state !== "present") continue;
     const lines = record.content.split(/\r?\n/u).filter((line) =>
@@ -297,13 +327,13 @@ function structuralBody(records, context) {
       /^\s*[-*]\s+(?:Current(?:\s+(?:status|step))?|Next(?:\s+action)?|Status|Goal|当前(?:状态|步骤)?|下一步(?:行动)?|状态|目标)\s*[:：]/iu.test(line),
     );
     const latest = record.file === "progress.md";
-    const boundedLines = latest ? lines.slice(-MAX_CONTEXT_LINES) : lines.slice(0, MAX_CONTEXT_LINES);
+    const boundedLines = latest ? lines.slice(-limits.projectionLines) : lines.slice(0, limits.projectionLines);
     const header = `FILE ${record.file}\n`;
     const body = boundedLines.join("\n");
     const bodyBudget = Math.max(0, fileBudget - header.length);
     selected.push(header + boundedText(body, bodyBudget, { latest }));
   }
-  return boundedText(selected.join("\n"), MAX_CONTEXT_CHARS);
+  return boundedText(selected.join("\n"), limits.projectionChars);
 }
 
 function fencedContext(nonce, body) {
@@ -315,8 +345,8 @@ function fencedContext(nonce, body) {
   ].join("\n");
 }
 
-function structuralProjection(records, nonce, context) {
-  return fencedContext(nonce, structuralBody(records, context));
+function structuralProjection(records, nonce, context, limits) {
+  return fencedContext(nonce, structuralBody(records, context, limits));
 }
 
 function unchangedContextPointer(nonce, digest, context) {
@@ -645,6 +675,7 @@ export async function resumePlanningContinuity(input = {}) {
     inspection.records,
     inspection.state.attestation.nonce,
     inspection.context,
+    planningContextLimits(input.options),
   );
   return { status: "resumed", projection, completion: inspection.completion, context: inspection.context };
 }
@@ -667,7 +698,7 @@ export async function selectPlanningContextInjection(input = {}) {
       return { status: "refused", issues: inspection.issues, context: inspection.context };
     }
     const { state, records, completion } = inspection;
-    const body = structuralBody(records, context);
+    const body = structuralBody(records, context, planningContextLimits(input.options));
     const digest = sha256(body);
     const previous = state.contextInjection || null;
     const mode = resolveInjectionMode({
@@ -793,7 +824,7 @@ export async function evaluateStopGate(input = {}) {
     state.stopGate = { blockedAttempts: attempts, bounded };
     state = appendEvent(state, bounded ? "stop_allow_incomplete" : "stop_block", {
       attempts,
-      completion,
+      completion: completionSummary(completion),
     });
     await atomicWriteJson(context.authority, state, { mode: 0o600 });
     if (bounded) {
@@ -812,6 +843,144 @@ export async function evaluateStopGate(input = {}) {
       remainingBlocks: MAX_STOP_BLOCKS - attempts,
     };
   });
+}
+
+function completionSummary(completion) {
+  if (!completion) return undefined;
+  const { checklist, ...facts } = completion;
+  return {
+    ...facts,
+    checklist: {
+      total: checklist.total,
+      openCount: checklist.open.length,
+      closedCount: checklist.closed.length,
+    },
+  };
+}
+
+// Reading is explicit and data-only. It can inspect a drifted file without
+// renewing its attestation, and a returned cursor binds the next page to these
+// exact bytes. No excerpt is used to decide completion or authorize recovery.
+export async function readPlanningPage(input = {}) {
+  const options = input.options || {};
+  const limits = planningContextLimits(options);
+  if (!PLANNING_FILES.includes(options.file)) throw new Error("planning_page_file_invalid");
+  if (typeof options.offset === "boolean" || typeof options.length === "boolean") throw new Error("planning_page_range_invalid");
+  const offset = options.offset === undefined ? 0 : Number(options.offset);
+  const length = options.length === undefined ? limits.pageChars : Number(options.length);
+  if (!Number.isSafeInteger(offset) || offset < 0) throw new Error("planning_page_offset_invalid");
+  if (!Number.isSafeInteger(length) || length < 2 || length > limits.pageChars) throw new Error("planning_page_length_invalid");
+  if (offset > 0 && !options.sha256) throw new Error("planning_page_sha256_required_after_first_page");
+  const context = await contextFrom(input);
+  const state = await readJson(context.authority);
+  const issues = bindingIssues(state, context);
+  if (issues.length) return { status: "refused", issues, context };
+  const record = await planningFileRecord(context.planRoot, options.file);
+  if (record.state !== "present") return { status: "refused", issues: [`${record.file}:${record.state}`], context };
+  if (options.sha256 && options.sha256 !== record.sha256) {
+    return { status: "refused", issues: ["planning_page_source_changed"], context, file: record.file, sha256: record.sha256 };
+  }
+  if (offset > record.content.length) throw new Error("planning_page_offset_out_of_range");
+  if (offset > 0 && /[\uDC00-\uDFFF]/u.test(record.content[offset]) && /[\uD800-\uDBFF]/u.test(record.content[offset - 1])) {
+    throw new Error("planning_page_offset_splits_unicode");
+  }
+  const content = boundedText(record.content.slice(offset), length);
+  const end = offset + content.length;
+  const nextOffset = end < record.content.length ? end : null;
+  return {
+    status: "read",
+    context,
+    file: { file: record.file, sha256: record.sha256, size: record.size },
+    attestationCurrent: state.attestation?.snapshot?.find((item) => item.file === record.file)?.sha256 === record.sha256,
+    range: { unit: "utf16_code_units", start: offset, end, total: record.content.length, nextOffset },
+    nextRead: nextOffset === null ? null : { command: "read", file: record.file, offset: nextOffset, length, sha256: record.sha256 },
+    content,
+  };
+}
+
+function textPreview(value, limit) {
+  const text = String(value);
+  const preview = boundedText(text, limit);
+  return { text: preview, omittedChars: text.length - preview.length };
+}
+
+function planningCliView(result, limits) {
+  const output = {
+    schemaVersion: "meta-kim-planning-cli-v1",
+    mode: result.status === "read" ? "file_page" : "summary",
+    limits,
+    dataOnly: true,
+    fullDataPreservedOnDisk: true,
+  };
+  if (result.status === "read") return { ...result, output };
+  const summary = { status: result.status, output };
+  for (const key of ["issues", "reason", "attempts", "remainingBlocks", "drifted", "created", "preserved"]) {
+    if (result[key] !== undefined) summary[key] = result[key];
+  }
+  if (result.context) {
+    const { identifier, ...context } = result.context;
+    summary.context = context;
+  }
+  const records = result.records || result.state?.attestation?.snapshot || [];
+  summary.files = records.map(({ content, ...record }) => record);
+  summary.read = { command: "read", files: PLANNING_FILES, options: ["--file", "--offset", "--length", "--sha256"], scope: "same project/runtime/run arguments" };
+  output.omitted = ["file_contents", "complete_checklist_text", "ledger_event_bodies"];
+  if (result.completion) {
+    summary.completion = completionSummary(result.completion);
+    summary.completion.checklist.preview = Object.fromEntries(["open", "closed"].map((key) => [key, {
+      items: result.completion.checklist[key].slice(0, limits.previewItems).map((item) => textPreview(item, limits.previewChars)),
+      omittedItems: Math.max(0, result.completion.checklist[key].length - limits.previewItems),
+    }]));
+  }
+  if (result.projection) summary.projection = result.projection;
+  else if (result.status === "healthy") {
+    summary.projection = structuralProjection(result.records, result.state.attestation.nonce, result.context, limits);
+  }
+  if (result.state) {
+    const state = result.state;
+    summary.state = {
+      schemaVersion: state.schemaVersion,
+      updatedAt: state.updatedAt,
+      attestation: state.attestation ? { digest: state.attestation.digest, reviewedAt: state.attestation.reviewedAt } : null,
+      completionClaim: state.completionClaim ? {
+        verificationPassed: state.completionClaim.verificationPassed,
+        summaryClosed: state.completionClaim.summaryClosed,
+        claimedAt: state.completionClaim.claimedAt,
+      } : null,
+      contextInjection: state.contextInjection,
+      stopGate: state.stopGate,
+      ledger: { retainedEventCount: state.ledger?.events?.length || 0, content: "on_disk_only" },
+    };
+  }
+  return summary;
+}
+
+function renderPlanningCliResult(result, limits) {
+  const encode = (value) => `${JSON.stringify(value, null, 2)}\n`;
+  const view = planningCliView(result, limits);
+  const text = encode(view);
+  if (Buffer.byteLength(text) <= limits.cliBytes) return { text, status: view.status };
+  // Extreme metadata or deliberately tiny budgets still cannot dump unlimited
+  // text. Explain omissions and preserve the full-data verdict and item counts.
+  // A file page is refused rather than silently returning a broken/truncated page.
+  const compact = {
+    status: result.status === "read" ? "refused" : result.status,
+    output: { ...view.output, mode: "counts_and_refs", reason: "cli_output_budget", omitted: ["previews", "projection", "expanded_metadata"] },
+    completion: completionSummary(result.completion),
+    issueCount: result.issues?.length || 0,
+    issues: (result.issues || []).slice(0, limits.previewItems).map((issue) => textPreview(typeof issue === "string" ? issue : JSON.stringify(issue), limits.previewChars)),
+    files: PLANNING_FILES,
+    read: { command: "read", scope: "reuse the same project/runtime/run arguments", nextAction: "Read the required file with --file, --offset and a smaller --length; reuse the returned sha256 for subsequent pages." },
+  };
+  if (result.status === "read") compact.issues = ["planning_page_exceeds_cli_byte_budget_reduce_length"];
+  let compactText = encode(compact);
+  while (Buffer.byteLength(compactText) > limits.cliBytes && compact.issues.length > 0) {
+    compact.issues.pop();
+    compact.output.omittedIssueCount = compact.issueCount - compact.issues.length;
+    compactText = encode(compact);
+  }
+  if (Buffer.byteLength(compactText) > limits.cliBytes) throw new Error("planning_cli_budget_unrepresentable");
+  return { text: compactText, status: compact.status };
 }
 
 async function governedRouteActive(projectRoot, profile) {
@@ -846,6 +1015,7 @@ function parseArgs(argv) {
       "verification-passed": "verificationPassed",
       "summary-closed": "summaryClosed",
       "zero-phase-reason": "zeroPhaseReason",
+      "context-limits": "contextLimits",
     }[key] || key;
     options[mapped] = next;
   }
@@ -1005,6 +1175,7 @@ async function main() {
   const { command, options } = parseArgs(process.argv.slice(2));
   const payload = await readPayload();
   const input = { payload, options };
+  const limits = planningContextLimits(options);
   let result;
   if (command === "init") result = await initializePlanningContinuity(input);
   else if (command === "attest") result = await attestPlanningContinuity(input);
@@ -1012,13 +1183,15 @@ async function main() {
   else if (command === "checkpoint") result = await checkpointPlanningContinuity(input);
   else if (command === "complete") result = await claimPlanningCompletion(input);
   else if (command === "doctor") result = await inspectPlanningContinuity(input);
+  else if (command === "read") result = await readPlanningPage(input);
   else if (command === "stop") result = await evaluateStopGate(input);
   else {
     await runHook(payload, options);
     return;
   }
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-  if (["refused", "unhealthy"].includes(result?.status)) process.exitCode = 2;
+  const rendered = renderPlanningCliResult(result, limits);
+  process.stdout.write(rendered.text);
+  if (["refused", "unhealthy"].includes(rendered.status)) process.exitCode = 2;
 }
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));

@@ -50,6 +50,31 @@
     ],
     "projection": "bounded_structural_summary"
   },
+  "diagnosticOutput": {
+    "cliSchema": "meta-kim-planning-cli-v1",
+    "default": "bounded_summary_with_full_data_counts_file_references_and_explicit_omissions",
+    "originalFiles": "preserved_without_rewriting_or_truncation",
+    "libraryApi": "retains_complete_records_and_completion_checklists",
+    "completionDecision": "always_evaluated_against_complete_source_before_projection",
+    "stopLedger": "completion_facts_and_checklist_counts_without_repeated_checklist_text",
+    "limitsAuthority": "canonical/runtime-assets/shared/hooks/planning-continuity.mjs:CONTEXT_LIMITS",
+    "configuration": {
+      "environment": "META_KIM_PLANNING_CONTEXT_LIMITS",
+      "cli": "--context-limits",
+      "libraryOption": "contextLimits",
+      "format": "JSON_object_with_validated_integer_ranges",
+      "precedence": ["defaults", "environment", "explicit_option"]
+    },
+    "explicitReading": {
+      "command": "read --file <planning-file> --offset <utf16-offset> --length <bounded-length> --sha256 <source-hash>",
+      "allowedFilesRef": "humanReadableFiles",
+      "continuation": "nextRead_returns_exact_source_hash_and_unicode_safe_next_offset",
+      "subsequentPageRequiresHash": true,
+      "changedSource": "refuse_continuation_without_renewing_attestation",
+      "byteBudgetExceeded": "refuse_page_with_actionable_smaller_length_instead_of_silent_truncation"
+    },
+    "guide": "docs/harness-architecture.md#bounded-planning-diagnostics"
+  },
   "completionGate": {
     "lifecycleTrigger": "affirmative_completion_claim_in_current_last_assistant_message",
     "lifecycleDetection": "conservative_text_recognition_is_scheduling_not_completion_evidence",
