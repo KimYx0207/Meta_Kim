@@ -268,7 +268,7 @@ Meta_Kim 把计划、发现、进度、决定、产物和检查记录保存在�
 
 ## 在自己的项目里开始
 
-先准备 **Node.js 22.13.0+**、Git，以及已经配置好模型连接的 AI 客户端。当前版本：**[v3.12.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.12.0)**。
+先准备 **Node.js 22.13.0+**、Git，以及已经配置好模型连接的 AI 客户端。当前版本：**[v3.12.1](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.12.1)**。
 
 ### 1. 安装 Meta_Kim
 

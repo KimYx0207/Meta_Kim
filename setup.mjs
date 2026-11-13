@@ -25,6 +25,7 @@ import { ENTRY_CLASSIFIER_HOOK_FILES } from "./scripts/runtime-hook-mapping.mjs"
  *   META_KIM_PROMPT_PROXY=1
  */
 
+import { hasNpmInstalledDependencies } from "./src/infrastructure/installer/npm-installed-dependencies.mjs";
 import { reconcileGraphifyPackage } from "./scripts/graphify-package-install.mjs";
 import { execSync, spawnSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -8976,6 +8977,7 @@ async function runInstall() {
     const npmOk = await withProgress(t.stepLabel(stepNum, t.progressNpmInstall), async () => {
       if (
         executingStableProjectionPackage ||
+        hasNpmInstalledDependencies(PROJECT_DIR) ||
         existsSync(join(PROJECT_DIR, "node_modules", "@modelcontextprotocol"))
       ) {
         skip(t.nodeModulesExist);
@@ -9298,8 +9300,9 @@ async function runUpdate() {
     );
   }
 
-  // ── 1. npm install (always — new code may have new deps) ────────────
-  if (executingStableProjectionPackage) {
+  // Source updates refresh dependencies; npm-installed packages already passed
+  // through npm, whose valid dependency tree may be hoisted above this root.
+  if (executingStableProjectionPackage || hasNpmInstalledDependencies(PROJECT_DIR)) {
     skip(`${C.dim}${t.nodeModulesExist}${C.reset}`);
     stepResults.push(installStep(t.updateNpm, INSTALL_STEP_OUTCOME.SKIPPED));
   } else {

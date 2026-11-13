@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createLiveWorkspaceService } from "../../src/application/live/live-workspace-service.mjs";
+import { createWorkspaceReview, workspaceDigest } from "../../src/domain/live/live-workspace.mjs";
 import { loadLiveWorkspacePolicy, normalizeLiveWorkspacePolicy } from "../../src/application/live/live-workspace-policy.mjs";
 import { buildLocalReviewClaim, claimHostAnswer } from "../../src/domain/decision/decision.mjs";
 import { activateSpineState, createInitialState, readSpineState, createMetaRunStatusEnvelope } from "../../canonical/runtime-assets/shared/hooks/spine-state.mjs";
@@ -182,6 +183,7 @@ test("feedback keeps exact original, invalidates actual Decision and has one con
   assert.equal(pendingAlpha.length, 1, "feedback must not enqueue an additional revise-module command");
   const claim = await f.service.claimRequest({ runId: f.runId, conversationId: CHAT, commandId: result.commandId, expectedRevision: after.revision });
   assert.equal(await readFile(path.join(f.root, claim.workOrder.feedback.ref), "utf8"), original);
+  assert.equal((await f.service.feedback(input)).status, "host_claimed", "idempotent submit returns the actual current receipt status");
   await assert.rejects(f.service.feedback({ ...input, nonce: "feedback-over-budget", original: "x".repeat(loadLiveWorkspacePolicy().maxFeedbackBytes + 1) }),
     { code: "workspace_feedback_limit" });
 });
@@ -412,4 +414,221 @@ test("configured maximum normal module lifecycle fits request/state budgets and 
   const bytes = Buffer.byteLength(JSON.stringify(workspace));
   assert.ok(bytes <= policy.maxWorkspaceStateBytes, `normal ${policy.maxModules}-module lifecycle needs ${bytes} bytes`);
   t.diagnostic(`normal lifecycle budget: modules=${policy.maxModules}, requests=${workspace.requests.length}, stateBytes=${bytes}, limit=${policy.maxWorkspaceStateBytes}; in-memory shape only`);
+});
+
+test("external dependency bytes invalidate only their consumers, including paged review visibility", async t => {
+  const f = await fixture(t);
+  const input = designInput({ full: true, dependent: true });
+  input.design.softwareDesign.architecture.moduleIds.push("gamma", "independent");
+  input.design.softwareDesign.modules.push({ id: "gamma", purpose: "Transitive consumer", dependsOn: ["beta"], ...detailed("gamma") },
+    { id: "independent", purpose: "Unrelated output", ...detailed("independent") });
+  input.materialRefs = { modules: { alpha: "outputs/alpha.md" } };
+  await writeFile(path.join(f.root, "outputs/alpha.md"), "Actual registered interface v1\n");
+  await f.publish(input); await f.vote("outline"); await f.vote("alpha"); await f.vote("beta");
+  const before = await f.overview();
+  const paged = createLiveWorkspaceService({ projectRoot: f.root, policy: { ...f.service.policy, modulePageSize: 1 } });
+  let page = await paged.getOverview({ runId: f.runId });
+  page = await paged.getOverview({ runId: f.runId, cursor: page.design.nextCursor });
+  const gammaCursor = page.design.nextCursor;
+  await writeFile(path.join(f.root, "outputs/alpha.md"), "Actual registered interface v2\n");
+  page = await paged.getOverview({ runId: f.runId, cursor: gammaCursor });
+  assert.equal(page.design.modules[0].id, "gamma");
+  assert.equal(page.design.modules[0].status, "material_changed");
+  assert.equal(page.reviews.find(review => review.moduleId === "gamma").available, false,
+    "a source on an earlier page cannot leave its transitive consumer review enabled");
+  const independent = await paged.getOverview({ runId: f.runId, cursor: page.design.nextCursor });
+  assert.equal(independent.reviews.find(review => review.moduleId === "independent").available, true);
+  await f.publish(input);
+  const after = await f.overview();
+  assert.equal(after.design.architecture.status, "accepted");
+  assert.equal(after.design.modules[1].status, "awaiting_human", "external bytes invalidate accepted dependent review");
+  assert.notEqual(after.design.modules[2].decisionId, before.design.modules[2].decisionId, "transitive review is renewed");
+  assert.equal(after.design.modules[3].decisionId, before.design.modules[3].decisionId, "independent review is preserved");
+});
+
+test("continuing the governed run verifies every accepted module source before claim", async t => {
+  const f = await fixture(t);
+  const input = designInput({ full: true });
+  input.materialRefs = { modules: { beta: "outputs/beta.md" } };
+  await writeFile(path.join(f.root, "outputs/beta.md"), "Accepted module design\n");
+  await f.publish(input); await f.vote("outline"); await f.vote("alpha");
+  const accepted = await f.vote("beta");
+  assert.equal(accepted.result.nextAction.kind, "continue_governed_run");
+  const revision = (await f.overview()).revision;
+  await writeFile(path.join(f.root, "outputs/beta.md"), "Unreviewed replacement\n");
+  await assert.rejects(f.service.claimRequest({ runId: f.runId, conversationId: CHAT, expectedRevision: revision,
+    commandId: accepted.result.nextAction.commandId }), { code: "workspace_material_changed" });
+});
+
+test("synthetic host CLI reads repository material, rejects foreign sessions, and recovers the exact file receipt", async t => {
+  const f = await fixture(t);
+  const cli = (args, { conversation = CHAT, runId = f.runId, success = true } = {}) => {
+    const result = spawnSync(process.execPath, [CLI, "--project-root", f.root, "--profile", "default",
+      "--run-id", runId, "--conversation-id", conversation, ...args], { encoding: "utf8" });
+    assert.equal(result.status, success ? 0 : 1, result.stderr);
+    return JSON.parse(success ? result.stdout : result.stderr);
+  };
+  const original = await readFile(path.join(REPO, "docs/live-workspace.md"), "utf8");
+  await writeFile(path.join(f.root, "outputs/module.md"), original);
+  const input = designInput({ full: true });
+  input.materialRefs = { modules: { alpha: "outputs/module.md" } };
+  await writeFile(path.join(f.root, ".meta-kim/work/design.json"), JSON.stringify(input));
+  cli(["--publish-design", "--input", ".meta-kim/work/design.json", "--expected-revision", "0"]);
+  await f.vote("outline");
+  const before = await f.overview();
+  const module = before.design.modules[0];
+  const feedback = await f.service.feedback({ runId: f.runId, moduleId: module.id, artifactId: module.artifactId,
+    version: module.version, original: "Extract the documented current-host CLI entrypoint as a repository-backed artifact.",
+    expectedWorkspaceRevision: before.revision, nonce: "repository-material-feedback" });
+  const inspect = cli(["--inspect"]);
+  const claimArgs = ["--claim-request", "--command-id", feedback.commandId, "--expected-revision", String(inspect.revision)];
+  assert.equal(cli(claimArgs, { conversation: "foreign-conversation", success: false }).code, "workspace_host_scope_or_revision_conflict");
+  assert.equal(cli(["--inspect"], { runId: "foreign-run", success: false }).code, "workspace_current_run_unavailable");
+  const claim = cli(claimArgs);
+  assert.equal(claim.workOrder.targetId, "alpha");
+  const bound = await readFile(path.join(f.root, claim.workOrder.material.ref), "utf8");
+  assert.equal(sha(bound), sha(original));
+  assert.match(bound, /scripts\/live-workspace-host\.mjs/u);
+  // A real deterministic local transformation of repository text, with an
+  // explicitly synthetic host identity; this does not certify a native model.
+  const output = JSON.stringify({ sourceSha256: sha(bound), entrypoint: "scripts/live-workspace-host.mjs",
+    source: "docs/live-workspace.md", recordOrigin: "acceptance_fixture" }) + "\n";
+  await writeFile(path.join(f.root, "outputs/entrypoint.json"), output);
+  const receipt = { outcome: "produced", summary: "Extracted and checked the repository-documented host entrypoint",
+    evidenceRefs: [{ ref: "outputs/entrypoint.json", sha256: sha(output) }] };
+  await writeFile(path.join(f.root, ".meta-kim/work/receipt.json"), JSON.stringify(receipt));
+  const completeArgs = ["--complete-request", "--command-id", claim.commandId, "--claim-token", claim.claimToken,
+    "--input", ".meta-kim/work/receipt.json", "--expected-revision", String(claim.revision)];
+  assert.equal(cli(completeArgs, { conversation: "foreign-conversation", success: false }).code, "workspace_host_scope_or_revision_conflict");
+  const returned = cli(completeArgs);
+  assert.equal(returned.status, "host_reported"); assert.equal(returned.completionVerified, false);
+  assert.equal(cli(completeArgs).replay, true, "a restarted CLI records the exact receipt without re-executing work");
+  assert.equal(cli(["--claim-request", "--command-id", claim.commandId, "--expected-revision", String(returned.revision)],
+    { success: false }).code, "workspace_request_not_claimable");
+  const observed = cli(["--list-requests", "--command-id", claim.commandId]).requests[0];
+  assert.deepEqual(observed.receipt.evidenceRefs, receipt.evidenceRefs);
+  assert.equal(sha(await readFile(path.join(f.root, observed.receipt.ref))), observed.receipt.sha256);
+  assert.equal(observed.receipt.nativeInvocationVerified, false);
+  assert.equal((await f.overview()).requests.find(request => request.commandId === claim.commandId).receipt.sha256, observed.receipt.sha256);
+});
+
+test("a copied workspace cannot be consumed under another project authority", async t => {
+  const f = await fixture(t);
+  await f.publish(designInput());
+  const state = await f.service.repository.readState();
+  const copied = createLiveWorkspaceService({ repository: { ...f.service.repository, projectRoot: path.join(f.root, "another-project"),
+    readState: async () => state } });
+  await assert.rejects(copied.hostInspect({ runId: f.runId, conversationId: CHAT }), { code: "workspace_project_binding_conflict" });
+  const wrongProfile = createLiveWorkspaceService({ repository: { ...f.service.repository, profile: "another-profile",
+    readState: async () => state } });
+  await assert.rejects(wrongProfile.hostInspect({ runId: f.runId, conversationId: CHAT }), { code: "workspace_project_binding_conflict" });
+});
+
+test("global readiness sees off-page sources and outline drift without erasing stored acceptance", async t => {
+  const f = await fixture(t);
+  const input = designInput({ full: true });
+  input.materialRefs = { outline: "outputs/outline.md", modules: { beta: "outputs/beta.md" } };
+  await writeFile(path.join(f.root, "outputs/outline.md"), "Original system outline\n");
+  await writeFile(path.join(f.root, "outputs/beta.md"), "Original beta design\n");
+  await f.publish(input); await f.vote("outline"); await f.vote("alpha"); await f.vote("beta");
+  const paged = createLiveWorkspaceService({ projectRoot: f.root, policy: { ...f.service.policy, modulePageSize: 1 } });
+  await writeFile(path.join(f.root, "outputs/beta.md"), "Changed off-page beta\n");
+  let page = await paged.getOverview({ runId: f.runId });
+  assert.equal(page.design.modules[0].id, "alpha");
+  assert.equal(page.design.modules[0].status, "accepted", "independent visible module remains accepted");
+  assert.equal(page.design.status, "material_changed");
+  assert.equal(page.nextAction.kind, "refresh_design_material", "off-page drift cannot advertise continuation");
+  const inspected = await f.service.hostInspect({ runId: f.runId, conversationId: CHAT });
+  assert.equal(inspected.designStatus, "material_changed");
+  assert.equal(inspected.nextAction.kind, "refresh_design_material", "host discovery receives the same current evidence as Live");
+  await writeFile(path.join(f.root, "outputs/beta.md"), "Original beta design\n");
+  await writeFile(path.join(f.root, "outputs/outline.md"), "Changed system outline\n");
+  page = await paged.getOverview({ runId: f.runId });
+  assert.equal(page.design.architecture.status, "material_changed");
+  assert.equal(page.design.modules[0].status, "material_changed");
+  assert.equal(page.nextAction.kind, "refresh_design_material");
+  assert.ok(page.reviews.every(review => review.available === false));
+  await writeFile(path.join(f.root, "outputs/outline.md"), "Original system outline\n");
+  page = await paged.getOverview({ runId: f.runId });
+  assert.equal(page.design.status, "accepted", "read-only drift projection does not destroy exact stored acceptance");
+});
+
+test("display polling caches stable file hashes while mutation verification stays fresh", async t => {
+  const f = await fixture(t);
+  const bytes = "large actual material\n".repeat(50000);
+  await writeFile(path.join(f.root, "outputs/cache.md"), bytes);
+  const material = await f.service.repository.putSource(f.runId, "outputs/cache.md", "markdown");
+  assert.equal((await f.service.repository.verifyMaterialForDisplay(material)).cached, false);
+  assert.equal((await f.service.repository.verifyMaterialForDisplay(material)).cached, true);
+  assert.equal((await f.service.repository.verifyMaterial(material)).cached, undefined, "claim/review verification never uses display cache");
+  // Same-length changes still change ctime/mtime identity and recheck content.
+  await writeFile(path.join(f.root, "outputs/cache.md"), bytes.replace("large", "other"));
+  await assert.rejects(f.service.repository.verifyMaterialForDisplay(material), { code: "workspace_material_changed" });
+  await assert.rejects(f.service.repository.verifyMaterial(material), { code: "workspace_material_changed" });
+  await writeFile(path.join(f.root, "outputs/cache.md"), bytes);
+  assert.equal((await f.service.repository.verifyMaterialForDisplay(material)).sha256, sha(bytes));
+});
+
+test("host inspection projects one state snapshot and publishing cannot rebind copied reviews", async t => {
+  const f = await fixture(t);
+  await f.publish(designInput({ full: true }));
+  const first = await f.service.repository.readState();
+  const second = structuredClone(first);
+  second.hostCheckpointRevision += 1;
+  second.liveWorkspace.nextAction = { kind: "concurrent-new-action" };
+  let reads = 0;
+  const inspecting = createLiveWorkspaceService({ repository: { ...f.service.repository,
+    readState: async () => ++reads === 1 ? first : second } });
+  const result = await inspecting.hostInspect({ runId: f.runId, conversationId: CHAT });
+  assert.equal(reads, 1, "revision, requests, and nextAction must use the same state snapshot");
+  assert.equal(result.revision, first.hostCheckpointRevision);
+  assert.deepEqual(result.nextAction, JSON.parse(JSON.stringify(first.liveWorkspace.nextAction)));
+  let writes = 0;
+  for (const mismatch of [{ projectRoot: path.join(f.root, "copied-project") }, { profile: "copied-profile" }]) {
+    const copying = createLiveWorkspaceService({ repository: { ...f.service.repository, ...mismatch,
+      readState: async () => first, writeState: async () => { writes += 1; } } });
+    await assert.rejects(copying.publishDesign({ runId: f.runId, conversationId: CHAT,
+      expectedRevision: first.hostCheckpointRevision, input: designInput({ full: true }) }), { code: "workspace_project_binding_conflict" });
+  }
+  assert.equal(writes, 0, "publishing cannot inherit foreign Decision records under a new project binding");
+});
+
+test("legacy accepted Decisions survive unchanged registration but never a dependency file change", async t => {
+  const f = await fixture(t);
+  const input = designInput({ full: true, dependent: true });
+  input.materialRefs = { modules: { alpha: "outputs/legacy-alpha.md" } };
+  await writeFile(path.join(f.root, "outputs/legacy-alpha.md"), "Registered legacy dependency\n");
+  await f.publish(input);
+  // Reproduce the exact v3.12 Decision contract without a git dependency in
+  // packaged tests; actual baseline-source upgrade is also checked separately.
+  const state = await f.service.repository.readState();
+  const next = JSON.parse(JSON.stringify(state)), workspace = next.liveWorkspace;
+  const stored = JSON.parse(await readFile(path.join(f.root, workspace.designRef.ref), "utf8"));
+  for (const module of workspace.modules) {
+    const structured = stored.softwareDesign.modules.find(item => item.id === module.id);
+    const basisDigest = workspaceDigest([workspace.architecture.basisDigest, structured,
+      (module.dependsOn || []).slice().sort().map(id => stored.softwareDesign.modules.find(item => item.id === id))]);
+    const review = createWorkspaceReview({ runId: `${workspace.projectBinding}:${f.runId}`, targetId: module.id,
+      moduleId: module.id, material: workspace.materials[module.artifactId], basisDigest,
+      generation: workspace.generation, at: new Date().toISOString(), policy: f.service.policy });
+    workspace.reviews = workspace.reviews.filter(item => item.decisionId !== module.decisionId);
+    workspace.reviews.push(review); module.decisionId = review.decisionId;
+  }
+  await f.service.repository.writeState(state, next);
+  await f.vote("outline"); await f.vote("alpha"); await f.vote("beta");
+  const before = JSON.parse(JSON.stringify((await f.service.repository.readState()).liveWorkspace));
+  await f.publish(input); await f.publish(input);
+  const unchanged = JSON.parse(JSON.stringify((await f.service.repository.readState()).liveWorkspace));
+  assert.equal(unchanged.designStatus, "accepted");
+  for (const module of before.modules) {
+    assert.equal(unchanged.modules.find(item => item.id === module.id).decisionId, module.decisionId);
+    assert.deepEqual(unchanged.reviews.find(item => item.decisionId === module.decisionId),
+      before.reviews.find(item => item.decisionId === module.decisionId), "preserve the actual old Decision, not a migrated artificial approval");
+  }
+  await writeFile(path.join(f.root, "outputs/legacy-alpha.md"), "Changed legacy dependency\n");
+  await f.publish(input);
+  const changed = await f.overview();
+  assert.equal(changed.design.architecture.status, "accepted");
+  assert.ok(changed.design.modules.every(module => module.status === "awaiting_human"));
+  assert.ok(changed.design.modules.every(module => module.decisionId !== before.modules.find(item => item.id === module.id).decisionId));
 });

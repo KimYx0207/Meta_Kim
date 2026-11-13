@@ -6,6 +6,19 @@ User-facing changes for each release. Detailed test results live in the linked v
 
 ## [Unreleased]
 
+## [3.12.1] - 2026-11-14
+
+### Repair source changes, host receipts and packaged upgrades
+
+- Bind module reviews to the actual files of their dependencies. Changes invalidate affected consumers while independent reviews survive; outline drift requires registration of the current source. Off-page materials participate in overall readiness. Unchanged v3.12 workspaces retain their original accepted decisions when registered again after upgrade.
+- Check project, profile, run and conversation bindings on workspace continuation. Display actual receipt artifact references and SHA-256. Saved, claimed and file-reported remain separate from verified execution. Display refreshes reuse stable-file checks; decisions, claims and returns still read current bytes.
+- Recognize npm-hoisted dependencies in officially installed packages and avoid redundant install/update downloads. Source checkouts retain dependency refresh, and existing user configuration ownership remains intact.
+- Derive release-plan runtime targets from the shared manifest, including Gemini and ZCode, and bind Kim_Service to the reviewed V1.16 source.
+
+### Verification and migration
+
+Source users run `git pull --ff-only` and `node setup.mjs --update`; tgz users first update the package with npm, then use its setup update entrypoint. See [installation and host evidence](docs/verification/host-install-upgrade-20261114.md) for reproducible commands and limits. Local file workflows, native component discovery and native model execution are reported separately; unavailable hosts and industry outcomes remain unverified.
+
 ## [3.12.0] - 2026-11-13
 
 ### Continue project work from one Live workspace

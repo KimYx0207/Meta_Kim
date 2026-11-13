@@ -106,6 +106,13 @@ test("narrow plan always retains version, sync, packaging, and focused regressio
   ]);
   assert.ok(plan.checks.find((check) => check.id === "version").commands.some((command) => command.includes("verify-packed-user-install-update.mjs")));
   assert.ok(plan.checks.find((check) => check.id === "sync").commands.some((command) => command.includes("meta:sync")));
+  const supportedTargets = JSON.parse(readFileSync(path.join(REPO_ROOT, "config/sync.json"), "utf8")).supportedTargets;
+  const targetCommands = plan.checks.find((check) => check.id === "sync").commands.filter(command => command.includes("--targets "));
+  assert.equal(targetCommands.length, 2, "both projection and readback must cover the declared hosts");
+  for (const command of targetCommands) {
+    assert.deepEqual(command.split("--targets ")[1].split(","), supportedTargets,
+      "release plans must not silently omit optional declared projections");
+  }
   assert.ok(plan.checks.find((check) => check.id === "packaging").commands.some((command) => command.includes("verify-packed-user-install-update.mjs")));
   assert.ok(plan.focusedRegressionSelectors.includes("tests/governance/example.test.mjs"));
   assert.equal(plan.claimBoundary.neverEquivalentTo.includes("full"), true);

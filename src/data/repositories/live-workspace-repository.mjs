@@ -73,6 +73,39 @@ export function createLiveWorkspaceRepository({ projectRoot, profile = "default"
     if (requireSourceCurrent && material.sourceRef) await inspect(material.sourceRef, material.sourceSha256);
     return inspect(material.ref, material.sha256);
   }
+  // Display-only memoization: no review, claim, or receipt may use it.
+  // Recheck trusted paths and nanosecond file identity on every poll; only
+  // stable files reuse their digest. The normal verifier always hashes fresh.
+  const displayChecks = new Map();
+  async function displayInspect(ref, expected) {
+    const signature = async () => {
+      const info = await stat(trusted(ref), { bigint: true });
+      workspaceRequire(info.isFile(), "workspace_material_path_untrusted", 403);
+      return [info.dev, info.ino, info.size, info.mtimeNs, info.ctimeNs].join(":");
+    };
+    const before = await signature();
+    const key = `${ref}:${expected}`;
+    const cached = displayChecks.get(key);
+    if (cached?.signature === before) {
+      if (cached.error) throw workspaceFailure(cached.error, 409);
+      return { ...cached.result, cached: true };
+    }
+    let result, failure;
+    try { result = await inspect(ref, expected); }
+    catch (error) { if (error.code !== "workspace_material_changed") throw error; failure = error; }
+    const after = await signature();
+    workspaceRequire(before === after, "workspace_material_changed", 409);
+    displayChecks.delete(key);
+    displayChecks.set(key, { signature: after, result, error: failure?.code });
+    while (displayChecks.size > 2 * (policy.maxModules + 1)) displayChecks.delete(displayChecks.keys().next().value);
+    if (failure) throw failure;
+    return { ...result, cached: false };
+  }
+  async function verifyMaterialForDisplay(material) {
+    workspaceRequire(material && /^[a-f0-9]{64}$/u.test(material.sha256), "workspace_material_unknown", 404);
+    if (material.sourceRef) await displayInspect(material.sourceRef, material.sourceSha256);
+    return displayInspect(material.ref, material.sha256);
+  }
   async function materialPage(material, { version, cursor = null }) {
     workspaceRequire(version === workspaceVersion(material.sha256), "workspace_material_version_conflict", 409);
     await verifyMaterial(material, { requireSourceCurrent: false });
@@ -109,7 +142,7 @@ export function createLiveWorkspaceRepository({ projectRoot, profile = "default"
       format: material.format, text, totalBytes: material.bytes, eof, sourceState,
       nextCursor: eof ? null : Buffer.from(JSON.stringify({ artifactId: material.artifactId, version, offset: offset + used })).toString("base64url") };
   }
-  return { projectRoot: root, profile, trusted, inspect, putBytes, putSource, verifyMaterial, materialPage,
+  return { projectRoot: root, profile, trusted, inspect, putBytes, putSource, verifyMaterial, verifyMaterialForDisplay, materialPage,
     async historicalReviewMaterial(runId, review) {
       workspaceRequire(review && /^[a-f0-9]{64}$/u.test(review.sha256 || "") && review.version === workspaceVersion(review.sha256),
         "workspace_historical_material_binding_invalid", 409);

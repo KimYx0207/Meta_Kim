@@ -449,3 +449,19 @@ for (const [language, expected] of Object.entries({
     assert.equal(h.node("next").textContent, "用户自己写的任务正文", "business subtitle retains its original text");
   });
 }
+
+test("record timeline displays the actual bounded file and immutable receipt hashes", () => {
+  const h = presentationHarness();
+  h.state.view = "records"; h.state.recordPage = 0; h.state.pageSize = 10;
+  h.state.history = { rows: [], total: 1, revision: 2 };
+  h.state.workspace.requests = [{ commandId: "actual-receipt", status: "host_reported", kind: "feedback",
+    summary: "Host supplied file evidence", receipt: { ref: ".meta-kim/work/receipt.json", sha256: "a".repeat(64),
+      evidenceRefs: [{ ref: "outputs/module.md", sha256: "b".repeat(64) }], evidenceOmitted: 2 } }];
+  h.renderer.render();
+  const texts = node => [node.textContent, ...node.children.flatMap(texts)].join("\n");
+  const rendered = texts(h.node("content"));
+  assert.match(rendered, /outputs\/module\.md/u);
+  assert.match(rendered, /\.meta-kim\/work\/receipt\.json/u);
+  assert.ok(rendered.includes("a".repeat(64)) && rendered.includes("b".repeat(64)));
+  assert.ok(rendered.includes(LIVE_WORKSPACE_MESSAGES.zh.evidenceMore.replace("{count}", "2")));
+});

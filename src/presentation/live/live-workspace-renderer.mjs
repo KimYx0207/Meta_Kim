@@ -378,7 +378,7 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
     for (const item of state.workspace?.requests || []) requests.set(item.commandId, item);
     const rows = [
       ...(state.snapshot?.replay || []).map((item) => ({ id: item.id, title: item.label || item.kind, summary: item.detail || item.summary || "", at: item.at, kind: item.kind })),
-      ...[...requests.values()].map((item) => ({ id: item.commandId, title: copy(item.kind === "feedback" ? "feedback" : item.kind === "review" ? "decision" : "request") + " · " + label(item.status), summary: item.summary || copy(workspaceCommandMessage(item.status, item.kind)), at: item.updatedAt || item.createdAt, kind: "request" })),
+      ...[...requests.values()].map((item) => ({ id: item.commandId, title: copy(item.kind === "feedback" ? "feedback" : item.kind === "review" ? "decision" : "request") + " · " + label(item.status), summary: item.summary || copy(workspaceCommandMessage(item.status, item.kind)), at: item.updatedAt || item.createdAt, kind: "request", receipt: item.receipt })),
     ].sort((a, b) => String(b.at || "").localeCompare(String(a.at || "")));
     if (history.stale || history.error) {
       const note = e("div", "uw-notice", history.stale ? copy("recordsChanged") : history.error);
@@ -392,6 +392,14 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
     for (const row of rows.slice(start, start + state.pageSize)) {
       const item = e("li", "uw-timeline-item"); item.dataset.liveWorkspaceEvent = row.id || "";
       const body = e("div", "uw-timeline-copy"); body.append(e("strong", "", row.title), e("p", "", row.summary), e("time", "", row.at || copy("unknown")));
+      if (row.receipt) {
+        const evidence = e("details", "uw-source-ref");
+        evidence.append(e("summary", "", copy("receipt") + " · " + copy("evidence")));
+        for (const ref of row.receipt.evidenceRefs || []) evidence.append(e("p", "", ref.ref + " · SHA-256: " + ref.sha256));
+        if (row.receipt.evidenceOmitted > 0) evidence.append(e("p", "", copy("evidenceMore").replace("{count}", String(row.receipt.evidenceOmitted))));
+        evidence.append(e("p", "", copy("receipt") + ": " + row.receipt.ref + " · SHA-256: " + row.receipt.sha256));
+        body.append(evidence);
+      }
       item.append(e("span", "uw-timeline-marker"), body); list.append(item);
     }
     content.append(list);

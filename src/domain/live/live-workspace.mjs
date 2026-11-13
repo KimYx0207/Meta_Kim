@@ -78,5 +78,14 @@ export function boundedWorkspaceRequest(request) {
   return { commandId: request.commandId, nonce: request.nonce, kind: request.kind, status: request.status,
     targetId: request.targetId, createdAt: request.createdAt, updatedAt: request.updatedAt,
     summary: workspaceText(request.summary), completionVerified: false,
-    ...(request.outcome ? { outcome: request.outcome } : {}) };
+    ...(request.outcome ? { outcome: request.outcome } : {}),
+    ...(request.receiptMaterial && request.receipt ? { receipt: {
+      ref: request.receiptMaterial.ref, sha256: request.receiptMaterial.sha256,
+      evidenceLevel: request.receipt.evidenceLevel, evidenceCount: request.receipt.evidenceCount,
+      // The full immutable receipt stays on disk. One actual file reference
+      // keeps overview/history pages bounded even for 32-file reports.
+      evidenceRefs: (request.receipt.evidenceRefs || []).slice(0, 1),
+      evidenceOmitted: Math.max(0, request.receipt.evidenceCount - (request.receipt.evidenceRefs || []).slice(0, 1).length),
+      completionVerified: false, nativeInvocationVerified: false,
+    } } : {}) };
 }

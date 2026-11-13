@@ -1,6 +1,6 @@
 {
   "name": "meta-kim",
-  "version": "3.12.0",
+  "version": "3.12.1",
   "description": "General agent governance for evidence-backed decisions, capability discovery, orchestration and outcome verification across domains, with primary Claude Code/Codex projections and opt-in compatibility adapters.",
   "private": true,
   "type": "module",
@@ -378,6 +378,7 @@
     "src/application/live/live-human-gate-projection.mjs",
     "src/infrastructure/capabilities/optional-engine-discovery.mjs",
     "src/infrastructure/installer/retired-dependency-copies.mjs",
+    "src/infrastructure/installer/npm-installed-dependencies.mjs",
     "docs/harness-architecture.md",
     "docs/dependency-baseline.md",
     "npm-shrinkwrap.json",
@@ -391,7 +392,8 @@
     "src/presentation/live/live-workspace-renderer.mjs",
     "src/presentation/live/live-workspace-styles.mjs",
     "src/presentation/live/live-workspace-view.mjs",
-    "docs/live-workspace.md"
+    "docs/live-workspace.md",
+    "docs/verification/host-install-upgrade-20261114.md"
   ],
   "author": "KimYx0207",
   "license": "Apache-2.0",

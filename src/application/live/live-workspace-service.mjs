@@ -60,6 +60,8 @@ export function createLiveWorkspaceService(options) {
     const workspace = state.liveWorkspace;
     workspaceRequire(workspace?.schemaVersion === LIVE_WORKSPACE_STATE_SCHEMA && workspace.runId === state.runId &&
       Array.isArray(workspace.modules) && Array.isArray(workspace.reviews) && Array.isArray(workspace.requests), "workspace_not_registered", 409);
+    workspaceRequire(workspace.profile === repository.profile &&
+      workspace.projectBinding === workspaceDigest([repository.projectRoot, repository.profile]), "workspace_project_binding_conflict", 409);
     // The spine JSON boundary intentionally returns null-prototype records;
     // Decision's public domain contract deliberately accepts plain records.
     return JSON.parse(JSON.stringify(workspace));
@@ -162,7 +164,7 @@ export function createLiveWorkspaceService(options) {
     }
     return progress;
   }
-  const resultFor = (request, workspace, replay = false) => ({ status: request.status === "recorded" ? "recorded" : "waiting_host",
+  const resultFor = (request, workspace, replay = false) => ({ status: publicRequest(request).status,
     commandId: request.commandId, nonce: request.nonce, replay, completionVerified: false, nextAction: workspace.nextAction });
 
   async function persistRequest(state, next, request, input, digest) {
@@ -196,7 +198,7 @@ export function createLiveWorkspaceService(options) {
     const order = new Map(software.architecture.moduleIds.map((id, index) => [id, index]));
     for (const module of software.modules) workspaceRequire((module.dependsOn || []).every(id => order.get(id) < order.get(module.id)),
       "workspace_module_order_must_follow_dependencies");
-    const previous = state.liveWorkspace?.schemaVersion === LIVE_WORKSPACE_STATE_SCHEMA ? state.liveWorkspace : null;
+    const previous = state.liveWorkspace ? workspaceFor(state) : null;
     const at = now();
     const workspace = { schemaVersion: LIVE_WORKSPACE_STATE_SCHEMA, runId, profile: repository.profile, generation: (previous?.generation || 0) + 1,
       projectBinding: workspaceDigest([repository.projectRoot, repository.profile]),
@@ -251,7 +253,26 @@ export function createLiveWorkspaceService(options) {
         for (const ancestor of software.modules.find(item => item.id === dependencyId)?.dependsOn || []) visit(ancestor);
       };
       for (const dependency of module.dependsOn || []) visit(dependency);
-      const basisDigest = workspaceDigest([outlineBasis, module, [...dependencies].sort().map(dependencyId => software.modules.find(item => item.id === dependencyId))]);
+      // Dependencies are ordered before their consumers. Bind the actual registered
+      // bytes as well as the structured contract: a Markdown-only change must
+      // invalidate its consumers, while unrelated module reviews remain valid.
+      let basisDigest = workspaceDigest([outlineBasis, outlineMaterial.sha256, module, [...dependencies].sort().map(dependencyId => {
+        const dependency = workspace.modules.find(item => item.id === dependencyId);
+        return { design: software.modules.find(item => item.id === dependencyId),
+          sha256: workspace.materials[dependency.artifactId].sha256 };
+      })]);
+      // v3.12 reviews predate file-bound dependency bases. Preserve their
+      // original Decision (never manufacture a new approval) only when the
+      // exact old structural basis and every registered relevant byte match.
+      const legacyBasis = workspaceDigest([outlineBasis, module,
+        [...dependencies].sort().map(dependencyId => software.modules.find(item => item.id === dependencyId))]);
+      const priorReview = previous?.reviews.find(item => item.decisionId === prior?.decisionId);
+      const sameRegisteredMaterial = (oldTarget, newTarget) => oldTarget && newTarget &&
+        previous.materials[oldTarget.artifactId]?.sha256 === workspace.materials[newTarget.artifactId]?.sha256;
+      if (priorReview?.basisDigest === legacyBasis && sameRegisteredMaterial(previous.architecture, workspace.architecture) &&
+          sameRegisteredMaterial(prior, { artifactId: moduleMaterial.artifactId }) &&
+          [...dependencies].every(dependencyId => sameRegisteredMaterial(previous.modules.find(item => item.id === dependencyId),
+            workspace.modules.find(item => item.id === dependencyId)))) basisDigest = legacyBasis;
       const review = detailed ? reviewFor(id, id, moduleMaterial, basisDigest, prior?.decisionId) : null;
       workspace.modules.push({ id, title: workspaceText(module.title || module.name || id, 160), purpose: workspaceText(module.purpose, 1000),
         detailed, artifactId: moduleMaterial.artifactId, decisionId: review?.decisionId || null,
@@ -281,6 +302,10 @@ export function createLiveWorkspaceService(options) {
     let state;
     try { state = await stateFor(runId); }
     catch (error) { if (error.code !== "workspace_current_run_unavailable") throw error; }
+    return overviewForState(state, runId, cursor);
+  }
+
+  async function overviewForState(state, runId, cursor = null) {
     const stages = STAGE_ORDER.map(id => {
       const report = state?.hostStageReports?.[id], stage = state?.stages?.[id];
       const summary = typeof report?.summary === "string" ? report.summary : "";
@@ -314,16 +339,26 @@ export function createLiveWorkspaceService(options) {
     const selectedModules = progress.modules.slice(offset, offset + policy.modulePageSize);
     const ids = new Set([workspace.architecture.decisionId, ...selectedModules.map(module => module.decisionId).filter(Boolean)]);
     const invalidMaterials = new Set();
-    for (const artifactId of new Set([workspace.architecture.artifactId, ...selectedModules.map(module => module.artifactId)])) {
-      try { await repository.verifyMaterial(workspace.materials[artifactId]); }
+    // Global readiness/nextAction covers the complete design even when this
+    // response contains only one module page. Hash checks do not load full
+    // bodies into the response or discard any prior review records.
+    for (const artifactId of new Set([workspace.architecture.artifactId, ...workspace.modules.map(module => module.artifactId)])) {
+      try { await (repository.verifyMaterialForDisplay || repository.verifyMaterial)(workspace.materials[artifactId]); }
       catch (error) { if (["workspace_material_changed", "ENOENT", "workspace_material_path_untrusted"].includes(error.code)) invalidMaterials.add(artifactId); else throw error; }
+    }
+    // Propagate source drift only along dependency edges, including ancestors
+    // outside this index page. Do not make an unrelated review unavailable.
+    const affectedMaterials = new Set(invalidMaterials);
+    for (const module of workspace.modules) {
+      if (invalidMaterials.has(workspace.architecture.artifactId) ||
+          module.dependsOn.some(id => affectedMaterials.has(workspace.modules.find(item => item.id === id).artifactId))) affectedMaterials.add(module.artifactId);
     }
     const descriptor = target => { const material = workspace.materials[target.artifactId];
       return { ...target, version: workspaceVersion(material.sha256), sha256: material.sha256,
-        ...(invalidMaterials.has(target.artifactId) ? { status: "material_changed" } : {}) }; };
+        ...(affectedMaterials.has(target.artifactId) ? { status: "material_changed" } : {}) }; };
     const writable = state.active === true && state.conversationLinkState === "verified";
     const reviews = workspace.reviews.filter(review => ids.has(review.decisionId)).map(review => {
-      const status = invalidMaterials.has(review.artifactId) ? "material_changed" : workspaceReviewState(review, Date.parse(now()));
+      const status = affectedMaterials.has(review.artifactId) ? "material_changed" : workspaceReviewState(review, Date.parse(now()));
       const target = progress.modules.find(module => module.id === review.moduleId);
       const dependenciesReady = !target || target.dependsOn.every(id => progress.modules.find(module => module.id === id)?.status === "accepted");
       const available = writable && status === "awaiting_human" && (review.kind === "outline" || dependenciesReady && progress.outlineStatus === "accepted" && !invalidMaterials.has(workspace.architecture.artifactId));
@@ -433,8 +468,9 @@ export function createLiveWorkspaceService(options) {
     assertHost(state, conversationId, state.hostCheckpointRevision || 0);
     const workspace = state.liveWorkspace ? workspaceFor(state) : null;
     const page = workspace ? requestPage(state, workspace) : { requests: [], total: 0, nextCursor: null };
+    const current = workspace ? await overviewForState(state, runId) : null;
     return { runId, profile: repository.profile, revision: state.hostCheckpointRevision || 0, stage: state.currentStage,
-      designStatus: workspace?.designStatus || "not_registered", nextAction: workspace?.nextAction || null,
+      designStatus: current?.design.status || "not_registered", nextAction: current?.nextAction || null,
       requests: page.requests, requestsTotal: page.total, requestsTruncated: page.nextCursor !== null, requestsNextCursor: page.nextCursor,
       boundedRequestRead: workspace ? { hostEntry: workspace.hostEntry,
         arguments: ["--project-root", repository.projectRoot, "--profile", repository.profile, "--run-id", runId,
@@ -458,7 +494,12 @@ export function createLiveWorkspaceService(options) {
       workspaceRequire(target && target.dependsOn.every(id => progress.modules.find(module => module.id === id)?.status === "accepted"),
         "workspace_dependency_review_required", 409);
     }
-    if (request.kind === "continue_governed_run") workspaceRequire(workspace.designStatus === "accepted", "workspace_design_review_pending", 409);
+    if (request.kind === "continue_governed_run") {
+      workspaceRequire(deriveWorkspaceProgress(workspace, Date.parse(now())).designStatus === "accepted", "workspace_design_review_pending", 409);
+      // Continuing the spine consumes the entire accepted design, not only
+      // the outline material carried by the generated work order.
+      for (const module of workspace.modules) await repository.verifyMaterial(workspace.materials[module.artifactId]);
+    }
     const material = currentMaterial(workspace, request.artifactId, request.version);
     await repository.verifyMaterial(workspace.materials[workspace.architecture.artifactId]);
     await repository.verifyMaterial(material);
@@ -507,7 +548,8 @@ export function createLiveWorkspaceService(options) {
     request.status = "host_reported"; request.updatedAt = now(); request.receiptDigest = digest;
     request.outcome = input.outcome; request.summary = workspaceText(input.summary);
     request.receiptMaterial = await repository.putBytes(runId, Buffer.from(JSON.stringify(input) + "\n"), "json");
-    request.receipt = { evidenceLevel: "host_reported_files_verified", evidenceCount: input.evidenceRefs.length, ...nativeBoundary };
+    request.receipt = { evidenceLevel: "host_reported_files_verified", evidenceCount: input.evidenceRefs.length,
+      evidenceRefs: input.evidenceRefs.map(({ ref, sha256 }) => ({ ref, sha256 })), ...nativeBoundary };
     const next = structuredClone(state); next.liveWorkspace = workspace;
     await repository.writeState(state, next);
     return { status: "host_reported", commandId, revision: next.hostCheckpointRevision, replay: false, ...nativeBoundary };

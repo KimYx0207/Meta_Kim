@@ -14,6 +14,9 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
+const RUNTIME_SYNC_TARGETS = JSON.parse(
+  readFileSync(path.join(REPO_ROOT, "config", "sync.json"), "utf8"),
+).supportedTargets;
 const CONTRACT_PATH = path.join(
   REPO_ROOT,
   "config",
@@ -244,7 +247,8 @@ function buildCheckPlan(checkId, { selectors = [], contract = RELEASE_VERIFICATI
     category: definition.category,
     required: true,
     description: definition.description,
-    commands: [...(definition.commands ?? [])],
+    commands: (definition.commands ?? []).map(command =>
+      command.replaceAll("{supportedTargets}", RUNTIME_SYNC_TARGETS.join(","))),
     ...(definition.commandTemplate ? { commandTemplate: definition.commandTemplate } : {}),
     ...(checkId === "focused_regression" ? { selectors: [...selectors] } : {}),
     sourceRefs: [...(definition.sourceRefs ?? [])],

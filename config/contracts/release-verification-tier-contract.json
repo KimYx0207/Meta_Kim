@@ -128,8 +128,8 @@
         "scripts/sync-coverage-check.mjs"
       ],
       "commands": [
-        "npm run meta:sync -- --targets claude,codex,openclaw,cursor",
-        "npm run meta:check:runtimes -- --targets claude,codex,openclaw,cursor",
+        "npm run meta:sync -- --targets {supportedTargets}",
+        "npm run meta:check:runtimes -- --targets {supportedTargets}",
         "npm run meta:check:sync-coverage"
       ],
       "evidenceBoundary": "Projection sync/readback is a narrow diagnostic lane and is not a substitute for the full release runner."
