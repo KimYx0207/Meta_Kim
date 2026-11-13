@@ -2,6 +2,11 @@
 export const LIVE_WORKSPACE_MESSAGES = Object.freeze({
   zh: {
     moduleSummary: "模块说明",
+    nextReviewOutline: "请审阅当前系统模块大纲", nextReviewModule: "请审阅模块：{module}", nextDesignModule: "继续详细设计：{module}",
+    nextReviseOutline: "系统模块大纲需要重新核对或修订", nextReviseModule: "修订或重新核对模块：{module}",
+    nextContinueRun: "设计已逐项采纳；由当前执行器完成设计关口并继续原工作流。",
+    nextRegisterReview: "已有结构化设计可只读查看；由当前执行器登记后接入人工审阅。",
+    nextRefreshMaterial: "材料已变化；请当前执行器重新登记准确版本。",
     summaryExcerpt: "摘要", evidenceMore: "另有 {count} 条引用未在本摘要中列出。",
     bindingPending: "提交已记录，正在同步当前工作版本。同步完成后可继续提交；若等待较久，可核实原请求。",
     loadMoreRecords: "加载更多记录", refreshRecords: "刷新记录", loadedRecords: "已载请求", recordsChanged: "记录版本已更新，已保留载入的记录。请刷新记录后继续翻页。",
@@ -28,6 +33,11 @@ export const LIVE_WORKSPACE_MESSAGES = Object.freeze({
   },
   en: {
     moduleSummary: "Module summary",
+    nextReviewOutline: "Review the current system outline", nextReviewModule: "Review module: {module}", nextDesignModule: "Continue detailed design: {module}",
+    nextReviseOutline: "Recheck or revise the system outline", nextReviseModule: "Revise or recheck module: {module}",
+    nextContinueRun: "Designs are adopted. The current host completes the design gate and continues the workflow.",
+    nextRegisterReview: "Read the existing design. The current host must register it before human review.",
+    nextRefreshMaterial: "The material changed. Ask the current host to register its current version.",
     summaryExcerpt: "Summary excerpt", evidenceMore: "{count} additional references are not included in this summary.",
     bindingPending: "The submission is recorded. Syncing the current work version before another submission; verify the original request if the wait continues.",
     loadMoreRecords: "Load more records", refreshRecords: "Refresh records", loadedRecords: "Requests loaded", recordsChanged: "The record version changed. Loaded records are preserved; refresh before continuing through history.",
@@ -54,6 +64,11 @@ export const LIVE_WORKSPACE_MESSAGES = Object.freeze({
   },
   ja: {
     moduleSummary: "モジュール概要",
+    nextReviewOutline: "現在のシステム概要を確認してください", nextReviewModule: "モジュールを確認：{module}", nextDesignModule: "詳細設計を続ける：{module}",
+    nextReviseOutline: "システム概要を再確認または修正してください", nextReviseModule: "モジュールを修正または再確認：{module}",
+    nextContinueRun: "設計はすべて採用済みです。現在のホストが設計段階を完了し、ワークフローを続行します。",
+    nextRegisterReview: "既存の設計を閲覧できます。人による審査の前に、現在のホストが登録する必要があります。",
+    nextRefreshMaterial: "資料が変更されました。現在のホストに最新版の登録を依頼してください。",
     summaryExcerpt: "要約", evidenceMore: "この要約には含まれていない参照が他に {count} 件あります。",
     bindingPending: "送信は記録済みです。次の送信の前に現在の作業バージョンを同期しています。待ち時間が長い場合は元のリクエストを確認してください。",
     loadMoreRecords: "さらに記録を読み込む", refreshRecords: "記録を更新", loadedRecords: "読み込み済みリクエスト", recordsChanged: "記録の版が更新されました。読み込み済みの内容は保持されています。記録を更新してから続きを読み込んでください。",
@@ -80,6 +95,11 @@ export const LIVE_WORKSPACE_MESSAGES = Object.freeze({
   },
   ko: {
     moduleSummary: "모듈 설명",
+    nextReviewOutline: "현재 시스템 개요를 검토해 주세요", nextReviewModule: "모듈 검토: {module}", nextDesignModule: "상세 설계 계속: {module}",
+    nextReviseOutline: "시스템 개요를 다시 확인하거나 수정해 주세요", nextReviseModule: "모듈 수정 또는 재확인: {module}",
+    nextContinueRun: "모든 설계가 채택되었습니다. 현재 실행기가 설계 단계를 마무리하고 워크플로를 계속합니다.",
+    nextRegisterReview: "기존 설계는 읽을 수 있습니다. 사람의 검토를 시작하려면 현재 실행기가 먼저 등록해야 합니다.",
+    nextRefreshMaterial: "자료가 변경되었습니다. 현재 실행기에 최신 버전 등록을 요청해 주세요.",
     summaryExcerpt: "요약", evidenceMore: "이 요약에 포함되지 않은 참조가 {count}개 더 있습니다.",
     bindingPending: "제출이 기록되었습니다. 다음 제출 전에 현재 작업 버전을 동기화합니다. 오래 기다려야 한다면 원래 요청을 확인해 주세요.",
     loadMoreRecords: "기록 더 불러오기", refreshRecords: "기록 새로 고침", loadedRecords: "불러온 요청", recordsChanged: "기록 버전이 변경되었습니다. 불러온 기록은 유지됩니다. 기록을 새로 고친 후 다음 페이지를 읽어 주세요.",

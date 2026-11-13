@@ -389,3 +389,63 @@ test("rendered module summaries use module-specific headings in all four languag
     assert.equal(h.article().children[1].children[0].textContent, LIVE_WORKSPACE_MESSAGES[language].overview, language);
   }
 });
+
+for (const [language, expected] of Object.entries({
+  en: { outline: "Review the current system outline", module: "Review module: {module}", design: "Continue detailed design: {module}",
+    reviseOutline: "Recheck or revise the system outline", reviseModule: "Revise or recheck module: {module}",
+    continue: "Designs are adopted. The current host completes the design gate and continues the workflow.",
+    register: "Read the existing design. The current host must register it before human review.",
+    refresh: "The material changed. Ask the current host to register its current version.",
+    feedback: "Feedback recorded; awaiting the current host." },
+  ja: { outline: "現在のシステム概要を確認してください", module: "モジュールを確認：{module}", design: "詳細設計を続ける：{module}",
+    reviseOutline: "システム概要を再確認または修正してください", reviseModule: "モジュールを修正または再確認：{module}",
+    continue: "設計はすべて採用済みです。現在のホストが設計段階を完了し、ワークフローを続行します。",
+    register: "既存の設計を閲覧できます。人による審査の前に、現在のホストが登録する必要があります。",
+    refresh: "資料が変更されました。現在のホストに最新版の登録を依頼してください。",
+    feedback: "修正意見を記録しました。現在の実行ホストによる対応待ちです。" },
+  ko: { outline: "현재 시스템 개요를 검토해 주세요", module: "모듈 검토: {module}", design: "상세 설계 계속: {module}",
+    reviseOutline: "시스템 개요를 다시 확인하거나 수정해 주세요", reviseModule: "모듈 수정 또는 재확인: {module}",
+    continue: "모든 설계가 채택되었습니다. 현재 실행기가 설계 단계를 마무리하고 워크플로를 계속합니다.",
+    register: "기존 설계는 읽을 수 있습니다. 사람의 검토를 시작하려면 현재 실행기가 먼저 등록해야 합니다.",
+    refresh: "자료가 변경되었습니다. 현재 실행기에 최신 버전 등록을 요청해 주세요.",
+    feedback: "수정 의견이 기록되었습니다. 현재 실행기의 처리를 기다립니다." },
+})) {
+  test(`rendered ${language} system next steps are localized while business text and unknown actions remain exact`, () => {
+    const h = presentationHarness({ language });
+    h.state.view = "work"; h.state.query = ""; h.state.taskFilter = "all";
+    h.state.snapshot.run.task = "";
+    h.state.workspace.stages = [{ id: "thinking", label: "Thinking", summary: "业务原文不翻译" }];
+    h.state.detail = { kind: "stage", id: "thinking" };
+    const moduleTitle = "付款 $& {module} 🚀";
+    h.state.workspace.design.modules[0].title = moduleTitle;
+    const scenarios = [
+      ["awaiting_review", null, expected.outline], ["awaiting_review", "alpha", expected.module],
+      ["design_module", "alpha", expected.design], ["revise_outline", null, expected.reviseOutline],
+      ["revise_module", "alpha", expected.reviseModule], ["continue_governed_run", null, expected.continue],
+      ["register_design_review", null, expected.register], ["refresh_design_material", null, expected.refresh],
+      ["apply_feedback", "alpha", expected.feedback],
+      ["future_business_action", null, "请审阅当前系统模块大纲"], ["constructor", null, "请审阅当前系统模块大纲"],
+    ];
+    for (const [kind, moduleId, template] of scenarios) {
+      h.state.workspace.nextAction = { kind, moduleId, summary: "请审阅当前系统模块大纲" };
+      const before = JSON.stringify(h.state.workspace);
+      const message = template.replace("{module}", () => moduleTitle);
+      h.renderer.render();
+      assert.equal(h.article().children[1].textContent, message, kind + " work card");
+      assert.equal(h.node("next").textContent, message, kind + " overview");
+      assert.equal(h.node("detail-body").children.at(-1).children[1].textContent, message, kind + " stage detail");
+      assert.equal(h.node("detail-body").children[1].children[1].textContent, "业务原文不翻译");
+      assert.equal(JSON.stringify(h.state.workspace), before, "presentation does not mutate the authoritative data");
+    }
+    h.state.workspace.nextAction = { kind: "design_module", moduleId: "unloaded-module", summary: "中文摘要" };
+    h.renderer.render();
+    assert.equal(h.article().children[1].textContent, expected.design.replace("{module}", "unloaded-module"));
+    h.state.workspace.design.architecture.status = "expired";
+    h.state.workspace.nextAction = { kind: "awaiting_review", moduleId: null, summary: "系统模块大纲需要重新核对或修订" };
+    h.renderer.render();
+    assert.equal(h.article().children[1].textContent, expected.reviseOutline, "expired material still calls for rechecking");
+    h.state.snapshot.run.task = "用户自己写的任务正文";
+    h.renderer.render();
+    assert.equal(h.node("next").textContent, "用户自己写的任务正文", "business subtitle retains its original text");
+  });
+}

@@ -25,6 +25,30 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
     const digest = /^(sha256:)?([a-f0-9]{64})$/i.exec(full);
     return digest ? (digest[1] || "") + digest[2].slice(0, 12) + "…" + digest[2].slice(-8) : full;
   };
+  const nextActionSummary = (action) => {
+    if (!action) return "";
+    const module = (state.workspace?.design?.modules || []).find((item) => item.id === action.moduleId);
+    const item = action.moduleId ? module : state.workspace?.design?.architecture;
+    let key;
+    switch (action.kind) {
+      case "awaiting_review":
+        key = ["expired", "not_reviewed", "material_changed"].includes(item?.status)
+          ? (action.moduleId ? "nextReviseModule" : "nextReviseOutline")
+          : (action.moduleId ? "nextReviewModule" : "nextReviewOutline");
+        break;
+      case "design_module": key = "nextDesignModule"; break;
+      case "revise_outline": key = "nextReviseOutline"; break;
+      case "revise_module": key = "nextReviseModule"; break;
+      case "continue_governed_run": key = "nextContinueRun"; break;
+      case "register_design_review": key = "nextRegisterReview"; break;
+      case "refresh_design_material": key = "nextRefreshMaterial"; break;
+      case "apply_feedback": key = "feedbackRecorded"; break;
+      default: return action.summary || copy("waiting");
+    }
+    // Module names and original summaries stay authoritative business data;
+    // only known system instructions use the selected interface language.
+    return copy(key).replace("{module}", () => module?.title || action.moduleId || copy("moduleDetail"));
+  };
   const button = (title, action, attributes = {}, secondary = false) => {
     const node = e("button", "uw-button" + (secondary ? " secondary" : ""), title);
     node.type = "button";
@@ -70,7 +94,7 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
     const snapshot = state.snapshot;
     root.dataset.workspaceRevision = state.workspace?.revision == null ? "" : String(state.workspace.revision);
     const title = snapshot?.run?.title || state.project?.displayName || copy("projectEmpty");
-    const subtitle = snapshot?.run?.task || state.workspace?.nextAction?.summary || (state.workspace ? copy("noReviews") : copy("chooseRun"));
+    const subtitle = snapshot?.run?.task || nextActionSummary(state.workspace?.nextAction) || (state.workspace ? copy("noReviews") : copy("chooseRun"));
     text("title", title);
     text("project-label", state.project?.displayName || copy("workspace"));
     text("next", subtitle);
@@ -180,7 +204,7 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
     if (nextAction) {
       const card = e("section", "uw-next-action");
       card.dataset.liveWorkspaceNextAction = nextAction.kind;
-      card.append(e("span", "uw-eyebrow", copy("nextAction")), e("h3", "", nextAction.summary || copy("waiting")));
+      card.append(e("span", "uw-eyebrow", copy("nextAction")), e("h3", "", nextActionSummary(nextAction)));
       const request = (state.workspace.requests || []).find((item) => item.commandId === nextAction.commandId);
       if (request) card.append(e("p", "", label(request.status)));
       card.append(button(copy(nextAction.kind === "awaiting_review" ? "openMaterial" : nextAction.moduleId ? "openModule" : nextAction.kind === "continue_governed_run" ? "openContinuation" : "overview"), () => actions.openNextAction(nextAction), { "data-live-workspace-next-action-open": "" }));
@@ -397,7 +421,7 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
         detailBody.append(section(copy("source"), list));
       } else if (!(stage?.evidenceTotal > 0)) detailBody.append(section(copy("source"), copy("stageEvidenceMissing")));
       if (Number.isSafeInteger(stage?.evidenceOmitted) && stage.evidenceOmitted > 0) detailBody.append(section(copy("source"), copy("evidenceMore").replace("{count}", String(stage.evidenceOmitted))));
-      if (state.workspace?.nextAction?.summary) detailBody.append(section(copy("nextAction"), state.workspace.nextAction.summary));
+      if (state.workspace?.nextAction) detailBody.append(section(copy("nextAction"), nextActionSummary(state.workspace.nextAction)));
     } else {
       const task = state.tasks.find((item) => item.id === state.detail.id);
       text("detail-kind", copy("tasks")); text("detail-title", task?.title || state.detail.id);
