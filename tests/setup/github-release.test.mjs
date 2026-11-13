@@ -4,12 +4,40 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
-import { publishReleaseAssets, releaseDocumentLinks, releaseSection, resolveReleaseTitle, selectPassedRuns, verifyPublished } from '../../.github/scripts/publish-release.mjs';
+import { publishReleaseAssets, releaseDocumentLinks, releaseSection, resolveReleaseTitle, selectPassedRuns, validateReleaseInvocation, verifyPublished } from '../../.github/scripts/publish-release.mjs';
 
 const sha = 'a'.repeat(40);
 const workflow = '.github/workflows/ci.yml';
 const passed = { id: 1, head_sha: sha, head_branch: 'main', event: 'push',
   path: workflow, status: 'completed', conclusion: 'success', html_url: 'https://github.com/example/run/1' };
+
+test('manual main publication binds the request, checkout and current main to one commit', () => {
+  const request = { tag: 'v3.12.0', refName: 'main', eventName: 'workflow_dispatch',
+    sourceSha: sha, requestedSha: sha, mainSha: sha, remoteMainSha: sha };
+  assert.equal(validateReleaseInvocation(request), 'main_dispatch');
+  assert.throws(() => validateReleaseInvocation({ ...request, eventName: 'push' }), /explicit workflow dispatch/u);
+  assert.throws(() => validateReleaseInvocation({ ...request, requestedSha: 'b'.repeat(40) }), /requested release/u);
+  assert.throws(() => validateReleaseInvocation({ ...request, mainSha: 'b'.repeat(40) }), /exact current main commit/u);
+  assert.throws(() => validateReleaseInvocation({ ...request, refName: 'candidate' }), /exact release/u);
+});
+
+test('a stale main dispatch cannot rely on checkout resetting origin/main to its event SHA', () => {
+  const request = { tag: 'v3.12.0', refName: 'main', eventName: 'workflow_dispatch',
+    sourceSha: sha, requestedSha: sha, mainSha: sha, remoteMainSha: 'b'.repeat(40) };
+  assert.throws(() => validateReleaseInvocation(request), /exact current remote main commit/u);
+  for (const unavailable of [undefined, null, '']) {
+    assert.throws(() => validateReleaseInvocation({ ...request, remoteMainSha: unavailable }), /exact current remote main commit/u);
+  }
+});
+
+test('legacy release refs keep exact version binding without admitting ordinary push events', () => {
+  const request = { tag: 'v3.12.0', refName: 'release/v3.12.0', eventName: 'create',
+    sourceSha: sha, requestedSha: sha, mainSha: 'b'.repeat(40) };
+  assert.equal(validateReleaseInvocation(request), 'release_ref');
+  assert.equal(validateReleaseInvocation({ ...request, eventName: 'workflow_dispatch' }), 'release_ref');
+  assert.throws(() => validateReleaseInvocation({ ...request, refName: 'release/v3.11.0' }), /exact release/u);
+  assert.throws(() => validateReleaseInvocation({ ...request, eventName: 'push' }), /Unsupported release request event/u);
+});
 
 test('release titles follow the repository rule without changing the default format', () => {
   assert.equal(resolveReleaseTitle({ title: 'Kim_Service', version: 'V1.11', releaseTitleEqualsVersion: true }), 'V1.11');

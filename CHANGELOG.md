@@ -6,6 +6,21 @@ User-facing changes for each release. Detailed test results live in the linked v
 
 ## [Unreleased]
 
+## [3.12.0] - 2026-11-13
+
+### Continue project work from one Live workspace
+
+- **Inspect work, eight stages and both PRD passes together.** Live now provides a system overview, module navigation, actual document text, review records and the next action in one workspace. The layout adapts to desktop, tablet and phone, with readable body text and four-language labels.
+- **Review the exact design, then continue the affected module.** Adopt, request changes or return the system outline and module details. Reviews bind the file hash, design revision and dependencies; changes invalidate affected decisions while keeping independent accepted work. Feedback becomes a durable work order for the current host, with separate waiting, claimed and reported states.
+- **Keep the current host and project identity.** The host CLI registers real PRD files, claims work and returns file-backed receipts using the same project, profile, run and conversation. Request history supports bounded pages and exact request lookup. Live does not start a background model service or certify execution merely because a request was saved.
+- **Resume long plans without loading the whole archive.** Planning diagnostics and stop records carry bounded summaries, counts and hash-bound page references. Full source files remain unchanged, and completion still checks every item, including work outside the displayed summary.
+- **Read the product through working screens and exact diagrams.** All four READMEs include the actual unified workspace, system PRD and module review screens, plus system-operation and PRD-to-task diagrams. Private workspace documents remain separate from public snapshots and shared views.
+- **Use the newly reviewed industry methods.** The default Kim_Service source is pinned to the revision prepared for V1.15, which adds ten industry Agents. Their professional inputs, field-specific review checks, complete synthetic examples and knowledge files enter the existing source-verified method handoff; the current host retains method selection, permissions and final acceptance.
+
+### Update and verification
+
+Run `git pull --ff-only`, then `node setup.mjs --update`; DSH users run `node bin/meta-kim.mjs dsh update`. Release attachments identify the exact source revision, repository CI and package checks. Local/browser regression evidence covers the tested workflow and does not imply paid-model evaluation or native-host certification.
+
 ## [3.11.0] - 2026-11-13
 
 ### Keep company work continuous across sessions and people

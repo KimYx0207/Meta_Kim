@@ -262,7 +262,7 @@ Meta_Kim は、計画、発見、進捗、決定、成果物、検査結果を�
 
 ## 自分のプロジェクトで始める
 
-**Node.js 22.13.0+**、Git、モデルへの接続を設定した AI クライアントが必要です。現在の公開版は **[v3.11.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.11.0)** です。
+**Node.js 22.13.0+**、Git、モデルへの接続を設定した AI クライアントが必要です。現在の公開版は **[v3.12.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.12.0)** です。
 
 ### 1. Meta_Kim をインストールする
 

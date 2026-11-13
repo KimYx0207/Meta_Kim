@@ -78,6 +78,19 @@ export function resolveReleaseTitle(config) {
     ? config.version : `${config.title} ${config.version}`;
 }
 
+export function validateReleaseInvocation({ tag, refName, eventName, sourceSha, requestedSha, mainSha, remoteMainSha }) {
+  assert.equal(sourceSha, requestedSha, 'Checked-out source differs from the requested release');
+  if (refName === 'main') {
+    assert.equal(eventName, 'workflow_dispatch', 'Main publication requires an explicit workflow dispatch');
+    assert.equal(sourceSha, mainSha, 'Main publication must use the exact current main commit');
+    assert.equal(sourceSha, remoteMainSha, 'Main publication must use the exact current remote main commit');
+    return 'main_dispatch';
+  }
+  assert.equal(refName, `release/${tag}`, 'Use main workflow dispatch or the exact release/<version> branch');
+  assert(['create', 'workflow_dispatch'].includes(eventName), 'Unsupported release request event');
+  return 'release_ref';
+}
+
 function configuration() {
   const config = JSON.parse(fs.readFileSync(path.join(root, '.github/release.json'), 'utf8'));
   const version = config.versionFile.endsWith('.json')
@@ -86,9 +99,14 @@ function configuration() {
   assert(config.repository === process.env.GITHUB_REPOSITORY, 'Publication repository mismatch');
   assert(/^(?:\d+\.\d+\.\d+|V\d+\.\d+)$/u.test(version), 'Invalid release version');
   const tag = config.tagPrefix + version;
-  assert(process.env.GITHUB_REF_NAME === `release/${tag}`, 'Use the exact release/<version> branch');
   const sha = command('git', ['rev-parse', 'HEAD']);
-  assert.equal(sha, process.env.GITHUB_SHA, 'Checked-out source differs from the requested release');
+  // Checkout may reset origin/main to a queued or rerun event's old SHA.
+  // Both prepare and publish must also read the current remote branch.
+  const remoteMainSha = process.env.GITHUB_REF_NAME === 'main'
+    ? api(`repos/${config.repository}/git/ref/heads/main`).object?.sha : undefined;
+  validateReleaseInvocation({ tag, refName: process.env.GITHUB_REF_NAME,
+    eventName: process.env.GITHUB_EVENT_NAME, sourceSha: sha, requestedSha: process.env.GITHUB_SHA,
+    mainSha: command('git', ['rev-parse', 'origin/main']), remoteMainSha });
   command('git', ['merge-base', '--is-ancestor', sha, 'origin/main']);
   assert.equal(command('git', ['status', '--porcelain=v1', '--untracked-files=all']), '', 'Release source must be clean');
   return { ...config, version, tag, sha, releaseTitle: resolveReleaseTitle({ ...config, version }),

@@ -1,7 +1,8 @@
 name: Publish GitHub release
 
-# Creating release/vX.Y.Z requests publication of that already-merged commit.
-# Regular branches, pull requests and the tag created below never publish.
+# Manually dispatch main to publish its exact, already-verified current commit.
+# Existing release/vX.Y.Z refs remain supported for compatibility. Ordinary
+# pushes, pull requests and the tag created below never publish.
 on:
   create:
   workflow_dispatch:
@@ -17,8 +18,9 @@ jobs:
   publish:
     if: >-
       github.repository == 'KimYx0207/Meta_Kim' &&
-      startsWith(github.ref, 'refs/heads/release/v') &&
-      (github.event_name == 'workflow_dispatch' || github.event.ref_type == 'branch')
+      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+       (startsWith(github.ref, 'refs/heads/release/v') &&
+        (github.event_name == 'workflow_dispatch' || github.event.ref_type == 'branch')))
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
