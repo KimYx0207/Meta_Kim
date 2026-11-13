@@ -9,10 +9,12 @@
 </div>
 
 <p align="center">
-  <img src="docs/images/meta-kim-overview.webp" alt="Conceptual panorama of Meta_Kim collaboration: intent and evidence, a shared plan and specialist work, then usable outputs and inspection" width="1000">
+  <img src="docs/images/system-panorama.en.svg" alt="Meta_Kim system flow with eight stages, dependency routing, human decisions, revision paths, and saved records" width="1200">
 </p>
 
-*A conceptual view of collaboration: goals and materials enter on the left, specialist work shares one plan in the middle, and usable results are delivered and inspected on the right. Records beneath the workbench preserve context for what comes next. The animated diagrams below explain the mechanisms in detail.*
+Read stages 01–08 from top to bottom. The dark section establishes the goal and evidence, then develops the system and its modules in one PRD. The execution section uses capabilities supplied by the current host; quality gates check actual results. Orange paths request a human decision when needed and reuse existing valid decisions. Purple paths return execution issues to affected tasks; scope, evidence, or design issues return to the responsible stage. Dashed paths write records. The host supplies Work adoption and effect feedback. Reusable learning is reviewed before updating methods or retaining a candidate; when no update is needed, the reason is recorded before delivery.
+
+[Open the scalable diagram](docs/images/system-panorama.en.svg)
 
 ## You describe a goal. What happens next?
 
@@ -71,10 +73,12 @@ For example, “tapping twice should produce one booking” becomes an acceptanc
 **You can assess the whole approach before implementation details grow.** Exploration can retain open questions. Before a module is ready for execution, its required decisions and interfaces must be settled. A small repair reuses its accepted design and expands only the affected part.
 
 <p align="center">
-  <img src="docs/images/meta-kim-prd-scales.webp" alt="Two scales of the same PRD: system and module relationships on the left, the selected module developed in detail on the right" width="1000">
+  <img src="docs/images/prd-to-tasks.en.svg" alt="Two passes of one PRD become system and module design, then task packets with context, scope, dependencies, and acceptance criteria" width="1200">
 </p>
 
-*The same PRD, from the whole system to the details. The left page preserves relationships among modules; the right develops the selected module’s user journey, states, interfaces and acceptance design. The repeated teal module with its terracotta corner links the two views. The next section explains how that design becomes executable work.*
+Read the two design passes from left to right, then follow the arrows down to task packets and execution. The first pass establishes scope, architecture, module boundaries, and shared interfaces. The second details module flows, states, failures, data, and acceptance within that same system baseline. Task packets reference the corresponding parts of this PRD and carry context, scope, dependencies, and output requirements. The decision branch illustrates one module: reuse valid decisions first, record a necessary human choice, and return to its design. Only affected dependencies wait; the host may execute other ready, independent tasks in parallel. Requirement changes identify the affected module and design baseline before updating linked tasks; failed verification returns to the relevant task.
+
+[Open the scalable diagram](docs/images/prd-to-tasks.en.svg)
 
 ## Second PRD pass: make each module ready to implement
 

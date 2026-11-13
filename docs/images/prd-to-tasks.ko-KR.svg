@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="1140" viewBox="0 0 1400 1140" role="img" aria-labelledby="title desc" lang="ko-KR"><title id="title">두 차례 PRD 설계를 실행 작업으로 바꾸는 과정</title><desc id="desc">계획, 실행, 검증, 사람의 판단, 되돌림과 기록 위치를 화살표로 보여 주는 시스템 구성도.</desc><style>text{font-family:"Noto Sans CJK SC","Microsoft YaHei",sans-serif}@media(prefers-reduced-motion:reduce){*{animation:none!important}}</style><defs><marker id="main" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9Z" fill="#46544a"/></marker><marker id="human" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9Z" fill="#b96b2a"/></marker><marker id="back" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9Z" fill="#6756b4"/></marker><marker id="record" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9Z" fill="#737b75"/></marker><marker id="light" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9Z" fill="#d8e1d9"/></marker></defs>
+<rect width="1400" height="1140" rx="18" fill="#f8f7f2"/>
+<rect x="50" y="145" width="1300" height="68" rx="15" fill="#eef1ed" stroke="#aeb7af" stroke-width="1.5"/>
+<rect x="50" y="250" width="595" height="300" rx="15" fill="#21362b" stroke="#21362b" stroke-width="1.5"/>
+<rect x="755" y="250" width="595" height="300" rx="15" fill="#eaf2ed" stroke="#aeb7af" stroke-width="1.5"/>
+<rect x="50" y="586" width="840" height="170" rx="15" fill="#f3efe4" stroke="#aeb7af" stroke-width="1.5"/>
+<rect x="920" y="578" width="430" height="178" rx="15" fill="#fff4e3" stroke="#b96b2a" stroke-width="1.5"/>
+<rect x="50" y="790" width="1300" height="226" rx="15" fill="#eaf2ed" stroke="#aeb7af" stroke-width="1.5"/>
+<rect x="50" y="1050" width="1300" height="50" rx="15" fill="#21362b" stroke="#21362b" stroke-width="1.5"/>
+<path d="M205 117 L244 117" fill="none" stroke="#46544a" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<path d="M475 117 L514 117" fill="none" stroke="#6756b4" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#back)"/>
+<path d="M745 117 L784 117" fill="none" stroke="#b96b2a" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#human)"/>
+<path d="M1015 117 L1054 117" fill="none" stroke="#737b75" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="5 6" marker-end="url(#record)"/>
+<path d="M347 213 L347 250" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<path d="M1184 201 L1184 250" fill="none" stroke="#6756b4" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#back)"/>
+<path d="M645 403 L755 403" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<path d="M1020 550 L1020 615" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<path d="M940 655 L890 655" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<path d="M1100 655 L1212 655 L1212 689" fill="none" stroke="#b96b2a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#human)"/>
+<path d="M1325 716 L1366 716 L1366 481 L1325 481" fill="none" stroke="#b96b2a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#human)"/>
+<path d="M470 756 L470 773 L65 773 L65 920 L90 920" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<path d="M330 920 L370 920 L370 883 L410 883" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<path d="M370 920 L370 962 L410 962" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<path d="M665 883 L715 883 L715 923 L760 923" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<path d="M665 962 L715 962 L715 923" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M1000 923 L1100 923" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<path d="M1035 923 L1035 1009 L538 1009 L538 993" fill="none" stroke="#6756b4" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#back)"/>
+<path d="M1205 961 L1205 1050" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<g data-box="68,157,300,44" data-label="비즈니스 목표"><rect x="68" y="157" width="300" height="44" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="390,157,300,44" data-label="프로젝트 사실과 근거"><rect x="390" y="157" width="300" height="44" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="712,157,300,44" data-label="기존 결정"><rect x="712" y="157" width="300" height="44" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="1034,157,300,44" data-label="변경 요구"><rect x="1034" y="157" width="300" height="44" rx="9" fill="#fff" stroke="#6756b4" stroke-width="1.4"/></g>
+<g data-box="75,340,260,88" data-label="범위와 사용자 경로"><rect x="75" y="340" width="260" height="88" rx="9" fill="#31473a" stroke="#687d6d" stroke-width="1.4"/></g>
+<g data-box="360,340,260,88" data-label="구조와 제약"><rect x="360" y="340" width="260" height="88" rx="9" fill="#31473a" stroke="#687d6d" stroke-width="1.4"/></g>
+<g data-box="75,437,260,88" data-label="모듈 경계"><rect x="75" y="437" width="260" height="88" rx="9" fill="#31473a" stroke="#687d6d" stroke-width="1.4"/></g>
+<g data-box="360,437,260,88" data-label="공유 인터페이스"><rect x="360" y="437" width="260" height="88" rx="9" fill="#31473a" stroke="#687d6d" stroke-width="1.4"/></g>
+<g data-box="780,340,260,88" data-label="흐름과 상태"><rect x="780" y="340" width="260" height="88" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="1065,340,260,88" data-label="예외와 복구"><rect x="1065" y="340" width="260" height="88" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="780,437,260,88" data-label="규칙과 데이터"><rect x="780" y="437" width="260" height="88" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="1065,437,260,88" data-label="인터페이스와 인수"><rect x="1065" y="437" width="260" height="88" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="75,642,240,90" data-label="목표와 맥락"><rect x="75" y="642" width="240" height="90" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="350,642,240,90" data-label="범위와 의존성"><rect x="350" y="642" width="240" height="90" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="625,642,240,90" data-label="산출물과 인수 조건"><rect x="625" y="642" width="240" height="90" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<path d="M1020 615.0L1100.0 655L1020 695.0L940.0 655Z" fill="#fff" stroke="#b96b2a" stroke-width="2"/>
+<g data-box="1100,689,225,54" data-label="판단과 이유 기록"><rect x="1100" y="689" width="225" height="54" rx="9" fill="#fff" stroke="#b96b2a" stroke-width="1.4"/></g>
+<g data-box="90,864,240,113" data-label="의존성 확인"><rect x="90" y="864" width="240" height="113" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="410,852,255,62" data-label="독립 작업 A"><rect x="410" y="852" width="255" height="62" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="410,931,255,62" data-label="독립 작업 B"><rect x="410" y="931" width="255" height="62" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="760,886,240,75" data-label="실제 결과 통합"><rect x="760" y="886" width="240" height="75" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="1100,886,210,75" data-label="전달 가능한 버전"><rect x="1100" y="886" width="210" height="75" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<text x="700" y="48" fill="#202b25" font-size="38" font-weight="700" text-anchor="middle"><tspan x="700" dy="0">두 차례 PRD 설계를 실행 작업으로 바꾸는 과정</tspan></text>
+<text x="700" y="85" fill="#5a655e" font-size="21" font-weight="450" text-anchor="middle"><tspan x="700" dy="0">시스템 기준을 세우고 모듈을 구체화하며, 설계 · 작업 · 검증을 하나로 연결합니다</tspan></text>
+<text x="256" y="124" fill="#202b25" font-size="20" font-weight="450" text-anchor="start"><tspan x="256" dy="0">주 흐름</tspan></text>
+<text x="526" y="124" fill="#202b25" font-size="20" font-weight="450" text-anchor="start"><tspan x="526" dy="0">수정 / 되돌림</tspan></text>
+<text x="796" y="124" fill="#202b25" font-size="20" font-weight="450" text-anchor="start"><tspan x="796" dy="0">사람의 결정</tspan></text>
+<text x="1066" y="124" fill="#202b25" font-size="20" font-weight="450" text-anchor="start"><tspan x="1066" dy="0">기록 저장</tspan></text>
+<text x="218.0" y="187.25" fill="#202b25" font-size="22" font-weight="700" text-anchor="middle"><tspan x="218.0" dy="0">비즈니스 목표</tspan></text>
+<text x="540.0" y="187.25" fill="#202b25" font-size="22" font-weight="700" text-anchor="middle"><tspan x="540.0" dy="0">프로젝트 사실과 근거</tspan></text>
+<text x="862.0" y="187.25" fill="#202b25" font-size="22" font-weight="700" text-anchor="middle"><tspan x="862.0" dy="0">기존 결정</tspan></text>
+<text x="1184.0" y="187.25" fill="#202b25" font-size="22" font-weight="700" text-anchor="middle"><tspan x="1184.0" dy="0">변경 요구</tspan></text>
+<text x="700" y="240" fill="#202b25" font-size="22" font-weight="700" text-anchor="middle"><tspan x="700" dy="0">Thinking: 하나의 PRD를 두 차례 구체화</tspan></text>
+<text x="1220" y="238" fill="#6756b4" font-size="20" font-weight="450" text-anchor="start"><tspan x="1220" dy="0">영향 추적</tspan></text>
+<text x="75" y="286" fill="#fff" font-size="26" font-weight="700" text-anchor="start"><tspan x="75" dy="0">1차 · 시스템과 모듈 개요</tspan></text>
+<text x="75" y="316" fill="#d8e1d9" font-size="20" font-weight="450" text-anchor="start"><tspan x="75" dy="0">무엇을 만들고 모듈이 어떻게 협력하는가</tspan></text>
+<text x="780" y="286" fill="#202b25" font-size="26" font-weight="700" text-anchor="start"><tspan x="780" dy="0">2차 · 모듈 상세 설계</tspan></text>
+<text x="780" y="316" fill="#5a655e" font-size="20" font-weight="450" text-anchor="start"><tspan x="780" dy="0">시스템 기준 안에서 구현 가능한 설계로</tspan></text>
+<text x="205.0" y="375.625" fill="#fff" font-size="23" font-weight="700" text-anchor="middle"><tspan x="205.0" dy="0">범위와 사용자 경로</tspan></text>
+<text x="205.0" y="411.375" fill="#fff" font-size="20" font-weight="450" text-anchor="middle"><tspan x="205.0" dy="0">누가 / 왜 사용하는가</tspan></text>
+<text x="490.0" y="375.625" fill="#fff" font-size="23" font-weight="700" text-anchor="middle"><tspan x="490.0" dy="0">구조와 제약</tspan></text>
+<text x="490.0" y="411.375" fill="#fff" font-size="20" font-weight="450" text-anchor="middle"><tspan x="490.0" dy="0">애플리케이션 / 데이터 / UI</tspan></text>
+<text x="205.0" y="472.625" fill="#fff" font-size="23" font-weight="700" text-anchor="middle"><tspan x="205.0" dy="0">모듈 경계</tspan></text>
+<text x="205.0" y="508.375" fill="#fff" font-size="20" font-weight="450" text-anchor="middle"><tspan x="205.0" dy="0">역할 / 의존성 / 선택</tspan></text>
+<text x="490.0" y="472.625" fill="#fff" font-size="23" font-weight="700" text-anchor="middle"><tspan x="490.0" dy="0">공유 인터페이스</tspan></text>
+<text x="490.0" y="508.375" fill="#fff" font-size="20" font-weight="450" text-anchor="middle"><tspan x="490.0" dy="0">데이터 소유 / 성공 기준</tspan></text>
+<text x="910.0" y="375.625" fill="#202b25" font-size="23" font-weight="700" text-anchor="middle"><tspan x="910.0" dy="0">흐름과 상태</tspan></text>
+<text x="910.0" y="411.375" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="910.0" dy="0">정상 / 빈 상태 / 로딩</tspan></text>
+<text x="1195.0" y="375.625" fill="#202b25" font-size="23" font-weight="700" text-anchor="middle"><tspan x="1195.0" dy="0">예외와 복구</tspan></text>
+<text x="1195.0" y="411.375" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="1195.0" dy="0">실패 / 재시도 / 복귀</tspan></text>
+<text x="910.0" y="472.625" fill="#202b25" font-size="23" font-weight="700" text-anchor="middle"><tspan x="910.0" dy="0">규칙과 데이터</tspan></text>
+<text x="910.0" y="508.375" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="910.0" dy="0">입력 / 출력 / 책임</tspan></text>
+<text x="1195.0" y="472.625" fill="#202b25" font-size="23" font-weight="700" text-anchor="middle"><tspan x="1195.0" dy="0">인터페이스와 인수</tspan></text>
+<text x="1195.0" y="508.375" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="1195.0" dy="0">동작 / 경계 / 검증</tspan></text>
+<text x="700" y="373" fill="#202b25" font-size="20" font-weight="700" text-anchor="middle"><tspan x="700" dy="0">선택 모듈</tspan><tspan x="700" dy="25">구체화</tspan></text>
+<text x="75" y="620" fill="#202b25" font-size="26" font-weight="700" text-anchor="start"><tspan x="75" dy="0">실행 작업 지시서 · 같은 PRD의 해당 부분 참조</tspan></text>
+<text x="195.0" y="678.625" fill="#202b25" font-size="23" font-weight="700" text-anchor="middle"><tspan x="195.0" dy="0">목표와 맥락</tspan></text>
+<text x="195.0" y="714.375" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="195.0" dy="0">시스템 기준 + 모듈 상세</tspan></text>
+<text x="470.0" y="678.625" fill="#202b25" font-size="23" font-weight="700" text-anchor="middle"><tspan x="470.0" dy="0">범위와 의존성</tspan></text>
+<text x="470.0" y="714.375" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="470.0" dy="0">담당 / 범위 / 선행 조건</tspan></text>
+<text x="745.0" y="678.625" fill="#202b25" font-size="23" font-weight="700" text-anchor="middle"><tspan x="745.0" dy="0">산출물과 인수 조건</tspan></text>
+<text x="745.0" y="714.375" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="745.0" dy="0">입력 / 출력 / 확인</tspan></text>
+<text x="1192" y="607" fill="#b96b2a" font-size="20" font-weight="450" text-anchor="middle"><tspan x="1192" dy="0">기존 결정을 먼저 재사용</tspan></text>
+<text x="1020" y="649.5" fill="#202b25" font-size="20" font-weight="700" text-anchor="middle"><tspan x="1020" dy="0">판단이 아직</tspan><tspan x="1020" dy="25.0">필요한가?</tspan></text>
+<text x="1212.5" y="723.875" fill="#202b25" font-size="21" font-weight="700" text-anchor="middle"><tspan x="1212.5" dy="0">판단과 이유 기록</tspan></text>
+<text x="915" y="640" fill="#202b25" font-size="20" font-weight="450" text-anchor="middle"><tspan x="915" dy="0">아니요</tspan></text>
+<text x="1155" y="646" fill="#b96b2a" font-size="20" font-weight="450" text-anchor="start"><tspan x="1155" dy="0">예</tspan></text>
+<text x="75" y="827" fill="#202b25" font-size="26" font-weight="700" text-anchor="start"><tspan x="75" dy="0">의존성에 따라 실행: 준비된 독립 작업은 병렬로 진행</tspan></text>
+<text x="210.0" y="899.125" fill="#202b25" font-size="23" font-weight="700" text-anchor="middle"><tspan x="210.0" dy="0">의존성 확인</tspan></text>
+<text x="210.0" y="934.875" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="210.0" dy="0">준비되면 실행</tspan><tspan x="210.0" dy="26.0">대기 시 재개 지점 기록</tspan></text>
+<text x="537.5" y="892.0" fill="#202b25" font-size="24" font-weight="700" text-anchor="middle"><tspan x="537.5" dy="0">독립 작업 A</tspan></text>
+<text x="537.5" y="971.0" fill="#202b25" font-size="24" font-weight="700" text-anchor="middle"><tspan x="537.5" dy="0">독립 작업 B</tspan></text>
+<text x="880.0" y="915.25" fill="#202b25" font-size="22" font-weight="700" text-anchor="middle"><tspan x="880.0" dy="0">실제 결과 통합</tspan></text>
+<text x="880.0" y="949.75" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="880.0" dy="0">함께 확인하고 검증</tspan></text>
+<text x="1205.0" y="915.25" fill="#202b25" font-size="22" font-weight="700" text-anchor="middle"><tspan x="1205.0" dy="0">전달 가능한 버전</tspan></text>
+<text x="1205.0" y="949.75" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="1205.0" dy="0">근거 + 다음 단계</tspan></text>
+<text x="1050" y="909" fill="#202b25" font-size="20" font-weight="450" text-anchor="middle"><tspan x="1050" dy="0">통과</tspan></text>
+<text x="844" y="992" fill="#6756b4" font-size="20" font-weight="700" text-anchor="middle"><tspan x="844" dy="0">문제 발견 시 해당 작업으로</tspan></text>
+<text x="700" y="1083" fill="#fff" font-size="26" font-weight="700" text-anchor="middle"><tspan x="700" dy="0">추적 가능한 전달: 요구 → 모듈 → 작업 → 결과와 근거</tspan></text>
+</svg>

@@ -1,0 +1,128 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="1120" viewBox="0 0 1400 1120" role="img" aria-labelledby="title desc" lang="ko-KR"><title id="title">Meta_Kim 작동 전체 구조</title><desc id="desc">계획, 실행, 검증, 사람의 판단, 되돌림과 기록 위치를 화살표로 보여 주는 시스템 구성도.</desc><style>text{font-family:"Noto Sans CJK SC","Microsoft YaHei",sans-serif}@media(prefers-reduced-motion:reduce){*{animation:none!important}}</style><defs><marker id="main" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9Z" fill="#46544a"/></marker><marker id="human" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9Z" fill="#b96b2a"/></marker><marker id="back" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9Z" fill="#6756b4"/></marker><marker id="record" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9Z" fill="#737b75"/></marker><marker id="light" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9Z" fill="#d8e1d9"/></marker></defs>
+<rect width="1400" height="1120" rx="18" fill="#f8f7f2"/>
+<rect x="50" y="145" width="1000" height="81" rx="15" fill="#eef1ed" stroke="#aeb7af" stroke-width="1.5"/>
+<rect x="50" y="244" width="1000" height="184" rx="15" fill="#21362b" stroke="#21362b" stroke-width="1.5"/>
+<rect x="50" y="456" width="1000" height="202" rx="15" fill="#f3efe4" stroke="#aeb7af" stroke-width="1.5"/>
+<rect x="50" y="686" width="1000" height="125" rx="15" fill="#eaf2ed" stroke="#aeb7af" stroke-width="1.5"/>
+<rect x="50" y="840" width="480" height="174" rx="15" fill="#fff4e3" stroke="#b96b2a" stroke-width="1.5"/>
+<rect x="560" y="840" width="490" height="174" rx="15" fill="#eaf2ed" stroke="#aeb7af" stroke-width="1.5"/>
+<rect x="1080" y="145" width="270" height="869" rx="15" fill="#edf0ed" stroke="#aeb7af" stroke-width="1.5"/>
+<rect x="50" y="1040" width="1300" height="60" rx="15" fill="#21362b" stroke="#21362b" stroke-width="1.5"/>
+<path d="M205 117 L244 117" fill="none" stroke="#46544a" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<path d="M475 117 L514 117" fill="none" stroke="#6756b4" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#back)"/>
+<path d="M745 117 L784 117" fill="none" stroke="#b96b2a" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#human)"/>
+<path d="M1015 117 L1054 117" fill="none" stroke="#737b75" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="5 6" marker-end="url(#record)"/>
+<path d="M550 226 L550 236 L65 236 L65 244" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M65 244 L65 350 L90 350" fill="none" stroke="#d8e1d9" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#light)"/>
+<path d="M350 350 L390 350" fill="none" stroke="#d8e1d9" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#light)"/>
+<path d="M650 350 L690 350" fill="none" stroke="#d8e1d9" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#light)"/>
+<path d="M840 407 L840 428" fill="none" stroke="#d8e1d9" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M840 428 L840 443 L65 443 L65 568 L90 568" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<path d="M330 572 L366 572 L366 538 L400 538" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<path d="M366 572 L366 602 L400 602" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<path d="M630 538 L678 538 L678 575 L730 575" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<path d="M630 602 L678 602 L678 575" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M990 575 L1015 575 L1015 672 L65 672 L65 766 L90 766" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<path d="M350 766 L390 766" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<path d="M650 766 L690 766" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<path d="M990 767 L1035 767 L1035 504 L210 504 L210 520" fill="none" stroke="#6756b4" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#back)"/>
+<path d="M90 568 L36 568 L36 941 L78 941" fill="none" stroke="#b96b2a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#human)"/>
+<path d="M234 941 L265 941 L265 917 L300 917" fill="none" stroke="#b96b2a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#human)"/>
+<path d="M265 941 L265 982 L300 982" fill="none" stroke="#b96b2a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#human)"/>
+<path d="M510 917 L542 917 L542 826 L20 826 L20 520 L90 520" fill="none" stroke="#b96b2a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#human)"/>
+<path d="M510 982 L542 982 L542 917" fill="none" stroke="#b96b2a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M840 799 L840 826 L575 826 L575 933 L592 933" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<path d="M770 933 L806 933" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<path d="M681 974 L681 1004 L917 1004" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M917 972 L917 1040" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<path d="M1215 818 L1215 834" fill="none" stroke="#737b75" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="5 6" marker-end="url(#record)"/>
+<path d="M1050 350 L1098 350" fill="none" stroke="#737b75" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="5 6" marker-end="url(#record)"/>
+<path d="M1050 525 L1098 525" fill="none" stroke="#737b75" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="5 6" marker-end="url(#record)"/>
+<path d="M1050 766 L1098 766" fill="none" stroke="#737b75" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="5 6" marker-end="url(#record)"/>
+<path d="M1050 962 L1098 962" fill="none" stroke="#737b75" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="5 6" marker-end="url(#record)"/>
+<g data-box="68,162,230,47" data-label="사용자 목표"><rect x="68" y="162" width="230" height="47" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="313,162,230,47" data-label="프로젝트와 제약"><rect x="313" y="162" width="230" height="47" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="558,162,230,47" data-label="새 요구 사항"><rect x="558" y="162" width="230" height="47" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="803,162,230,47" data-label="Work 맥락"><rect x="803" y="162" width="230" height="47" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="90,295,260,112" data-label="01 핵심 확인"><rect x="90" y="295" width="260" height="112" rx="9" fill="#31473a" stroke="#687d6d" stroke-width="1.4"/></g>
+<g data-box="390,295,260,112" data-label="02 조사와 탐색"><rect x="390" y="295" width="260" height="112" rx="9" fill="#31473a" stroke="#687d6d" stroke-width="1.4"/></g>
+<g data-box="690,295,300,112" data-label="03 사고와 계획"><rect x="690" y="295" width="300" height="112" rx="9" fill="#31473a" stroke="#687d6d" stroke-width="1.4"/></g>
+<g data-box="90,520,240,104" data-label="의존성에 따라 배정"><rect x="90" y="520" width="240" height="104" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="400,513,230,50" data-label="준비된 작업 A"><rect x="400" y="513" width="230" height="50" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="400,577,230,50" data-label="준비된 작업 B"><rect x="400" y="577" width="230" height="50" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="730,533,260,83" data-label="같은 단계에서 통합"><rect x="730" y="533" width="260" height="83" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="90,730,260,75" data-label="05 검토"><rect x="90" y="730" width="260" height="75" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="390,730,260,75" data-label="06 검토 재평가"><rect x="390" y="730" width="260" height="75" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="690,730,300,75" data-label="07 실제 검증"><rect x="690" y="730" width="300" height="75" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<path d="M156 895.5L233.5 941L156 986.5L78.5 941Z" fill="#fff" stroke="#b96b2a" stroke-width="2"/>
+<g data-box="300,893,210,49" data-label="기존 결정 재사용"><rect x="300" y="893" width="210" height="49" rx="9" fill="#fff" stroke="#b96b2a" stroke-width="1.4"/></g>
+<g data-box="300,958,210,49" data-label="판단과 이유 기록"><rect x="300" y="958" width="210" height="49" rx="9" fill="#fff" stroke="#b96b2a" stroke-width="1.4"/></g>
+<path d="M681 892.0L770.0 933L681 974.0L592.0 933Z" fill="#fff" stroke="#46544a" stroke-width="2"/>
+<g data-box="806,892,222,80" data-label="검토 후 처리
+반영 / 후보 보관"><rect x="806" y="892" width="222" height="80" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<path d="M1098 299C1098 285 1332 285 1332 299V371C1332 387 1098 387 1098 371Z" fill="#fff" stroke="#737b75" stroke-width="1.5"/><ellipse cx="1215.0" cy="299" rx="117.0" ry="12" fill="#fff" stroke="#737b75" stroke-width="1.5"/>
+<path d="M1098 488C1098 474 1332 474 1332 488V560C1332 576 1098 576 1098 560Z" fill="#fff" stroke="#737b75" stroke-width="1.5"/><ellipse cx="1215.0" cy="488" rx="117.0" ry="12" fill="#fff" stroke="#737b75" stroke-width="1.5"/>
+<path d="M1098 696C1098 682 1332 682 1332 696V768C1332 784 1098 784 1098 768Z" fill="#fff" stroke="#737b75" stroke-width="1.5"/><ellipse cx="1215.0" cy="696" rx="117.0" ry="12" fill="#fff" stroke="#737b75" stroke-width="1.5"/>
+<path d="M1098 846C1098 832 1332 832 1332 846V898C1332 914 1098 914 1098 898Z" fill="#fff" stroke="#737b75" stroke-width="1.5"/><ellipse cx="1215.0" cy="846" rx="117.0" ry="12" fill="#fff" stroke="#737b75" stroke-width="1.5"/>
+<path d="M1098 932C1098 918 1332 918 1332 932V995C1332 1011 1098 1011 1098 995Z" fill="#fff" stroke="#737b75" stroke-width="1.5"/><ellipse cx="1215.0" cy="932" rx="117.0" ry="12" fill="#fff" stroke="#737b75" stroke-width="1.5"/>
+<text x="700" y="48" fill="#202b25" font-size="38" font-weight="700" text-anchor="middle"><tspan x="700" dy="0">Meta_Kim 작동 전체 구조</tspan></text>
+<text x="700" y="85" fill="#5a655e" font-size="21" font-weight="450" text-anchor="middle"><tspan x="700" dy="0">하나의 관리 흐름에서 의존성에 따라 작업하고, 근거와 함께 결과를 전달합니다</tspan></text>
+<text x="256" y="124" fill="#202b25" font-size="20" font-weight="450" text-anchor="start"><tspan x="256" dy="0">주 흐름</tspan></text>
+<text x="526" y="124" fill="#202b25" font-size="20" font-weight="450" text-anchor="start"><tspan x="526" dy="0">수정 / 되돌림</tspan></text>
+<text x="796" y="124" fill="#202b25" font-size="20" font-weight="450" text-anchor="start"><tspan x="796" dy="0">사람의 결정</tspan></text>
+<text x="1066" y="124" fill="#202b25" font-size="20" font-weight="450" text-anchor="start"><tspan x="1066" dy="0">기록 저장</tspan></text>
+<text x="183.0" y="193.75" fill="#202b25" font-size="22" font-weight="700" text-anchor="middle"><tspan x="183.0" dy="0">사용자 목표</tspan></text>
+<text x="428.0" y="193.75" fill="#202b25" font-size="22" font-weight="700" text-anchor="middle"><tspan x="428.0" dy="0">프로젝트와 제약</tspan></text>
+<text x="673.0" y="193.75" fill="#202b25" font-size="22" font-weight="700" text-anchor="middle"><tspan x="673.0" dy="0">새 요구 사항</tspan></text>
+<text x="918.0" y="193.75" fill="#202b25" font-size="22" font-weight="700" text-anchor="middle"><tspan x="918.0" dy="0">Work 맥락</tspan></text>
+<text x="74" y="276" fill="#fff" font-size="23" font-weight="700" text-anchor="start"><tspan x="74" dy="0">목표, 근거와 설계</tspan></text>
+<text x="220.0" y="343.0" fill="#fff" font-size="24" font-weight="700" text-anchor="middle"><tspan x="220.0" dy="0">01 핵심 확인</tspan></text>
+<text x="220.0" y="380.0" fill="#fff" font-size="20" font-weight="450" text-anchor="middle"><tspan x="220.0" dy="0">목표 / 범위 / 인수 조건</tspan></text>
+<text x="520.0" y="343.0" fill="#fff" font-size="24" font-weight="700" text-anchor="middle"><tspan x="520.0" dy="0">02 조사와 탐색</tspan></text>
+<text x="520.0" y="380.0" fill="#fff" font-size="20" font-weight="450" text-anchor="middle"><tspan x="520.0" dy="0">프로젝트 사실 / 가용 역량</tspan></text>
+<text x="840.0" y="343.0" fill="#fff" font-size="24" font-weight="700" text-anchor="middle"><tspan x="840.0" dy="0">03 사고와 계획</tspan></text>
+<text x="840.0" y="380.0" fill="#fff" font-size="20" font-weight="450" text-anchor="middle"><tspan x="840.0" dy="0">같은 PRD: 전체 → 모듈</tspan></text>
+<text x="74" y="490" fill="#202b25" font-size="24" font-weight="700" text-anchor="start"><tspan x="74" dy="0">04 실행과 동적 작업 조율</tspan></text>
+<text x="1025" y="490" fill="#5a655e" font-size="20" font-weight="450" text-anchor="end"><tspan x="1025" dy="0">클라이언트와 모델을 따로 선택</tspan></text>
+<text x="210.0" y="550.75" fill="#202b25" font-size="22" font-weight="700" text-anchor="middle"><tspan x="210.0" dy="0">의존성에 따라 배정</tspan></text>
+<text x="210.0" y="585.25" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="210.0" dy="0">준비되면 실행</tspan><tspan x="210.0" dy="26.0">대기 시 재개 지점 기록</tspan></text>
+<text x="515.0" y="546.25" fill="#202b25" font-size="22" font-weight="700" text-anchor="middle"><tspan x="515.0" dy="0">준비된 작업 A</tspan></text>
+<text x="515.0" y="610.25" fill="#202b25" font-size="22" font-weight="700" text-anchor="middle"><tspan x="515.0" dy="0">준비된 작업 B</tspan></text>
+<text x="860.0" y="566.125" fill="#202b25" font-size="23" font-weight="700" text-anchor="middle"><tspan x="860.0" dy="0">같은 단계에서 통합</tspan></text>
+<text x="860.0" y="601.875" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="860.0" dy="0">실제 산출물 + 실행 기록</tspan></text>
+<text x="550" y="650" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="550" dy="0">현재 호스트가 실행 역량 제공: Agent · Skill · 도구 / MCP · Hook</tspan></text>
+<text x="74" y="714" fill="#202b25" font-size="22" font-weight="700" text-anchor="start"><tspan x="74" dy="0">품질 확인 · 목표 / 사실 / 설계 문제는 해당 단계로</tspan></text>
+<text x="220.0" y="759.25" fill="#202b25" font-size="22" font-weight="700" text-anchor="middle"><tspan x="220.0" dy="0">05 검토</tspan></text>
+<text x="220.0" y="793.75" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="220.0" dy="0">목표와 결과 대조</tspan></text>
+<text x="520.0" y="759.25" fill="#202b25" font-size="22" font-weight="700" text-anchor="middle"><tspan x="520.0" dy="0">06 검토 재평가</tspan></text>
+<text x="520.0" y="793.75" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="520.0" dy="0">기준과 근거 확인</tspan></text>
+<text x="840.0" y="759.25" fill="#202b25" font-size="22" font-weight="700" text-anchor="middle"><tspan x="840.0" dy="0">07 실제 검증</tspan></text>
+<text x="840.0" y="793.75" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="840.0" dy="0">실행 / 조작 / 확인</tspan></text>
+<text x="1008" y="714" fill="#6756b4" font-size="20" font-weight="700" text-anchor="end"><tspan x="1008" dy="0">해당 작업을 수정</tspan></text>
+<text x="74" y="872" fill="#202b25" font-size="22" font-weight="700" text-anchor="start"><tspan x="74" dy="0">사람의 판단: 어느 단계든 필요할 때</tspan></text>
+<text x="156" y="935.5" fill="#202b25" font-size="20" font-weight="700" text-anchor="middle"><tspan x="156" dy="0">기존 결정이</tspan><tspan x="156" dy="25.0">아직 유효?</tspan></text>
+<text x="405.0" y="925.375" fill="#202b25" font-size="21" font-weight="700" text-anchor="middle"><tspan x="405.0" dy="0">기존 결정 재사용</tspan></text>
+<text x="405.0" y="990.375" fill="#202b25" font-size="21" font-weight="700" text-anchor="middle"><tspan x="405.0" dy="0">판단과 이유 기록</tspan></text>
+<text x="265" y="909" fill="#b96b2a" font-size="20" font-weight="450" text-anchor="middle"><tspan x="265" dy="0">예</tspan></text>
+<text x="265" y="975" fill="#b96b2a" font-size="20" font-weight="450" text-anchor="middle"><tspan x="265" dy="0">아니요</tspan></text>
+<text x="290" y="824" fill="#b96b2a" font-size="20" font-weight="450" text-anchor="middle"><tspan x="290" dy="0">판단을 요청한 단계로 복귀</tspan></text>
+<text x="584" y="872" fill="#202b25" font-size="24" font-weight="700" text-anchor="start"><tspan x="584" dy="0">08 경험 개선</tspan></text>
+<text x="681" y="927.5" fill="#202b25" font-size="20" font-weight="700" text-anchor="middle"><tspan x="681" dy="0">재사용할</tspan><tspan x="681" dy="25.0">발견이 있나?</tspan></text>
+<text x="917.0" y="926.5" fill="#202b25" font-size="22" font-weight="700" text-anchor="middle"><tspan x="917.0" dy="0">검토 후 처리</tspan><tspan x="917.0" dy="27.5">반영 / 후보 보관</tspan></text>
+<text x="788" y="913" fill="#202b25" font-size="20" font-weight="450" text-anchor="middle"><tspan x="788" dy="0">예</tspan></text>
+<text x="795" y="994" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="795" dy="0">없음: 미반영 이유 기록</tspan></text>
+<text x="1215" y="179" fill="#202b25" font-size="26" font-weight="700" text-anchor="middle"><tspan x="1215" dy="0">과정과 근거</tspan></text>
+<text x="1215" y="211" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="1215" dy="0">같은 Work / 실행에 연결</tspan></text>
+<text x="1215.0" y="330" fill="#202b25" font-size="22" font-weight="700" text-anchor="middle"><tspan x="1215.0" dy="0">계획 · PRD · 결정</tspan></text>
+<text x="1215.0" y="357" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="1215.0" dy="0">설계 기준과 버전</tspan></text>
+<text x="1215.0" y="519" fill="#202b25" font-size="22" font-weight="700" text-anchor="middle"><tspan x="1215.0" dy="0">작업 · 의존성 · 진행</tspan></text>
+<text x="1215.0" y="546" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="1215.0" dy="0">작업과 재개 조건</tspan></text>
+<text x="1215.0" y="727" fill="#202b25" font-size="22" font-weight="700" text-anchor="middle"><tspan x="1215.0" dy="0">산출물 · 검증 근거</tspan></text>
+<text x="1215.0" y="754" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="1215.0" dy="0">검토와 실제 검증</tspan></text>
+<text x="1215.0" y="877" fill="#202b25" font-size="22" font-weight="700" text-anchor="middle"><tspan x="1215.0" dy="0">Work 업무 결과</tspan></text>
+<text x="1215.0" y="904" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="1215.0" dy="0">채택 버전 / 실제 효과</tspan></text>
+<text x="1215.0" y="963" fill="#202b25" font-size="22" font-weight="700" text-anchor="middle"><tspan x="1215.0" dy="0">경험 후보 · 방법</tspan></text>
+<text x="1215.0" y="990" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="1215.0" dy="0">검토 후 재사용</tspan></text>
+<text x="1215" y="812" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="1215" dy="0">호스트 피드백</tspan></text>
+<text x="700" y="1079" fill="#fff" font-size="27" font-weight="700" text-anchor="middle"><tspan x="700" dy="0">전달: 실제 산출물 · 검증 결과 · 다음 단계</tspan></text>
+</svg>

@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="1140" viewBox="0 0 1400 1140" role="img" aria-labelledby="title desc" lang="ja-JP"><title id="title">2 回の PRD 設計から実行可能なタスクへ</title><desc id="desc">計画、実行、検証、人の判断、差し戻し、記録先を矢印で示すシステム図。</desc><style>text{font-family:"Noto Sans CJK SC","Microsoft YaHei",sans-serif}@media(prefers-reduced-motion:reduce){*{animation:none!important}}</style><defs><marker id="main" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9Z" fill="#46544a"/></marker><marker id="human" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9Z" fill="#b96b2a"/></marker><marker id="back" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9Z" fill="#6756b4"/></marker><marker id="record" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9Z" fill="#737b75"/></marker><marker id="light" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9Z" fill="#d8e1d9"/></marker></defs>
+<rect width="1400" height="1140" rx="18" fill="#f8f7f2"/>
+<rect x="50" y="145" width="1300" height="68" rx="15" fill="#eef1ed" stroke="#aeb7af" stroke-width="1.5"/>
+<rect x="50" y="250" width="595" height="300" rx="15" fill="#21362b" stroke="#21362b" stroke-width="1.5"/>
+<rect x="755" y="250" width="595" height="300" rx="15" fill="#eaf2ed" stroke="#aeb7af" stroke-width="1.5"/>
+<rect x="50" y="586" width="840" height="170" rx="15" fill="#f3efe4" stroke="#aeb7af" stroke-width="1.5"/>
+<rect x="920" y="578" width="430" height="178" rx="15" fill="#fff4e3" stroke="#b96b2a" stroke-width="1.5"/>
+<rect x="50" y="790" width="1300" height="226" rx="15" fill="#eaf2ed" stroke="#aeb7af" stroke-width="1.5"/>
+<rect x="50" y="1050" width="1300" height="50" rx="15" fill="#21362b" stroke="#21362b" stroke-width="1.5"/>
+<path d="M205 117 L244 117" fill="none" stroke="#46544a" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<path d="M475 117 L514 117" fill="none" stroke="#6756b4" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#back)"/>
+<path d="M745 117 L784 117" fill="none" stroke="#b96b2a" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#human)"/>
+<path d="M1015 117 L1054 117" fill="none" stroke="#737b75" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="5 6" marker-end="url(#record)"/>
+<path d="M347 213 L347 250" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<path d="M1184 201 L1184 250" fill="none" stroke="#6756b4" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#back)"/>
+<path d="M645 403 L755 403" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<path d="M1020 550 L1020 615" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<path d="M940 655 L890 655" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<path d="M1100 655 L1212 655 L1212 689" fill="none" stroke="#b96b2a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#human)"/>
+<path d="M1325 716 L1366 716 L1366 481 L1325 481" fill="none" stroke="#b96b2a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#human)"/>
+<path d="M470 756 L470 773 L65 773 L65 920 L90 920" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<path d="M330 920 L370 920 L370 883 L410 883" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<path d="M370 920 L370 962 L410 962" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<path d="M665 883 L715 883 L715 923 L760 923" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<path d="M665 962 L715 962 L715 923" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M1000 923 L1100 923" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<path d="M1035 923 L1035 1009 L538 1009 L538 993" fill="none" stroke="#6756b4" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#back)"/>
+<path d="M1205 961 L1205 1050" fill="none" stroke="#46544a" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<g data-box="68,157,300,44" data-label="業務の目的"><rect x="68" y="157" width="300" height="44" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="390,157,300,44" data-label="プロジェクトの事実と根拠"><rect x="390" y="157" width="300" height="44" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="712,157,300,44" data-label="既存の決定"><rect x="712" y="157" width="300" height="44" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="1034,157,300,44" data-label="要求の変更"><rect x="1034" y="157" width="300" height="44" rx="9" fill="#fff" stroke="#6756b4" stroke-width="1.4"/></g>
+<g data-box="75,340,260,88" data-label="範囲と利用経路"><rect x="75" y="340" width="260" height="88" rx="9" fill="#31473a" stroke="#687d6d" stroke-width="1.4"/></g>
+<g data-box="360,340,260,88" data-label="構成と制約"><rect x="360" y="340" width="260" height="88" rx="9" fill="#31473a" stroke="#687d6d" stroke-width="1.4"/></g>
+<g data-box="75,437,260,88" data-label="モジュールの境界"><rect x="75" y="437" width="260" height="88" rx="9" fill="#31473a" stroke="#687d6d" stroke-width="1.4"/></g>
+<g data-box="360,437,260,88" data-label="共有インターフェース"><rect x="360" y="437" width="260" height="88" rx="9" fill="#31473a" stroke="#687d6d" stroke-width="1.4"/></g>
+<g data-box="780,340,260,88" data-label="フローと状態"><rect x="780" y="340" width="260" height="88" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="1065,340,260,88" data-label="例外と復旧"><rect x="1065" y="340" width="260" height="88" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="780,437,260,88" data-label="規則とデータ"><rect x="780" y="437" width="260" height="88" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="1065,437,260,88" data-label="接続と受入条件"><rect x="1065" y="437" width="260" height="88" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="75,642,240,90" data-label="目的と文脈"><rect x="75" y="642" width="240" height="90" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="350,642,240,90" data-label="境界と依存"><rect x="350" y="642" width="240" height="90" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="625,642,240,90" data-label="成果と受入条件"><rect x="625" y="642" width="240" height="90" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<path d="M1020 615.0L1100.0 655L1020 695.0L940.0 655Z" fill="#fff" stroke="#b96b2a" stroke-width="2"/>
+<g data-box="1100,689,225,54" data-label="判断と理由を記録"><rect x="1100" y="689" width="225" height="54" rx="9" fill="#fff" stroke="#b96b2a" stroke-width="1.4"/></g>
+<g data-box="90,864,240,113" data-label="依存関係を確認"><rect x="90" y="864" width="240" height="113" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="410,852,255,62" data-label="独立したタスク A"><rect x="410" y="852" width="255" height="62" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="410,931,255,62" data-label="独立したタスク B"><rect x="410" y="931" width="255" height="62" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="760,886,240,75" data-label="実際の成果を統合"><rect x="760" y="886" width="240" height="75" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<g data-box="1100,886,210,75" data-label="引き渡せる版"><rect x="1100" y="886" width="210" height="75" rx="9" fill="#fff" stroke="#aeb7af" stroke-width="1.4"/></g>
+<text x="700" y="48" fill="#202b25" font-size="38" font-weight="700" text-anchor="middle"><tspan x="700" dy="0">2 回の PRD 設計から実行可能なタスクへ</tspan></text>
+<text x="700" y="85" fill="#5a655e" font-size="21" font-weight="450" text-anchor="middle"><tspan x="700" dy="0">全体の基準を定め、モジュールを具体化し、設計・工票・検証をつなぐ</tspan></text>
+<text x="256" y="124" fill="#202b25" font-size="20" font-weight="450" text-anchor="start"><tspan x="256" dy="0">主な流れ</tspan></text>
+<text x="526" y="124" fill="#202b25" font-size="20" font-weight="450" text-anchor="start"><tspan x="526" dy="0">修正・差し戻し</tspan></text>
+<text x="796" y="124" fill="#202b25" font-size="20" font-weight="450" text-anchor="start"><tspan x="796" dy="0">人の判断</tspan></text>
+<text x="1066" y="124" fill="#202b25" font-size="20" font-weight="450" text-anchor="start"><tspan x="1066" dy="0">記録への書き込み</tspan></text>
+<text x="218.0" y="187.25" fill="#202b25" font-size="22" font-weight="700" text-anchor="middle"><tspan x="218.0" dy="0">業務の目的</tspan></text>
+<text x="540.0" y="187.25" fill="#202b25" font-size="22" font-weight="700" text-anchor="middle"><tspan x="540.0" dy="0">プロジェクトの事実と根拠</tspan></text>
+<text x="862.0" y="187.25" fill="#202b25" font-size="22" font-weight="700" text-anchor="middle"><tspan x="862.0" dy="0">既存の決定</tspan></text>
+<text x="1184.0" y="187.25" fill="#202b25" font-size="22" font-weight="700" text-anchor="middle"><tspan x="1184.0" dy="0">要求の変更</tspan></text>
+<text x="700" y="240" fill="#202b25" font-size="22" font-weight="700" text-anchor="middle"><tspan x="700" dy="0">Thinking：同じ PRD を 2 回に分けて具体化</tspan></text>
+<text x="1220" y="238" fill="#6756b4" font-size="20" font-weight="450" text-anchor="start"><tspan x="1220" dy="0">影響を特定</tspan></text>
+<text x="75" y="286" fill="#fff" font-size="26" font-weight="700" text-anchor="start"><tspan x="75" dy="0">第 1 回 · システム構成</tspan></text>
+<text x="75" y="316" fill="#d8e1d9" font-size="20" font-weight="450" text-anchor="start"><tspan x="75" dy="0">何を作り、モジュールがどう連携するか</tspan></text>
+<text x="780" y="286" fill="#202b25" font-size="26" font-weight="700" text-anchor="start"><tspan x="780" dy="0">第 2 回 · モジュール詳細</tspan></text>
+<text x="780" y="316" fill="#5a655e" font-size="20" font-weight="450" text-anchor="start"><tspan x="780" dy="0">全体設計の中で実装可能な仕様へ進める</tspan></text>
+<text x="205.0" y="375.625" fill="#fff" font-size="23" font-weight="700" text-anchor="middle"><tspan x="205.0" dy="0">範囲と利用経路</tspan></text>
+<text x="205.0" y="411.375" fill="#fff" font-size="20" font-weight="450" text-anchor="middle"><tspan x="205.0" dy="0">誰が / 何のために</tspan></text>
+<text x="490.0" y="375.625" fill="#fff" font-size="23" font-weight="700" text-anchor="middle"><tspan x="490.0" dy="0">構成と制約</tspan></text>
+<text x="490.0" y="411.375" fill="#fff" font-size="20" font-weight="450" text-anchor="middle"><tspan x="490.0" dy="0">アプリ / データ / 表示</tspan></text>
+<text x="205.0" y="472.625" fill="#fff" font-size="23" font-weight="700" text-anchor="middle"><tspan x="205.0" dy="0">モジュールの境界</tspan></text>
+<text x="205.0" y="508.375" fill="#fff" font-size="20" font-weight="450" text-anchor="middle"><tspan x="205.0" dy="0">責任 / 依存 / 選択</tspan></text>
+<text x="490.0" y="472.625" fill="#fff" font-size="23" font-weight="700" text-anchor="middle"><tspan x="490.0" dy="0">共有インターフェース</tspan></text>
+<text x="490.0" y="508.375" fill="#fff" font-size="20" font-weight="450" text-anchor="middle"><tspan x="490.0" dy="0">データ所有 / 成功条件</tspan></text>
+<text x="910.0" y="375.625" fill="#202b25" font-size="23" font-weight="700" text-anchor="middle"><tspan x="910.0" dy="0">フローと状態</tspan></text>
+<text x="910.0" y="411.375" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="910.0" dy="0">通常 / 空 / 読込中</tspan></text>
+<text x="1195.0" y="375.625" fill="#202b25" font-size="23" font-weight="700" text-anchor="middle"><tspan x="1195.0" dy="0">例外と復旧</tspan></text>
+<text x="1195.0" y="411.375" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="1195.0" dy="0">失敗 / 再試行 / 復帰</tspan></text>
+<text x="910.0" y="472.625" fill="#202b25" font-size="23" font-weight="700" text-anchor="middle"><tspan x="910.0" dy="0">規則とデータ</tspan></text>
+<text x="910.0" y="508.375" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="910.0" dy="0">入力 / 出力 / 責任</tspan></text>
+<text x="1195.0" y="472.625" fill="#202b25" font-size="23" font-weight="700" text-anchor="middle"><tspan x="1195.0" dy="0">接続と受入条件</tspan></text>
+<text x="1195.0" y="508.375" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="1195.0" dy="0">動作 / 境界 / 検証</tspan></text>
+<text x="700" y="373" fill="#202b25" font-size="20" font-weight="700" text-anchor="middle"><tspan x="700" dy="0">選択した</tspan><tspan x="700" dy="25">部分を展開</tspan></text>
+<text x="75" y="620" fill="#202b25" font-size="26" font-weight="700" text-anchor="start"><tspan x="75" dy="0">実行可能な工票 · 同じ PRD の該当部分を参照</tspan></text>
+<text x="195.0" y="678.625" fill="#202b25" font-size="23" font-weight="700" text-anchor="middle"><tspan x="195.0" dy="0">目的と文脈</tspan></text>
+<text x="195.0" y="714.375" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="195.0" dy="0">全体の基準 + 詳細</tspan></text>
+<text x="470.0" y="678.625" fill="#202b25" font-size="23" font-weight="700" text-anchor="middle"><tspan x="470.0" dy="0">境界と依存</tspan></text>
+<text x="470.0" y="714.375" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="470.0" dy="0">担当 / 範囲 / 前提</tspan></text>
+<text x="745.0" y="678.625" fill="#202b25" font-size="23" font-weight="700" text-anchor="middle"><tspan x="745.0" dy="0">成果と受入条件</tspan></text>
+<text x="745.0" y="714.375" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="745.0" dy="0">入力 / 出力 / 確認</tspan></text>
+<text x="1192" y="607" fill="#b96b2a" font-size="20" font-weight="450" text-anchor="middle"><tspan x="1192" dy="0">既存の決定を先に使う</tspan></text>
+<text x="1020" y="649.5" fill="#202b25" font-size="20" font-weight="700" text-anchor="middle"><tspan x="1020" dy="0">人の判断が</tspan><tspan x="1020" dy="25.0">まだ必要？</tspan></text>
+<text x="1212.5" y="723.875" fill="#202b25" font-size="21" font-weight="700" text-anchor="middle"><tspan x="1212.5" dy="0">判断と理由を記録</tspan></text>
+<text x="915" y="640" fill="#202b25" font-size="20" font-weight="450" text-anchor="middle"><tspan x="915" dy="0">いいえ</tspan></text>
+<text x="1155" y="646" fill="#b96b2a" font-size="20" font-weight="450" text-anchor="start"><tspan x="1155" dy="0">はい</tspan></text>
+<text x="75" y="827" fill="#202b25" font-size="26" font-weight="700" text-anchor="start"><tspan x="75" dy="0">依存関係に沿って実行：準備済みの独立タスクは並行可能</tspan></text>
+<text x="210.0" y="899.125" fill="#202b25" font-size="23" font-weight="700" text-anchor="middle"><tspan x="210.0" dy="0">依存関係を確認</tspan></text>
+<text x="210.0" y="934.875" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="210.0" dy="0">準備できれば実行</tspan><tspan x="210.0" dy="26.0">待機は再開点を残す</tspan></text>
+<text x="537.5" y="892.0" fill="#202b25" font-size="24" font-weight="700" text-anchor="middle"><tspan x="537.5" dy="0">独立したタスク A</tspan></text>
+<text x="537.5" y="971.0" fill="#202b25" font-size="24" font-weight="700" text-anchor="middle"><tspan x="537.5" dy="0">独立したタスク B</tspan></text>
+<text x="880.0" y="915.25" fill="#202b25" font-size="22" font-weight="700" text-anchor="middle"><tspan x="880.0" dy="0">実際の成果を統合</tspan></text>
+<text x="880.0" y="949.75" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="880.0" dy="0">まとめて検証する</tspan></text>
+<text x="1205.0" y="915.25" fill="#202b25" font-size="22" font-weight="700" text-anchor="middle"><tspan x="1205.0" dy="0">引き渡せる版</tspan></text>
+<text x="1205.0" y="949.75" fill="#5a655e" font-size="20" font-weight="450" text-anchor="middle"><tspan x="1205.0" dy="0">根拠 + 次の一手</tspan></text>
+<text x="1050" y="909" fill="#202b25" font-size="20" font-weight="450" text-anchor="middle"><tspan x="1050" dy="0">合格</tspan></text>
+<text x="844" y="992" fill="#6756b4" font-size="20" font-weight="700" text-anchor="middle"><tspan x="844" dy="0">問題は該当タスクへ戻す</tspan></text>
+<text x="700" y="1083" fill="#fff" font-size="26" font-weight="700" text-anchor="middle"><tspan x="700" dy="0">追跡できる成果：要求 → モジュール → 工票 → 成果と根拠</tspan></text>
+</svg>
