@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, mkdir, writeFile, readFile, rm, symlink } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, stat, rename } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -293,6 +293,73 @@ test("an existing governed softwareDesign remains privately readable without inv
   artifact.runId = "meta-other-run";
   await writeFile(file, JSON.stringify(artifact));
   assert.equal((await f.overview()).design.status, "not_registered", "a different run's artifact cannot be borrowed");
+});
+
+test("a source-bound private design projection reads a large run without relaxing the design budget", async t => {
+  const f = await fixture(t);
+  const sourceRef = `.meta-kim/state/default/governed-executions/${f.runId}.json`;
+  const sourcePath = path.join(f.root, sourceRef);
+  await mkdir(path.dirname(sourcePath), { recursive: true });
+  const softwareDesign = designInput({ full: true }).design.softwareDesign;
+  const artifact = { runId: f.runId, recordOrigin: "acceptance_fixture", productDesignPacket: { softwareDesign },
+    unrelatedExecutionHistory: "x".repeat(f.service.policy.maxDesignBytes) };
+  const sourceBytes = Buffer.from(JSON.stringify(artifact));
+  await writeFile(sourcePath, sourceBytes);
+  const info = await stat(sourcePath, { bigint: true });
+  const identity = Object.fromEntries(["dev", "ino", "size", "mtimeNs", "ctimeNs"].map(key => [key, String(info[key])]));
+  const projection = { schemaVersion: "meta-kim-live-workspace-design-projection-v1", runId: f.runId, profile: "default",
+    recordOrigin: "acceptance_fixture", design: { softwareDesign }, sourceDesignDigest: null,
+    softwareDesignSha256: sha(JSON.stringify(softwareDesign)),
+    source: { ref: sourceRef, sha256: sha(sourceBytes), bytes: sourceBytes.length, identity },
+    nativeInvocationVerified: false, completionVerified: false, publicReadyAuthority: false,
+    evidenceBoundary: "private_design_display_only; source_digest_recorded_by_publisher; current_source_stat_identity_checked; no_review_or_execution_authority" };
+  const projectionPath = sourcePath.replace(/\.json$/u, ".workspace-design.json");
+  await writeFile(projectionPath, JSON.stringify(projection));
+
+  const view = await f.overview();
+  assert.equal(view.source.kind, "governed_design_artifact");
+  assert.equal(view.source.recordOrigin, "acceptance_fixture");
+  assert.equal(view.design.status, "unregistered");
+  assert.equal(view.design.totalModules, softwareDesign.modules.length);
+  assert.equal(view.capabilities.review.available, false);
+  assert.equal(view.capabilities.feedback.available, false);
+  assert.equal(view.design.version, `sha256:${sha(sourceBytes)}`);
+  const module = view.design.modules[0];
+  const page = await f.service.getMaterial({ runId: f.runId, artifactId: module.artifactId, version: module.version });
+  assert.deepEqual(JSON.parse(page.text), softwareDesign.modules[0]);
+  assert.equal((await readSpineState(f.root)).liveWorkspace, undefined);
+  assert.equal(await readFile(sourcePath, "utf8"), sourceBytes.toString("utf8"));
+  assert.equal(f.service.policy.maxDesignBytes, 8 * 1024 * 1024);
+
+  await t.test("wrong run, profile, source and design bindings fail closed", async () => {
+    for (const change of [record => { record.runId = "another-run"; }, record => { record.profile = "another-profile"; },
+      record => { record.source.ref = sourceRef.replace(f.runId, "another-run"); },
+      record => { record.design.softwareDesign.modules[0].purpose = "Unbound replacement"; },
+      record => { record.nativeInvocationVerified = true; }]) {
+      const invalid = structuredClone(projection); change(invalid);
+      await writeFile(projectionPath, JSON.stringify(invalid));
+      await assert.rejects(f.overview(), { code: "workspace_design_projection_binding_invalid", status: 409 });
+    }
+    await writeFile(projectionPath, JSON.stringify(projection));
+  });
+  await t.test("oversize and symlinked projections retain the original read guards", async () => {
+    await writeFile(projectionPath, " ".repeat(f.service.policy.maxDesignBytes + 1));
+    await assert.rejects(f.overview(), { code: "workspace_material_too_large", status: 413 });
+    await rm(projectionPath);
+    await symlink(sourcePath, projectionPath);
+    await assert.rejects(f.overview(), { code: "workspace_material_path_untrusted", status: 403 });
+    await rm(projectionPath);
+    await writeFile(projectionPath, JSON.stringify(projection));
+  });
+  await t.test("a changed or symlinked source cannot reuse a prior private projection", async () => {
+    const changed = Buffer.from(sourceBytes); changed[changed.length - 3] = "y".charCodeAt(0);
+    await writeFile(sourcePath, changed);
+    await assert.rejects(f.overview(), { code: "workspace_material_changed", status: 409 });
+    const retained = `${sourcePath}.retained`;
+    await rename(sourcePath, retained);
+    await symlink(retained, sourcePath);
+    await assert.rejects(f.overview(), { code: "workspace_material_path_untrusted", status: 403 });
+  });
 });
 
 test("module pagination keeps global review capability and rejects a changed design cursor", async t => {

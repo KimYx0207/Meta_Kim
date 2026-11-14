@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
@@ -6,8 +7,37 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import test from "node:test";
+import { copyProjectCapability } from "../../scripts/project-capability-copy.mjs";
 
 const REPO_ROOT = path.resolve(".");
+const hash = value => createHash("sha256").update(value).digest("hex");
+
+test("reviewed in-place project iteration binds candidate bytes and the current user-edited source", async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), "meta-kim-reviewed-iteration-"));
+  try {
+    const projectDir = path.join(temp, "project"), source = path.join(temp, "reviewer.toml");
+    await mkdir(projectDir); await writeFile(path.join(projectDir, "package.json"), "{}");
+    await writeFile(source, 'name = "reviewer"\ndeveloper_instructions = "Initial maintenance review"\n');
+    const options = { projectDir, runtime: "codex", type: "agent", id: "reviewer", source, mode: "iterate", apply: true };
+    const original = copyProjectCapability(options);
+    const relPath = ".codex/agents/reviewer.toml", target = path.join(projectDir, relPath);
+    writeFileSync(target, 'name = "reviewer"\ndeveloper_instructions = "User maintenance boundary"\n');
+    const expectedProjectFiles = [{ relPath, sha256: hash(readFileSync(target)) }];
+    const revised = 'name = "reviewer"\ndeveloper_instructions = "User maintenance boundary plus audited escalation acceptance"\n';
+    await writeFile(source, revised);
+    const contentDigest = "sha256:" + hash(JSON.stringify([{ relPath, baselineHash: hash(revised) }]));
+    const approvalRef = path.join(projectDir, "review.json");
+    const approval = { status: "approved", projectRoot: projectDir, runtime: "codex", capabilityType: "agent", requestedCapability: "reviewer", contentDigest, expectedProjectFiles };
+    writeFileSync(approvalRef, JSON.stringify(approval));
+    const updated = copyProjectCapability({ ...options, reviewedUpdate: { approvalRef, contentDigest, expectedProjectFiles } });
+    assert.equal(updated.ok, true);
+    assert.equal(readFileSync(target, "utf8"), revised);
+    assert.deepEqual(updated.capability.sourceBaseline, original.capability.sourceBaseline);
+    assert.equal(updated.capability.files[0].state, "reviewed_project_update");
+    assert.throws(() => copyProjectCapability({ ...options, reviewedUpdate: { approvalRef, contentDigest, expectedProjectFiles } }), /expected file hash changed/u);
+    assert.equal(readFileSync(target, "utf8"), revised);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
 
 function runCli(args) {
   return spawnSync(process.execPath, [path.join(REPO_ROOT, "bin", "meta-kim.mjs"), ...args], {
@@ -44,6 +74,8 @@ test("project capability copy detaches an iterated global Agent from dependency 
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
     assert.equal(manifest.capabilities[0].detachedFromDependencyUpdates, true);
     assert.equal(manifest.capabilities[0].policy, "copy_to_project_for_modification");
+    assert.equal(manifest.capabilities[0].sourceBaseline.files[0].sha256, manifest.capabilities[0].files[0].baselineHash);
+    const originalBaseline = manifest.capabilities[0].sourceBaseline;
 
     writeFileSync(target, 'name = "reviewer"\ndeveloper_instructions = "project-owned"\n');
     writeFileSync(source, 'name = "reviewer"\ndeveloper_instructions = "dependency-v2"\n');
@@ -61,6 +93,11 @@ test("project capability copy detaches an iterated global Agent from dependency 
     assert.equal(update.status, 0, update.stderr || update.stdout);
     assert.match(readFileSync(target, "utf8"), /project-owned/u);
     assert.doesNotMatch(readFileSync(target, "utf8"), /dependency-v2/u);
+    const retained = JSON.parse(readFileSync(manifestPath, "utf8")).capabilities[0];
+    assert.deepEqual(retained.sourceBaseline, originalBaseline, "An upstream refresh cannot rewrite the project's original source provenance");
+    assert.equal(retained.upstreamComparison.status, "source_changed_project_preserved");
+    assert.notEqual(retained.upstreamComparison.candidateDigest, originalBaseline.contentDigest);
+    assert.deepEqual(retained.upstreamComparison.changedPaths, [".codex/agents/reviewer.toml"]);
   } finally {
     await rm(temp, { recursive: true, force: true });
   }

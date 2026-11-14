@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { taskOutcomeDigest, buildTaskGoalContract } from "../../src/domain/governance/task-outcome.mjs";
+import { normalizeProjectCapabilityRequirements } from "./product-design.mjs";
 
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
@@ -89,14 +90,14 @@ export function intentDialogueDigest(intent) {
 /** Consume the current host's Thinking work orders, not a second task planner.
  * The host performs semantic judgment. These bindings grant no tool permission.
  */
-export function normalizeHostThinking({ input = null, task, dialogue, requirementsDiscovery = null }) {
+export function normalizeHostThinking({ input = null, task, dialogue, requirementsDiscovery = null, critical = null }) {
   if (input == null) return null;
   if (!input || typeof input !== "object" || Array.isArray(input) || input.taskHash !== taskOutcomeDigest(task) ||
       (input.intentDigest ?? null) !== (dialogue.intentDigest ?? null) ||
       (input.requirementsDigest ?? null) !== (requirementsDiscovery?.discoveryDigest ?? null)) {
     throw new TypeError("Thinking must bind the current original task, intent and requirements materials");
   }
-  if (!refs(input.evidenceRefs) || !input.intentPacket || input.intentPacket.realIntent !== dialogue.outcome ||
+  if (!refs(input.evidenceRefs) || !input.intentPacket || input.intentPacket.realIntent !== (critical?.realIntent ?? dialogue.outcome) ||
       !Array.isArray(input.intentPacket.blockingUnknowns) || !Array.isArray(input.intentPacket.nonGoals) ||
       !Array.isArray(input.intentPacket.successCriteria) || !input.intentPacket.successCriteria.length ||
       !refs(input.intentPacket.evidenceRefs)) {
@@ -110,6 +111,7 @@ export function normalizeHostThinking({ input = null, task, dialogue, requiremen
     throw new TypeError("Thinking needs the actual Fetch inventory, considered routes and existing worker task fields");
   }
   const ids = new Set();
+  if (thinking.projectCapabilityRequirements !== undefined) normalizeProjectCapabilityRequirements(thinking.projectCapabilityRequirements);
   for (const packet of thinking.workerTaskPackets) {
     if (!packet || typeof packet !== "object" || Array.isArray(packet) ||
         typeof packet.roleInstanceId !== "string" || !packet.roleInstanceId.trim() || ids.has(packet.roleInstanceId) ||
@@ -133,7 +135,10 @@ export function normalizeHostThinking({ input = null, task, dialogue, requiremen
       throw new TypeError("Thinking verification must retain the existing verifySteps contract");
     }
     if (packet.handoffContract?.handoffTo && packet.handoffContract.handoffTo !== packet.handoffTarget) throw new TypeError("Thinking handoff target conflict");
-    for (const key of ["trusted", "permissions", "authorization", "executionAllowed", "nativeInvocationVerified", "workOrderReadiness", "safetyEvidence", "ownerSource", "ownerContract", "ownerBindingMode", "nativeAgentType", "codexSpawnBinding", "agentCapabilityProfile"]) {
+    if (packet.researchRefs !== undefined && (!Array.isArray(packet.researchRefs) || packet.researchRefs.some(id =>
+      typeof id !== "string" || !requirementsDiscovery?.research?.sources.some(source => source.id === id)))) throw new TypeError("Thinking task references unknown research evidence");
+    if (packet.projectCapabilityRefs !== undefined && !refs(packet.projectCapabilityRefs)) throw new TypeError("Thinking task project capability references must be a nonempty role list");
+    for (const key of ["trusted", "permissions", "authorization", "executionAllowed", "nativeInvocationVerified", "workOrderReadiness", "safetyEvidence", "ownerSource", "ownerContract", "ownerBindingMode", "nativeAgentType", "codexSpawnBinding", "agentCapabilityProfile", "projectCapabilityBinding", "projectCapabilityRequirements", "methodOwner"]) {
       if (Object.hasOwn(packet, key)) throw new TypeError("A Thinking work order cannot assert " + key);
     }
     ids.add(packet.roleInstanceId);
@@ -162,7 +167,8 @@ export function normalizeHostThinking({ input = null, task, dialogue, requiremen
 export function normalizeHostCritical({ input = null, task, dialogue }) {
   if (input == null) return null;
   if (!input || input.taskHash !== taskOutcomeDigest(task) || (input.intentDigest ?? null) !== (dialogue.intentDigest ?? null) ||
-      input.realIntent !== dialogue.outcome || !refs(input.evidenceRefs) ||
+      typeof input.realIntent !== "string" || !input.realIntent.trim() ||
+      (dialogue.status === "host_provided_understanding" && input.realIntent !== dialogue.outcome) || !refs(input.evidenceRefs) ||
       !Array.isArray(input.blockingUnknowns) || input.blockingUnknowns.some((id) => typeof id !== "string" || !id.trim()) ||
       !Array.isArray(input.nonGoals) || !Array.isArray(input.successCriteria) || !input.successCriteria.length) {
     throw new TypeError("Critical requires the current task/intent, evidence, success criteria, non-goals and unresolved decision IDs");
@@ -196,6 +202,7 @@ export function hostCriticalGoalCriteria({ task, critical }) {
 /** Compare validated current conditions, not object order or source refs. */
 export function sameHostCriticalMeaning(left, right) {
   const meaning = (packet) => [
+    [packet.realIntent.trim()],
     packet.successCriteria.map((criterion) => JSON.stringify(canonical(typeof criterion === "string" ? criterion.trim() : {
       id: criterion.id, condition: criterion.condition.trim(), evidenceRequired: criterion.evidenceRequired.trim(),
       ...(criterion.measurement ? { measurement: criterion.measurement } : {}),
@@ -276,7 +283,7 @@ export function prepareIntentDialogue({ task, confirmedIntent = null, sharedUnde
  * Runtime tools, required implementation skills and permission gates remain
  * owned by the existing route. A missing match stays an explicit gap.
  */
-export function bindIntentToWorkerTasks({ workerTaskPackets, routeResult, dialogue }) {
+export function bindIntentToWorkerTasks({ workerTaskPackets, routeResult, dialogue, critical = null }) {
   const route = routeResult?.recommendedRoute;
   const direction = route?.intentDirectionSelection;
   // Selection stays in the existing route selector, including its eligibility
@@ -299,7 +306,8 @@ export function bindIntentToWorkerTasks({ workerTaskPackets, routeResult, dialog
   const primaryWorkers = workerTaskPackets.filter((packet) => ["primary_execution", "local_tool_execution", "factory_then_dispatch"].includes(packet.executionMode));
   const outcomeWorkers = primaryWorkers.length ? primaryWorkers
     : workerTaskPackets.filter((packet) => packet.executionMode === "verification_execution");
-  const globalNonGoals = [...strings(dialogue.constraints?.nonGoals), ...strings(dialogue.constraints?.forbidden)];
+  const realIntent = critical?.realIntent ?? dialogue.outcome;
+  const globalNonGoals = [...strings(dialogue.constraints?.nonGoals), ...strings(dialogue.constraints?.forbidden), ...strings(critical?.nonGoals)];
   return workerTaskPackets.map((packet) => {
     const implementation = packet.executionMode === "primary_execution" &&
       ["backend", "frontend", "worker"].includes(packet.roleDisplayName);
@@ -309,6 +317,7 @@ export function bindIntentToWorkerTasks({ workerTaskPackets, routeResult, dialog
     for (const provider of selected) if (!skills.some((item) => item.id === provider.id)) skills.push(provider);
     const binding = {
       taskHash: dialogue.taskHash, status: dialogue.status, confirmedOutcome: dialogue.outcome,
+      realIntent, ...(critical ? { understandingEvidenceRefs: [...critical.evidenceRefs], understandingStatus: "host_provided_not_independently_verified" } : {}),
       intentDigest: dialogue.intentDigest ?? null, constraints: dialogue.constraints,
       acceptanceCriteria: dialogue.acceptanceCriteria,
       settledDecisionRefs: dialogue.settledDecisionRefs,
@@ -325,8 +334,8 @@ export function bindIntentToWorkerTasks({ workerTaskPackets, routeResult, dialog
       acceptanceCriterionIds,
       criterionAssignmentSource: hasExplicitAssignment ? "explicit_goal_ids" : acceptanceCriterionIds.length ? primaryWorkers.length ? "sole_primary_outcome_owner" : "sole_verification_outcome_owner" : "unassigned",
       nonGoals: [...new Set([...strings(packet.nonGoals), ...globalNonGoals])],
-      coreProblem: dialogue.outcome,
-      todayTask: implementation && !packet.taskFacts ? `${dialogue.outcome}\n${packet.todayTask ?? ""}`.trim() : packet.todayTask,
+      coreProblem: realIntent,
+      todayTask: implementation && !packet.taskFacts ? `${realIntent}\n${packet.todayTask ?? ""}`.trim() : packet.todayTask,
       acceptanceCriteria: [...(packet.acceptanceCriteria ?? []),
         ...assignedCriteria.map((criterion) => criterion.description)],
       handoffContract: { ...packet.handoffContract,

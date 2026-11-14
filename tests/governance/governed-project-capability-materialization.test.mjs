@@ -459,7 +459,7 @@ test("existing user Skill reuse does not turn a refusal into iteration or owners
       task: "请在当前项目创建 skill existing-project-method，用于检查发布清单并拒绝修改用户文件。",
     });
     assert.equal(artifact.projectCustomizationPacket.status, "completed_no_copy");
-    assert.equal(artifact.projectCustomizationPacket.decisions[0].copyPolicy, "use_global_directly");
+    assert.equal(artifact.projectCustomizationPacket.decisions[0].copyPolicy, "reuse_existing_project");
     assert.equal(artifact.projectCustomizationPacket.execution.appliedCount, 0);
     assert.equal(readFileSync(target, "utf8"), before);
     assert.equal(existsSync(path.join(fixture.projectDir, ".meta-kim/state/default/project-capabilities.json")), false);

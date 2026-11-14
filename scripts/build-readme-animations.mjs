@@ -9,6 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { copy, diagramLabels, workContextCopy } from './readme-animation-copy.mjs';
 import { architectureCopy, runtimeSelectionCopy } from './readme-architecture-copy.mjs';
+import { projectCopy } from './readme-project-copy.mjs';
 const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const OUT=path.join(ROOT,'docs/images');
 const check=process.argv.includes('--check');
@@ -78,6 +79,20 @@ ${text(this.t.footer,480,bottom+82,848,{size:30,line:39,fill:C.muted,align:'midd
 }
 function diagrams(locale){
  const c=copy[locale],l=diagramLabels[locale],out={};
+ {
+  const t=projectCopy[locale],d=new Diagram(locale,'project-specialization',t,24);
+  const source=d.card(80,d.top,800,t.source,{start:.01,end:.18,progress:false,align:'middle',fill:'#eaf1ff'});
+  const w=404,y=source.b+74,h=Math.max(...t.projects.map(row=>cardSize(row,w)));
+  const ownerY=y+h+64,ownerH=Math.max(...t.owners.map(row=>cardSize(row,w)));
+  t.projects.forEach((row,i)=>{
+   const x=i?500:56,color=i?C.purple:C.teal;
+   d.wire(`M480 ${source.b}V${y-34}H${x+w/2}V${y}`,.15,.3,{color});
+   const project=d.card(x,y,w,row,{h,start:.28,end:.53,progress:false,color});
+   const owner=d.card(x,ownerY,w,t.owners[i],{h:ownerH,start:.56,end:.92,progress:false,color});
+   d.down(project,owner,.5,.61,{color});
+  });
+  out['project-specialization']=d.finish(ownerY+ownerH);
+ }
  {
   const d=new Diagram(locale,'system-map',c.map),w=404,topH=Math.max(...c.map.cards.slice(0,2).map(row=>cardSize(row,w))),bottomH=Math.max(...c.map.cards.slice(2).map(row=>cardSize(row,w)));
   const y=d.top,centerY=y+topH+96,centerH=cardSize([c.map.center,c.map.centerBody],644),lowerY=centerY+centerH+96,middle={x:158,y:centerY,w:644,h:centerH,cx:480,b:centerY+centerH};

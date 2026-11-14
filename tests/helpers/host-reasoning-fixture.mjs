@@ -100,6 +100,7 @@ export function fixtureReadWorkOrder(preparation, { id, todayTask, output, crite
     selectionReason: "The test host selected the discovered bounded backend role for package metadata inspection and a separate review owner.",
     handoffTarget: "review", qualityBar: "Source-bound report, no invented execution evidence", referenceDirection: "Use only the current fixture package.json and supplied criterion IDs.",
     selectedCapabilityProviders: { agent: fixtureInventoryProvider(preparation, owner), verificationAgent: fixtureInventoryProvider(preparation, "review"), skill: fixtureInventoryProvider(preparation, "get-context", "providers"), ...selectedProviders },
+    projectCapabilityIntent: { mode: "preparation", purpose: "diagnostic", rationale: "This fixture measures bounded source inspection and transport, not a persistent project professional deliverable.", evidenceRefs: ["package.json"] },
     effectClass: "read_only_worker", ...(taskFacts ? { taskFacts } : {}) };
 }
 

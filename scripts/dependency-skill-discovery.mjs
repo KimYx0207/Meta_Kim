@@ -5,8 +5,10 @@ import { dependencyRootBinding } from "./managed-dependency-source.mjs";
 import { inspectPlainAbsolutePath } from "./safe-managed-file-operations.mjs";
 import {
   checkedPath, componentHash, stableJson, uniqueIds, stringArray, sha256,
-  matchDependencyAgentContracts,
+  matchDependencyAgentContracts, readDependencyProjectOverrides,
 } from "./dependency-agent-discovery.mjs";
+import { repoRoot } from "./governance-lib.mjs";
+import { loadMethodKnowledgeAssets } from "../src/infrastructure/capabilities/dependency-method-knowledge.mjs";
 
 const INDEX_FIELDS = [
   "id", "summary", "useWhen", "doNotUseWhen", "input", "output",
@@ -128,11 +130,12 @@ async function readSelectedComponent(context, component, selected, projectRoot) 
 // relative to their original declaring project, then pass that explicit root here.
 export async function discoverDependencySkillContracts({
   request = "", capabilityNeedIds = [], projects = [], projectRoot = process.cwd(), localOverrides = {}, environment = process.env,
+  indexOnly = false,
 } = {}) {
   assert.equal(typeof request, "string", "request must be a string");
   stringArray(capabilityNeedIds, "capabilityNeedIds");
   const result = { skills: [], capabilities: [], sources: [], matches: [], canExecute: false, invocationStatus: "not_invoked" };
-  if (!capabilityNeedIds.length && !request.trim()) return result;
+  if (!indexOnly && !capabilityNeedIds.length && !request.trim()) return result;
   const contexts = [];
   for (const project of projects.filter((entry) => entry.interface?.capabilityIndex)) {
     const binding = rootBinding(project, localOverrides, environment);
@@ -145,6 +148,29 @@ export async function discoverDependencySkillContracts({
       contexts.push({ ...await readIndex(project, binding, projectRoot), source });
       source.status = "index_read";
     } catch (error) { Object.assign(source, { status: error.code === "ENOENT" ? "missing" : "invalid", reason: error.message }); }
+  }
+  if (indexOnly) {
+    for (const context of contexts) {
+      for (const capability of context.index.capabilities.filter(item => item.componentType === "skill")) {
+        const component = context.index.components.find(item => item.id === capability.componentId && item.componentType === "skill");
+        if (!component || component.path !== `skills/${component.id}` || component.entrypoint !== "SKILL.md" ||
+            capability.componentPath !== component.path || capability.componentContentSha256 !== component.contentSha256 ||
+            capability.contractSha256 !== component.contractSha256 || !/^[a-f0-9]{64}$/u.test(component.contentSha256 ?? "") ||
+            !/^[a-f0-9]{64}$/u.test(component.contractSha256 ?? "")) continue;
+        const id = `${context.project.id}:${capability.id}`;
+        const sourceRef = path.relative(projectRoot, path.join(context.root, component.path, component.entrypoint)).replaceAll("\\", "/");
+        const contentDigest = sha256(stableJson(capability));
+        const skillContract = { schemaVersion: 1, dependencyId: context.project.id, componentId: component.id, capabilityId: id,
+          componentVersion: component.componentVersion, sourceRef, indexSha256: context.indexSha256, contractSha256: component.contractSha256,
+          componentContentSha256: component.contentSha256, contentDigest, contentDigestKind: "indexed_capability", sourceVerification: "index_only",
+          permissions: capability.permissions, sideEffects: capability.sideEffects, humanGate: capability.humanGate };
+        result.capabilities.push({ id, type: "skills", providerType: "skill", source: "dependency_skill_contract", sourceRef,
+          sourceRoot: context.root, sourceKey: `dependency:${id}`, contentDigest, description: capability.summary,
+          boundary: "Declared index candidate only; selected source verification and current host authorization remain separate from invocation.",
+          routeEligible: true, routeEligibility: "skill_contract_candidate", skillContract, canExecute: false, invocationStatus: "not_invoked" });
+      }
+    }
+    return result;
   }
   const candidates = contexts.flatMap((context) => context.index.capabilities.map((capability) => ({
     id: `${context.project.id}:${capability.id}`, componentId: capability.id,
@@ -190,4 +216,39 @@ export async function discoverDependencySkillContracts({
     if (context.source.status === "index_read") context.source.status = entries.length ? "verified_local" : "no_selected_skill";
   }
   return result;
+}
+
+/** Open only an exact host-selected candidate through the existing verifier.
+ * Index metadata recalls the source; it never grants tools or proves invocation. */
+export async function loadDependencySkillMethod({ provider, packet = {}, projectRoot = process.cwd(), environment = process.env }) {
+  assert.equal(provider?.source, "dependency_skill_contract", "Selected Skill requires a dependency source binding");
+  const { projects } = JSON.parse(await fs.readFile(path.join(repoRoot, "config/capability-index/dependency-project-registry.json"), "utf8"));
+  const localOverrides = await readDependencyProjectOverrides(projectRoot);
+  const options = { projects, localOverrides, projectRoot, environment };
+  const inventory = await discoverDependencySkillContracts({ ...options, indexOnly: true });
+  const current = inventory.capabilities.filter(item => item.id === provider.id);
+  assert.equal(current.length, 1, "Selected dependency Skill is unavailable or ambiguous");
+  for (const field of ["contentDigest", "sourceRef", "sourceRoot"]) assert.equal(provider[field], current[0][field], `Selected Skill binding changed: ${field}`);
+  for (const field of ["dependencyId", "componentId", "capabilityId", "indexSha256", "contractSha256", "componentContentSha256"]) {
+    assert.equal(provider.skillContract?.[field], current[0].skillContract[field], `Selected Skill contract changed: ${field}`);
+  }
+  const discovered = await discoverDependencySkillContracts({ ...options, capabilityNeedIds: [provider.id] });
+  const capability = discovered.capabilities.find(item => item.id === provider.id);
+  const skill = discovered.skills.find(item => item.componentId === capability?.componentId && item.dependencyId === capability?.dependencyId);
+  assert(skill && capability, `Selected dependency Skill source is not verified: ${discovered.sources.find(item => item.dependencyId === provider.skillContract.dependencyId)?.reason ?? "missing"}`);
+  let method = null;
+  try {
+    method = JSON.parse(await fs.readFile(await checkedPath(skill.componentRoot, "method.json"), "utf8"));
+    assert.equal(method.schemaVersion, 1, "Unsupported Skill method schema");
+    assert.equal(method.roleId, skill.componentId, "Skill method identity differs from selected source");
+    assert.equal(method.protocol, "host-bound-task-method-v1", "Unsupported Skill method protocol");
+    stringArray(method.steps, "method.steps", true); stringArray(method.acceptance, "method.acceptance", true);
+  } catch (error) { if (error.code !== "ENOENT") throw error; }
+  const knowledgeAssets = await loadMethodKnowledgeAssets({ componentRoot: skill.componentRoot, method, capabilityId: capability.selectedCapability.id, packet });
+  assert.equal(await componentHash(skill.componentRoot), skill.componentContentSha256, "Skill source changed during handoff");
+  return { ownerAgent: provider.id, componentId: skill.componentId, componentVersion: skill.componentVersion, sourceRef: provider.sourceRef, sourceText: skill.entrypointText,
+    contentDigest: sha256(skill.entrypointText), componentContentSha256: skill.componentContentSha256, ownerContractSha256: skill.contractSha256,
+    capabilityId: provider.id, inputContract: capability.selectedCapability.input, outputContract: capability.selectedCapability.output,
+    method, methodSha256: method ? sha256(stableJson(method)) : null, knowledgeAssets,
+    methodStatus: method ? "structured_method_loaded" : "legacy_skill_text_only" };
 }

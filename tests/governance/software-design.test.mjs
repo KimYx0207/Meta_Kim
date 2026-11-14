@@ -29,6 +29,16 @@ function designInput() {
 }
 const normalize = input => normalizeProductDesign({ input, dialogue, goalContract: goal });
 
+test("Service module implementation notes retain text-list semantics and digest compatibility", () => {
+  const input = designInput();
+  input.softwareDesign.modules[0].implementationNotes = ["Keep registration identity in its module", "Use the current delivery boundary"];
+  assert.deepEqual(normalize(input).softwareDesign.modules[0].implementationNotes, input.softwareDesign.modules[0].implementationNotes);
+  for (const invalid of [[], [""], true]) {
+    const changed = structuredClone(input); changed.softwareDesign.modules[0].implementationNotes = invalid;
+    assert.throws(() => normalize(changed), /implementation approach/u);
+  }
+});
+
 test("two-level software design binds one PRD and hands only the relevant module to its worker", async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), "meta-software-design-"));
   t.after(() => rm(root, { recursive: true, force: true }));

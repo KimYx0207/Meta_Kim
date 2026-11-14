@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { taskOutcomeDigest } from "../../src/domain/governance/task-outcome.mjs";
 
 const ACTION_INTENT_CONFIG = JSON.parse(
   readFileSync(
@@ -68,7 +69,17 @@ function trustedContradictionEvidence(items) {
   );
 }
 
-function classifyPlanChallengeActions(task, requestedSideEffectActions = []) {
+function classifyPlanChallengeActions(task, requestedSideEffectActions = [], actionScope = null) {
+  if (actionScope != null) {
+    if (actionScope.taskHash !== taskOutcomeDigest(task) || !Array.isArray(actionScope.actions) ||
+        actionScope.actions.some(action => typeof action !== "string" || !action.trim()) ||
+        !Array.isArray(actionScope.evidenceRefs) || !actionScope.evidenceRefs.length || actionScope.evidenceRefs.some(ref => typeof ref !== "string" || !ref.trim())) {
+      throw new TypeError("Current action task scope binding is invalid");
+    }
+    return { explicitlyReadOnly: false, documentationOnly: false, nonExecutionContext: actionScope.actions.length === 0,
+      sideEffectActions: [...new Set([...actionScope.actions, ...requestedSideEffectActions])].sort(),
+      classificationSource: "current_host_assessed_task_scope" };
+  }
   const text = String(task ?? "");
   const clauses = configuredClauses(text);
   const clauseContext = (clause) => ({
@@ -158,9 +169,10 @@ function planChallengeSignals(
   contradictionEvidence = [],
   requestedSideEffectActions = [],
   branchingOptions = [],
+  actionScope = null,
 ) {
   const text = String(task ?? "");
-  const actionIntent = classifyPlanChallengeActions(task, requestedSideEffectActions);
+  const actionIntent = classifyPlanChallengeActions(task, requestedSideEffectActions, actionScope);
   const boundContradictions = trustedContradictionEvidence(contradictionEvidence);
   const explicitChallengeNegated =
     /(?:不需要|无需|不要|别)\s*(?:(?:方案|计划)\s*)?(?:拷问|压力测试|挑刺|反证|质疑)|(?:do\s+not|don't|no\s+need\s+to)\s+(?:challenge|stress[- ]?test)|(?:不要|不要です|必要ありません).*(?:ストレステスト|問い直)|(?:필요\s*없|하지\s*마).*(?:스트레스\s*테스트|비판적\s*검토)/iu.test(text);
@@ -171,7 +183,7 @@ function planChallengeSignals(
     !actionIntent.explicitlyReadOnly &&
     !actionIntent.documentationOnly &&
     (actionIntent.sideEffectActions.some((action) => action !== "local_file_mutation") ||
-      /高成本|昂贵|不可逆|安全边界|costly|high[- ]?cost|irreversible/iu.test(text));
+      (!actionScope && /高成本|昂贵|不可逆|安全边界|costly|high[- ]?cost|irreversible/iu.test(text)));
   const normalizedBranchingOptions = normalizeBranchingOptions(branchingOptions);
   const explicitRouteQuestion = BRANCHING_DECISION_PATTERN.test(text);
   const settledRouteDirection =
@@ -193,6 +205,7 @@ function planChallengeSignals(
     explicitlyReadOnly: actionIntent.explicitlyReadOnly,
     documentationOnly: actionIntent.documentationOnly,
     sideEffectActions: actionIntent.sideEffectActions,
+    actionClassificationSource: actionIntent.classificationSource ?? "classified_side_effect_intent",
     boundContradictions,
     evidenceInsufficient,
     branchingOptions: normalizedBranchingOptions,
@@ -298,12 +311,14 @@ export function buildPlanChallengeState({
   decisionItems = [],
   settledDecisions = [],
   resolvedFacts = [],
+  actionScope = null,
 } = {}) {
   const signals = planChallengeSignals(
     task,
     contradictionEvidence,
     requestedSideEffectActions,
     branchingOptions,
+    actionScope,
   );
   const active = signals.triggerReasons.length > 0 || decisionItems.length > 0;
   if (decisionItems.length > 0) signals.triggerReasons.push("requirements_discovery");
@@ -447,7 +462,7 @@ export function buildPlanChallengeState({
   const riskEvidenceRef = signals.materialRisk
     ? addTriggerEvidence(
         "material_risk",
-        "classified_side_effect_intent",
+        signals.actionClassificationSource,
         signals.sideEffectActions.join(", "),
       )
     : null;

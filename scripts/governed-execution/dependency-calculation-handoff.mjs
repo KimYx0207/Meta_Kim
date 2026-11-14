@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { constants as fsConstants, promises as fs } from "node:fs";
 import { loadDependencyAgentMethod, stableJson } from "../dependency-agent-discovery.mjs";
+import { assessProjectCapabilityBinding, verifyAgentCapabilityProfileSnapshot, verifyProjectCapabilityBindingSnapshot } from "../agent-capability-profile.mjs";
 import { runDependencyCalculation, MAX_CALCULATION_INPUT_BYTES } from "./dependency-calculation.mjs";
 
 export const MAX_CALCULATION_HANDOFF_BYTES = 524288;
@@ -10,8 +11,29 @@ const digest = (value) => createHash("sha256").update(value).digest("hex");
 const runtimeId = (runtime) => runtime === "claude_code" ? "claude" : runtime;
 const summary = (status, fields = {}) => ({ schemaVersion: 1, status, toolInvoked: false,
   nativeAgentInvocation: false, modelSemanticAcceptance: false, ...fields });
-const ownerSourceBinding = (method, runId, taskPacketId) => ({ runId, taskPacketId, ownerAgent: method.ownerAgent,
+const methodContract = packet => packet.methodOwner?.ownerContract ?? packet.ownerContract;
+const methodOwnerId = packet => packet.methodOwner?.id ?? packet.ownerAgent ?? packet.owner;
+const methodSource = packet => packet.methodOwner?.source ?? packet.ownerSource;
+const ownerSourceBinding = (method, runId, taskPacketId, ownerAgent) => ({ runId, taskPacketId, ownerAgent, methodAgent: method.ownerAgent,
   ownerContractSha256: method.ownerContractSha256, componentContentSha256: method.componentContentSha256 });
+
+// The same current project sources that qualify worker dispatch must still be
+// valid before its read-only calculation helper runs. A method grants no owner
+// authority and cannot substitute for the project's reviewed identity.
+function verifyExecutionOwner(packet) {
+  const profile = packet.agentCapabilityProfile, binding = packet.projectCapabilityBinding;
+  verifyAgentCapabilityProfileSnapshot(profile);
+  verifyProjectCapabilityBindingSnapshot(binding);
+  if (binding?.status === "project_owned_ready") {
+    const owner = { ...binding.owner, id: binding.owner.ownerAgent };
+    const current = assessProjectCapabilityBinding({ projectRoot: owner.sourceRoot, owner,
+      workOrder: { ...packet, projectCapabilityIntent: { mode: "project_owned" } }, profile, providers: binding.capabilityProviders });
+    if (owner.id !== (packet.ownerAgent ?? packet.owner) || current.status !== "project_owned_ready" ||
+        current.ownerSource.contentDigest !== binding.ownerSource.contentDigest || current.ownerSource.content !== binding.ownerSource.content) {
+      throw new TypeError("calculation_project_owner_source_rejected");
+    }
+  }
+}
 
 export async function readDependencyCalculationInputFile(filename) {
   let handle;
@@ -98,19 +120,21 @@ export async function bindDependencyCalculationWorkOrder({ request, runId, route
   if (rebound.summary.status !== "prepared" || JSON.stringify(rebound.binding) !== JSON.stringify(request.binding)) return workerTaskPackets;
   const owner = route?.recommendedRoute?.owner;
   const selected = workerTaskPackets.filter((packet) => (packet.ownerAgent ?? packet.owner) === owner);
-  if (selected.length !== 1 || selected[0].ownerSource !== "dependency_agent_contract") return workerTaskPackets;
+  if (selected.length !== 1 || methodSource(selected[0]) !== "dependency_agent_contract") return workerTaskPackets;
   const packet = selected[0];
+  const contract = methodContract(packet);
   let method;
-  try { method = await loadDependencyAgentMethod({ packet, environment, projectRoot }); }
+  try { verifyExecutionOwner(packet); method = await loadDependencyAgentMethod({ packet, environment, projectRoot }); }
   catch { return workerTaskPackets; }
   if (!method?.tools?.length || method.tools.some((tool) => tool !== "Read") ||
-      !Array.isArray(packet.ownerContract?.sideEffects) || packet.ownerContract.sideEffects.length !== 0) return workerTaskPackets;
+      !Array.isArray(contract?.sideEffects) || contract.sideEffects.length !== 0) return workerTaskPackets;
   const shardScope = [`input-sha256:${request.binding.inputSha256}`];
   // Record the source observation only after reloading the verified component.
   // Its original contract digest is distinct from the redacted public projection.
-  request.summary.ownerSourceBinding = ownerSourceBinding(method, runId, packet.taskPacketId);
-  const workOrderScope = { kind: "dependency_materials", runId, ...request.binding, inputBytes: request.summary.inputBytes,
-    ownerContractSha256: method.ownerContractSha256, ownerContractProjectionSha256: digest(stableJson(packet.ownerContract)),
+  request.summary.ownerSourceBinding = ownerSourceBinding(method, runId, packet.taskPacketId, owner);
+  const workOrderScope = { kind: "dependency_materials", runId, ownerAgent: owner, methodAgent: method.ownerAgent,
+    ...request.binding, inputBytes: request.summary.inputBytes,
+    ownerContractSha256: method.ownerContractSha256, ownerContractProjectionSha256: digest(stableJson(contract)),
     componentContentSha256: method.componentContentSha256 };
   return workerTaskPackets.map((entry) => entry !== packet ? entry : {
     ...entry, workOrderScope, scopeFiles: [], shardScope, workOrderReadiness: "ready",
@@ -125,17 +149,18 @@ export async function bindDependencyCalculationWorkOrder({ request, runId, route
 
 /** Called only after the existing plan/route gate. It always runs the real helper;
  * no public receipt parameter or callback can create a current tool observation. */
-export async function prepareDependencyCalculationHandoff({ request, runId, runtime, osTarget, route, workerTaskPackets, environment = process.env, projectRoot }) {
+export async function prepareDependencyCalculationHandoff({ request, runId, runtime, osTarget, route, workerTaskPackets, environment = process.env, projectRoot, entryClassification = null }) {
   if (!request || request.summary.status !== "prepared") return { summary: request?.summary ?? summary("not_requested"), handoff: null };
   const fail = (code) => ({ summary: summary("blocked", { ...request.summary, status: "blocked", code }), handoff: null });
   const gate = route?.routeExecutionGate;
   if (gate?.handoffStatus !== "ready_for_host_handoff" || gate.canHandoffToHost !== true || gate.routeCompatible !== true) return fail("calculation_route_not_ready");
   const owner = route.recommendedRoute?.owner;
   const selected = workerTaskPackets.filter((packet) => (packet.ownerAgent ?? packet.owner) === owner);
-  if (selected.length !== 1 || selected[0].ownerSource !== "dependency_agent_contract") return fail("calculation_owner_binding_rejected");
+  if (selected.length !== 1 || methodSource(selected[0]) !== "dependency_agent_contract") return fail("calculation_owner_binding_rejected");
   const packet = selected[0];
+  const contract = methodContract(packet);
   let method;
-  try { method = await loadDependencyAgentMethod({ packet, environment, projectRoot }); }
+  try { verifyExecutionOwner(packet); method = await loadDependencyAgentMethod({ packet, environment, projectRoot }); }
   catch { return fail("calculation_owner_source_rejected"); }
   // Project an existing, checked Thinking decision. Never create reasoning or
   // rebind another task's work order merely by copying this request's hash.
@@ -150,39 +175,51 @@ export async function prepareDependencyCalculationHandoff({ request, runId, runt
   const taskHash = digest(request.task.trim());
   const intentMatches = (value) => value?.taskHash === taskHash && (value.intentDigest ?? null) === (request.binding.intentDigest ?? null);
   const selectedRoute = route.recommendedRoute;
-  const provider = selectedRoute?.selectedCapabilityProviders?.agent;
+  const executionProvider = selectedRoute?.selectedCapabilityProviders?.agent;
+  const provider = selectedRoute?.selectedCapabilityProviders?.methodAgent ?? executionProvider;
+  const executionOwnerDigest = packet.projectCapabilityBinding?.ownerSource?.contentDigest ?? method.contentDigest;
+  const normalizedDigest = value => String(value ?? "").replace(/^sha256:/u, "");
   if (!intentMatches(route.intentBinding) || !intentMatches(packet.intentBinding) ||
       route.task !== route.intentBinding.routeTask || runtimeId(route.runtime) !== runtimeId(runtime) ||
       runtimeId(selectedRoute?.runtime) !== runtimeId(runtime) ||
       selectedRoute?.selectionPolicy !== "host_selected_current_bindings" ||
       selectedRoute.selectionStatus !== "bindings_verified_not_invoked" || selectedRoute.blockedReasons?.length ||
-      provider?.id !== owner || provider.source !== "dependency_agent_contract" ||
-      provider.contentDigest !== packet.ownerContract?.contentDigest || provider.contentDigest !== method.contentDigest ||
-      provider.ownerContract?.componentContentSha256 !== packet.ownerContract?.componentContentSha256 ||
+      executionProvider?.id !== owner || executionProvider.source !== packet.ownerSource ||
+      normalizedDigest(executionProvider.contentDigest) !== normalizedDigest(executionOwnerDigest) ||
+      provider?.id !== methodOwnerId(packet) || provider.source !== "dependency_agent_contract" ||
+      provider.contentDigest !== contract?.contentDigest || provider.contentDigest !== method.contentDigest ||
+      provider.ownerContract?.componentContentSha256 !== contract?.componentContentSha256 ||
       provider.ownerContract?.componentContentSha256 !== method.componentContentSha256) {
     return fail("calculation_thinking_binding_rejected");
   }
   const scope = packet.workOrderScope;
-  if (scope?.kind !== "dependency_materials" || scope.runId !== runId ||
+  if (scope?.kind !== "dependency_materials" || scope.runId !== runId || scope.ownerAgent !== owner || scope.methodAgent !== method.ownerAgent ||
       !["requestSha256", "inputSha256", "intentDigest", "dependencyRootSha256", "methodInputsSha256"]
         .every(key => (scope[key] ?? null) === (request.binding[key] ?? null)) ||
       scope.inputBytes !== request.summary.inputBytes || scope.inputBytes !== Buffer.byteLength(request.inputJson, "utf8") ||
       scope.ownerContractSha256 !== method.ownerContractSha256 || scope.componentContentSha256 !== method.componentContentSha256 ||
-      scope.ownerContractProjectionSha256 !== digest(stableJson(packet.ownerContract)) ||
+      scope.ownerContractProjectionSha256 !== digest(stableJson(contract)) ||
       packet.scopeFiles?.length !== 0 || packet.shardScope?.length !== 1 ||
       packet.shardScope[0] !== `input-sha256:${request.binding.inputSha256}`) {
     return fail("calculation_work_order_binding_rejected");
   }
   const methodAssessment = { schemaVersion: 1, runtime, taskHash: request.binding.requestSha256,
-    agentId: owner, contentDigest: packet.ownerContract.contentDigest,
-    componentContentSha256: packet.ownerContract.componentContentSha256,
+    agentId: method.ownerAgent, contentDigest: contract.contentDigest,
+    componentContentSha256: contract.componentContentSha256,
     operation: packet.todayTask, deliverable: packet.output, fitRationale: selectedRoute.selectionReason,
     nonGoals: packet.nonGoals, evidenceRefs: packet.evidenceRefs };
+  const currentHostWorkOrder = entryClassification?.governedEntry === true && entryClassification.path !== "fast_path" ? {
+    runId, runtime, taskPacketId: packet.taskPacketId,
+    entryClassification: { ...entryClassification, taskHash }, requestBinding: request.binding,
+    executionOwner: executionProvider, methodProvider: provider, scope, sourceBinding: request.summary.ownerSourceBinding,
+    effectClass: packet.effectClass, mutationPolicy: packet.mutationPolicy, externalWritePolicy: packet.externalWritePolicy,
+    routeExecutionGate: gate,
+  } : null;
   const calculation = await runDependencyCalculation({ task: request.task, inputJson: request.inputJson,
-    methodAssessment, dependencyRoot: request.dependencyRoot, runtime, osTarget, environment, projectRoot });
+    methodAssessment, dependencyRoot: request.dependencyRoot, runtime, osTarget, environment, projectRoot, currentHostWorkOrder });
   const publicSummary = summary(calculation.status, {
     code: calculation.code ?? null, binding: request.binding, ownerAgent: owner,
-    ownerSourceBinding: ownerSourceBinding(method, runId, packet.taskPacketId),
+    ownerSourceBinding: ownerSourceBinding(method, runId, packet.taskPacketId, owner),
     inputBytes: request.summary.inputBytes,
     toolInvoked: calculation.toolInvoked, questions: calculation.questions ?? [], missing: calculation.missing ?? [],
     receiptStatus: calculation.receipt?.status ?? null,
@@ -198,7 +235,7 @@ export async function prepareDependencyCalculationHandoff({ request, runId, runt
     execution: calculation.execution ?? null,
     observationScope: "current_invocation",
   });
-  if (calculation.route?.owner !== owner || calculation.route?.sourceContentSha256 !== method.componentContentSha256 ||
+  if (calculation.route?.owner !== method.ownerAgent || calculation.route?.sourceContentSha256 !== method.componentContentSha256 ||
       calculation.binding?.requestSha256 !== request.binding.requestSha256 || calculation.binding?.inputSha256 !== request.binding.inputSha256) {
     return { summary: { ...publicSummary, status: "blocked", code: "calculation_source_or_binding_rejected" }, handoff: null };
   }
@@ -211,7 +248,7 @@ export async function prepareDependencyCalculationHandoff({ request, runId, runt
     return { summary: publicSummary, handoff: null };
   }
   const handoff = { schemaVersion: 1, runId, runtime: runtimeId(runtime), requestTask: request.task,
-    taskPacketId: packet.taskPacketId, ownerAgent: owner, ownerContract: {
+    taskPacketId: packet.taskPacketId, ownerAgent: owner, methodAgent: method.ownerAgent, ownerContract: {
       contentDigest: method.contentDigest, componentContentSha256: method.componentContentSha256,
       ownerContractSha256: method.ownerContractSha256,
     }, binding: request.binding,

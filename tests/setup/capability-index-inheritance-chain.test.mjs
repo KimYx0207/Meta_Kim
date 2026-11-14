@@ -21,6 +21,7 @@ import {
   repoRoot,
   resolveRuntimeProjection,
 } from "../../scripts/meta-kim-sync-config.mjs";
+import { buildVerificationStages } from "../../scripts/run-verify-all.mjs";
 
 const canonicalIndexPath = path.join(
   repoRoot,
@@ -1095,19 +1096,28 @@ describe("capability index inheritance chain", () => {
 
   test("release verification checks canonical discovery read-only before mirror sync", async () => {
     const pkg = await readJson("package.json");
-    const releaseScript = await fs.readFile(
-      path.join(repoRoot, "scripts", "run-verify-all.mjs"),
-      "utf8",
-    );
     assert.match(pkg.scripts?.["meta:verify:all"] ?? "", /run-verify-all\.mjs/);
-    assert.match(releaseScript, /npm run discover:global -- --check/u);
-    assert.match(releaseScript, /npm run meta:sync/u);
+    const stages = buildVerificationStages({});
+    const discoverIndex = stages.findIndex((stage) => stage.name === "discover:global");
+    const syncIndex = stages.findIndex((stage) => stage.name === "meta:sync");
+    const checkIndex = stages.findIndex((stage) => stage.name === "meta:check");
     assert.ok(
-      releaseScript.indexOf("npm run discover:global -- --check") <
-        releaseScript.indexOf("npm run meta:sync") &&
-        releaseScript.indexOf("npm run meta:sync") < releaseScript.indexOf("npm run meta:check"),
+      discoverIndex >= 0 && discoverIndex < syncIndex && syncIndex < checkIndex,
       "meta:verify:all must check canonical source read-only, sync mirrors, then validate",
     );
+    assert.deepEqual(stages[discoverIndex].commands, [
+      { command: "npm", args: ["run", "discover:global", "--", "--check"] },
+    ], "canonical discovery must remain read-only without any extra command");
+    const allTargets = (await loadSyncManifest()).supportedTargets.join(",");
+    assert.deepEqual(stages[syncIndex].commands, [
+      { command: "npm", args: ["run", "meta:sync", "--", "--targets", allTargets] },
+    ], "release synchronization must include every supported runtime target");
+    assert.deepEqual(stages[checkIndex].commands, [
+      { command: "npm", args: ["run", "meta:check:runtimes", "--", "--targets", allTargets] },
+      { command: "npm", args: ["run", "meta:check:sync-coverage"] },
+      { command: "npm", args: ["run", "meta:open-source-boundary:validate"] },
+      { command: "npm", args: ["run", "meta:validate"] },
+    ], "release validation must retain the complete runtime, coverage, boundary and project checks");
 
     const liveScript = pkg.scripts?.["meta:verify:all:live"] ?? "";
     assert.match(liveScript, /eval-meta-agents\.mjs/);

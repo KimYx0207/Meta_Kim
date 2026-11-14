@@ -3789,7 +3789,11 @@ function hasBoundDependencyMaterialsScope(artifact, packet) {
   if (scope == null) return false;
   const binding = artifact.dependencyCalculationPacket?.binding;
   const sourceBinding = artifact.dependencyCalculationPacket?.ownerSourceBinding;
-  const selected = artifact.selectedExecutionRoute?.recommendedRoute?.selectedCapabilityProviders?.agent;
+  const providers = artifact.selectedExecutionRoute?.recommendedRoute?.selectedCapabilityProviders;
+  const selected = providers?.agent;
+  const method = providers?.methodAgent ?? selected;
+  const contract = packet.methodOwner?.ownerContract ?? packet.ownerContract;
+  const methodId = packet.methodOwner?.id ?? packet.ownerAgent;
   const stable = (value) => Array.isArray(value) ? value.map(stable) : value && typeof value === "object"
     ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, stable(value[key])])) : value;
   const hash = (value) => createHash("sha256").update(value).digest("hex");
@@ -3804,15 +3808,19 @@ function hasBoundDependencyMaterialsScope(artifact, packet) {
     scope.intentDigest === (artifact.preDecisionOptionFrame?.intentBinding?.intentDigest ?? null) &&
     Number.isInteger(scope.inputBytes) && scope.inputBytes > 0 && scope.inputBytes <= 262144 &&
     scope.inputBytes === artifact.dependencyCalculationPacket?.inputBytes &&
-    packet.ownerSource === "dependency_agent_contract" && packet.ownerBindingMode === "run_scoped_owner_contract" &&
-    selected?.id === packet.ownerAgent && selected.ownerContract?.contentDigest === packet.ownerContract?.contentDigest &&
-    selected.ownerContract?.componentContentSha256 === scope.componentContentSha256 &&
-    scope.componentContentSha256 === packet.ownerContract?.componentContentSha256 &&
+    (packet.methodOwner?.source ?? packet.ownerSource) === "dependency_agent_contract" &&
+    (packet.methodOwner || packet.ownerBindingMode === "run_scoped_owner_contract") &&
+    selected?.id === packet.ownerAgent && selected.source === packet.ownerSource &&
+    scope.ownerAgent === packet.ownerAgent && scope.methodAgent === methodId &&
+    method?.id === methodId && method.source === "dependency_agent_contract" &&
+    method.ownerContract?.contentDigest === contract?.contentDigest &&
+    method.ownerContract?.componentContentSha256 === scope.componentContentSha256 &&
+    scope.componentContentSha256 === contract?.componentContentSha256 &&
     sourceBinding?.runId === artifact.runId && sourceBinding.taskPacketId === packet.taskPacketId &&
-    sourceBinding.ownerAgent === packet.ownerAgent && sourceBinding.componentContentSha256 === scope.componentContentSha256 &&
+    sourceBinding.ownerAgent === packet.ownerAgent && sourceBinding.methodAgent === methodId && sourceBinding.componentContentSha256 === scope.componentContentSha256 &&
     sourceBinding.ownerContractSha256 === scope.ownerContractSha256 &&
-    scope.ownerContractProjectionSha256 === hash(JSON.stringify(stable(packet.ownerContract), null, 2) + "\n") &&
-    Array.isArray(packet.ownerContract?.sideEffects) && packet.ownerContract.sideEffects.length === 0 &&
+    scope.ownerContractProjectionSha256 === hash(JSON.stringify(stable(contract), null, 2) + "\n") &&
+    Array.isArray(contract?.sideEffects) && contract.sideEffects.length === 0 &&
     packet.scopeFiles?.length === 0 && packet.shardScope?.length === 1 && packet.shardScope[0] === `input-sha256:${scope.inputSha256}` &&
     packet.mutationPolicy === "read_only" && packet.externalWritePolicy === "forbidden" &&
     packet.safetyEvidence?.status === "proven" && packet.safetyEvidence?.evidenceBasis === "verified_readonly_owner_and_bound_materials";

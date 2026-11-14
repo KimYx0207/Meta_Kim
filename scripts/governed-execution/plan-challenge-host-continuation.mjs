@@ -9,6 +9,7 @@ import { assertValidNativeDecisionChallenge } from "../../src/domain/decision/na
 import { inspectTrustedPath, normalizeManagedRelPath } from "../safe-managed-file-operations.mjs";
 import { isCodexDesktopDecisionHostAdapter } from "../../src/adapters/codex/desktop-decision-host-adapter.mjs";
 import { dependentNodeClosure } from "../../src/domain/scheduling/human-gate-progress.mjs";
+import { sameHostCriticalMeaning } from "./intent-dialogue.mjs";
 
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === "object"
   ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
@@ -390,6 +391,7 @@ export async function loadPlanChallengeContinuationCandidate({
   previousRunId,
   taskFingerprint,
   unallocatedPreparationFingerprint = null,
+  initialDesignPreparation = null,
   taskHash,
   intentDigest,
 }) {
@@ -400,8 +402,22 @@ export async function loadPlanChallengeContinuationCandidate({
     // Existing assigned preparations and all materialized executions still bind
     // their exact fingerprint. The caller derives this alternative from the
     // same current task/calculation/design inputs without the new allocation.
+    let firstDesignMatches = false;
+    if (initialDesignPreparation && raw.preparation.status === "needs_thinking" &&
+        !raw.productDesignPacket && !raw.coreLoop?.productDesignPacket &&
+        raw.intentPacket?.status === "host_provided_not_independently_verified" &&
+        initialDesignPreparation.fingerprints.includes(raw.taskFingerprint) &&
+        sameHostCriticalMeaning(raw.intentPacket, initialDesignPreparation.critical) &&
+        (raw.requirementsDiscoveryPacket?.discoveryDigest ?? null) === (initialDesignPreparation.requirementsDiscovery?.discoveryDigest ?? null)) {
+      const currentMaterials = collectPlanChallengeMaterials({ artifact: {
+        intentPacket: initialDesignPreparation.critical, requirementsDiscoveryPacket: initialDesignPreparation.requirementsDiscovery,
+        preDecisionOptionFrame: raw.preDecisionOptionFrame,
+      }, projectRoot: initialDesignPreparation.projectRoot });
+      firstDesignMatches = !currentMaterials.gaps.length && !raw.preparation.materialGaps?.length &&
+        digest(currentMaterials.bindings) === digest(raw.preparation.materialBindings);
+    }
     const fingerprintMatches = raw.taskFingerprint === taskFingerprint ||
-      (unallocatedPreparationFingerprint != null && raw.taskFingerprint === unallocatedPreparationFingerprint);
+      (unallocatedPreparationFingerprint != null && raw.taskFingerprint === unallocatedPreparationFingerprint) || firstDesignMatches;
     if (raw.runId !== previousRunId || !fingerprintMatches || raw.goalContractPacket?.taskHash !== taskHash ||
         (raw.intentPacket.intentBinding?.intentDigest ?? null) !== (intentDigest ?? null) ||
         raw.workerTaskPackets.length || raw.coreLoop?.stageDagPacket ||

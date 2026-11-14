@@ -861,18 +861,41 @@ test("67 — dual committed artifacts with an active DB resume to terminal witho
 
 test("67 — terminal kernel plus missing final artifact is finalized from staging without workers", async (t) => {
   const root = await tempRoot(t);
+  const projectRoot = process.cwd();
+  const profile = "durable-design-recovery";
+  const outputDir = path.join(projectRoot, ".meta-kim/state", profile, "governed-executions");
+  const { buildTaskGoalContract } = await runtimeFixture.import("src/domain/governance/task-outcome.mjs");
+  const { createLiveWorkspaceService } = await runtimeFixture.import("src/application/live/live-workspace-service.mjs");
+  const goal = buildTaskGoalContract({ task: TASK });
+  const confirmedIntent = { taskHash: goal.taskHash, outcome: TASK,
+    constraints: { nonGoals: ["No source edits or native model acceptance"] }, acceptanceCriteria: goal.acceptanceCriteria,
+    settledDecisions: [], evidenceRefs: ["fixture:durable-design-recovery-understanding"] };
+  const intentDigest = digestFixtureIntent(confirmedIntent);
+  const designInput = { schemaVersion: 1, taskHash: goal.taskHash, intentDigest, acceptanceDigest: goal.acceptanceDigest,
+    designId: "durable-metadata-report", revision: 1, mode: "delivery", sourceRefs: ["package.json"], settledDecisionRefs: [],
+    userJourneys: [], artifactFlow: [], taskSlices: [{ id: "package-metadata", workKind: "support", outcome: TASK,
+      capabilityNeed: ["read package metadata"], scopeFiles: ["package.json"], inputRefs: ["package.json"],
+      criterionIds: ["user-outcome"], dependsOn: [], completionDemo: "Compare the report's exact name and version with package.json",
+      deliverables: [{ id: "metadata-report", description: "Exact package name and version", consumer: "Fixture reviewer" }],
+      verification: [{ criterionId: "user-outcome", procedure: "Read the report and package.json", expectedEvidence: "Matching name and version" }] }],
+    softwareDesign: { schemaVersion: 1, architecture: { id: "metadata-system", revision: 1,
+      summary: "Read package metadata into a reviewable report", decisionRefs: [], moduleIds: ["metadata"], constraints: [],
+      technologyChoices: [{ id: "node", name: "Node.js", version: process.versions.node,
+        rationale: "The existing local report runtime", evidenceRefs: ["package.json"] }] },
+      modules: [{ id: "metadata", purpose: "Let the reviewer compare exact package metadata", taskIds: ["package-metadata"],
+        acceptanceCriterionIds: ["user-outcome"], implementationNotes: "Read package.json and report its name and version",
+        businessRules: ["Preserve source field values"], states: [{ name: "read", behavior: "Expose the source values" }] }] } };
+  const base = { task: TASK, stateDir: outputDir, artifactDir: outputDir, dbPath: path.join(root, "analytics.sqlite"),
+    projectRoot, projectCapabilityMutationMode: "read_only", confirmedIntent, designInput,
+    sharedUnderstandingConfirmed: { trusted: true, binding: "plan-challenge-understanding-confirmation", taskHash: goal.taskHash,
+      intentDigest, evidenceRefs: confirmedIntent.evidenceRefs } };
   const runId = "p118-terminal-missing-final";
   const crash = new Error("simulated post-terminal crash");
   crash.simulatedProcessCrash = true;
   await assert.rejects(
     runDurableReportFixture({
-      task: TASK,
+      ...base,
       runId,
-      stateDir: root,
-      artifactDir: root,
-      dbPath: path.join(root, "analytics.sqlite"),
-      projectRoot: process.cwd(),
-      projectCapabilityMutationMode: "read_only",
       stageRunner: {
         ...durableStageRunner(root, { count: 0 }, "fresh"),
         materializationFaultInjector(step) {
@@ -882,24 +905,46 @@ test("67 — terminal kernel plus missing final artifact is finalized from stagi
     }),
     /simulated post-terminal crash/iu,
   );
-  await fs.rm(path.join(root, `${runId}.json`));
+  const artifactPath = path.join(outputDir, `${runId}.json`);
+  const projectionPath = path.join(outputDir, `${runId}.workspace-design.json`);
+  await fs.rm(artifactPath);
   const counter = { count: 0 };
   const resumed = await runDurableReportFixture({
-    task: TASK,
+    ...base,
     runId,
-    stateDir: root,
-    artifactDir: root,
-    dbPath: path.join(root, "analytics.sqlite"),
-    projectRoot: process.cwd(),
-    projectCapabilityMutationMode: "read_only",
     stageRunner: durableStageRunner(root, counter, "resume"),
   });
   assert.equal(counter.count, 0);
   assert.equal(resumed.durableExecution.status, "already_materialized");
-  const persisted = JSON.parse(await fs.readFile(path.join(root, `${runId}.json`), "utf8"));
+  const persistedBytes = await fs.readFile(artifactPath);
+  const persisted = JSON.parse(persistedBytes);
   assert.equal(persisted.durableExecution.status, "materialized");
   assert.equal(JSON.parse(await fs.readFile(
-    path.join(root, `${runId}.reservation.json`),
+    path.join(outputDir, `${runId}.reservation.json`),
     "utf8",
   )).phase, "materialized");
+  const privateDesign = JSON.parse(await fs.readFile(projectionPath, "utf8"));
+  assert.equal(privateDesign.runId, runId);
+  assert.equal(privateDesign.profile, profile);
+  assert.equal(privateDesign.source.ref, `.meta-kim/state/${profile}/governed-executions/${runId}.json`);
+  assert.equal(privateDesign.source.sha256, createHash("sha256").update(persistedBytes).digest("hex"),
+    "Publication binds the committed materialized file, not the temporary already_materialized return view");
+  assert.deepEqual(privateDesign.design.softwareDesign, persisted.productDesignPacket.softwareDesign);
+  assert.equal(privateDesign.nativeInvocationVerified, false);
+  const workspace = createLiveWorkspaceService({ projectRoot, profile });
+  assert.equal((await workspace.getOverview({ runId })).design.status, "unregistered");
+
+  // Restoring identical committed bytes preserves the reservation digest but
+  // replaces the inode. A second no-worker resume must refresh that display binding.
+  await fs.rename(artifactPath, `${artifactPath}.retained`);
+  await fs.writeFile(artifactPath, persistedBytes);
+  await assert.rejects(workspace.getOverview({ runId }), { code: "workspace_material_changed", status: 409 });
+  const again = await runDurableReportFixture({ ...base, runId, stageRunner: durableStageRunner(root, counter, "resume") });
+  assert.equal(again.durableExecution.status, "already_materialized");
+  assert.equal(counter.count, 0);
+  assert.deepEqual(await fs.readFile(artifactPath), persistedBytes);
+  const refreshed = JSON.parse(await fs.readFile(projectionPath, "utf8"));
+  const identity = await fs.stat(artifactPath, { bigint: true });
+  for (const key of ["dev", "ino", "size", "mtimeNs", "ctimeNs"]) assert.equal(refreshed.source.identity[key], String(identity[key]));
+  assert.equal((await workspace.getOverview({ runId })).design.status, "unregistered");
 });

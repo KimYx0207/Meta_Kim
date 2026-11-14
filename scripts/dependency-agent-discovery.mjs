@@ -155,7 +155,7 @@ async function readDependency(project, root, projectRoot) {
       executionBlock: false, routeEligible: true,
       ownerBindingMode: "run_scoped_owner_contract", nativeAgentType: null, validCustomAgentDefinition: false,
       ownerContract: {
-        dependencyId: project.id, sourceRef, contentDigest, componentContentSha256: component.contentSha256,
+        dependencyId: project.id, sourceRef, contentDigest, componentVersion: contract.componentVersion, componentContentSha256: component.contentSha256,
         ...(contract.capabilities.length === 1 ? contract.capabilities[0] : {}), capabilities: contract.capabilities,
         reviewOwner: "meta-prism", verificationOwner: "meta-prism",
         runtimeStatus: "needs_probe", invocationStatus: "not_invoked",
@@ -197,6 +197,12 @@ export async function discoverDependencyAgentContracts({ projects = [], projectR
 /** Resolve authority from the installed package, never from worker-supplied paths
  * or prompt text. Discovery is selection evidence; reread it at invocation time. */
 export async function loadDependencyAgentMethod({ packet, environment = process.env, projectRoot = environment.META_KIM_CALLER_CWD || repoRoot } = {}) {
+  if (packet?.methodOwner) {
+    const methodOwner = packet.methodOwner;
+    packet = { ...packet, owner: methodOwner.id, ownerAgent: methodOwner.id, ownerSource: methodOwner.source,
+      ownerSourceRef: methodOwner.sourceRef, ownerContract: methodOwner.ownerContract,
+      ownerBindingMode: "run_scoped_owner_contract", nativeAgentType: null };
+  }
   const ownerId = packet?.ownerAgent ?? packet?.owner;
   if (packet?.ownerSource !== "dependency_agent_contract" && !packet?.ownerContract && !String(ownerId ?? "").includes(":")) return null;
   const { projects } = JSON.parse(await fs.readFile(path.join(repoRoot, "config/capability-index/dependency-project-registry.json"), "utf8"));
@@ -228,7 +234,7 @@ export async function loadDependencyAgentMethod({ packet, environment = process.
   // The component digest covers the complete capability.json and AGENT.md.
   // Publication may redact contract prose/schema keys; none of those advisory
   // packet fields may become instructions or tool permissions at invocation.
-  for (const field of ["dependencyId", "contentDigest", "componentContentSha256"]) {
+  for (const field of ["dependencyId", "contentDigest", "componentContentSha256", "componentVersion"]) {
     assert.equal(packet.ownerContract?.[field], owner.ownerContract[field], `owner contract binding differs: ${field}`);
   }
   const componentRoot = await checkedPath(root, `agents/${owner.componentId}`, true);
@@ -255,6 +261,7 @@ export async function loadDependencyAgentMethod({ packet, environment = process.
   return {
     ownerAgent: owner.id,
     componentId: owner.componentId,
+    componentVersion: contract.componentVersion,
     description: owner.description,
     tools: sourceText.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u)[1]
       .match(/^tools:\s*(.+)$/mu)[1].replace(/[\[\]"']/gu, "").split(",").map((tool) => tool.trim()),

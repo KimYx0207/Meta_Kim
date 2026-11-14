@@ -120,6 +120,7 @@ export const LIVE_HUB_RUNTIME_IDENTITY_PATHS = Object.freeze([
   "src/application/live/live-workspace-service.mjs",
   "src/application/live/plan-live-continuation.mjs",
   "src/application/live/prepare-live-projection-record.mjs",
+  "src/application/live/prepare-live-workspace-design-record.mjs",
   "src/data/sqlite/runtime.mjs",
   "src/data/sqlite/transaction.mjs",
   "src/data/repositories/live-deliverable-repository.mjs",

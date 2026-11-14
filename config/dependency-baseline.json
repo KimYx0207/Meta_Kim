@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "kimService": {
     "repository": "KimYx0207/Kim_Service",
-    "commit": "0f764266fc5bacb6a90d5e06f937a95aa3944b66"
+    "commit": "e5b3d894bcdbbced25c13395381e81d6f3990b21"
   },
   "graphify": {
     "package": "graphifyy",
@@ -10,7 +10,7 @@
   },
   "npm": {
     "lockFile": "npm-shrinkwrap.json",
-    "sha256": "022528241271b354c166b3805bd0807b27101a789b24da8a8f3cae992932db29",
+    "sha256": "e3227bcfa169e1d65da2833090fbf49daa40924062a9753da622951e627b2446",
     "nodeRegression": "22.13.0",
     "nodeDshHost": "24.22.1",
     "resolutionBefore": "2026-11-10T00:00:00.000Z"

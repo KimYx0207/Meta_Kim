@@ -8,8 +8,9 @@ import test, { before, after } from "node:test";
 import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
 import { readDependencyCalculationInputFile, readDependencyCalculationMethodInputsFile } from "../../scripts/governed-execution/dependency-calculation-handoff.mjs";
 import { stableJson, sha256 } from "../../scripts/dependency-agent-discovery.mjs";
-import { fixtureCalculationDiagnostics, runWithCalculationHostThinking } from "../helpers/calculation-host-fixture.mjs";
+import { calculationProjectOwnerId, fixtureCalculationDiagnostics, runWithCalculationHostThinking } from "../helpers/calculation-host-fixture.mjs";
 import { refreshFixtureSourcePins } from "../helpers/host-reasoning-fixture.mjs";
+import { localProtocolFixtureTaskFacts } from "../helpers/task-design-facts.mjs";
 
 const dependencyRoot = process.env.META_KIM_TEST_KIM_SERVICE_SOURCE;
 const sourceOptions = { skip: !dependencyRoot && "Requires explicitly selected real Kim_Service source", timeout: 120000 };
@@ -120,7 +121,10 @@ test("formal entry passes complete >2000-character materials and real receipt to
   const captures = [];
   const config = options(input); config.stageRunner.invokeWorker = captureWorker(captures);
   const report = await runner(config);
-  assert.equal(report.dependencyCalculationPacket.status, "ready_for_worker", JSON.stringify({calculation: report.dependencyCalculationPacket, failure: report.stageRunnerBridgePacket.failure}));
+  assert.equal(report.dependencyCalculationPacket.status, "ready_for_worker", JSON.stringify({ calculation: report.dependencyCalculationPacket,
+    failure: report.stageRunnerBridgePacket.failure, blockedBy: report.stageRunnerBridgePacket.routeExecutionGate?.blockedBy,
+    workOrderGate: report.stageRunnerBridgePacket.workOrderGate,
+    workers: report.workerTaskPackets.map(packet => ({ id: packet.ownerAgent, readiness: packet.workOrderReadiness, assessment: packet.taskDesignAssessment })) }));
   assert.equal(report.stageRunnerBridgePacket.status, "pass", JSON.stringify(report.stageRunnerBridgePacket.failure));
   assert.equal(report.preDecisionOptionFrame.planChallengeState.active, false);
   assert.equal(report.preDecisionOptionFrame.planChallengeState.authorizationRequired, false);
@@ -133,21 +137,24 @@ test("formal entry passes complete >2000-character materials and real receipt to
   assert.equal(context.calculation.receipt.normalizedQuotes[0].landedTotal, "335");
   assert.equal(context.calculation.evidence, "current_source_verified_helper_result");
   assert.equal(context.materials.trust, "unverified_host_supplied_materials");
-  assert.equal(packet.ownerAgent, "kim-service:supplier-comparison-analyst");
+  assert.equal(packet.ownerAgent, calculationProjectOwnerId("kim-service:supplier-comparison-analyst"));
+  assert.equal(packet.methodOwner.id, "kim-service:supplier-comparison-analyst");
+  assert.equal(packet.projectCapabilityBinding.status, "project_owned_ready");
+  assert.match(prompt, /Project operation: Read supplied procurement quotes/u);
   assert.match(prompt, /条件短名单/);
   assert.equal(report.dependencyCalculationPacket.nativeAgentInvocation, false);
   assert.equal(report.dependencyCalculationPacket.modelSemanticAcceptance, false);
   assert.equal(report.stageRunnerBridgePacket.executionProjection.invocationTruth.nativeRuntimeInvoked, false);
   assert.equal(report.executionResult.actualWorkerExecution, false);
   assert.equal(JSON.stringify(report).includes(input.quotes[1].qualityEvidence), false, "raw materials are not published in artifacts");
-  assert.equal(report.workerTaskPackets[0].ownerContract.sideEffects.length, 0);
+  assert.equal(report.workerTaskPackets[0].methodOwner.ownerContract.sideEffects.length, 0);
   assert.deepEqual(packet.scopeFiles, [], "Materials do not become invented filesystem paths");
   assert.equal(packet.workOrderReadiness, "ready");
   assert.equal(packet.workOrderScope.kind, "dependency_materials");
   assert.equal(packet.workOrderScope.inputSha256, report.dependencyCalculationPacket.binding.inputSha256);
   assert.equal(packet.workOrderScope.ownerContractSha256, context.ownerContract.ownerContractSha256,
     "The original verified source digest survives public path redaction");
-  assert.equal(packet.workOrderScope.ownerContractProjectionSha256, sha256(stableJson(packet.ownerContract)));
+  assert.equal(packet.workOrderScope.ownerContractProjectionSha256, sha256(stableJson(packet.methodOwner.ownerContract)));
   assert.equal(report.dependencyCalculationPacket.ownerSourceBinding.ownerContractSha256, context.ownerContract.ownerContractSha256);
   const { validateArtifactFile } = await fixture.import("scripts/validate-run-artifact.mjs");
   await validateArtifactFile(report.paths.json);
@@ -156,6 +163,7 @@ test("formal entry passes complete >2000-character materials and real receipt to
     ["intentDigest", "another-intent"], ["componentContentSha256", "c".repeat(64)],
     ["ownerContractSha256", "d".repeat(64)], ["ownerContractProjectionSha256", "e".repeat(64)], ["inputBytes", 1],
     ["methodInputsSha256", "f".repeat(64)],
+    ["ownerAgent", "another-project-owner"], ["methodAgent", "another-method"],
   ]) {
     const forged = JSON.parse(fs.readFileSync(report.paths.json, "utf8"));
     forged.workerTaskPackets[0].workOrderScope[field] = value;
@@ -164,7 +172,7 @@ test("formal entry passes complete >2000-character materials and real receipt to
     await assert.rejects(validateArtifactFile(forgedPath), /workOrderScope must bind/);
   }
   for (const [field, value] of [["runId", "other-run"], ["taskPacketId", "another-task"],
-    ["ownerAgent", "unverified-owner"], ["ownerContractSha256", "f".repeat(64)], ["componentContentSha256", "f".repeat(64)]]) {
+    ["ownerAgent", "unverified-owner"], ["methodAgent", "unverified-method"], ["ownerContractSha256", "f".repeat(64)], ["componentContentSha256", "f".repeat(64)]]) {
     const forged = JSON.parse(fs.readFileSync(report.paths.json, "utf8"));
     forged.dependencyCalculationPacket.ownerSourceBinding[field] = value;
     const forgedPath = path.join(config.artifactDir, `invalid-source-binding-${field}.json`);
@@ -212,7 +220,7 @@ test("caller-only dependency configuration reaches discovery, materials and both
   assert.equal(report.dependencyCalculationPacket.toolInvoked, true);
   assert.equal(captures.length, 1);
   const { packet, prompt } = captures[0];
-  assert.equal(packet.ownerAgent, "kim-service:supplier-comparison-analyst");
+  assert.equal(packet.ownerAgent, calculationProjectOwnerId("kim-service:supplier-comparison-analyst"));
   assert.equal(packet.workOrderReadiness, "ready");
   const inventory = JSON.parse(fs.readFileSync(path.join(config.stateDir, "capability-inventory.json"), "utf8"));
   assert.equal(inventory.dependencyAgentDiscovery.sources.find((source) => source.dependencyId === "kim-service").status, "verified_local");
@@ -233,6 +241,22 @@ test("caller-only dependency configuration reaches discovery, materials and both
   assert.deepEqual(rejected.workerTaskPackets, []);
   assert.equal(rejected.fetchPacket.capabilityDiscovery.agents.some(owner => owner.id.startsWith("kim-service:")), false);
   assert.equal(process.env.META_KIM_KIM_SERVICE_ROOT, undefined);
+});
+
+test("current host read-only work preserves the original low-signal request through the inner calculation lookup", sourceOptions, async () => {
+  const original = "Inspect the supplied synthetic quote format and helper transport; report only diagnostic evidence.";
+  const captures = [], config = options(materials(), { task: original, governanceTaskFacts: localProtocolFixtureTaskFacts(original) });
+  config.stageRunner.invokeWorker = captureWorker(captures);
+  const report = await runner(config);
+  assert.equal(report.coreLoop.requestRecord.entryClassification.governedEntry, true);
+  assert.equal(report.dependencyCalculationPacket.status, "ready_for_worker", fixtureCalculationDiagnostics(report.dependencyCalculationPacket));
+  assert.equal(captures.length, 1);
+  assert.equal(captures[0].context.requestTask, original);
+  assert.equal(captures[0].context.binding.requestSha256, sha256(original));
+  assert.equal(captures[0].packet.mutationPolicy, "read_only");
+  assert.equal(captures[0].packet.externalWritePolicy, "forbidden");
+  assert.equal(report.selectedExecutionRoute.routeExecutionGate.executionAuthorized, false);
+  assert.equal(report.selectedExecutionRoute.routeExecutionGate.canEnterExecution, false);
 });
 
 test("complete payload size limit fails explicitly after a real receipt, never truncates into worker", sourceOptions, async () => {
@@ -264,7 +288,7 @@ test("handoff clones, altered bindings and unverified owner contracts cannot inv
     return original(command, argv, opts);
   }; syncBuiltinESMExports();
   try {
-    const badPackets = structuredClone(planned.workerTaskPackets); badPackets[0].ownerContract.contentDigest = "a".repeat(64);
+    const badPackets = structuredClone(planned.workerTaskPackets); badPackets[0].methodOwner.ownerContract.contentDigest = "a".repeat(64);
     const denied = await handoffApi.prepareDependencyCalculationHandoff({ ...args, workerTaskPackets: badPackets });
     assert.equal(denied.summary.code, "calculation_owner_source_rejected");
     const conflictingPackets = structuredClone(planned.workerTaskPackets);
@@ -278,8 +302,10 @@ test("handoff clones, altered bindings and unverified owner contracts cannot inv
     wrongTaskRoute.intentBinding.taskHash = "0".repeat(64);
     const staleRoute = structuredClone(planned.selectedExecutionRoute);
     staleRoute.recommendedRoute.selectedCapabilityProviders.agent.contentDigest = "0".repeat(64);
+    const wrongMethodRoute = structuredClone(planned.selectedExecutionRoute);
+    wrongMethodRoute.recommendedRoute.selectedCapabilityProviders.methodAgent.id = "kim-service:store-performance-analyst";
     for (const changed of [{ runtime: "claude" }, { workerTaskPackets: wrongIntentPackets },
-      { route: wrongTaskRoute }, { route: staleRoute },
+      { route: wrongTaskRoute }, { route: staleRoute }, { route: wrongMethodRoute },
       { request: handoffApi.prepareDependencyCalculationInput({ input: config.dependencyCalculationInput, task: task + " Changed scope." }) }]) {
       const rejected = await handoffApi.prepareDependencyCalculationHandoff({ ...args, ...changed });
       assert.equal(rejected.summary.code, "calculation_thinking_binding_rejected");

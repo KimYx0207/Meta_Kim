@@ -120,6 +120,26 @@
       "targetRef": "config/contracts/core-loop-contract.json",
       "toStatus": "active"
     },
+    "project-specialization-20261115:canonical-project-owner": {
+      "appliedAt": "2026-11-14T21:24:35.626Z",
+      "approvalDigest": "sha256:bcb76021d5bc301dff7fc5ad6d2c14081f8018d1953fa330aeccd2c027e84542",
+      "candidateDigest": "sha256:0f82082278f2e9a984ccd9af9e95d946ebe35ca28a53d702405597aa0dd61079",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "rollbackPlanDigest": "sha256:8cacf03b5fd3b60fb945f75ec45d3c40c235368912fc6589d42d97405bda7977",
+      "targetRef": "canonical/skills/meta-theory/SKILL.md",
+      "toStatus": "active"
+    },
+    "project-specialization-20261115:project-capability-contract": {
+      "appliedAt": "2026-11-14T21:24:35.681Z",
+      "approvalDigest": "sha256:20aa2e2f1c8825a3adf67804bd1b481e3533edd9eb9380511d15320748b9b11c",
+      "candidateDigest": "sha256:a4e68670dbb6d449f0cedb4782c8be6f26b6eac364cacb3e1c782b92663f293a",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "rollbackPlanDigest": "sha256:e5da8ce61d54dbeb8fc4562cae5d76c107ef3b61250204d55c5ec65465516007",
+      "targetRef": "config/contracts/core-loop-contract.json",
+      "toStatus": "active"
+    },
     "publish-both-20261021:reviewed-meta-theory-skill": {
       "appliedAt": "2026-10-21T14:08:10.970Z",
       "approvalDigest": "sha256:25450021a3af89b61b47573cac68c321901624018146f3dadb65a53e649e0d5a",
@@ -157,9 +177,9 @@
       "foundational": true,
       "kind": "knowledge",
       "lifecycle": {
-        "changedAt": "2026-11-12T21:33:04.703Z",
-        "lastTransitionId": "company-work-runtime-20261113:reviewed-meta-theory-source",
-        "reason": "Bind the exact current source for the user-requested optional company Work context and separate client/model selection. The additions reuse the eight-stage flow and existing authorization, retain unobserved outcomes, and do not create a business database, scheduler or automatic public writeback. The source binding records current-session agent review, not user-performed acceptance or native model execution."
+        "changedAt": "2026-11-14T21:24:35.626Z",
+        "lastTransitionId": "project-specialization-20261115:canonical-project-owner",
+        "reason": "Require evidence-backed independent capabilities for persistent professional projects, reuse current project owners, retain versioned shared foundations and existing ownership/review lifecycle; remove global reuse plus project state as an exemption."
       },
       "provenance": {
         "evidenceRefs": [
@@ -171,7 +191,7 @@
         ]
       },
       "replacementRefs": [],
-      "sourceDigest": "sha256:756138e72c2085f4524130d937bd5ad0424cc5b50555e9589c9d2401394ce7c2",
+      "sourceDigest": "sha256:7630fb69ae985baeea3f652d3604bc649be7af4ea9cd1fe0cfdfb3fd5d41f82c",
       "status": "active",
       "targetRef": "canonical/skills/meta-theory/SKILL.md"
     },
@@ -180,9 +200,9 @@
       "foundational": true,
       "kind": "rule",
       "lifecycle": {
-        "changedAt": "2026-11-11T18:58:03.366Z",
-        "lastTransitionId": "material-choice-20261112:reviewed-core-loop-binding",
-        "reason": "Current-session source review by /root and /root/openclaw_routing_fix compared the exact registered HEAD bytes and full current contract. The parsed delta contains only the Thinking choicePolicyRef and userChoiceWhen: reference the shared material-decision policy and ask only for an unresolved, evidenced material user impact while reusing existing direction and authorization. Internal owner/loadout differences alone do not create a user decision. Execution permission, destructive/external-write boundaries, stage order, verification and public-ready evidence requirements are unchanged. This source binding records the present local review; it is not user-performed review or native execution proof."
+        "changedAt": "2026-11-14T21:24:35.681Z",
+        "lastTransitionId": "project-specialization-20261115:project-capability-contract",
+        "reason": "Record preparation/project-required/project-reuse decisions; bind substantive professional requirements and exact source-bound project fit; maintain per-task scope, CAS and source ownership without changing execution authority."
       },
       "provenance": {
         "evidenceRefs": [
@@ -194,7 +214,7 @@
         ]
       },
       "replacementRefs": [],
-      "sourceDigest": "sha256:9b181778f2e641d2af91dd84c68ac2e9985bf3b4459bc188c89e863e72988b2a",
+      "sourceDigest": "sha256:edd91ca8a8e024d3c4aa3eaa0f78dff3aaed021237ad39fd42fe363901b26e5b",
       "status": "active",
       "targetRef": "config/contracts/core-loop-contract.json"
     },
@@ -717,6 +737,72 @@
       "targetRef": "canonical/skills/meta-theory/SKILL.md",
       "toStatus": "active",
       "transitionId": "company-work-runtime-20261113:reviewed-meta-theory-source"
+    },
+    {
+      "appliedAt": "2026-11-14T21:24:35.626Z",
+      "approvalDigest": "sha256:bcb76021d5bc301dff7fc5ad6d2c14081f8018d1953fa330aeccd2c027e84542",
+      "candidateDigest": "sha256:0f82082278f2e9a984ccd9af9e95d946ebe35ca28a53d702405597aa0dd61079",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "previousEntry": {
+        "executionClass": "execution_eligible",
+        "foundational": true,
+        "kind": "knowledge",
+        "lifecycle": {
+          "changedAt": "2026-11-12T21:33:04.703Z",
+          "lastTransitionId": "company-work-runtime-20261113:reviewed-meta-theory-source",
+          "reason": "Bind the exact current source for the user-requested optional company Work context and separate client/model selection. The additions reuse the eight-stage flow and existing authorization, retain unobserved outcomes, and do not create a business database, scheduler or automatic public writeback. The source binding records current-session agent review, not user-performed acceptance or native model execution."
+        },
+        "provenance": {
+          "evidenceRefs": [
+            "AGENTS.md#Meta-Theory-Activation"
+          ],
+          "recordedAt": "2026-08-12T00:00:00.000Z",
+          "sourceRefs": [
+            "canonical/skills/meta-theory/SKILL.md"
+          ]
+        },
+        "replacementRefs": [],
+        "sourceDigest": "sha256:756138e72c2085f4524130d937bd5ad0424cc5b50555e9589c9d2401394ce7c2",
+        "status": "active",
+        "targetRef": "canonical/skills/meta-theory/SKILL.md"
+      },
+      "targetRef": "canonical/skills/meta-theory/SKILL.md",
+      "toStatus": "active",
+      "transitionId": "project-specialization-20261115:canonical-project-owner"
+    },
+    {
+      "appliedAt": "2026-11-14T21:24:35.681Z",
+      "approvalDigest": "sha256:20aa2e2f1c8825a3adf67804bd1b481e3533edd9eb9380511d15320748b9b11c",
+      "candidateDigest": "sha256:a4e68670dbb6d449f0cedb4782c8be6f26b6eac364cacb3e1c782b92663f293a",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "previousEntry": {
+        "executionClass": "execution_eligible",
+        "foundational": true,
+        "kind": "rule",
+        "lifecycle": {
+          "changedAt": "2026-11-11T18:58:03.366Z",
+          "lastTransitionId": "material-choice-20261112:reviewed-core-loop-binding",
+          "reason": "Current-session source review by /root and /root/openclaw_routing_fix compared the exact registered HEAD bytes and full current contract. The parsed delta contains only the Thinking choicePolicyRef and userChoiceWhen: reference the shared material-decision policy and ask only for an unresolved, evidenced material user impact while reusing existing direction and authorization. Internal owner/loadout differences alone do not create a user decision. Execution permission, destructive/external-write boundaries, stage order, verification and public-ready evidence requirements are unchanged. This source binding records the present local review; it is not user-performed review or native execution proof."
+        },
+        "provenance": {
+          "evidenceRefs": [
+            "AGENTS.md#Eight-Stage-Spine"
+          ],
+          "recordedAt": "2026-08-12T00:00:00.000Z",
+          "sourceRefs": [
+            "config/contracts/core-loop-contract.json"
+          ]
+        },
+        "replacementRefs": [],
+        "sourceDigest": "sha256:9b181778f2e641d2af91dd84c68ac2e9985bf3b4459bc188c89e863e72988b2a",
+        "status": "active",
+        "targetRef": "config/contracts/core-loop-contract.json"
+      },
+      "targetRef": "config/contracts/core-loop-contract.json",
+      "toStatus": "active",
+      "transitionId": "project-specialization-20261115:project-capability-contract"
     }
   ],
   "policy": {
@@ -726,7 +812,7 @@
     "referenceOnlyPromotion": false,
     "retiredRecordsRemainTombstones": true
   },
-  "revision": 15,
+  "revision": 17,
   "schemaVersion": "knowledge-lifecycle-registry-v1",
-  "updatedAt": "2026-11-12T21:33:04.703Z"
+  "updatedAt": "2026-11-14T21:24:35.681Z"
 }

@@ -362,6 +362,9 @@ const GOVERNED_RUN_SURFACE_LABELS = Object.freeze({
       line: (family, provider, state, source) => `${family}: ${state}; provider ${provider}; source ${source}.`,
       projectDecisions: {
         use_global_directly: "Reuse the existing global capability; do not copy it into the project.",
+        reuse_project_capability: "Reuse the project's existing professional capability.",
+        preparation_only: "Continue bounded discovery or preparation; project delivery remains unassessed.",
+        project_capability_required: "Prepare and assess the professional capability required by this project.",
         upgrade_existing_owner: "Upgrade the existing owner contract after gap review; do not create a duplicate.",
         create_project_local_capability: "Create a project-local capability through the reviewed Type B lifecycle.",
       },
@@ -485,6 +488,9 @@ const GOVERNED_RUN_SURFACE_LABELS = Object.freeze({
       line: (family, provider, state, source) => `${family}：${state}；使用对象：${provider}；来源：${source}。`,
       projectDecisions: {
         use_global_directly: "直接复用现有全局能力，不复制到项目内。",
+        reuse_project_capability: "复用本项目已有的专业能力。",
+        preparation_only: "继续调查和准备，项目交付能力尚待评估。",
+        project_capability_required: "准备并评估本项目需要的独立专业能力。",
         upgrade_existing_owner: "通过能力缺口评审升级现有负责人，不新建重复能力。",
         create_project_local_capability: "通过 Type B 完整生命周期创建项目专属能力。",
       },
@@ -605,6 +611,9 @@ const GOVERNED_RUN_SURFACE_LABELS = Object.freeze({
       },
       line: (family, provider, state, source) => `${family}：${state}。対象：${provider}。出所：${source}。`,
       projectDecisions: {
+        reuse_project_capability: "プロジェクト専用の既存専門能力を再利用します。",
+        preparation_only: "調査と準備を続けます。プロジェクトの納品能力は未評価です。",
+        project_capability_required: "このプロジェクトに必要な専門能力を準備して評価します。",
         use_global_directly: "既存のグローバル機能を直接再利用し、プロジェクトへ複製しません。",
         upgrade_existing_owner: "重複を作らず、機能不足レビュー後に既存担当を強化します。",
         create_project_local_capability: "Type B のレビュー済みライフサイクルでプロジェクト固有機能を作成します。",
@@ -726,6 +735,9 @@ const GOVERNED_RUN_SURFACE_LABELS = Object.freeze({
       },
       line: (family, provider, state, source) => `${family}: ${state}; 대상: ${provider}; 출처: ${source}.`,
       projectDecisions: {
+        reuse_project_capability: "프로젝트의 기존 전문 역량을 재사용합니다.",
+        preparation_only: "조사와 준비를 계속합니다. 프로젝트 납품 역량은 아직 평가되지 않았습니다.",
+        project_capability_required: "이 프로젝트에 필요한 독립 전문 역량을 준비하고 평가합니다.",
         use_global_directly: "기존 전역 기능을 직접 재사용하고 프로젝트에 복사하지 않습니다.",
         upgrade_existing_owner: "중복을 만들지 않고 공백 검토 후 기존 담당자를 개선합니다.",
         create_project_local_capability: "검토된 Type B 수명주기로 프로젝트 전용 기능을 생성합니다.",

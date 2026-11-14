@@ -102,6 +102,39 @@ function preparePackedCandidate(testRoot) {
   return { installDir, workspace };
 }
 
+function setPackedFixtureVersion(workspace, version) {
+  const manifestPath = path.join(workspace, "package.json");
+  const lockPath = path.join(workspace, "npm-shrinkwrap.json");
+  const baselinePath = path.join(workspace, "config", "dependency-baseline.json");
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  const lock = JSON.parse(readFileSync(lockPath, "utf8"));
+  const baseline = JSON.parse(readFileSync(baselinePath, "utf8"));
+  const originalBaseline = structuredClone(baseline);
+  const originalLock = structuredClone(lock);
+  assert.equal(lock.version, manifest.version);
+  assert.equal(lock.packages[""].version, manifest.version);
+  assert.equal(baseline.npm.sha256, sha256(readFileSync(lockPath)));
+  manifest.version = version;
+  lock.version = version;
+  lock.packages[""].version = version;
+  const lockBytes = `${JSON.stringify(lock, null, 2)}\n`;
+  baseline.npm.sha256 = sha256(lockBytes);
+  assert.deepEqual(
+    { ...lock, version: originalLock.version, packages: {
+      ...lock.packages, "": { ...lock.packages[""], version: originalLock.packages[""].version },
+    } },
+    originalLock,
+  );
+  assert.deepEqual(
+    { ...baseline, npm: { ...baseline.npm, sha256: originalBaseline.npm.sha256 } },
+    originalBaseline,
+  );
+  writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  writeFileSync(lockPath, lockBytes);
+  writeFileSync(baselinePath, `${JSON.stringify(baseline, null, 2)}\n`);
+  return manifest;
+}
+
 function isolatedRuntime(testRoot, label) {
   const userHome = path.join(testRoot, label);
   const claudeHome = path.join(userHome, ".claude");
@@ -463,10 +496,10 @@ function verifyDurableBundleRollbackFailures() {
     const backupRoot = path.join(runtime.userHome, ".meta-kim", "backups", "mcp-runtime");
     const oldBackups = listFilesIfPresent(backupRoot);
 
-    const candidateManifestPath = path.join(candidate.workspace, "package.json");
-    const nextManifest = JSON.parse(readFileSync(candidateManifestPath, "utf8"));
-    nextManifest.version = `${ORIGINAL_MANIFEST.version}-runtime-bundle-test`;
-    writeFileSync(candidateManifestPath, `${JSON.stringify(nextManifest, null, 2)}\n`);
+    const nextManifest = setPackedFixtureVersion(
+      candidate.workspace,
+      `${ORIGINAL_MANIFEST.version}-runtime-bundle-test`,
+    );
     const nextIdentity = resolvePortableMetaKimPackageIdentity(nextManifest, DISTRIBUTION);
     const nextLayout = resolveDurableMetaKimRuntimeLayout(
       runtime.userHome,
@@ -513,8 +546,7 @@ function verifyDurableBundleRollbackFailures() {
 
     // A same-version candidate can still differ during development. This lane
     // exercises the actual displacement path rather than a new version dir.
-    nextManifest.version = ORIGINAL_MANIFEST.version;
-    writeFileSync(candidateManifestPath, `${JSON.stringify(nextManifest, null, 2)}\n`);
+    setPackedFixtureVersion(candidate.workspace, ORIGINAL_MANIFEST.version);
     const candidateCliPath = path.join(candidate.workspace, ORIGINAL_MANIFEST.bin[ORIGINAL_IDENTITY.cliName]);
     writeFileSync(
       candidateCliPath,
@@ -641,10 +673,10 @@ function verifyConcurrentEditsBlockRollback() {
     requireSuccess("seed manifest/config CAS runtime", runGlobalSync(candidate.workspace, manifestRuntime));
     requireSuccess("seed late/bundle CAS runtime", runGlobalSync(candidate.workspace, lateRuntime));
 
-    const candidateManifestPath = path.join(candidate.workspace, "package.json");
-    const nextManifest = JSON.parse(readFileSync(candidateManifestPath, "utf8"));
-    nextManifest.version = `${ORIGINAL_MANIFEST.version}-runtime-cas-test`;
-    writeFileSync(candidateManifestPath, `${JSON.stringify(nextManifest, null, 2)}\n`);
+    const nextManifest = setPackedFixtureVersion(
+      candidate.workspace,
+      `${ORIGINAL_MANIFEST.version}-runtime-cas-test`,
+    );
     const nextIdentity = resolvePortableMetaKimPackageIdentity(nextManifest, DISTRIBUTION);
 
     const manifestOldRaw = readFileSync(

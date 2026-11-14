@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -9,8 +9,9 @@ import {
   attestPlanningContinuity, initializePlanningContinuity, inspectPlanningContinuity,
   planningContextLimits, readPlanningPage,
 } from "../../canonical/runtime-assets/shared/hooks/planning-continuity.mjs";
+import { copyHookClosure } from "../helpers/hook-fixture.mjs";
 
-const sourceRoot = path.resolve(import.meta.dirname, "../../canonical/runtime-assets/shared/hooks");
+const repoRoot = path.resolve(import.meta.dirname, "../..");
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 
 async function fixture(t) {
@@ -21,9 +22,7 @@ async function fixture(t) {
   await mkdir(projected);
   // Execute the independently copied Hook with only its existing dependency
   // closure: output configuration must not depend on repository-only files.
-  for (const file of ["planning-continuity.mjs", "project-root.mjs", "spine-state-utils.mjs"]) {
-    await copyFile(path.join(sourceRoot, file), path.join(projected, file));
-  }
+  copyHookClosure(repoRoot, projected, ["planning-continuity.mjs"]);
   const input = { options: { projectRoot: root, runtime: "codex", runId: "large-plan" } };
   const initialized = await initializePlanningContinuity(input);
   const env = { ...process.env };

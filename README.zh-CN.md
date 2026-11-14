@@ -76,6 +76,20 @@
 
 它的作用体现在这些连接上。某个模块改变了接口，相关任务会一起更新；一个分支等待你判断，独立工作仍可推进；某次方法无效，下一轮要有新的依据。
 
+## 全局提供基础，项目形成自己的专业能力
+
+**每个持续交付的项目，都建立自己的专业能力。** 全局 Agent 和 Skill 提供通用方法；项目结合用户、价值目标、实际技术版本、领域、品牌和工具，创建或更新自己的 Agent、Skill 与规则。后续任务会重新发现并加载这些项目能力。
+
+比如，设备维护要考虑单位、工况和告警；服装电商要考虑品牌、尺码、库存和退换货。两者都使用通用体验原则，各自保留独立的专业规则与验收案例。Meta_Kim 记录来源基线，识别规则冲突，并在全局来源更新时保留项目积累，供你审查差异。
+
+<p align="center">
+  <a href="docs/images/animated-project-specialization.zh-CN.svg"><img src="docs/images/animated-project-specialization.zh-CN.svg" alt="全局通用基础进入不同项目，各项目保留独立的 Agent、Skill、规则与验收案例" width="720"></a>
+  <br>
+  <a href="docs/images/animated-project-specialization.zh-CN.svg">打开原图</a>
+</p>
+
+使用时，继续在当前 Agent 对话里说需求、提供现有材料。宿主研究影响决策的未知项、比较方案，把选定的专业要求带进设计与任务。项目已有能力会继续复用和完善；全局方法也可以承担前期调查和日常诊断。Live 与 Service 目录按需打开。
+
 ## 第一轮 PRD：从一句需求，形成系统框架和模块大纲
 
 **PRD 就是产品需求文档：把“做什么、为什么做、怎样算做好”写清楚。** 在 Meta_Kim 里，系统大纲和模块详情是同一份 PRD 的两次展开，前面的决定会带进后面的设计。
@@ -320,7 +334,7 @@ Meta_Kim 把计划、发现、进度、决定、产物和检查记录保存在�
 
 ## 在自己的项目里开始
 
-先准备 **Node.js 22.13.0+**、Git，以及已经配置好模型连接的 AI 客户端。当前版本：**[v3.13.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.13.0)**。 版本变化和迁移说明独立维护在 [CHANGELOG.zh-CN.md](CHANGELOG.zh-CN.md)。
+先准备 **Node.js 22.13.0+**、Git，以及已经配置好模型连接的 AI 客户端。这份源码为正在准备发布的 **v3.14.0 候选版**；当前正式版为 **[v3.13.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.13.0)**。版本变化和迁移说明见 [CHANGELOG.zh-CN.md](CHANGELOG.zh-CN.md)，已完成的检查及其范围见[验证记录](docs/verification/project-specialization-20261115.md)。
 
 ### 1. 安装 Meta_Kim
 
@@ -331,7 +345,7 @@ npm install
 node setup.mjs
 ```
 
-按提示选择客户端和安装范围。**全局安装**让当前账号下的多个项目复用能力；**项目安装**会请你选择一个具体项目目录。保留 Meta_Kim 仓库，之后可用它更新。实际工作的项目可以放在另一个目录。
+按提示选择客户端和安装范围。默认在全局复用能力，提供通用基础；**项目安装**会请你选择一个具体项目目录。每个长期项目仍会在项目内创建或更新自己的专业 Agent、Skill 与规则。保留 Meta_Kim 仓库，之后可用它更新。实际工作的项目可以放在另一个目录。
 
 例如，只给某个项目安装 Codex 支持：
 
@@ -423,7 +437,7 @@ node bin/meta-kim.mjs live --project-root "/path/to/your-project"
 
 **使用条件：** 这是方法导入路线，实际执行使用客户端已有的模型、工具和权限；Meta CLI 和 Live 功能需要另行安装 Meta 运行时。包导出和本地完整性核验已实现，客户端导入、执行和续做按下面步骤在自己的任务中核对。
 
-准备 Meta_Kim **v3.13.0** 源码目录或正式源码解压目录，以及 **Node.js 22.13.0+**。在该根目录打开终端，按操作系统复制下面一组命令，即可生成并核验两个客户端的导入包；每个输出目录都必须是新目录。任何命令报错时先处理错误，不导入不完整产物。
+准备 Meta_Kim **v3.14.0 候选源码**，或已发布的 **v3.13.0** 源码包，以及 **Node.js 22.13.0+**。在所选源码根目录打开终端，按操作系统复制下面一组命令，即可生成并核验两个客户端的导入包；每个输出目录都必须是新目录。正式下载包在发布完成后提供。
 
 **Windows · PowerShell**
 
@@ -465,7 +479,7 @@ done
 缺少资源、权限或 Meta CLI 时明确列出，不把导入成功、实际执行和结果验证混为一谈。
 ```
 
-需要专业方法时，准备配对的 **Kim_Service V1.16** 源码。在它的根目录使用薄入口，每次导出一个 Agent 或 Skill；把下面的绝对路径替换为实际目录：
+需要专业方法时，Meta_Kim v3.14.0 候选版配对 **Kim_Service V1.17 候选源码**；已发布的配对为 Meta_Kim v3.13.0 与 Kim_Service V1.16。在所选 Service 源码根目录使用入口，每次导出一个 Agent 或 Skill；把下面的绝对路径替换为实际目录：
 
 ```bash
 node scripts/build-desktop-skill-package.mjs --meta-root "/absolute/Meta_Kim" --host workbuddy --component reliability-engineer --output "/absolute/new-reliability-method"
@@ -532,6 +546,28 @@ node bin/meta-kim.mjs dsh check --scope project --project-root "/path/to/your-pr
 > “继续注册流程的改进。先把已记录的决定和完成的工作与当前项目核对，确认中断操作的实际结果，再从下一项未完成任务接着做。”
 
 继续迭代时，说清哪些保留、哪些改变，例如：“保留手机布局和现有字段，改进注册成功提示。” 这样，新的工作就能接着已认可的成果开展。可选的 Memory 服务可以帮助跨会话保存选定信息；当前任务的续接，本身已有项目记录作为依据。
+
+<details>
+<summary>按需展开：检查 Memory 的跨会话记忆</summary>
+
+启用 MCP Memory 后，将服务健康、实际写入、实际读取和跨会话召回分别检查：
+
+| 证据 | 要观察什么 |
+| --- | --- |
+| 服务健康 | 当前配置的服务能返回健康检查结果。 |
+| 实际写入 | 保存一条双方确认的测试信息，留下写入回执或记录编号。 |
+| 实际读取 | 读取这条记录，核对返回的内容与原信息。 |
+| 跨会话召回 | 为同一项目打开新对话，再读取这条信息并保留结果。 |
+
+默认本地端点的健康检查命令是：
+
+```bash
+curl -fsS --max-time 3 http://127.0.0.1:8000/api/health
+```
+
+`.mcp.json` 和 hook 注册用于核对连接配置。仓库维护者可以运行 `npm run meta:test:mcp` 检查代码回归，并将上述四项实操结果与测试结果分别保存。
+
+</details>
 
 源码安装的更新方式，在 Meta_Kim 仓库目录执行：
 

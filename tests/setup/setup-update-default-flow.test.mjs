@@ -375,10 +375,12 @@ describe("setup update default flow", () => {
     );
     const updateHandoff = updateSource.indexOf("ensureStableGlobalProjectionPackage");
     assert.ok(updateHandoff > updateSource.indexOf("const updateSkillIds"));
-    assert.ok(updateHandoff < updateSource.indexOf("// ── 1. npm install"));
+    const updateNpmInstall = updateSource.indexOf('spawnCliSync("npm", ["install"]');
+    assert.ok(updateNpmInstall >= 0, "the source update path must still expose its npm install operation");
+    assert.ok(updateHandoff < updateNpmInstall, "immutable handoff must occur before the actual npm install operation");
     assert.match(
       updateSource,
-      /if \(executingStableProjectionPackage\)[\s\S]*?INSTALL_STEP_OUTCOME\.SKIPPED[\s\S]*?else \{[\s\S]*?spawnCliSync\("npm", \["install"\]/,
+      /if \(executingStableProjectionPackage \|\| hasNpmInstalledDependencies\(PROJECT_DIR\)\)[\s\S]*?INSTALL_STEP_OUTCOME\.SKIPPED[\s\S]*?else \{[\s\S]*?spawnCliSync\("npm", \["install"\]/,
       "a verified immutable package must not mutate its own closure with npm install in any scope",
     );
     assert.match(updateSource, /assertProjectPersistentWriteBoundary\(deployDirs, "update project target"\)/);

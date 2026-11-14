@@ -585,19 +585,17 @@ describe("55 - governed run identity, language, and chat surface", () => {
       }
       assert.equal(
         run.projectCustomizationPacket?.decision,
-        "use_global_directly",
-        "asking whether project capability creation is needed must not be treated as authorization to create",
+        "preparation_only",
+        "bounded source inspection remains preparation and must not authorize project capability creation",
       );
       assert.equal(run.projectCustomizationPacket?.requestedCapabilityCount, 0);
       assert.equal(run.projectCustomizationPacket?.targetPath, null);
       assert.equal(typeof run.projectCustomizationPacket?.reason, "string");
       assert.equal(typeof run.projectCustomizationPacket?.verification, "string");
       assert.equal(typeof run.projectCustomizationPacket?.rollback, "string");
-      assert.ok(
-        ["use_global_directly", "upgrade_existing_owner", "create_project_local_capability"].includes(
-          run.projectCustomizationPacket?.decision,
-        ),
-      );
+      assert.equal(run.projectCustomizationPacket.requiresApproval, false);
+      assert.deepEqual(run.projectCustomizationPacket.decisions, []);
+      assert.deepEqual(run.machineExecution.calls, [], "A reporting fixture does not invoke a worker");
 
       const routeBlock = run.conversationNotice.blocks.find((block) => block.id === "route");
       const routeText = routeBlock.lines.join("\n");

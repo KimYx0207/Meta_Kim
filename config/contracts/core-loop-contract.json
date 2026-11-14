@@ -857,12 +857,14 @@
       "discovered, selected, configured, host-visible, and invoked states remain distinct"
     ],
     "projectCustomizationRequirements": [
-      "decision is use_global_directly, upgrade_existing_owner, or create_project_local_capability",
+      "decision is use_global_directly, upgrade_existing_owner, create_project_local_capability, reuse_project_capability, preparation_only, or project_capability_required",
       "decision records reason, targetPath, verification, and rollback",
       "global candidates and existing project candidates are checked before a project-local create decision",
-      "use_global_directly never copies a reusable global capability into the project",
+      "use_global_directly is a reference for preparation or genuine shared foundations; persistent professional delivery requires a discovered and loaded project-owned capability",
       "create_project_local_capability requires project-specific need, review, approval, native project target, verification, rollback, and a runtime_sedimented_project_copy ownership record",
-      "upgrade_existing_owner that changes an Agent, Skill, or Command copies it into the native project directory before modification and protects it from dependency updates",
+      "upgrade_existing_owner adapts an existing project capability in place, or copies a global source into the native project directory before substantive adaptation; reviewed expectedProjectFiles enforce CAS and project copies remain protected from dependency updates",
+      "reuse_project_capability uses reuse_existing_project and current source-bound fit; no project-capability request defaults to preparation_only or project_capability_required until professional delivery requirements are satisfied",
+      "professionalRequirementDigest binds the researched project requirement to the creator artifact and its reviewed approval; a copied generic template does not prove specialization",
       "the decision packet never claims that a candidate was written, loaded, or invoked"
     ],
     "planChallengeRequirements": [

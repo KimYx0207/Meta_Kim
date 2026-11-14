@@ -27,6 +27,21 @@ function uniqueRows(rows, field, label) {
   }
   return ids;
 }
+
+/** Professional host output shared by Thinking and the existing PRD. */
+export function normalizeProjectCapabilityRequirements(input = []) {
+  const rows = structuredClone(input);
+  uniqueRows(rows, "role", "Project capability requirements");
+  for (const requirement of rows) {
+    for (const key of ["projectId", "baseComponentId", "baseComponentVersion", "targetPath"]) requireThat(text(requirement[key]), `Project capability requirement needs ${key}`);
+    requireThat(text(requirement.projectDelta) || list(requirement.projectDelta) && requirement.projectDelta.length > 0,
+      "Project capability requirement needs projectDelta text or nonempty text list");
+    for (const key of ["domainEvidenceRefs", "responsibilities", "boundaries", "reuseConditions", "requiredInputs", "toolRequirements", "acceptance"]) requireThat(list(requirement[key]), `Project capability requirement ${key} must be a list`);
+    requireThat(requirement.domainEvidenceRefs.length > 0 && requirement.responsibilities.length > 0 && requirement.acceptance.length > 0, "Project capability requirement needs domain evidence, responsibilities and acceptance");
+    requireThat(requirement.capabilityType === undefined || ["agent", "skill", "command"].includes(requirement.capabilityType), "Unsupported project capability requirement type");
+  }
+  return rows;
+}
 function bind(input, dialogue, goal, label) {
   requireThat(object(input) && input.schemaVersion === 1, `${label} requires schemaVersion 1`);
   requireThat(input.taskHash === dialogue.taskHash, `${label} task binding mismatch`);
@@ -118,6 +133,12 @@ export function normalizeProductDesign({ input = null, dialogue, goalContract, r
     requireThat((journey.criterionIds ?? []).every((id) => criteria.has(id)), "Journey references unknown goal criterion");
   }
   const slices = structuredClone(input.taskSlices ?? []);
+  const projectCapabilityRequirements = normalizeProjectCapabilityRequirements(input.projectCapabilityRequirements);
+  const projectRoles = uniqueRows(projectCapabilityRequirements, "role", "Project capability requirements");
+  const projectExperience = input.projectExperience == null ? null : structuredClone(input.projectExperience);
+  if (projectExperience) requireThat(object(projectExperience) && projectExperience.schemaVersion === 1 && text(projectExperience.projectId) &&
+    Number.isInteger(projectExperience.revision) && projectExperience.revision > 0 && Array.isArray(projectExperience.layers) && Array.isArray(projectExperience.tasks),
+    "Project experience requires its current project/revision and professional layers; domain review remains with its selected Service method");
   const researchRequired = requireResearch || research?.required === true;
   const knownResearch = new Set(research?.sources.map(source => source.id) ?? []);
   const researchRefs = input.researchRefs ?? [];
@@ -125,6 +146,9 @@ export function normalizeProductDesign({ input = null, dialogue, goalContract, r
   const researchGaps = researchRequired ? [...research?.gaps ?? ["required_research_missing"]] : [];
   checkDag(slices, "id");
   for (const slice of slices) {
+    requireThat(slice.projectCapabilityRefs === undefined || list(slice.projectCapabilityRefs) && slice.projectCapabilityRefs.every(role => projectRoles.has(role)), "Task references unknown project capability role");
+    requireThat(slice.experienceTaskIds === undefined || list(slice.experienceTaskIds) && slice.experienceTaskIds.length > 0 &&
+      slice.experienceTaskIds.every(id => projectExperience?.tasks.some(task => task.id === id)), "Task references unknown project experience task");
     slice.scopeFiles ??= [];
     slice.inputRefs ??= [];
     if (research || researchRequired || slice.researchRefs !== undefined) {
@@ -193,6 +217,8 @@ export function normalizeProductDesign({ input = null, dialogue, goalContract, r
     ...(input.solutionOptions !== undefined ? { solutionOptions } : {}),
     ...(input.selectedOptionId !== undefined ? { selectedOptionId: input.selectedOptionId, selectionRationale: input.selectionRationale } : {}),
     ...(input.sharedState !== undefined ? { sharedState } : {}), ...(input.interfaces !== undefined ? { interfaces } : {}),
+    ...(input.projectCapabilityRequirements !== undefined ? { projectCapabilityRequirements } : {}),
+    ...(projectExperience ? { projectExperience } : {}),
     ...(slices.some(slice => slice.decisionRefs?.length) ? { decisions: structuredClone((dialogue.settledDecisionRefs ?? []).filter(decision => slices.some(slice => slice.decisionRefs?.includes(decision.decisionId)))) } : {}),
     ...(research || researchRequired ? { researchBinding: { required: researchRequired, digest: research?.digest ?? null,
       sourceIds: [...new Set([...researchRefs, ...slices.flatMap(slice => slice.researchRefs ?? [])])], gaps: researchGaps } } : {}) };
@@ -218,6 +244,15 @@ export function deriveDesignRevisionImpact(design) {
   const ids = new Set(design.taskSlices.map((slice) => slice.id));
   requireThat(declaredTasks.every((id) => ids.has(id)), "Revision references unknown affected task");
   const directlyAffectedTaskIds = [...new Set([...declaredTasks, ...softwareAffectedTasks(design.softwareDesign, revision, design.taskSlices)])];
+  if (design.mode === "exploration" && design.taskSlices.length === 0) {
+    requireThat(text(revision.reason) || [revision.changedArchitectureIds, revision.changedModuleIds, revision.changedDecisionIds].some(values => list(values) && values.length), "Exploration revision needs an evidenced change reason");
+    requireThat(!revision.reuseCandidates?.length, "Exploration cannot attest reusable prior tasks before decomposition");
+    return { previousRunId: revision.previousRunId, previousDesignDigest: revision.previousDesignDigest,
+      changeEvidenceRefs: [...revision.changeEvidenceRefs], ...(revision.reason ? { reason: revision.reason } : {}),
+      changedArchitectureIds: [...(revision.changedArchitectureIds ?? [])], changedModuleIds: [...(revision.changedModuleIds ?? [])], changedDecisionIds: [...(revision.changedDecisionIds ?? [])],
+      directlyAffectedTaskIds: [], affectedTaskIds: [], reuseCandidates: [], taskImpactStatus: "deferred_until_task_decomposition", status: "new_run_required",
+      claimBoundary: "Replacement tasks are not yet decomposed; prior tasks are not declared unaffected and no previous completion or review evidence is inherited." };
+  }
   requireThat(directlyAffectedTaskIds.length > 0, "Revision requires a concrete affected task, module, architecture or decision");
   const affected = new Set(directlyAffectedTaskIds);
   let changed = true;
@@ -268,6 +303,10 @@ export function projectDesignWorkerTasks({ design, runId, templates, research = 
       interfaces: (design.interfaces ?? []).filter(contract => softwareContext?.modules.some(module => module.interfaceRefs.includes(contract.id)) ||
         (slice.interfaceRefs ? slice.interfaceRefs.includes(contract.id) : contract.producerTaskId === slice.id || contract.consumerTaskIds.includes(slice.id))),
       ...(design.softwareDesign ? { softwareDesign: softwareContext } : {}),
+      ...(design.projectCapabilityRequirements ? { projectCapabilityRequirements: design.projectCapabilityRequirements.filter(requirement =>
+        !slice.projectCapabilityRefs || slice.projectCapabilityRefs.includes(requirement.role)) } : {}),
+      ...(design.projectExperience ? { projectExperience: structuredClone(design.projectExperience),
+        applicableExperienceTaskIds: [...slice.experienceTaskIds ?? design.projectExperience.tasks.map(task => task.id)] } : {}),
       artifactFlow: design.artifactFlow.filter(flow => flow.producerTaskId === slice.id || flow.consumerTaskIds.includes(slice.id)), sourceBindings };
     const designContext = { ...context, digest: productDesignDigest(context), authority: "Task-scoped projection of the single PRD; no user approval or tool permission" };
     const ready = design.readiness === "structure_ready_not_reviewed" && scopeFiles.length > 0 && packet.workOrderReadiness === "ready" && !sourceBindings.some(source => source.status === "unavailable");
@@ -436,10 +475,15 @@ export async function evaluateProductOutcomeReview({ input, artifact, projectRoo
   const coveredTaskCriteria = input.observations.flatMap((observation) => snapshots.filter((snapshot) => observation.artifactRefs.includes(snapshot.ref)).map((snapshot) => ({
     taskId: snapshot.producerTaskId, criterionId: observation.criterionId, artifactRef: snapshot.ref, sha256: snapshot.verifiedSha256,
     verdict: outcome.results.find((result) => result.criterionId === observation.criterionId).status,
+    required: goal.acceptanceCriteria.find(criterion => criterion.id === observation.criterionId)?.required !== false,
   })));
+  const failedCriteria = outcome.results.filter(result => result.required !== false && result.status === "fail").map(result => result.criterionId);
+  const undiagnosedCriteria = failedCriteria.filter(id => !revisionRequests.some(request => request.criterionId === id));
   const review = { schemaVersion: 1, runId: artifact.runId, reviewDigest: productDesignDigest(input), reviewRef: input.reviewRef,
     designDigest: design?.designDigest ?? null, artifactSnapshots: snapshots, outcomeEvaluation: outcome, revisionRequests, coveredTaskCriteria,
-    nextAction: revisionRequests.length ? { action: "revise", stage: revisionRequests[0].returnToStage, taskIds: [...new Set(revisionRequests.map((request) => request.taskId))] }
+    nextAction: undiagnosedCriteria.length ? { action: "prepare_revision", stage: "Review", criterionIds: undiagnosedCriteria,
+      taskIds: [...new Set(packets.filter(packet => packet.acceptanceCriterionIds?.some(id => undiagnosedCriteria.includes(id))).map(packet => packet.taskPacketId))] }
+      : revisionRequests.length ? { action: "revise", stage: ["Critical", "Fetch", "Thinking", "Execution"].find(stage => revisionRequests.some(request => request.returnToStage === stage)), taskIds: [...new Set(revisionRequests.map((request) => request.taskId))] }
       : { action: outcome.status === "pass" ? "continue_verification" : "obtain_missing_outcome_evidence", stage: "Review", taskIds: [] },
     status: outcome.status, evidenceKind: "supplied_assessment_with_current_artifact_binding", nativeInvocationVerified: false,
     claimBoundary: "Current artifact bytes and supplied independent assessments were checked; host invocation and user acceptance are not authenticated here." };
@@ -458,16 +502,58 @@ export function readEvaluatedOutcomeReview(review) {
 export function projectProductReview(artifact, review) {
   const core = artifact.coreLoop;
   const prior = artifact.reviewPacket ?? core?.reviewPacket ?? {};
-  const nextAction = artifact.machineExecution?.nextAction ?? review.nextAction;
+  const coversScope = (candidate, pending) => candidate.taskId === (pending.taskId ?? pending.taskPacketId) &&
+    candidate.criterionId === pending.criterionId && Array.isArray(pending.artifactRefs) && pending.artifactRefs.length > 0 &&
+    pending.artifactRefs.every(ref => candidate.artifactRefs?.includes(ref));
+  const passedScope = pending => Array.isArray(pending.artifactRefs) && pending.artifactRefs.length > 0 &&
+    pending.artifactRefs.every(ref => review.coveredTaskCriteria.some(row => row.taskId === (pending.taskId ?? pending.taskPacketId) &&
+      row.criterionId === pending.criterionId && row.artifactRef === ref && row.verdict === "pass"));
+  let nextAction = { ...review.nextAction,
+    ...(review.revisionRequests.length ? { revisionRequests: review.revisionRequests } : {}) };
+  // A durable consumer may still hold a different scope's unresolved revision.
+  // Matching outcome bytes alone do not identify a diagnosis: a current request
+  // replaces only the scope it covers, and its wording always takes precedence.
+  const machine = artifact.machineExecution;
+  const machineAction = machine?.nextAction;
+  const stages = ["Critical", "Fetch", "Thinking", "Execution", "Review", "Verification", "Evolution"];
+  if (machine?.runId === artifact.runId && machine.outcome && machineAction?.action === "revise" &&
+      stages.includes(machineAction.stage) && productDesignDigest(machine.outcome) === productDesignDigest(review.outcomeEvaluation)) {
+    const requests = (Array.isArray(machineAction.revisionRequests) ? machineAction.revisionRequests : []).filter(request =>
+      object(request) && /^[a-f0-9]{64}$/u.test(request.reviewDigest ?? "") && artifact.workerTaskPackets?.some(packet =>
+        packet.taskPacketId === request.taskId && packet.acceptanceCriterionIds?.includes(request.criterionId)));
+    const retained = requests.filter(request => !review.revisionRequests.some(current => coversScope(current, request)) && !passedScope(request));
+    const currentCorrection = requests.some(request => request.reviewDigest === review.reviewDigest &&
+      review.revisionRequests.some(current => coversScope(current, request) && current.requiredChange === request.requiredChange));
+    if (retained.length || currentCorrection) {
+      const stage = stages.indexOf(machineAction.stage) < stages.indexOf(nextAction.stage) ? machineAction.stage : nextAction.stage;
+      const revisionRequests = [...review.revisionRequests, ...retained];
+      nextAction = { ...nextAction, action: "revise", stage, revisionRequests,
+        taskIds: [...new Set([...(nextAction.taskIds ?? []), ...revisionRequests.map(request => request.taskId)])] };
+    }
+  }
   const findings = review.revisionRequests.map((request) => ({ findingId: `outcome-${productDesignDigest([review.reviewDigest, request.taskId, request.criterionId]).slice(0, 16)}`,
     taskPacketId: request.taskId, criterionId: request.criterionId, severity: "high", finding: request.finding, summary: request.finding,
-    requiredChange: request.requiredChange, returnToStage: request.returnToStage, evidenceRefs: request.evidenceRefs, status: "open" }));
-  const reviewPacket = { ...prior, ...(review.status === "pass" ? {} : { status: "partial" }), qualityGate: review.status === "pass" ? prior.qualityGate ?? "partial" : "partial",
-    revisionNeeded: findings.length > 0, findings: [...(prior.findings ?? []).filter((finding) => !String(finding.findingId ?? "").startsWith("outcome-")), ...findings],
+    requiredChange: request.requiredChange, returnToStage: request.returnToStage, evidenceRefs: request.evidenceRefs, artifactRefs: request.artifactRefs, status: "open" }));
+  const currentFindings = [...(prior.findings ?? []).filter(finding => !String(finding.findingId ?? "").startsWith("outcome-") ||
+    !review.revisionRequests.some(current => coversScope(current, finding)) && !passedScope(finding)), ...findings];
+  const revisionNeeded = currentFindings.some(finding => !["closed", "resolved", "passed"].includes(finding.status)) ||
+    review.outcomeEvaluation.results.some(result => result.required !== false && result.status === "fail") || nextAction.action === "revise";
+  const reviewPacket = { ...prior, status: review.status === "pass" && !revisionNeeded ? "pass" : "partial", qualityGate: review.status === "pass" && !revisionNeeded ? "pass" : "partial",
+    revisionNeeded, findings: currentFindings,
     outcomeReviewRef: review.reviewRef, revisionRequests: review.revisionRequests, nextAction };
   const traceEvalControlPlane = { ...(artifact.traceEvalControlPlane ?? core?.traceEvalControlPlane), outcomeEvaluation: review.outcomeEvaluation };
-  return { ...artifact, ...(review.status === "pass" ? {} : { status: "partial" }), outcomeReviewPacket: review, reviewPacket, traceEvalControlPlane,
-    ...(artifact.defaultRuntimePath ? { defaultRuntimePath: { ...artifact.defaultRuntimePath, traceEvalControlPlane } } : {}),
-    ...(core ? { coreLoop: { ...core, outcomeReviewPacket: review, reviewPacket, traceEvalControlPlane } } : {}),
-    ...(artifact.summaryPacket ? { summaryPacket: { ...artifact.summaryPacket, nextAction: JSON.stringify(nextAction), publicReady: false } } : {}) };
+  const verification = artifact.verificationPacket ?? core?.verificationPacket;
+  const verificationPacket = verification ? { ...verification, status: "partial", publicReady: false,
+    ...(Object.hasOwn(verification, "accepted") ? { accepted: false } : {}), outcomeReviewRef: review.reviewRef } : null;
+  const pendingDecision = decision => ({ ...decision, publicReady: false, status: "partial", outcomeReviewRef: review.reviewRef,
+    ...(Object.hasOwn(decision, "userOutcomeAccepted") ? { userOutcomeAccepted: false } : {}) });
+  return { ...artifact, status: "partial", outcomeReviewPacket: review, reviewPacket, traceEvalControlPlane,
+    ...(verificationPacket ? { verificationPacket } : {}),
+    ...(artifact.publicReadyDecision ? { publicReadyDecision: pendingDecision(artifact.publicReadyDecision) } : {}),
+    ...(artifact.defaultRuntimePath ? { defaultRuntimePath: { ...artifact.defaultRuntimePath, status: "partial", traceEvalControlPlane } } : {}),
+    ...(artifact.runReport ? { runReport: { ...artifact.runReport, status: "partial" } } : {}),
+    ...(core ? { coreLoop: { ...core, outcomeReviewPacket: review, reviewPacket, traceEvalControlPlane,
+      ...(core.publicReadyDecision ? { publicReadyDecision: pendingDecision(core.publicReadyDecision) } : {}),
+      ...(verificationPacket ? { verificationPacket } : {}) } } : {}),
+    ...(artifact.summaryPacket ? { summaryPacket: { ...artifact.summaryPacket, status: "partial", nextAction: JSON.stringify(nextAction), accepted: false, publicReady: false } } : {}) };
 }

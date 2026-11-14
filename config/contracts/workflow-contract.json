@@ -3166,11 +3166,11 @@
         "ownerBindingFields": ["ownerAgent", "runtime", "scope", "source", "sourceRef", "sourceRoot", "contentDigest"],
         "profileFields": ["capabilityProfileId", "capabilityProfileVersion", "owner", "capabilityLoadout", "projectEvidenceRefs", "referenceDirection"],
         "profileOptionalFields": ["contentDigest", "baseProfileRef", "materialRefs"],
-        "profileIdentityPolicy": "Current profile IDs are unique. Lookup uses stable owner runtime/scope/source/ref identity, not its mutable digest; use still verifies the complete current binding. Source changes require review, and the same profile ID/version cannot change provenance or content.",
+        "profileIdentityPolicy": "Current profile IDs are unique. Lookup uses stable owner runtime/scope/source/ref identity, not its mutable digest; use still verifies the complete current binding. Source changes require review, and the same profile ID/version cannot change provenance or content. A cross-root baseProfileRef requires its complete sourceOwner binding and sourceVersion. Duplicate capability slots within one layer are ambiguous and rejected.",
         "referenceFields": ["ref", "contentDigest"],
         "fitAssessmentFields": ["projectRoot", "owner", "capabilityProfileId", "capabilityProfileVersion", "profileDigest", "ownerResolution", "evidenceRefs", "rationale", "hardConflicts"],
         "fitOptionalFields": ["fallbackProviderIds", "runLoadoutDigest"],
-        "fitOptionalFieldPolicy": "A current source-bound assessment must name any allowed default fallback; current-run loadout overrides require its exact runLoadoutDigest. These records are not caller permission grants.",
+        "fitOptionalFieldPolicy": "A current source-bound assessment must name allowed default fallbacks; current-run loadout overrides require its exact runLoadoutDigest. Approved fitAssessments may be saved in the same private profile document and are rechecked against current source/evidence bytes on reuse. These records do not grant permissions.",
         "slotFields": ["capabilitySlot", "bindingType", "providerId", "mode"],
         "bindingTypes": ["skill", "mcp_tool", "command", "runtime_tool"],
         "selectionModes": ["required", "default", "optional"],
@@ -3181,13 +3181,14 @@
         "mergeOrder": ["declared_source_defaults", "project_overrides", "run_scoped_overrides"],
         "hardConstraints": ["owner_refusals", "current_user_constraints", "required_meta_skill_creator", "permissions", "runtime_os_provider_support"],
         "writePolicy": "Explicit preview/apply with content-bound local approval sources, expectedOldHash and the existing project-mutation-session transaction. Same version cannot change content. Normal run/sync/install never saves this configuration.",
-        "missingPolicy": "No file preserves the old route with not_evaluated fit; a declared selection, known conflict or durable adaptation need cannot use compatibility to bypass the gap.",
+        "missingPolicy": "No file remains unconfigured with not_evaluated fit. Persistent professional project work must prepare a project owner and its current fit before delivery; bounded read-only support can investigate missing facts. A known conflict or required local identity cannot use backward compatibility to bypass the gap.",
         "recoveryPolicy": "Current configuration plus version/digest and existing transaction backups only. Clone without this ignored private file is unconfigured; no reconstruction from old worker packets. Explicit reviewed adoption can restore compatible old content as a new version."
       },
       "globalAgentReusePolicy": {
         "searchGlobalBeforeCopy": true,
         "directUseDoesNotCopyToProject": true,
         "copyToProjectOnlyWhen": [
+          "persistent_professional_project_delivery_requires_independent_project_identity",
           "stable_professional_judgment_or_responsibility_contract_must_change",
           "explicit_independent_project_identity_requires_reviewed_substantive_adaptation"
         ],
@@ -3206,10 +3207,11 @@
         ],
         "creationBlockedUntilExistingAgentsChecked": true,
         "checkedAgentsMustBeNamedInCapabilityGapPacket": true,
-        "description": "Fetch checks cached global and lightweight actual-project inventories and current project rules/dependencies. Host Thinking evaluates real owner/source and project evidence before resolving reuse_existing_owner, upgrade_existing_owner or create_owner_first. A fitting global identity remains global; knowledge, methods and stable default providers first belong in the independent project capability profile, never an automatic identity copy. Stable responsibility/refusal/input/output changes require reviewed substantive Type B adaptation; a real long-term professional owner gap may justify Type B creation on the first Fetch. Explicit independent project identity changes the deliverable but does not waive adaptation or host evidence. Copies remain preparation until adapted. Actual capabilityBindings stay run_scoped; a temporary worker or runtime nickname cannot satisfy a durable identity deliverable. copy_to_project_for_modification requires project_local/upgrade_existing_owner; create_project_local_agent requires project_local/create_owner_first. Full global scanning remains limited to install/update/explicit refresh or evidenced cache/probe needs."
+        "description": "Fetch inspects shared global foundations, existing project capabilities and actual project rules/dependencies. Persistent professional delivery requires an independent project owner, created or substantively adapted through the existing Type B lifecycle when none fits. A suitable project owner is reused with current source-bound fit. Global professional methods can investigate or prepare the project capability; methodAgent binds that versioned source separately from selectedCapabilityProviders.agent. Project professional requirements carry domain evidence, responsibilities, project delta, inputs/tools and acceptance. Materialization remains preparation until rediscovery and loading. Current capabilityBindings stay run_scoped. Full global scanning remains limited to install/update/explicit refresh or evidenced cache/probe needs."
       },
       "durableProjectAgentPolicy": {
         "appliesWhenUserRequestsAgentCreationOrIteration": true,
+        "appliesToPersistentProfessionalProjectWork": true,
         "runtimeTargetsSource": [
           "config/sync.json supportedTargets",
           "config/runtime-compatibility-catalog.json genericCompatibility.agentPath"
@@ -3240,7 +3242,7 @@
           "meta-chrysalis"
         ],
         "forbidPersistedNonGovernanceExecutionAgents": true,
-        "fallbackBehavior": "Inside the Meta_Kim repository itself, use a governance meta owner plus run-scoped matchedCapabilities / capabilityBindings, or use legacy matchedSkills as compatibility evidence, or block with capabilityGapPacket. During user-project use, global execution agents may be reused directly without copying, and project-local execution agents may be created or upgraded only when the governance layer approves the gap."
+        "fallbackBehavior": "Inside the Meta_Kim repository itself, use a governance meta owner plus run-scoped matchedCapabilities / capabilityBindings, or use legacy matchedSkills as compatibility evidence, or block with capabilityGapPacket. During user-project use, global methods may support preparation and genuinely shared foundations. Persistent professional delivery uses a reviewed project-local execution owner; a missing owner enters the existing creation or adaptation lifecycle."
       },
       "runScopedSkillPersistenceGate": {
         "failWhenConcreteSkillCopiedToDurableIdentity": true,
@@ -3330,9 +3332,9 @@
           ]
         },
         "skillSelectionScope": "run_scoped",
-        "description": "Open-source Meta_Kim ignores non-governance execution agents in durable Meta_Kim repository state. Critical, Fetch, Thinking, and Review governance nodes are owned only by governance meta agents and must include their required participants. During user-project use, those governance nodes inspect each orchestration node, allow direct global-agent reuse when it already fits, and approve copying/iterating or creating a project-local agent only when capability gaps require durable local change."
+        "description": "Open-source Meta_Kim ignores non-governance execution agents in durable Meta_Kim repository state. Critical, Fetch, Thinking, and Review governance nodes are owned only by governance meta agents and must include their required participants. During user-project use, those governance nodes inspect each orchestration node, reuse suitable project owners, and establish independent project capabilities for persistent professional work through reviewed creation or adaptation. Global methods remain separately bound sources for preparation and execution."
       },
-      "description": "Capability-first role blueprint. In the open-source Meta_Kim project, ownerAgent is one of the governance meta agents, while concrete execution capability is expressed through run-scoped matchedCapabilities / capabilityBindings and governanceStageNodes; matchedSkills remains accepted only as legacy compatibility evidence. During user-project use, ownerAgent may be a directly reused global execution agent or a project-local execution agent created/upgraded after governance approval. ownerSource and agentCopyPolicy distinguish direct global reuse from project-local modification so usable global agents are not copied into the project; copying into the project must mean project-local upgrade work, not ordinary reuse. It separates businessRoleId, roleDisplayName, selected owner, assigned responsibility slice, owner responsibility delta, and per-run role instances so owners can run multiple named shards in parallel without confusing users. ownerResolution uses reuse_existing_owner, upgrade_existing_owner, or create_owner_first."
+      "description": "Capability-first role blueprint. In the open-source Meta_Kim project, ownerAgent is one of the governance meta agents, while concrete execution capability is expressed through run-scoped matchedCapabilities / capabilityBindings and governanceStageNodes; matchedSkills remains accepted only as legacy compatibility evidence. During user-project use, persistent professional ownerAgent is a project-local execution agent reused, created or upgraded after review. ownerSource and agentCopyPolicy distinguish shared global preparation from independent project delivery; a global copy requires substantive project adaptation before reuse. It separates businessRoleId, roleDisplayName, selected owner, assigned responsibility slice, owner responsibility delta, and per-run role instances so owners can run multiple named shards in parallel without confusing users. ownerResolution uses reuse_existing_owner, upgrade_existing_owner, or create_owner_first."
     },
     "orchestrationTask": {
       "requiredFields": [

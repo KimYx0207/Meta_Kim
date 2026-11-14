@@ -14,6 +14,7 @@ import {
 import { spawnCli } from "../runtime-cli-invocation.mjs";
 import { normalizeConfiguredModel, modelSelectionRecord } from "../runtime-tool-profiles.mjs";
 import { inspectTrustedPath } from "../safe-managed-file-operations.mjs";
+import { assessProjectCapabilityBinding, verifyAgentCapabilityProfileSnapshot, verifyProjectCapabilityBindingSnapshot } from "../agent-capability-profile.mjs";
 import { loadDependencyAgentMethod, stableJson } from "../dependency-agent-discovery.mjs";
 import { projectWorkerProgressEvent } from "./worker-result-projection.mjs";
 import { calculationHandoffForWorker } from "./dependency-calculation-handoff.mjs";
@@ -365,6 +366,16 @@ export function buildReadOnlyWorkerPrompt({
   calculationContext = null,
 }) {
   const profile = packet.agentCapabilityProfile;
+  verifyAgentCapabilityProfileSnapshot(profile);
+  const projectBinding = packet.projectCapabilityBinding;
+  verifyProjectCapabilityBindingSnapshot(projectBinding);
+  if (projectBinding?.status === "project_owned_ready") {
+    const owner = { ...projectBinding.owner, id: projectBinding.owner.ownerAgent };
+    const current = assessProjectCapabilityBinding({ projectRoot: owner.sourceRoot, owner,
+      workOrder: { ...packet, projectCapabilityIntent: { mode: "project_owned" } }, profile, providers: projectBinding.capabilityProviders });
+    if (current.status !== "project_owned_ready" || current.ownerSource.contentDigest !== projectBinding.ownerSource.contentDigest ||
+        current.ownerSource.content !== projectBinding.ownerSource.content) throw new Error("Project professional source changed before delivery");
+  }
   if (profile?.status === "capability_gap" || (profile?.owner?.ownerAgent && profile.owner.ownerAgent !== (packet.ownerAgent ?? packet.owner))) {
     throw new Error("Project capability profile does not match this read-only worker");
   }
@@ -398,6 +409,8 @@ export function buildReadOnlyWorkerPrompt({
     shardScope: Array.isArray(packet.shardScope) ? packet.shardScope : [],
     nonGoals: Array.isArray(packet.nonGoals) ? packet.nonGoals : [],
     ...(profile ? { agentCapabilityProfile: profile, capabilityLoadout: packet.capabilityLoadout ?? null } : {}),
+    ...(projectBinding ? { projectCapabilityBinding: projectBinding } : {}),
+    ...(packet.methodOwner ? { methodOwner: packet.methodOwner } : {}),
     ...(packet.intentBinding?.status === "host_provided_understanding"
       ? { intentBinding: packet.intentBinding } : {}),
   };
@@ -532,6 +545,7 @@ async function verifyWorkerResearch(packet, projectRoot) {
 
 /** A source-verified invocation plan is not evidence that a process/model ran. */
 export async function prepareReadOnlyRuntimeInvocation({ runtime, model = null, workspaceRoot, packet, prompt, upstreamResults = [], env = process.env }) {
+  if (packet?.hostOperation) throw new Error("Current-host operation requires its actual host binding; it cannot enter the read-only subprocess adapter");
   const normalizedRuntime = normalizeStageRunnerRuntime(runtime);
   const configuredModel = normalizeConfiguredModel(model);
   const readiness = packet?.taskPacketId ? verifyTaskDesignReadiness(packet) : null;
@@ -1482,13 +1496,13 @@ export async function runStageRunnerBridge({
               Number(process.hrtime.bigint() - nodeStartedHr) / 1_000_000,
             ),
           });
-        } else if (packet.externalWriteBoundary === true || packet.executionMode === "approval_gate") {
+        } else if (packet.hostOperation || packet.externalWriteBoundary === true || packet.executionMode === "approval_gate") {
           normalizedResult = bridgeNodeRecord(node, {
             status: "failed",
             runtime: normalizedRuntime,
             evidenceKind: resolvedEvidenceKind,
             taskPacketId: packet.taskPacketId,
-            failureClass: "read_only_bridge_rejected_side_effect_task",
+            failureClass: packet.hostOperation ? "current_host_operation_requires_actual_host_binding" : "read_only_bridge_rejected_side_effect_task",
             startedAt: nodeStartedAt.toISOString(),
             endedAt: new Date().toISOString(),
             observedDurationMs: Math.max(
@@ -1528,7 +1542,7 @@ export async function runStageRunnerBridge({
             if (calculationContext) prompt = buildReadOnlyWorkerPrompt({ runId, runtime: normalizedRuntime,
               node, packet, requestTask, upstreamResults, calculationContext });
             if (!nativeRuntimeInvokerSelected && !localToolInvokerSelected &&
-              (packet.ownerSource === "dependency_agent_contract" || packet.ownerContract || String(packet.ownerAgent ?? packet.owner ?? "").includes(":"))) {
+              (packet.methodOwner || packet.ownerSource === "dependency_agent_contract" || packet.ownerContract || String(packet.ownerAgent ?? packet.owner ?? "").includes(":"))) {
               sourceValidationPending = true;
               const method = await loadDependencyAgentMethod({ packet, environment: workerEnv, projectRoot: resolvedWorkspace });
               sourceValidationPending = false;
@@ -2278,7 +2292,7 @@ function matchesBridgeWorkOrder(attestation, bridge, coreLoop, result) {
     coreLoop.requestRecord?.runId === bridge.runId &&
     (coreLoop.thinkingPacket?.workerTaskPackets ?? []).some((packet) =>
       packet.taskPacketId === result.taskPacketId &&
-      (!result.ownerMethodBinding || result.ownerMethodBinding.ownerAgent === (packet.ownerAgent ?? packet.owner)) &&
+      (!result.ownerMethodBinding || result.ownerMethodBinding.ownerAgent === (packet.methodOwner?.id ?? packet.ownerAgent ?? packet.owner)) &&
       coreLoop.executionResult.workerResultPackets.some((planned) =>
         planned.taskPacketId === packet.taskPacketId &&
         (planned.ownerAgent ?? planned.owner) === (packet.ownerAgent ?? packet.owner)) &&

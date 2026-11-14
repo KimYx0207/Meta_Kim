@@ -170,6 +170,7 @@ test("switching native projections to global_only retires exact fragments and ke
 test("native global package survives source removal and checks, updates, and uninstalls exact settings", (t) => {
   const runtime = createGovernanceRuntimeFixture(t);
   cpSync(path.join(root, "bin"), path.join(runtime.repoRoot, "bin"), { recursive: true });
+  cpSync(path.join(root, "npm-shrinkwrap.json"), path.join(runtime.repoRoot, "npm-shrinkwrap.json"));
   // This lifecycle case installs the real npm dependency closure. Carry only
   // the environment's transport/CA settings, never npm or provider credentials.
   for (const key of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR"]) {

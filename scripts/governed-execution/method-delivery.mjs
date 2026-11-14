@@ -107,7 +107,7 @@ export function buildMethodInvocationContext({ method, packet, upstreamResults =
     inspectInput(value, properties[key] ?? {}, key, problems);
     if (problems.length === 0) inputs[key] = clone(value);
   };
-  setDefault("goal", packet.intentBinding?.confirmedOutcome ?? packet.coreProblem ?? packet.description ?? packet.task);
+  setDefault("goal", packet.intentBinding?.realIntent ?? packet.intentBinding?.confirmedOutcome ?? packet.coreProblem ?? packet.description ?? packet.task);
   setDefault("constraints", packet.intentBinding?.constraints ?? (packet.nonGoals?.length ? { nonGoals: packet.nonGoals } : undefined));
   const assignedIds = packet.acceptanceCriterionIds ?? [];
   const criteria = (packet.intentBinding?.acceptanceCriteria ?? []).filter((criterion) => assignedIds.includes(criterion.id)).map((criterion) => ({
@@ -143,6 +143,7 @@ export function buildMethodInvocationContext({ method, packet, upstreamResults =
     context: { scopeFiles: packet.scopeFiles ?? [], nonGoals: packet.nonGoals ?? [], acceptanceCriterionIds: assignedIds,
       acceptanceCriteria: packet.acceptanceCriteria ?? [], intentBinding: packet.intentBinding ?? null,
       designBinding: packet.designBinding ?? null,
+      ...(packet.hostOperation ? { executionOwner: "current_host", methodSource: clone(packet.hostOperation.methodSource), hostOperation: clone(packet.hostOperation) } : {}),
       ...(packet.workBinding ? { workBinding: clone(packet.workBinding), workContext: clone(packet.workContext), workScopeRef: packet.workScopeRef, workContextRef: packet.workContextRef } : {}) },
     inputContract: method.inputContract,
     outputContract: method.outputContract,

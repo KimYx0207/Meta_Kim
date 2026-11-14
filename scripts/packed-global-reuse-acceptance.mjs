@@ -105,6 +105,8 @@ export function runPackedGlobalReusePlanning({ installedPackageRoot, roots, env,
     handoffTarget: PACKED_REUSE_REVIEWER,
     qualityBar: "Current source-bound planning only; no invented native execution evidence",
     referenceDirection: "Use only the actual Fetch records and local source-selection input; preserve project/user-owned files.",
+    projectCapabilityIntent: { mode: "preparation", purpose: "diagnostic",
+      rationale: "Inspect existing global source bindings without professional delivery, capability edits or project materialization.", evidenceRefs },
     selectedCapabilityProviders, effectClass: "read_only_worker", taskFacts: facts,
   };
   const thinkingFile = put("thinking.json", {

@@ -14,11 +14,11 @@ Discovery requires: the **capability needed** (e.g. "frontend Next.js", "graph c
 
 ## Do
 
-Use the six source families below as a catalog, consulting route-relevant cached inventory and project evidence in locality order. Match by **capability and boundary**, not by agent title. Record actual sources checked (including empty results), cache references and reasons for skipping route-relevant sources in `dispatchEnvelopePacket.capabilityInventory`. Stop when a qualified provider fits; perform a full applicable scan only when the machine contract's `fullScanTriggers` applies. Prefer a global owner that already fits over creating a project-local copy. When multiple candidates match, prefer the most local durable owner, then the one whose scope already includes the architecture type.
+Use the six source families below as a catalog, consulting route-relevant cached inventory and project evidence in locality order. Match by **capability and boundary**, not by agent title. Record actual sources checked (including empty results), cache references and reasons for skipping route-relevant sources in `dispatchEnvelopePacket.capabilityInventory`. Stop when a qualified provider fits; perform a full applicable scan only when the machine contract's `fullScanTriggers` applies. Prefer an existing suitable project owner. For a new persistent project responsibility, use global methods to research and prepare an independent project capability through the existing reviewed lifecycle. When multiple candidates match, prefer the most local durable owner, then the one whose scope already includes the architecture type.
 
 ## Do not
 
-Do not hardcode an agent name before discovery. Do not skip a route-relevant unresolved source without a reason, or report an unscanned path as freshly checked. Do not silently synthesize a new owner when a global one fits. Do not copy a reusable global asset into the project when `use_global_directly` applies. Do not emit local absolute home paths in route reports.
+Do not hardcode an agent name before discovery. Do not skip a route-relevant unresolved source without a reason, or report an unscanned path as freshly checked. Do not synthesize a project owner from a renamed generic template. Research its professional requirements, author substantive project rules and preserve the source baseline. Direct global preparation remains a reference; it does not complete a project-owned professional assignment. Do not emit local absolute home paths in route reports.
 
 ## The six global discovery sources
 
@@ -26,7 +26,7 @@ Source catalog, considered in order of locality then priority under the machine 
 
 1. **Local canonical assets** — `canonical/agents/`, `canonical/skills/`, `canonical/runtime-assets/shared/`, `canonical/runtime-assets/<runtime>/`. These are the durable sources of truth for Meta_Kim and must be searched first for any meta-owned capability.
 2. **Capability indexes** — `config/capability-index/` and the runtime capability-index mirrors under `.claude/capability-index/`, `.codex/capability-index/`, `.cursor/capability-index/`. These are query-first indices that resolve capability → owner without reading every agent file.
-3. **Global runtime homes** — `~/.claude/agents/`, `~/.claude/skills/`, `~/.codex/agents/`, `~/.cursor/agents/`, `~/.openclaw/`, `~/.agents/`. A reusable global owner that already matches the boundary wins over creating a project-local copy.
+3. **Global runtime homes** — `~/.claude/agents/`, `~/.claude/skills/`, `~/.codex/agents/`, `~/.cursor/agents/`, `~/.openclaw/`, `~/.agents/`. These provide general methods and source baselines. Persistent project professional delivery uses an existing suitable project owner or creates one with project-specific responsibilities and rules.
 4. **Package scripts and local inventory** — `package.json` `scripts`, `bin/`, `scripts/`, and the local runtime inventory inside the project root. These often expose registered tools, MCP providers, and shell entry points that are themselves owners.
 5. **MCP / runtime configs** — `.mcp.json`, `~/.mcp.json`, `.codex/config.toml`, `.cursor/mcp.json`, runtime adapter templates. MCP tools are first-class owners; capability matching must enumerate them.
 6. **External discovery** — `findskill` / `meta-scout` / third-party registries, package indexes, and web research. Used only when sources 1-5 have no fit; the result must surface a `capabilityGapPacket` and a proposed owner creation/upgrade, not silent synthesis.

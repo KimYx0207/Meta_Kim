@@ -25,6 +25,36 @@ describe("release documentation semantics", () => {
     return nextReleaseIndex === -1 ? raw : raw.slice(0, nextReleaseIndex);
   };
 
+  const publishedReleaseLabels = [
+    "The published release is", "当前正式版为", "現在の公開版は", "현재 공개 버전은",
+  ];
+  const sourceCandidateLabels = ["candidate", "候选版", "候補版", "후보 버전"];
+  const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+
+  function assertReleaseVersionDeclarations({ packageVersion, readmes, changelog }) {
+    assert.equal(readmes.length, readmeFiles.length, "all four localized release declarations are required");
+    const versions = readmes.map((raw, index) => {
+      const declaration = new RegExp(
+        `${escapeRegExp(publishedReleaseLabels[index])}\\s*(?:\\*\\*)?` +
+          String.raw`\[v(\d+\.\d+\.\d+)\]\(https://github\.com/KimYx0207/Meta_Kim/releases/tag/v\1\)`,
+        "u",
+      ).exec(raw);
+      assert.ok(declaration, `${readmeFiles[index]} must explicitly name the published release with a matching version label and URL`);
+      return declaration[1];
+    });
+    const [releasedVersion] = versions;
+    assert.ok(versions.every((version) => version === releasedVersion), "localized published release declarations must agree");
+    assert.match(changelog, new RegExp(`^## \\[${escapeRegExp(releasedVersion)}\\] - \\d{4}-\\d{2}-\\d{2}$`, "mu"), "the declared published release must have a dated changelog entry");
+    if (packageVersion !== releasedVersion) {
+      readmes.forEach((raw, index) => assert.match(
+        raw,
+        new RegExp(`v${escapeRegExp(packageVersion)}\\s+${escapeRegExp(sourceCandidateLabels[index])}`, "u"),
+        `${readmeFiles[index]} must identify the actual source version as a candidate`,
+      ));
+    }
+    return releasedVersion;
+  }
+
   test("generated runtime projections stay outside GitHub source and package files", () => {
     const output = execFileSync(
       process.execPath,
@@ -173,6 +203,35 @@ describe("release documentation semantics", () => {
     });
   });
 
+  const releaseVersionFixture = (publishedVersion, candidateVersion = null) => ({
+    packageVersion: candidateVersion ?? publishedVersion,
+    readmes: publishedReleaseLabels.map((label, index) =>
+      `${label} **[v${publishedVersion}](https://github.com/KimYx0207/Meta_Kim/releases/tag/v${publishedVersion})**.` +
+      (candidateVersion ? ` Source: v${candidateVersion} ${sourceCandidateLabels[index]}.` : "")),
+    changelog: "## [Unreleased]\n\n## [3.14.0] - 2026-11-15\n\n## [3.13.0] - 2026-11-14\n",
+  });
+
+  test("release version declarations keep a dated candidate separate from the published release", () => {
+    const fixture = releaseVersionFixture("3.13.0", "3.14.0");
+    assert.equal(assertReleaseVersionDeclarations(fixture), "3.13.0");
+    const missingCandidate = structuredClone(fixture);
+    missingCandidate.readmes[1] = missingCandidate.readmes[1].replace("v3.14.0 候选版", "v3.12.0 候选版");
+    assert.throws(() => assertReleaseVersionDeclarations(missingCandidate), /actual source version as a candidate/u);
+    const disagreement = structuredClone(fixture);
+    disagreement.readmes[2] = disagreement.readmes[2].replaceAll("v3.13.0", "v3.14.0");
+    assert.throws(() => assertReleaseVersionDeclarations(disagreement), /published release declarations must agree/u);
+  });
+
+  test("release version declarations accept the published source and require exact link and history", () => {
+    const fixture = releaseVersionFixture("3.14.0");
+    assert.equal(assertReleaseVersionDeclarations(fixture), "3.14.0");
+    const mismatchedLink = structuredClone(fixture);
+    mismatchedLink.readmes[0] = mismatchedLink.readmes[0].replace("tag/v3.14.0", "tag/v3.13.0");
+    assert.throws(() => assertReleaseVersionDeclarations(mismatchedLink), /matching version label and URL/u);
+    const missingHistory = { ...fixture, changelog: "## [Unreleased]\n\n## [3.13.0] - 2026-11-14\n" };
+    assert.throws(() => assertReleaseVersionDeclarations(missingHistory), /dated changelog entry/u);
+  });
+
   test("localized product overviews explain client use and output review inline", () => {
     const betaNames = ["DSH", "Qoder", "Trae"];
     const taskResultScope = [
@@ -204,11 +263,13 @@ describe("release documentation semantics", () => {
       /\*\*Cursor\*\*\s*\|\s*완전 지원/,
     ];
 
-    // The package may be an unreleased source candidate. Current-release links
-    // follow the latest dated release entry, not that candidate version.
-    const releasedVersion = readFileSync(path.join(root, "CHANGELOG.md"), "utf8")
-      .match(/^## \[([^\]]+)\] - \d{4}-\d{2}-\d{2}/m)?.[1];
-    assert.ok(releasedVersion, "The changelog must identify a dated release");
+    // Dated release notes can be prepared before publication. Check the explicit
+    // published declaration; a newer package remains a separately named candidate.
+    const releasedVersion = assertReleaseVersionDeclarations({
+      packageVersion: JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).version,
+      readmes: readmeFiles.map((file) => readFileSync(path.join(root, file), "utf8")),
+      changelog: readFileSync(path.join(root, "CHANGELOG.md"), "utf8"),
+    });
 
     for (const [index, file] of readmeFiles.entries()) {
       const raw = readFileSync(path.join(root, file), "utf8");

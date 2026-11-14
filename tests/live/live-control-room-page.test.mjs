@@ -43,7 +43,7 @@ import {
   renderLiveControlRoomPage,
 } from "../../src/presentation/live/live-control-room-page.mjs";
 
-const workOverviewHelpers = { liveWorkOverviewCopy, plainLiveTaskLabel, liveTaskDisplayLabel, liveRunTaskNodes, resolveLiveTaskLifecycle, normalizeLiveOwnerReport };
+const workOverviewHelpers = { liveWorkOverviewCopy, plainLiveTaskLabel, liveTaskDisplayLabel, liveRunTaskNodes, resolveLiveTaskLifecycle, resolveLiveNodeTaskLifecycle, normalizeLiveOwnerReport };
 
 test("browser normalization keeps partial session counters unknown instead of inventing zero", () => {
   const normalize = runNormalizerHarness({ actualStatus: true });
@@ -132,18 +132,33 @@ function ordinaryOverviewHarness(language = "zh") {
   const feedback = [];
   const html = renderLiveControlRoomPage();
   const render = new Function("runOverview", "makeElement", "clearChildren", "helpers", "currentLanguage", "selectNode", "openOverviewFeedback", "observeDeliverableRead", `
-const { resolveLiveRunOverview, liveTaskLifecycleCopy, liveWorkOverviewCopy, plainLiveTaskLabel, liveTaskDisplayLabel, liveRunTaskNodes, resolveLiveTaskLifecycle, normalizeLiveOwnerReport } = helpers;
+const { resolveLiveRunOverview, liveTaskLifecycleCopy, liveWorkOverviewCopy, plainLiveTaskLabel, liveTaskDisplayLabel, liveRunTaskNodes, resolveLiveTaskLifecycle, resolveLiveNodeTaskLifecycle, normalizeLiveOwnerReport } = helpers;
 const selectedProjectId = "project-a";
 const localize = (value) => value;
 const formatSessionTime = (at) => at;
 const appendObservedTime = (parent, at) => { const time = makeElement("time"); time.dateTime = at; parent.append(time); return time; };
 ${shippedHelper(html, "deliverableOpenHref")}
 ${shippedHelper(html, "renderRunOverview")}
-return renderRunOverview;`)(root, element, (node) => { node.children = []; }, { ...workOverviewHelpers, resolveLiveRunOverview, liveTaskLifecycleCopy }, language,
+return renderRunOverview;`)(root, element, (node) => { node.children = []; }, { ...workOverviewHelpers, resolveLiveRunOverview, liveTaskLifecycleCopy, resolveLiveNodeTaskLifecycle }, language,
     (...args) => opened.push(args), (item) => feedback.push(item), (item) => read.push(item));
   const text = (node) => [node.textContent, ...node.children.map(text)].join(" ");
   return { root, render, text, opened, read, feedback };
 }
+
+test("ordinary overview shows a current outcome failure instead of the owner's old complete report", () => {
+  const runId = "current-product-review";
+  const taskPacketId = "task:" + "a".repeat(20);
+  const snapshot = { run: { id: runId, status: "completed", active: false }, deliverables: [],
+    nodes: [{ id: "writer", runId, kind: "worker", taskPacketId, status: "completed", active: false, task: "现有任务", ownerAgent: "backend",
+      ownerReport: { runId, taskPacketId, ownerAgent: "backend", resultStatus: "reported_complete", summary: "旧完成说明", evidenceLevel: "owner_reported", nativeInvocationVerified: false } }],
+    productOutcomeReview: { schemaVersion: "meta-kim-live-product-outcome-v1", runId, provenance: "recorded", status: "fail", reviewDigest: "a".repeat(64),
+      criteria: [{ criterionId: "K1", required: true, status: "fail" }], taskCriteria: [{ taskPacketId, criterionId: "K1", required: true, verdict: "fail" }],
+      revisionTaskPacketIds: [], nextAction: { action: "prepare_revision", stage: "review", taskPacketIds: [taskPacketId], criterionIds: ["K1"] }, nativeInvocationVerified: false, publicReady: false } };
+  const page = ordinaryOverviewHarness(); page.render(snapshot);
+  assert.equal(page.root.dataset.state, "in_progress");
+  assert.match(page.text(page.root), /评审|验收/);
+  assert.doesNotMatch(page.text(page.root), /旧完成说明/);
+});
 
 test("ordinary summary shows seven finished tasks without empty result, blocker or activity cards", () => {
   const runId = "ordinary-seven";
@@ -4400,7 +4415,7 @@ test("overview reuses guarded timestamp rendering with localized copy and no emp
     const render = new Function("runOverview", "makeElement", "clearChildren", "resolveLiveRunOverview", "liveTaskLifecycleCopy", "DISPLAY_FORMAT", "currentLanguage", "workHelpers", "liveUiLocale", `
 const selectedProjectId = "";
 const localize = (value) => value;
-const { liveWorkOverviewCopy, plainLiveTaskLabel, liveTaskDisplayLabel, liveRunTaskNodes, resolveLiveTaskLifecycle, normalizeLiveOwnerReport } = workHelpers;
+const { liveWorkOverviewCopy, plainLiveTaskLabel, liveTaskDisplayLabel, liveRunTaskNodes, resolveLiveTaskLifecycle, resolveLiveNodeTaskLifecycle, normalizeLiveOwnerReport } = workHelpers;
 ${serializeLiveTokenUsageResolvers()}
 ${["renderRunOverview", "appendObservedTime", "formatTime", "formatSessionTime", "display"].map((name) => shippedHelper(html, name)).join("\n")}
 return renderRunOverview;`)(overview, makeElement, (element) => { element.children = []; }, resolveLiveRunOverview, liveTaskLifecycleCopy, displayFormat, language, workOverviewHelpers, liveUiLocale);
@@ -7453,7 +7468,7 @@ return (node)=>[nodeDisplayState(node),nodeStateCopy(node),nodeShortStateCopy(no
   const overview = element("section");
   const render = new Function("runOverview", "makeElement", "clearChildren", "resolveLiveRunOverview", "liveTaskLifecycleCopy", "workHelpers", `
 const selectedProjectId='p'; const currentLanguage='zh';
-const { liveWorkOverviewCopy, plainLiveTaskLabel, liveTaskDisplayLabel, liveRunTaskNodes, resolveLiveTaskLifecycle, normalizeLiveOwnerReport } = workHelpers;
+const { liveWorkOverviewCopy, plainLiveTaskLabel, liveTaskDisplayLabel, liveRunTaskNodes, resolveLiveTaskLifecycle, resolveLiveNodeTaskLifecycle, normalizeLiveOwnerReport } = workHelpers;
 ${serializeLiveTokenUsageResolvers()}
 ${shippedHelper(html, "renderRunOverview")}
 return renderRunOverview;`)(overview, element, (node) => { node.children = []; }, resolveLiveRunOverview, liveTaskLifecycleCopy, workOverviewHelpers);

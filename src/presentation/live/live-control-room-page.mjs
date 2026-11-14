@@ -4831,7 +4831,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (!runOverview) return;
     const overview = resolveLiveRunOverview(snapshot, currentLanguage);
     const copy = liveWorkOverviewCopy(currentLanguage);
-    const work = liveRunTaskNodes(snapshot).map((node) => ({ node, lifecycle: resolveLiveTaskLifecycle(node, snapshot?.run?.id) }));
+    const work = liveRunTaskNodes(snapshot).map((node) => ({ node, lifecycle: resolveLiveNodeTaskLifecycle(node, snapshot) }));
     const completed = work.filter((item) => item.lifecycle.state === "completed");
     const listed = completed.length ? completed : work;
     const renderKey = JSON.stringify([overview, work, currentLanguage, selectedProjectId]);
@@ -4891,14 +4891,15 @@ const CLIENT_SCRIPT = String.raw`(() => {
       feedback.addEventListener("click", () => openOverviewFeedback(available));
       task.append(feedback);
     }
-    const issues = work.filter((item) => ["failed", "blocked", "cancelled"].includes(item.lifecycle.detail));
-    const runNeedsAction = ["failed", "blocked", "cancelled"].includes(overview.taskLifecycle.detail);
+    const issues = work.filter((item) => ["failed", "blocked", "cancelled", "outcome_revision_required"].includes(item.lifecycle.detail));
+    const runNeedsAction = ["failed", "blocked", "cancelled", "outcome_revision_required"].includes(overview.taskLifecycle.detail);
     if (issues.length || runNeedsAction) {
       const attention = item("blocker", copy.attention);
-      if (!issues.length) attention.append(makeElement("p", "run-overview-value", snapshot?.run?.statusReason
-        ? plainLiveTaskLabel(snapshot.run.statusReason, currentLanguage) : liveTaskLifecycleCopy(overview.taskLifecycle, currentLanguage).detail));
+      if (!issues.length) attention.append(makeElement("p", "run-overview-value", overview.blocker?.label || (snapshot?.run?.statusReason
+        ? plainLiveTaskLabel(snapshot.run.statusReason, currentLanguage) : liveTaskLifecycleCopy(overview.taskLifecycle, currentLanguage).detail)));
       issues.forEach(({ node, lifecycle }) => {
-        const reason = node.statusReason || normalizeLiveOwnerReport(node, snapshot?.run?.id)?.summary;
+        const reason = lifecycle.detail === "outcome_revision_required" ? liveTaskLifecycleCopy(lifecycle, currentLanguage).detail
+          : node.statusReason || normalizeLiveOwnerReport(node, snapshot?.run?.id)?.summary;
         const row = makeElement("p", "run-overview-value", liveTaskDisplayLabel(node, currentLanguage)
           + " · " + (reason ? plainLiveTaskLabel(reason, currentLanguage) : liveTaskLifecycleCopy(lifecycle, currentLanguage).detail));
         row.title = reason || "";

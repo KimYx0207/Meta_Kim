@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { open, mkdir, readFile, writeFile, copyFile, chmod, stat } from "node:fs/promises";
+import { open, mkdir, readFile, writeFile, copyFile, chmod, stat, lstat } from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { inspectTrustedPath, inspectPlainAbsolutePath } from "../../../scripts/safe-managed-file-operations.mjs";
@@ -148,6 +148,55 @@ export function createLiveWorkspaceRepository({ projectRoot, profile = "default"
       format: material.format, text, totalBytes: material.bytes, eof, sourceState,
       nextCursor: eof ? null : Buffer.from(JSON.stringify({ artifactId: material.artifactId, version, offset: offset + used })).toString("base64url") };
   }
+  async function readDesignProjection(runId) {
+    const sourceRef = `.meta-kim/state/${profile}/governed-executions/${runId}.json`;
+    const ref = sourceRef.replace(/\.json$/u, ".workspace-design.json");
+    // Absence permits the small historical-artifact reader. An existing unsafe,
+    // stale or malformed projection must not silently fall back to another view.
+    try { await lstat(path.join(root, ref)); }
+    catch (error) { if (error.code === "ENOENT") return null; throw error; }
+    const observed = await inspect(ref, null, policy.maxDesignBytes);
+    const handle = await open(trusted(ref), constants.O_RDONLY | (constants.O_NOFOLLOW || 0));
+    const bytes = Buffer.alloc(observed.bytes);
+    try {
+      let position = 0;
+      while (position < bytes.length) {
+        const read = await handle.read(bytes, position, bytes.length - position, position);
+        if (!read.bytesRead) break;
+        position += read.bytesRead;
+      }
+      const extra = await handle.read(Buffer.alloc(1), 0, 1, position);
+      workspaceRequire(position === bytes.length && extra.bytesRead === 0 && workspaceBytesDigest(bytes) === observed.sha256,
+        "workspace_material_changed", 409);
+    } finally { await handle.close(); }
+    let record;
+    try { record = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); }
+    catch { throw workspaceFailure("workspace_input_json_invalid"); }
+    const source = record?.source;
+    workspaceRequire(record?.schemaVersion === "meta-kim-live-workspace-design-projection-v1" && record.runId === runId &&
+      record.profile === profile && source?.ref === sourceRef && /^[a-f0-9]{64}$/u.test(source.sha256 || "") &&
+      Number.isSafeInteger(source.bytes) && source.bytes > 0 && source.identity?.size === String(source.bytes) &&
+      record.nativeInvocationVerified === false && record.completionVerified === false && record.publicReadyAuthority === false,
+      "workspace_design_projection_binding_invalid", 409);
+    const softwareDesign = record.design?.softwareDesign;
+    workspaceRequire(softwareDesign?.architecture && Array.isArray(softwareDesign.modules) &&
+      workspaceBytesDigest(Buffer.from(JSON.stringify(softwareDesign))) === record.softwareDesignSha256,
+      "workspace_design_projection_binding_invalid", 409);
+    const identityKeys = ["dev", "ino", "size", "mtimeNs", "ctimeNs"];
+    const checkSourceIdentity = async () => {
+      const info = await stat(trusted(sourceRef), { bigint: true });
+      workspaceRequire(info.isFile() && identityKeys.every(key => source.identity?.[key] === String(info[key])),
+        "workspace_material_changed", 409);
+      return info;
+    };
+    // The source digest was computed by the ordinary publisher. Polling reads
+    // only this bounded projection and checks the original's trusted file identity
+    // before/after; it does not re-read a large run or authenticate its provenance.
+    await checkSourceIdentity();
+    const design = { softwareDesign };
+    await checkSourceIdentity();
+    return { design, sha256: source.sha256, recordOrigin: record.recordOrigin };
+  }
   return { projectRoot: root, profile, trusted, inspect, putBytes, putSource, verifyMaterial, verifyMaterialForDisplay, materialPage,
     async historicalReviewMaterial(runId, review) {
       workspaceRequire(review && /^[a-f0-9]{64}$/u.test(review.sha256 || "") && review.version === workspaceVersion(review.sha256),
@@ -159,6 +208,8 @@ export function createLiveWorkspaceRepository({ projectRoot, profile = "default"
     async readState() { return readSpineStateIncludingInactive(root, { profile }); },
     async readPublishedDesign(runId) {
       workspaceRequire(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(runId), "workspace_run_invalid");
+      const projection = await readDesignProjection(runId);
+      if (projection) return projection;
       const candidates = [`.meta-kim/state/${profile}/governed-executions/${runId}.json`,
         `.meta-kim/state/${profile}/runs/${runId}/artifact.json`, `.meta-kim/state/${profile}/runs/${runId}/run.json`];
       for (const ref of candidates) {

@@ -119,6 +119,8 @@ export async function runDiagnosticReadPlan(run, options, scopes) {
       selectionReason: "The diagnostic host selects current discovered read-capable sources for an independent read-only lane.",
       handoffTarget: verificationAgent.id, qualityBar: "Source-bound findings with no invocation or acceptance overclaim.",
       referenceDirection: `Read only ${scope}; the diagnostic exercises protocol and does not certify a professional result.`,
+      projectCapabilityIntent: { mode: "preparation", purpose: "diagnostic",
+        rationale: "This bounded source inspection checks protocol and evidence; it does not deliver a persistent project professional capability.", evidenceRefs: [scope] },
       selectedCapabilityProviders: { agent, verificationAgent, skill }, effectClass: "read_only_worker", taskFacts: diagnosticFacts(todayTask) };
   });
   const thinkingInput = { taskHash: criticalInput.taskHash, intentDigest: null,

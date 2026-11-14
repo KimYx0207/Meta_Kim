@@ -1,6 +1,6 @@
 {
   "name": "meta-kim",
-  "version": "3.13.0",
+  "version": "3.14.0",
   "description": "General agent governance for evidence-backed decisions, capability discovery, orchestration and outcome verification across domains, with primary Claude Code/Codex projections and opt-in compatibility adapters.",
   "private": true,
   "type": "module",
@@ -301,6 +301,7 @@
     "src/application/live/live-viewport-budget.mjs",
     "src/application/live/plan-live-continuation.mjs",
     "src/application/live/prepare-live-projection-record.mjs",
+    "src/application/live/prepare-live-workspace-design-record.mjs",
     "src/application/installer/ensure-stable-global-projection-package.mjs",
     "src/application/installer/beta-runtime-adapter-bundle.mjs",
     "src/application/evolution/apply-knowledge-lifecycle-transition.mjs",
@@ -401,7 +402,8 @@
     "docs/workbuddy.md",
     "docs/doubao-work.md",
     "docs/verification/meta-flow-closure.md",
-    "docs/verification/meta-flow-probe.mjs"
+    "docs/verification/meta-flow-probe.mjs",
+    "docs/verification/project-specialization-20261115.md"
   ],
   "author": "KimYx0207",
   "license": "Apache-2.0",

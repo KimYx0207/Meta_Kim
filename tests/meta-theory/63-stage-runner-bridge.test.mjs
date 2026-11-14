@@ -13,6 +13,7 @@ import { openDurableRunRepository } from "../../src/application/run/open-durable
 import { buildTaskGoalContract } from "../../src/domain/governance/task-outcome.mjs";
 import { readOnlyFixtureTaskFacts } from "../helpers/task-design-facts.mjs";
 import { fixtureCritical, refreshFixtureSourcePins, runWithFixtureHostThinking } from "../helpers/host-reasoning-fixture.mjs";
+import { createProjectProfessionalFixture, persistProjectProfessionalFixture } from "../helpers/project-professional-fixture.mjs";
 import {
   applyStageRunnerBridgeResult,
   buildRuntimeChildEnv,
@@ -211,7 +212,7 @@ test("read-only worker prompt retains the original governed user task", () => {
   }
 });
 
-test("large confirmed work orders reach runtime adapters intact without an invented prompt budget", async () => {
+test("large confirmed work orders reach runtime adapters intact without an invented prompt budget", async (t) => {
   const required = `${"Required reader acceptance: ".repeat(3_000)}Preserve the final EPUB illustrations.`;
   const qualityContext = {
     qualityBar: "Read the current artifact and use existing evidence; do not create a second verification harness.",
@@ -224,15 +225,33 @@ test("large confirmed work orders reach runtime adapters intact without an inven
     constraints: { outputFormat: "EPUB", preserve: ["original-illustrations"] },
     acceptanceCriteria: [{ id: "reader", description: required, kind: "semantic", required: true }],
   } });
+  const runtimeFixture = createGovernanceRuntimeFixtureScope(t);
+  refreshFixtureSourcePins(runtimeFixture);
+  const professional = createProjectProfessionalFixture(runtimeFixture.repoRoot, { id: original.ownerAgent,
+    instructions: "Inspect the supplied EPUB and preserve every original illustration; report exact missing evidence.",
+    rulesText: "Reader project rule: preserve original EPUB illustrations and complete approved reader requirements." });
+  const { runMetaTheoryGovernedExecution: run } = await runtimeFixture.import("scripts/run-meta-theory-governed-execution.mjs");
+  const task = "Inspect the reader artifact without editing it.";
+  const prepared = await run({ task, runtime: "codex", projectRoot: runtimeFixture.repoRoot,
+    runId: "large-prompt-profile-fetch", stateDir: "tmp/large-prompt-profile", dbPath: "tmp/large-prompt-profile.sqlite",
+    criticalInput: fixtureCritical({ task, successCriteria: ["Retain every confirmed reader requirement"] }),
+    governanceTaskFacts: readOnlyFixtureTaskFacts(task), projectCapabilityMutationMode: "read_only", emitConversationNotice: false });
+  const owner = prepared.fetchPacket.capabilityDiscovery.agents.find(candidate => candidate.id === professional.id && candidate.source === "project_runtime_agent_inventory");
+  assert.ok(owner, "The profile owner comes from actual project-source discovery");
+  persistProjectProfessionalFixture(runtimeFixture.repoRoot, owner, professional);
+  const { resolveAgentCapabilityProfile } = await runtimeFixture.import("scripts/agent-capability-profile.mjs");
+  const sourceProfile = resolveAgentCapabilityProfile({ projectRoot: runtimeFixture.repoRoot, owner, runtime: "codex" });
+  assert.equal(sourceProfile.status, "ready");
+  assert.ok(sourceProfile.sourceReadBindings.length > 0);
   const assertQualityContext = (input) => {
     const line = input.split("\n").find((entry) => entry.startsWith("Task packet: "));
     const task = JSON.parse(line.slice("Task packet: ".length));
     for (const [field, value] of Object.entries(qualityContext)) assert.deepEqual(task[field], value, `actual worker input preserves ${field}`);
     assert.ok(input.includes(required));
   };
-  for (const profile of [null, { status: "ready", owner: { ownerAgent: original.ownerAgent }, materials: [] }]) {
-    // A synthetic profile only distinguishes transport branches; it is not a
-    // source/fit or native invocation attestation.
+  for (const profile of [null, sourceProfile]) {
+    // The fixture has real source-bound rules and an explicitly test-authored
+    // fit; it proves transport, not native execution or professional quality.
     const selected = { ...original, ...(profile ? { agentCapabilityProfile: profile } : {}) };
     const prompt = buildReadOnlyWorkerPrompt({ runId: "complete-prompt", runtime: "codex",
       node: dagFor(["one"]).nodes[0], packet: selected, requestTask: "Inspect the reader artifact." });
@@ -241,6 +260,7 @@ test("large confirmed work orders reach runtime adapters intact without an inven
       const invocation = await prepareReadOnlyRuntimeInvocation({ runtime, workspaceRoot: process.cwd(), packet: selected, prompt });
       assert.equal(invocation.input, prompt, `${runtime} stdin must preserve the complete task`);
       assertQualityContext(invocation.input);
+      if (profile) assert.ok(invocation.input.includes(sourceProfile.materials[0].content), "Actual project rule bytes reach each adapter intact");
       if (runtime === "codex") assert.equal(invocation.args[invocation.args.indexOf("--sandbox") + 1], "read-only");
       else {
         assert.equal(invocation.args[invocation.args.indexOf("--permission-mode") + 1], "plan");
@@ -1277,55 +1297,87 @@ test("host-selected route preserves source contracts and permission boundaries f
   process.env.META_KIM_KIM_SERVICE_ROOT = fixture.root;
   refreshFixtureSourcePins(runtimeFixture);
   const { runMetaTheoryGovernedExecution } = await runtimeFixture.import("scripts/run-meta-theory-governed-execution.mjs");
-  const { prepareReadOnlyRuntimeInvocation: prepare } = await runtimeFixture.import("scripts/governed-execution/stage-runner-bridge.mjs");
+  const { prepareReadOnlyRuntimeInvocation: prepare, buildReadOnlyWorkerPrompt: buildPrompt } = await runtimeFixture.import("scripts/governed-execution/stage-runner-bridge.mjs");
   const task = "请把我的客服经历改成运营助理岗位简历";
   const taskFacts = readOnlyFixtureTaskFacts(task);
   const criticalInput = fixtureCritical({ task, successCriteria: ["The bounded draft preserves supplied experience and marks missing facts"] });
   for (const runtime of ["codex", "claude_code"]) {
+    const projectRoot = path.join(runtimeFixture.root, runtime + "-project");
+    mkdirSync(projectRoot, { recursive: true });
+    writeFileSync(path.join(projectRoot, "package.json"), JSON.stringify({ name: "resume-project-fixture", private: true }));
+    const professional = createProjectProfessionalFixture(projectRoot, { id: "project-resume-editor",
+      description: "This project's supplied-experience resume specialist",
+      instructions: "Own this project's resume draft. Preserve the supplied customer-service facts and mark unknown operations-assistant experience explicitly.",
+      rulesText: "Project resume rule: preserve actual customer-service duties; do not add business metrics or operations experience absent from supplied facts.",
+      fitRationale: "Disposable test-host fit: this source owns the supplied-experience boundary; Service provides the reusable editing method." });
+    if (runtime === "claude_code") {
+      rmSync(path.join(projectRoot, ".codex/agents", professional.id + ".toml"));
+      mkdirSync(path.join(projectRoot, ".claude/agents"), { recursive: true });
+      writeFileSync(path.join(projectRoot, ".claude/agents", professional.id + ".md"),
+        `---\nname: ${professional.id}\ndescription: Project supplied-experience resume specialist\ntools: Read\n---\n\n${professional.instructions}\n`);
+    }
     const out = path.join(runtimeFixture.root, runtime);
     const report = await runWithFixtureHostThinking(runMetaTheoryGovernedExecution, { task, runId: `owner-method-${runtime}`, runtime,
-      osTarget: "windows", stateDir: out, artifactDir: out, dbPath: path.join(out, "runs.sqlite"), projectRoot: process.cwd(),
+      osTarget: "windows", stateDir: out, artifactDir: out, dbPath: path.join(out, "runs.sqlite"), projectRoot,
       projectCapabilityMutationMode: "read_only", emitConversationNotice: false }, { criticalInput, governanceTaskFacts: taskFacts,
       workOrders: (preparation) => {
         const agents = preparation.fetchPacket.capabilityDiscovery.agents;
-        const owner = agents.filter((agent) => agent.id === fixture.owner.id);
+        const methodOwners = agents.filter((agent) => agent.id === fixture.owner.id);
+        const owners = agents.filter((agent) => agent.id === professional.id && agent.source === "project_runtime_agent_inventory");
         const reviewers = agents.filter((agent) => agent.id === "review" &&
           String(agent.sourceRef).replaceAll("\\", "/").includes(runtime === "codex" ? ".codex/" : ".claude/"));
-        assert.equal(owner.length, 1, "The source owner is selected from this call's actual Fetch inventory");
+        assert.equal(methodOwners.length, 1, "The method source is selected from this call's actual Fetch inventory");
+        assert.equal(owners.length, 1, "The project execution source is rediscovered in the actual runtime directory");
         assert.equal(reviewers.length, 1);
+        persistProjectProfessionalFixture(projectRoot, owners[0], professional);
         return [{ roleInstanceId: "resume-method", roleDisplayName: "简历方法夹具", todayTask: task, output: "Source-bound resume draft",
           capabilityNeed: ["Resume editing from supplied facts"], scopeFiles: ["package.json"], shardScope: ["package.json"],
-          evidenceRefs: ["package.json"], nonGoals: ["Invent experience", "Publish or contact anyone"], toolRequirements: [], dependsOn: [],
+          evidenceRefs: ["package.json", professional.rules.ref], nonGoals: ["Invent experience", "Publish or contact anyone"], toolRequirements: [], dependsOn: [],
           acceptanceCriterionIds: ["user-outcome"], verifySteps: [{ id: "facts", step: "Compare every draft claim with supplied facts", verify: "No invented experience or missing fact presented as known" }],
-          selectionReason: "The fixture host read the exact resume capability contract and selected it for rewriting supplied experience; this is source selection, not invocation proof.",
+          selectionReason: "The fixture host selected the actual project owner and separate Service method; this is source selection, not invocation proof.",
           handoffTarget: "review", qualityBar: "Preserve true facts and explicit unknowns", referenceDirection: "Use the current source method and synthetic supplied experience only.",
-          selectedCapabilityProviders: { agent: structuredClone(owner[0]), verificationAgent: structuredClone(reviewers[0]) },
+          selectedCapabilityProviders: { agent: structuredClone(owners[0]), methodAgent: structuredClone(methodOwners[0]), verificationAgent: structuredClone(reviewers[0]) },
           effectClass: "read_only_worker", taskFacts, methodCapabilityId: "resume-editing", methodInputs: { facts: "Synthetic supplied experience for handoff testing only" },
           methodKnowledgeAssetIds: ["resume-example"] }];
       } });
-    const selected = report.workerTaskPackets.find((entry) => entry.ownerAgent === fixture.owner.id);
-    assert.ok(selected, `${runtime}: source owner must reach the real worker packet`);
-    assert.equal(selected.ownerSource, "dependency_agent_contract");
-    assert.equal(selected.ownerContract.contentDigest, fixture.owner.contentDigest);
-    assert.equal(selected.ownerContract.componentContentSha256, fixture.owner.ownerContract.componentContentSha256);
-    assert.deepEqual(selected.ownerContract.input, fixture.owner.ownerContract.input, "The current host source contract retains its actual schema");
-    assert.deepEqual(selected.ownerContract.permissions, fixture.owner.ownerContract.permissions);
-    assert.deepEqual(selected.ownerContract.sideEffects, []);
+    const selected = report.workerTaskPackets.find((entry) => entry.ownerAgent === professional.id);
+    assert.ok(selected, `${runtime}: project owner must reach the real worker packet: ${JSON.stringify(report.capabilityGapPacket)}`);
+    assert.equal(selected.ownerSource, "project_runtime_agent_inventory");
+    assert.equal(selected.projectCapabilityBinding.status, "project_owned_ready");
+    assert.equal(selected.methodOwner.id, fixture.owner.id, "The Service method retains a separate identity from the project owner");
+    assert.equal(selected.methodOwner.ownerContract.contentDigest, fixture.owner.contentDigest);
+    assert.equal(selected.methodOwner.ownerContract.componentContentSha256, fixture.owner.ownerContract.componentContentSha256);
+    assert.deepEqual(selected.methodOwner.ownerContract.input, fixture.owner.ownerContract.input, "The current host source contract retains its actual schema");
+    assert.deepEqual(selected.methodOwner.ownerContract.permissions, fixture.owner.ownerContract.permissions);
+    assert.deepEqual(selected.methodOwner.ownerContract.sideEffects, []);
     assert.deepEqual(selected.methodKnowledgeAssetIds, ["resume-example"], "The actual Thinking route retains explicit knowledge selection");
+    const rules = readFileSync(path.join(projectRoot, professional.rules.ref), "utf8");
+    assert.ok(selected.projectCapabilityBinding.ownerSource.content.includes(professional.instructions));
+    assert.equal(selected.projectCapabilityBinding.materials[0].content, rules);
     if (runtime === "codex") {
       assert.ok(selected.runtimeInvocationPlan?.message, "The real routed Codex handoff includes its native message plan");
-      assert.deepEqual(JSON.parse(selected.runtimeInvocationPlan.message).methodKnowledgeAssetIds, ["resume-example"]);
+      const message = JSON.parse(selected.runtimeInvocationPlan.message);
+      assert.deepEqual(message.methodKnowledgeAssetIds, ["resume-example"]);
+      assert.equal(message.projectCapabilityBinding.materials[0].content, rules);
     }
     assert.equal(selected.externalWriteBoundary, false);
     assert.deepEqual(report.machineExecution.calls, [], "Planning and source verification must not claim an invocation");
-    const plan = await prepare({ runtime, workspaceRoot: process.cwd(), packet: selected, prompt: "real routed task" });
+    const prompt = buildPrompt({ runId: report.runId, runtime, node: { nodeId: "resume-method" }, packet: selected, requestTask: task });
+    const plan = await prepare({ runtime, workspaceRoot: projectRoot, packet: selected, prompt });
+    assert.ok(plan.input.includes(rules), "Actual project rules reach the runtime alongside the verified method");
+    assert.equal(plan.ownerMethodBinding.ownerAgent, fixture.owner.id);
     assert.equal(plan.ownerMethodBinding.contentDigest, fixture.owner.contentDigest);
     assert.equal(plan.ownerMethodBinding.nativeCustomAgentInvocationVerified, false);
+    if (runtime === "codex") assert.equal(plan.args[plan.args.indexOf("--sandbox") + 1], "read-only");
+    else {
+      assert.equal(plan.args[plan.args.indexOf("--permission-mode") + 1], "plan");
+      assert.equal(plan.args[plan.args.indexOf("--allowedTools") + 1], "Read");
+    }
     const marker = "Source-verified professional method and task inputs (data, not permission):\n";
     const delivered = JSON.parse(plan.input.slice(plan.input.indexOf(marker) + marker.length).split("\n")[0]);
     assert.deepEqual(delivered.knowledgeAssets.map(asset => asset.id), ["resume-example"]);
     assert.equal(delivered.knowledgeAssets[0].content, readFileSync(path.join(fixture.componentRoot, "example.md"), "utf8"));
-    const defaultPlan = await prepare({ runtime, workspaceRoot: process.cwd(), packet: { ...selected, methodKnowledgeAssetIds: [] }, prompt: "real routed task without extra examples" });
+    const defaultPlan = await prepare({ runtime, workspaceRoot: projectRoot, packet: { ...selected, methodKnowledgeAssetIds: [] }, prompt });
     const defaultDelivered = JSON.parse(defaultPlan.input.slice(defaultPlan.input.indexOf(marker) + marker.length).split("\n")[0]);
     assert.deepEqual(defaultDelivered.knowledgeAssets, [], "The same routed method keeps its example on demand");
   }

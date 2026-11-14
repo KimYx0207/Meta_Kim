@@ -141,7 +141,10 @@ test("actual runner consumes discovery before design and later review without re
   const runtimeDiscovery = items => ({ ...discoveryInput(items), intentDigest: initialDigest });
   const runtimeDesign = () => ({ ...designInput(), intentDigest: initialDigest });
   const governanceTaskFacts = readOnlyFixtureTaskFacts(task);
-  const workOrders = preparation => [fixtureReadWorkOrder(preparation, { id: "package-report", todayTask: task, output: "Exact package name report", criterionIds: ["user-outcome"], taskFacts: readOnlyFixtureTaskFacts(task) })];
+  // Thinking explicitly supplies the same current inputs as the reviewed design;
+  // projection must preserve them, not introduce a second source of method data.
+  const workOrders = preparation => [{ ...fixtureReadWorkOrder(preparation, { id: "package-report", todayTask: task, output: "Exact package name report", criterionIds: ["user-outcome"], taskFacts: readOnlyFixtureTaskFacts(task) }),
+    capabilityNeed: runtimeDesign().taskSlices[0].capabilityNeed, methodInputs: runtimeDesign().taskSlices[0].methodInputs }];
   const base = { task, confirmedIntent: initialIntent, sharedUnderstandingConfirmed: understanding(initialIntent), criticalInput, governanceTaskFacts, stateDir: path.resolve("tmp/product"), dbPath: path.resolve("tmp/product.sqlite"), projectCapabilityMutationMode: "read_only" };
   const discovery = await runMetaTheoryGovernedExecution({ ...base, runId: "requirements-before-design", designRequired: true, requirementsDiscoveryInput: runtimeDiscovery([question("audience")]) });
   assert.equal(discovery.artifactKind, "host_preparation");

@@ -23,10 +23,11 @@ import {
 import { loadEffectiveRuntimeCapabilityClaims } from "./effective-runtime-capability-claims.mjs";
 import { evaluateRouteExecutionGate } from "./runtime-execution-gate.mjs";
 import { discoverDependencyAgentContracts, matchDependencyAgentContracts, readDependencyProjectOverrides, stableJson } from "./dependency-agent-discovery.mjs";
-import { discoverDependencySkillContracts } from "./dependency-skill-discovery.mjs";
+import { discoverDependencySkillContracts, loadDependencySkillMethod } from "./dependency-skill-discovery.mjs";
+import { prepareCurrentHostOperation } from "./governed-execution/host-operation-preparation.mjs";
 import { LOCAL_DEPENDENCY_TOOL_CONTRACT } from "./governed-execution/local-dependency-tool-contract.mjs";
 import { durableCapabilityRequestsFromTask } from "./capability-request-intent.mjs";
-import { resolveAgentCapabilityProfile } from "./agent-capability-profile.mjs";
+import { assessProjectCapabilityBinding, resolveAgentCapabilityProfile } from "./agent-capability-profile.mjs";
 import { inspectTrustedPath } from "./safe-managed-file-operations.mjs";
 import { decomposeTaskActions, extractActionPaths } from "./task-action-decomposition.mjs";
 import { scopeComparisonKey, scopeKeysAreProvablyDisjoint } from "./task-scope-comparison.mjs";
@@ -498,8 +499,8 @@ function compactCapabilityProvider(entry, source, type = entry.type ?? "skills")
 
 async function scanProjectFiles({ runtime: runtimeName, dir, type, source, extensions, recursive = false, maxDepth = 2 }) {
   const providers = [];
-  const root = repoPath(dir);
-  if (!(await exists(root))) return providers;
+  const root = inspectTrustedPath(dependencyProjectRoot, dir)?.target;
+  if (!root || !(await exists(root))) return providers;
 
   async function visit(absDir, relDir, depth) {
     const entries = await fs.readdir(absDir, { withFileTypes: true });
@@ -513,12 +514,16 @@ async function scanProjectFiles({ runtime: runtimeName, dir, type, source, exten
       if (!entry.isFile()) continue;
       if (!extensions.some((extension) => entry.name.endsWith(extension))) continue;
       const id = relPath.replace(/\.[^.]+$/, "").replace(/\\/g, "/");
+      const checked = inspectTrustedPath(dependencyProjectRoot, path.join(dir, relPath));
+      if (!checked) continue;
       providers.push({
         id,
         type,
         source,
         runtime: runtimeName,
         sourceRef: toPosix(path.join(dir, relPath)),
+        sourceRoot: dependencyProjectRoot,
+        contentDigest: createHash("sha256").update(await fs.readFile(checked.target)).digest("hex"),
       });
     }
   }
@@ -999,6 +1004,9 @@ const projectRuntimeAgentCandidates = await projectRuntimeAgents();
 const dependencyAgentDiscovery = await discoverDependencyAgentContracts({
   projects: registryDependencies, projectRoot: dependencyProjectRoot, localOverrides,
 });
+const dependencyMethodSkills = fetchOnly || hostWorkOrder
+  ? await discoverDependencySkillContracts({ projects: registryDependencies, projectRoot: dependencyProjectRoot, localOverrides, indexOnly: true })
+  : { capabilities: [], sources: [] };
 const dependencySkillDiscovery = localToolRequest?.status === "ready"
   ? await discoverDependencySkillContracts({
       request: localToolRequest.request,
@@ -1157,7 +1165,14 @@ const dependencyMethodHandoff = buildDependencyMethodHandoff({ task, match: prof
   ? { ...dependencyAgentMatch, selected: methodContractOwners.length === 1 && methodContractOwners[0].routeEligible === true &&
     methodContractOwners[0].executionBlock !== true ? methodContractOwners[0] : null }
   : dependencyAgentMatches, scopeExclusion: dependencyAgentScopeExclusion });
-const repoCanonicalSkillProviders = capabilityEntries(repoCapabilityIndex, "skills").map((entry) => compactCapabilityProvider(entry, "repo_canonical_capability_index", "skills"));
+const repoCanonicalSkillProviders = await Promise.all(capabilityEntries(repoCapabilityIndex, "skills").map(async (entry) => {
+  const provider = compactCapabilityProvider(entry, "repo_canonical_capability_index", "skills");
+  if (entry.namespace !== "canonical-reference") return provider;
+  const source = inspectTrustedPath(repoPath("."), entry.path);
+  if (!source || !(await fs.stat(source.target)).isFile()) return { ...provider, routeEligible: false };
+  return { ...provider, sourceRoot: path.dirname(source.target),
+    contentDigest: createHash("sha256").update(await fs.readFile(source.target)).digest("hex") };
+}));
 const projectRuntimeSkillProviders = await projectSkillProviders();
 const codexGlobalSkillFileProviders = await codexGlobalSkillProviders();
 const repoCanonicalCapabilityProviders = [
@@ -1489,6 +1504,7 @@ const ownerDiscoveryPacket = {
     { source: "repo_canonical_capability_index", checked: true, sourceRef: "config/capability-index/meta-kim-capabilities.json" },
     ...dependencyAgentDiscovery.sources.map((source) => ({ source: "dependency_agent_contract", checked: true, ...source })),
     ...dependencySkillDiscovery.sources.map((source) => ({ source: "dependency_skill_contract", checked: true, ...source })),
+    ...dependencyMethodSkills.sources.map((source) => ({ source: "dependency_skill_contract", checked: true, ...source })),
     { source: "runtime_mirror_capability_indexes", checked: true, sourceRef: ".claude/.codex/.cursor/openclaw capability-index mirrors" },
     { source: "project_projection_policy", checked: true, sourceRef: `.meta-kim/local.overrides.json#projectProjectionMode=${projectProjectionMode}` },
     { source: "claude_project_inventory", checked: true, sourceRef: ".claude/agents; .claude/skills; .claude/commands; .claude/hooks; .claude/settings.json" },
@@ -1776,6 +1792,7 @@ const reusableProviders = uniqueById(sortProvidersForRuntime([
   ...projectRuntimeCapabilityProviders,
   ...localGlobalCapabilityProvidersAll,
   ...runtimeToolProviders,
+  ...dependencyMethodSkills.capabilities,
 ]));
 
 function referenceOnlyProvider(provider) {
@@ -1934,6 +1951,7 @@ const routeOccurredAt = new Date().toISOString();
 // Inventory references identify observed records, not native invocation or trust.
 if (fetchOnly || hostWorkOrder) {
   const fact = (provider) => Object.fromEntries(["id", "type", "providerType", "source", "sourceRef", "sourceRoot", "sourceKey",
+    "dependencyId", "componentId", "skillContract", "canExecute", "invocationStatus",
     "contentDigest", "description", "boundary", "ownerContract", "runtime", "platformId", "runtimeSupport", "osSupport",
     "routeEligible", "executionEligible", "executionBlock", "layer", "routeEligibility", "cacheEvidenceOnly",
     "validCustomAgentDefinition", "nativeCustomAgentEligible", "ownerBindingMode", "metadata", "risk"]
@@ -1965,7 +1983,7 @@ if (fetchOnly || hostWorkOrder) {
   if (!/^[a-f0-9]{64}$/u.test(hostWorkOrder.inventoryDigest ?? "")) blockers.push("fetch_inventory_binding_required");
   const selected = {};
   for (const [slot, requested] of Object.entries(hostWorkOrder.selectedCapabilityProviders ?? {})) {
-    const pool = ["agent", "verificationAgent"].includes(slot) ? fetchPacket.capabilityDiscovery.agents : fetchPacket.capabilityDiscovery.providers;
+    const pool = ["agent", "methodAgent", "verificationAgent"].includes(slot) ? fetchPacket.capabilityDiscovery.agents : fetchPacket.capabilityDiscovery.providers;
     const matches = pool.filter((provider) => requested?.inventoryRef === provider.inventoryRef &&
       requested.id === provider.id && requested.source === provider.source &&
       requested.sourceRef === provider.sourceRef && (requested.contentDigest ?? null) === (provider.contentDigest ?? null));
@@ -1973,12 +1991,15 @@ if (fetchOnly || hostWorkOrder) {
     else selected[slot] = matches[0];
   }
   const owner = selected.agent;
+  // Project identity and a reusable professional method are distinct bindings.
+  // Both must name current discovered bytes; a method contributes no authority.
+  const methodOwner = selected.methodAgent ?? owner;
   for (const method of requirementsContext?.methods ?? []) {
     const requestedSource = typeof method.sourceRef === "string" ? path.resolve(dependencyProjectRoot, method.sourceRef) : null;
-    const actualSource = owner?.sourceRef ? path.resolve(dependencyProjectRoot, owner.sourceRef) : null;
+    const actualSource = methodOwner?.sourceRef ? path.resolve(dependencyProjectRoot, methodOwner.sourceRef) : null;
     const sameSource = requestedSource && actualSource && (hostOs === "windows"
       ? requestedSource.toLowerCase() === actualSource.toLowerCase() : requestedSource === actualSource);
-    if (owner?.source !== "dependency_agent_contract" || !sameSource ||
+    if (methodOwner?.source !== "dependency_agent_contract" || !sameSource ||
         hostWorkOrder.methodCapabilityId !== method.methodCapabilityId) blockers.push("explicit_material_method_source_conflicts_with_selected_contract");
   }
   if (!owner || !/^[a-f0-9]{64}$/iu.test(String(owner.contentDigest ?? "").replace(/^sha256:/u, ""))) {
@@ -1992,14 +2013,24 @@ if (fetchOnly || hostWorkOrder) {
   }
   const readOnly = ["read_only_worker", "read_only_support"].includes(hostWorkOrder.effectClass);
   const localWrite = hostWorkOrder.effectClass === "local_write";
-  if (owner?.source === "dependency_agent_contract") {
-    const capabilities = owner.ownerContract.capabilities.filter((capability) =>
-      !hostWorkOrder.methodCapabilityId || capability.id === hostWorkOrder.methodCapabilityId ||
-      owner.dependencyId + ":" + capability.id === hostWorkOrder.methodCapabilityId);
-    if (capabilities.length !== 1 || !readOnly || capabilities[0].sideEffects.length) blockers.push("exact_read_only_method_contract_required");
-    if (hostWorkOrder.toolRequirements.some((tool) => !capabilities[0]?.permissions.includes(tool))) blockers.push("method_tool_requirement_exceeds_contract");
-  } else if (hostWorkOrder.methodCapabilityId) blockers.push("explicit_method_requires_exact_discovered_contract");
+  const hostOperationPreparation = prepareCurrentHostOperation({ task, workOrder: hostWorkOrder, owner: methodOwner, projectRoot: dependencyProjectRoot });
+  blockers.push(...hostOperationPreparation.blockers);
+  const hostOperation = hostOperationPreparation.operation;
+  const selectedMethodSkill = Object.values(selected).find(provider => provider?.source === "dependency_skill_contract" &&
+    [provider.id, provider.id.split(":").at(-1)].includes(hostWorkOrder.methodCapabilityId));
+  for (const provider of Object.values(selected).filter(provider => provider?.source === "dependency_skill_contract")) {
+    try { await loadDependencySkillMethod({ provider, projectRoot: dependencyProjectRoot }); }
+    catch (error) { blockers.push("selected_skill_source_unverified:" + provider.id + ":" + error.message); }
+  }
+  if (methodOwner?.source === "dependency_agent_contract") {
+    const capabilities = methodOwner.ownerContract.capabilities.filter((capability) =>
+      selectedMethodSkill || !hostWorkOrder.methodCapabilityId || capability.id === hostWorkOrder.methodCapabilityId ||
+      (methodOwner.dependencyId ?? methodOwner.ownerContract.dependencyId) + ":" + capability.id === hostWorkOrder.methodCapabilityId);
+    if (capabilities.length !== 1 || (!readOnly && !hostOperation) || capabilities[0].sideEffects.length) blockers.push("exact_read_only_method_contract_required");
+    if (!hostOperation && hostWorkOrder.toolRequirements.some((tool) => !capabilities[0]?.permissions.includes(tool))) blockers.push("method_tool_requirement_exceeds_contract");
+  } else if (hostWorkOrder.methodCapabilityId && !selectedMethodSkill) blockers.push("explicit_method_requires_exact_discovered_contract");
   for (const tool of hostWorkOrder.toolRequirements ?? []) {
+    if (hostOperation?.requestedTools.some(request => request.tool === tool)) continue;
     if (!Object.values(selected).some((provider) => provider.id === tool ||
       provider.ownerContract?.capabilities?.some((capability) => capability.permissions.includes(tool)))) {
       blockers.push("tool_requirement_not_bound:" + tool);
@@ -2038,6 +2069,9 @@ if (fetchOnly || hostWorkOrder) {
   }
   const snapshot = owner ? profileForExecutionOwner(owner, hostWorkOrder.capabilityNeed ?? [], Object.values(selected), hostWorkOrder.todayTask) : null;
   if (snapshot?.status === "capability_gap") blockers.push(...snapshot.blockedReasons);
+  const projectCapabilityBinding = assessProjectCapabilityBinding({ projectRoot: dependencyProjectRoot, owner,
+    workOrder: hostWorkOrder, profile: snapshot, providers: Object.values(selected) });
+  blockers.push(...projectCapabilityBinding.blockedReasons);
   // A profile is a constraint on the host choice, not another selector.
   const profileSlotKeys = { skill: "skill", mcp_tool: "mcpTool", command: "command", runtime_tool: "runtimeTool" };
   for (const slot of snapshot?.slots ?? []) {
@@ -2065,20 +2099,23 @@ if (fetchOnly || hostWorkOrder) {
     runtime, os: osTarget, verificationOwner: selected.verificationAgent?.id ?? null,
     verificationMethod: "Current work order verifySteps and actual host results",
     selectionPolicy: "host_selected_current_bindings", selectionStatus: blockers.length ? "blocked" : "bindings_verified_not_invoked",
-    selectedCapabilityProviders: providersAfterProfile, agentCapabilityProfile: snapshot,
+    selectedCapabilityProviders: providersAfterProfile, agentCapabilityProfile: snapshot, projectCapabilityBinding,
     ownerBinding: { selectedOwner: owner?.id ?? null, source: owner?.source, sourceRef: owner?.sourceRef,
       providerEvidenceRef: owner?.inventoryRef, existingOwnerMatched: Boolean(owner), bindingStage: "Thinking" },
     blockedReasons: blockers, selectionReason: hostWorkOrder.selectionReason, nativeInvocationVerified: false };
+  if (hostOperation) Object.assign(route, { executionOwner: "current_host", methodSource: hostOperation.methodSource, hostOperation });
   const executionGate = evaluateRouteExecutionGate({ route, runtime, taskShape: "standard_path", choiceRequired: false, effectiveMatrix: runtimeMatrix });
   const ready = !blockers.length && executionGate.routeCompatible === true;
   const binding = owner ? codexSpawnBindingForOwner(owner.id, "agent", hostWorkOrder.roleInstanceId,
     { ...hostWorkOrder, purpose: hostWorkOrder.todayTask, roleDisplayName: hostWorkOrder.roleDisplayName,
       scopeFiles, shardScope,
       verificationOwner: selected.verificationAgent?.id, verification: hostWorkOrder.verifySteps, agentCapabilityProfile: snapshot,
+      projectCapabilityBinding,
       capabilityLoadout: { ...snapshot, selectedProviders: providersAfterProfile } }) : null;
   const draft = { ...hostWorkOrder, ownerAgent: owner?.id, ownerSource: owner?.source, sourceRef: owner?.sourceRef,
+    ...(selected.methodAgent ? { methodOwner: selected.methodAgent } : {}),
     ownerContract: owner?.ownerContract ?? null, purpose: hostWorkOrder.todayTask, scopeFiles, shardScope,
-    codexSpawnBinding: binding, agentCapabilityProfile: snapshot,
+    codexSpawnBinding: binding, agentCapabilityProfile: snapshot, projectCapabilityBinding,
     mutationPolicy: readOnly ? "read_only" : "scoped_local_writes_only", externalWriteBoundary: hostWorkOrder.effectClass === "external_write",
     workspaceIsolation: readOnly ? "shared_workspace_read_only" : "unproven",
     externalWritePolicy: readOnly ? "forbidden" : "forbidden_without_host_authorization",
@@ -2086,11 +2123,12 @@ if (fetchOnly || hostWorkOrder) {
     safetyEvidence: { status: ready && readOnly ? "proven" : "unproven", shardScope,
       ...(localWrite ? { planningBlockers } : {}),
       evidenceBasis: localWrite ? "trusted_project_paths_pending_current_thinking_graph" : "current_discovered_sources_and_requested_read_only_scope_not_permission" } };
+  if (hostOperation) Object.assign(draft, { executionOwner: "current_host", methodSource: hostOperation.methodSource, hostOperation });
   console.log(JSON.stringify({ schemaVersion: 1, task, taskShape, runtime, os: osTarget, fetchPacket, ownerDiscoveryPacket,
     recommendedRoute: blockers.length ? null : { ...route, executionCapabilityGate: executionGate },
     selectedCapabilityProviders: blockers.length ? {} : providersAfterProfile,
     rankedRoutes: [route], workerTaskPacketDrafts: ready ? [draft] : [],
-    capabilityGapPacket: ready ? null : gap([...blockers, ...executionGate.blockers ?? []]),
+    capabilityGapPacket: ready ? null : { ...gap([...blockers, ...executionGate.blockers ?? []]), projectCapabilityBinding },
     capabilityGapDetected: !ready, capabilityGapDecision: ready ? null : { decision: "blocked_or_needs_approval" },
     routeExecutionGate: { routeCompatible: executionGate.routeCompatible, canHandoffToHost: ready && !planningBlockers.length,
       canEnterExecution: false, executionAuthorized: false, handoffStatus: ready && !planningBlockers.length ? "ready_for_host_handoff" : "blocked",
@@ -2576,6 +2614,7 @@ function buildCodexWorkerMessage(ownerId, ownerKind, roleInstanceId, taskPacket 
     ownerContract: provider?.ownerContract ?? null,
     capabilityLoadout,
     agentCapabilityProfile: taskPacket?.agentCapabilityProfile ?? null,
+    projectCapabilityBinding: taskPacket?.projectCapabilityBinding ?? null,
     referenceDirection: taskPacket?.agentCapabilityProfile?.referenceDirection ?? taskPacket?.referenceDirection ?? taskPacket?.decisionImpact ?? null,
     requiredMaterials: taskPacket?.agentCapabilityProfile?.materials ?? [],
     scope: {

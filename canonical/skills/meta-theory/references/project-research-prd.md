@@ -22,6 +22,12 @@ The runner persists immutable `research-<digest>.json` files inside the trusted 
 
 Workers receive selected `researchEvidence` entries containing a short finding, relevance, adaptation, URL/revision and `recordRef`/`recordSha256`/`researchDigest`. `readTaskResearchEvidence({projectRoot,evidence,taskHash,intentDigest})` validates the trusted path, current goal binding, immutable bytes, selected summary and source freshness before returning only the selected source entries. A source hash binds the record, not the truth of an external claim. Do not copy all research into every worker or create another task authority.
 
+## Research decisions and project expertise
+
+A research topic may carry `decisionContext`: materially different `alternatives` with mechanism, tradeoffs and source IDs; `selectedAlternativeId`, `selectionRationale` or a reason to stop; exact component/version compatibility with conditions and evidence; and remaining unknowns with impact and a blocking flag. Compatibility states are `supported`, `tested`, `unknown` and `incompatible`. The host researches the deployed project versions and primary sources, then stops when decision-relevant uncertainty is sufficiently resolved. Keyword counts, repository popularity and a fixed source quota do not establish decision quality.
+
+Relevant project professional requirements travel in the same product design as `projectCapabilityRequirements`, and project UX context as `projectExperience`. The latter records general, domain, brand and task rules with source versions. A slice may select `experienceTaskIds`; the worker receives `designContext.applicableExperienceTaskIds` and only relevant project capability references. Shared rules still apply, while a worker need not validate an unrelated module. Source-bound research, project rules and actual method materials must affect the deliverable; their presence in JSON alone is insufficient.
+
 ## Software architecture and module views
 
 For software work, read [intent to delivery](intent-to-delivery.md). Optional `designInput.softwareDesign` adds an architecture baseline and detailed modules to this same PRD. `mode: exploration` allows architecture-only work and module outlines; `mode: delivery` requires evidenced technology versions, implementation details, acceptance coverage and actual interface/state boundaries. Worker context includes the relevant module's actual settled decisions and contracts. Module/architecture/decision changes feed the existing task dependency closure. No new queue or approval is created.

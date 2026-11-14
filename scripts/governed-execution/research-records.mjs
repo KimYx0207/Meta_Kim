@@ -76,10 +76,33 @@ export function normalizeResearchEvidence({ input = null, taskHash, intentDigest
     for (const source of sources.filter(source => topic.sourceIds.includes(source.id))) {
       if (source.expiresAt && Date.parse(source.expiresAt) < now) gaps.push(`research_source_expired:${source.id}`);
     }
+    const context = topic.decisionContext == null ? null : structuredClone(topic.decisionContext);
+    if (context) {
+      requireThat(Array.isArray(context.alternatives) && context.alternatives.length > 0 && text(context.selectionRationale) && text(context.stopReason), "Decision context needs actual alternatives, selection rationale and a stopping reason");
+      const alternatives = new Set();
+      for (const option of context.alternatives) {
+        requireThat(text(option.id) && !alternatives.has(option.id) && text(option.mechanism) && list(option.tradeoffs) &&
+          list(option.sourceIds) && option.sourceIds.length > 0 && option.sourceIds.every(id => topic.sourceIds.includes(id)), "Decision alternative needs a distinct identity, mechanism, tradeoffs and topic-bound sources");
+        alternatives.add(option.id);
+      }
+      requireThat(alternatives.has(context.selectedAlternativeId), "Decision context selected alternative is unknown");
+      requireThat(Array.isArray(context.compatibility ?? []) && Array.isArray(context.remainingUnknowns ?? []), "Decision compatibility and unknowns must be lists");
+      for (const item of context.compatibility ?? []) {
+        requireThat(text(item.component) && text(item.version) && text(item.conditions) &&
+          ["supported", "tested", "unknown", "incompatible"].includes(item.status) && list(item.sourceIds) && item.sourceIds.every(id => topic.sourceIds.includes(id)), "Version compatibility requires component, actual version, conditions, status and topic source bindings");
+        if (["supported", "tested"].includes(item.status)) requireThat(item.sourceIds.length > 0, "A positive compatibility claim needs evidence");
+        if (["unknown", "incompatible"].includes(item.status) && item.requiredForSelectedAlternative !== false) gaps.push(`decision_context_compatibility:${topic.id}:${item.component}`);
+      }
+      for (const unknown of context.remainingUnknowns ?? []) {
+        requireThat(text(unknown.id) && text(unknown.question) && text(unknown.impact) && typeof unknown.blocking === "boolean", "Decision unknown needs its question, impact and scope");
+        if (unknown.blocking) gaps.push(`decision_context_unknown:${topic.id}:${unknown.id}`);
+      }
+    }
     return { id: topic.id, question: topic.question, keywords: [...new Set(topic.keywords)], queries,
       sourceIds: [...new Set(topic.sourceIds)], decisionRefs: [...new Set(topic.decisionRefs ?? [])],
       decisionImpact: legacy ? "Current decision review required for legacy evidence" : topic.decisionImpact,
       status: legacy ? "unresolved" : topic.status, ...(topic.conclusion ? { conclusion: topic.conclusion } : {}),
+      ...(context ? { decisionContext: context } : {}),
       ...(topic.notApplicableReason ? { notApplicableReason: topic.notApplicableReason } : {}) };
   });
   if (input.required && !topics.length) gaps.push("research_topics_missing");
@@ -124,7 +147,15 @@ export function researchForTask({ research, sourceIds = [] }) {
     const source = research.sources.find(item => item.id === id);
     return { sourceId: id, url: source.url, ...(source.revision ? { revision: source.revision } : {}),
       summary: source.findings, relevance: source.relevance, adaptation: source.adaptation,
-      recordRef: research.recordRef ?? null, recordSha256: research.recordSha256 ?? null, researchDigest: research.digest };
+      recordRef: research.recordRef ?? null, recordSha256: research.recordSha256 ?? null, researchDigest: research.digest,
+      ...(research.topics.some(topic => topic.sourceIds.includes(id) && topic.decisionContext) ? {
+        decisionContexts: research.topics.filter(topic => topic.sourceIds.includes(id) && topic.decisionContext)
+          .map(topic => ({ topicId: topic.id, question: topic.question, decisionImpact: topic.decisionImpact,
+            conclusion: topic.conclusion ?? null, context: structuredClone(topic.decisionContext),
+            supportingSources: research.sources.filter(source => topic.sourceIds.includes(source.id)).map(source => ({ id: source.id,
+              url: source.url, observedAt: source.observedAt, ...(source.revision ? { revision: source.revision } : {}),
+              findings: source.findings, adaptation: source.adaptation })) })),
+      } : {}) };
   });
 }
 
@@ -156,6 +187,7 @@ export async function readTaskResearchEvidence({ projectRoot, evidence, taskHash
     requireThat(digest(researchForTask({ research: record, sourceIds: [item.sourceId] })[0]) === digest(item), "Task research summary differs from its stored source");
     const topics = record.topics.filter(topic => topic.sourceIds.includes(item.sourceId));
     requireThat(topics.length > 0 && topics.every(topic => topic.status === "resolved" || topic.status === "not_applicable"), "Selected research still has unresolved or conflicting decision evidence; return to Fetch");
+    requireThat(!record.gaps.some(gap => topics.some(topic => gap.startsWith(`decision_context_unknown:${topic.id}:`) || gap.startsWith(`decision_context_compatibility:${topic.id}:`))), "Selected research has unresolved decision or compatibility risks; return to Fetch");
     requireThat(!record.gaps.some(gap => gap.startsWith("explicit_") || gap.startsWith("keyword_query_missing:")), "Explicit task research constraints are not satisfied");
     const source = record.sources.find(source => source.id === item.sourceId);
     requireThat(!source.expiresAt || Date.parse(source.expiresAt) >= now, "Selected research source expired; return to Fetch");

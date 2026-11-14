@@ -37,7 +37,8 @@ export function normalizeSoftwareDesign({ input, design, settledDecisionIds, cri
   const tasks = new Map(design.taskSlices.map(row => [row.id, row]));
   for (const module of modules) {
     requireThat(text(module.purpose), "Module needs a user purpose");
-    if (design.mode === "delivery" || module.implementationNotes !== undefined) requireThat(text(module.implementationNotes), "Module needs an implementation approach");
+    if (design.mode === "delivery" || module.implementationNotes !== undefined) requireThat(text(module.implementationNotes) ||
+      strings(module.implementationNotes) && module.implementationNotes.length > 0, "Module needs an implementation approach");
     for (const key of ["journeyRefs", "decisionRefs", "interfaceRefs", "stateRefs", "taskIds", "acceptanceCriterionIds"]) module[key] ??= [];
     references(module.journeyRefs, journeys, "Module journeys");
     references(module.decisionRefs, settledDecisionIds, "Module decisions");

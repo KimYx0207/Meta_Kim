@@ -7,7 +7,8 @@ function arrayOfStrings(value) {
 }
 
 export function taskIsExecutableWorker(packet) {
-  return packet?.executionMode !== "approval_gate" && packet?.externalWriteBoundary !== true;
+  return packet?.executionMode !== "approval_gate" && packet?.externalWriteBoundary !== true &&
+    !["incomplete", "blocked"].includes(packet?.workOrderReadiness) && packet?.hostOperation?.status !== "blocked";
 }
 
 export function taskDependencyIds(packet) {

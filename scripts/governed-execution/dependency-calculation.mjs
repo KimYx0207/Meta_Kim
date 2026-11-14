@@ -60,7 +60,7 @@ export function validateDeliveryEnvelope(value, tool, task) {
  */
 export async function runDependencyCalculation({ task, inputJson, methodAssessment = null, dependencyRoot = process.env.META_KIM_KIM_SERVICE_ROOT,
   runtime = process.env.META_KIM_RUNTIME_FAMILY, osTarget = process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux",
-  projectRoot = repoRoot, environment = process.env } = {}) {
+  projectRoot = repoRoot, environment = process.env, currentHostWorkOrder = null } = {}) {
   if (typeof task !== "string" || !task.trim() || task.length > 6000 || typeof inputJson !== "string"
     || Buffer.byteLength(inputJson) > MAX_CALCULATION_INPUT_BYTES) return result("invalid_input", { code: "invalid_request_envelope" });
   let materials;
@@ -86,6 +86,7 @@ export async function runDependencyCalculation({ task, inputJson, methodAssessme
   const assessmentRuntime = methodAssessment.runtime === "claude" ? "claude_code" : methodAssessment.runtime;
   if (assessmentRuntime !== runtime) return result("unavailable", { code: "host_method_runtime_binding_rejected", binding });
   let componentRoot, policy, tool, deliveryTool, sourceHash, route;
+  let routeSource = "existing_execution_route";
   const reviewedFiles = new Map();
   try {
     const sourceRoot = path.resolve(dependencyRoot);
@@ -100,8 +101,53 @@ export async function runDependencyCalculation({ task, inputJson, methodAssessme
     const match = matchDependencyAgentContracts(task, discovered.agents, { hostSelection: methodAssessment });
     if (!match.selected) return result("unavailable", { code: "host_method_assessment_rejected", binding,
       assessmentReason: match.reason });
-    route = await runRouteQuery({ task, runtime, os: osTarget, env,
-      extraArgs: ["--project-root", projectRoot, "--method-assessment-json", assessmentJson] });
+    if (currentHostWorkOrder != null) {
+      // Continue the already selected current work order. Reclassifying its
+      // original sentence here loses the host's assessed execution intent.
+      // This projection supplies no permissions and does not skip source,
+      // reviewed-script, runtime, input or receipt validation below.
+      const context = currentHostWorkOrder, scope = context.scope, provider = context.methodProvider;
+      const gate = context.routeExecutionGate;
+      assert(isObject(context) && isObject(scope) && isObject(provider));
+      assert.equal(context.runtime === "claude" ? "claude_code" : context.runtime, runtime);
+      assert.equal(context.entryClassification?.taskHash, binding.requestSha256);
+      assert.equal(context.entryClassification.governedEntry, true);
+      assert.notEqual(context.entryClassification.path, "fast_path");
+      assert.equal(scope.kind, "dependency_materials");
+      assert.equal(scope.runId, context.runId);
+      assert.equal(context.sourceBinding?.runId, context.runId);
+      assert.equal(context.sourceBinding.taskPacketId, context.taskPacketId);
+      assert.equal(scope.ownerAgent, context.executionOwner?.id);
+      assert.equal(scope.methodAgent, provider.id);
+      assert.equal(context.sourceBinding.ownerAgent, scope.ownerAgent);
+      assert.equal(context.sourceBinding.methodAgent, scope.methodAgent);
+      assert.equal(context.sourceBinding.ownerContractSha256, scope.ownerContractSha256);
+      assert.equal(scope.requestSha256, binding.requestSha256);
+      assert.equal(scope.inputSha256, binding.inputSha256);
+      assert.equal(scope.dependencyRootSha256, digest(sourceRoot));
+      assert.equal(scope.inputBytes, Buffer.byteLength(inputJson, "utf8"));
+      for (const key of ["requestSha256", "inputSha256", "intentDigest", "dependencyRootSha256", "methodInputsSha256"]) {
+        assert.equal(scope[key] ?? null, context.requestBinding?.[key] ?? null);
+      }
+      assert(["read_only_worker", "read_only_support"].includes(context.effectClass));
+      assert.equal(context.mutationPolicy, "read_only");
+      assert.equal(context.externalWritePolicy, "forbidden");
+      assert.equal(provider.id, match.selected.id);
+      assert.equal(provider.source, "dependency_agent_contract");
+      assert.equal(provider.contentDigest, match.selected.contentDigest);
+      assert.equal(provider.ownerContract?.componentContentSha256, match.selected.ownerContract.componentContentSha256);
+      assert.equal(scope.componentContentSha256, match.selected.ownerContract.componentContentSha256);
+      assert.equal(gate?.handoffStatus, "ready_for_host_handoff");
+      assert.equal(gate.canHandoffToHost, true); assert.equal(gate.routeCompatible, true);
+      assert.equal(gate.executionAuthorized, false); assert.equal(gate.canEnterExecution, false);
+      assert.deepEqual(gate.blockedBy ?? [], []);
+      route = { entryClassification: context.entryClassification, routeExecutionGate: gate,
+        recommendedRoute: { owner: provider.id, selectedCapabilityProviders: { agent: provider } } };
+      routeSource = "current_host_work_order";
+    } else {
+      route = await runRouteQuery({ task, runtime, os: osTarget, env,
+        extraArgs: ["--project-root", projectRoot, "--method-assessment-json", assessmentJson] });
+    }
     if (route.entryClassification?.path === "fast_path") return result("not_applicable", { code: "request_is_not_execution", binding });
     const policies = JSON.parse(await fs.readFile(path.join(repoRoot, "config/contracts/dependency-calculation-tools.json"), "utf8"));
     policy = policies.tools.find((entry) => entry.ownerId === route.recommendedRoute?.owner);
@@ -160,7 +206,7 @@ export async function runDependencyCalculation({ task, inputJson, methodAssessme
   }
   const brief = { request: task };
   const selectedRoute = { owner: policy.ownerId, runtime, entryPath: route.entryClassification.path,
-    source: "existing_execution_route", sourceContentSha256: sourceHash, toolId: tool.id };
+    source: routeSource, sourceContentSha256: sourceHash, toolId: tool.id };
   if (Buffer.byteLength(inputJson, "utf8") > deliveryTool.maxInputBytes) {
     return result("invalid_input", { code: "calculation_materials_size_limit", maxBytes: deliveryTool.maxInputBytes,
       binding, brief, route: selectedRoute });

@@ -7,9 +7,11 @@ import path from "node:path";
 import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
 import { fixtureCritical, fixtureInventoryProvider, fixtureReadWorkOrder, runWithFixtureHostThinking } from "../helpers/host-reasoning-fixture.mjs";
 import { localProtocolFixtureTaskFacts } from "../helpers/task-design-facts.mjs";
+import { buildReadOnlyWorkerPrompt } from "../../scripts/governed-execution/stage-runner-bridge.mjs";
 import {
   agentCapabilityProfileDigest,
   agentProfileOwnerBinding,
+  assessProjectCapabilityBinding,
   readAgentCapabilityProfiles,
   resolveAgentCapabilityProfile,
   saveAgentCapabilityProfiles,
@@ -77,6 +79,74 @@ test("agent profile reads source A and project B, saves only approved defaults a
   write(f.projectRoot, f.method.ref, "Changed project method.");
   assert.equal(result.materials[0].content, oldText, "an active run keeps its actual read snapshot");
   assert.equal(f.resolve().status, "capability_gap", "a changed source cannot reuse an old fit");
+});
+
+test("a reviewed project fit is reusable across runs from the existing profile document and invalidates on evidence drift", t => {
+  const f = fixture(t); f.fit();
+  const plan = saveAgentCapabilityProfiles({ projectRoot: f.projectRoot, profiles: [f.profile],
+    fitAssessments: f.context.fitAssessments, expectedOldHash: null });
+  const approval = write(f.projectRoot, "reviews/persist-fit.json", { scope: "project_capability_profile", status: "approved",
+    projectRoot: f.projectRoot, candidateDigest: plan.contentDigest, expectedOldHash: null });
+  saveAgentCapabilityProfiles({ projectRoot: f.projectRoot, profiles: [f.profile], fitAssessments: f.context.fitAssessments,
+    expectedOldHash: null, approvalRefs: [approval, ...f.context.approvalRefs], apply: true });
+  assert.equal(f.resolve({ context: {} }).status, "ready");
+  assert.equal(f.resolve({ context: {} }).fitStatus, "host_assessed_sources_current");
+  write(f.projectRoot, f.evidence.ref, { dependencies: { vue: "4.0.0" } });
+  assert.equal(f.resolve({ context: {} }).status, "capability_gap");
+});
+
+test("actual dispatch rejects drift in project materials, fit review and separately bound base sources after selection", t => {
+  for (const change of ["material", "fit", "approval", "base"]) {
+    const f = fixture(t); f.adopt(); f.fit();
+    const profile = f.resolve(); assert.equal(profile.status, "ready");
+    const packet = { taskPacketId: "profile-dispatch", ownerAgent: f.owner.id, agentCapabilityProfile: profile, todayTask: "Inspect the current project", scopeFiles: ["package.json"], nonGoals: [] };
+    const prompt = () => buildReadOnlyWorkerPrompt({ runId: "profile-dispatch", runtime: "codex", node: { nodeId: "read" }, packet });
+    assert.match(prompt(), /Keep Vue components/u);
+    if (change === "material") write(f.projectRoot, f.method.ref, "New project rule after selection");
+    if (change === "fit") write(f.projectRoot, "reviews/fit.json", { rationale: "Changed assessment" });
+    if (change === "approval") write(f.projectRoot, "reviews/fit-approval.json", { status: "revoked" });
+    if (change === "base") write(f.sourceRoot, "defaults.json", { capabilityLoadout: { slots: [] } });
+    assert.throws(prompt, /profile.*(changed|digest)|reference_digest_mismatch/u, `The ${change} source must be reread before actual delivery`);
+  }
+});
+
+test("profile rejects ambiguous same-layer slots before saving instead of choosing the last provider", (t) => {
+  const f = fixture(t);
+  f.profile.capabilityLoadout.slots.push({ ...f.profile.capabilityLoadout.slots[0], providerId: "react-method" });
+  assert.throws(() => f.adopt(), /duplicate_capability_slot/u);
+  assert.equal(readAgentCapabilityProfiles({ projectRoot: f.projectRoot }).status, "not_configured");
+});
+
+test("ordinary project delivery requires an assessed independent project owner while diagnostic work can prepare it", t => {
+  const f = fixture(t);
+  const workOrder = { effectClass: "read_only_worker", todayTask: "Design the refrigeration maintenance workflow", capabilityNeed: ["maintenance design"], evidenceRefs: ["package.json"] };
+  const assess = options => assessProjectCapabilityBinding({ projectRoot: f.projectRoot, owner: f.owner,
+    workOrder, profile: f.resolve(), ...options });
+  assert.equal(assess().status, "project_capability_required");
+  assert.equal(assess().nextAction.action, "prepare_project_capability_from_discovered_source");
+  assert.equal(assess().completion, false);
+  assert.equal(assess({ workOrder: { ...workOrder, projectCapabilityIntent: { mode: "preparation", purpose: "decision_probe", rationale: "Read the existing workflow to determine the missing project professional contract", evidenceRefs: ["package.json"] } } }).status, "preparation_only");
+  assert.equal(assess({ workOrder: { ...workOrder, effectClass: "local_write", projectCapabilityIntent: { mode: "shared_foundation", rationale: "Use everything globally", evidenceRefs: ["package.json"] } } }).status, "capability_gap");
+  const local = write(f.projectRoot, ".codex/agents/maintenance-designer.toml", 'name = "maintenance-designer"\ndeveloper_instructions = "Preserve the documented maintenance escalation and technician responsibilities."\n');
+  const localOwner = { ...f.owner, id: "maintenance-designer", source: "project_runtime_agent_inventory", scope: "project", sourceRef: local.ref,
+    sourceRoot: f.projectRoot, contentDigest: local.contentDigest };
+  assert.equal(assess({ owner: localOwner }).status, "project_fit_required");
+  f.profile.owner = agentProfileOwnerBinding(localOwner); delete f.profile.baseProfileRef;
+  f.adopt(); f.fit();
+  const ready = assess({ owner: localOwner, profile: f.resolve({ owner: localOwner }) });
+  assert.equal(ready.status, "project_owned_ready");
+  assert.ok(ready.ownerSource.content.includes("technician responsibilities"));
+  write(f.projectRoot, local.ref, "Changed without reassessment");
+  assert.equal(assess({ owner: localOwner, profile: { status: "ready", fitStatus: "host_assessed_sources_current" } }).status, "capability_gap");
+});
+
+test("profile rejects duplicate source defaults and run overrides without mutating the saved project", (t) => {
+  const f = fixture(t); f.adopt();
+  const override = { slots: [f.profile.capabilityLoadout.slots[0], { ...f.profile.capabilityLoadout.slots[0], providerId: "react-method" }] };
+  f.context.profileSelections = [{ owner: f.profile.owner, capabilityProfileId: f.profile.capabilityProfileId,
+    capabilityProfileVersion: f.profile.capabilityProfileVersion, contentDigest: agentCapabilityProfileDigest(f.profile), capabilityLoadout: override }];
+  f.fit(f.profile, "reuse_existing_owner", { runLoadoutDigest: hash(JSON.stringify(override)) });
+  assert.ok(f.resolve().blockedReasons.includes("agent_profile_duplicate_capability_slot"));
 });
 
 test("agent profile approval, readonly, same-version and CAS boundaries preserve the current private config", (t) => {
@@ -183,6 +253,21 @@ test("agent profile required conditions cannot be narrowed by project or run ove
     assert.deepEqual(result.selectedProviders.map((provider) => provider.id), ["react-method"]);
     assert.deepEqual(valid.resolve({ capabilityNeed: ["unrelated-need"] }).selectedProviders, [], "an untriggered conditional required stays conditional");
   }
+});
+
+test("a project profile inherits a separately bound general source without giving upstream updates project ownership", t => {
+  const f = fixture(t);
+  const foundationRoot = path.join(f.root, "general-foundation"); mkdirSync(foundationRoot);
+  const source = write(foundationRoot, "general-ui.toml", 'name = "general-ui"\ndeveloper_instructions = "Preserve required accessibility checks."\n');
+  const foundationOwner = { id: "general-ui", runtime: "codex", source: "local_global_agent_inventory", sourceRoot: foundationRoot,
+    sourceRef: source.ref, contentDigest: source.contentDigest };
+  const base = write(foundationRoot, "defaults.json", { capabilityLoadout: { slots: [{ capabilitySlot: "accessibility", bindingType: "skill", providerId: "vue-method", mode: "required" }] } });
+  f.profile.baseProfileRef = { ...base, sourceRoot: foundationRoot, sourceVersion: "1", sourceOwner: agentProfileOwnerBinding(foundationOwner) };
+  f.adopt(); f.fit();
+  assert.equal(f.resolve().status, "ready");
+  assert.ok(f.resolve().slots.some(slot => slot.capabilitySlot === "accessibility" && slot.mode === "required"));
+  write(foundationRoot, source.ref, "Changed source; the saved project profile must be reassessed");
+  assert.equal(f.resolve().status, "capability_gap");
 });
 
 test("agent profile capability slots replace defaults across binding types and keep required type constraints", (t) => {

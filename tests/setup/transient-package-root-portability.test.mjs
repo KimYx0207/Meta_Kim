@@ -268,15 +268,9 @@ function packCandidate(layout, env) {
   mkdirSync(path.join(layout.origin, ".git"), { recursive: true });
   writeFileSync(path.join(layout.origin, ".git", "cache-origin-sentinel"), "not a checkout\n");
 
-  // This regression is intentionally network-free. The global sync/check
-  // route exercised here uses Node built-ins and package-internal modules; the
-  // full production dependency closure is covered by the packed acceptance
-  // suite. Removing dependency declarations prevents an empty isolated npm
-  // content cache from turning this portability test into a registry test.
-  const fixtureManifestPath = path.join(layout.origin, "package.json");
-  const fixtureManifest = JSON.parse(readFileSync(fixtureManifestPath, "utf8"));
-  fixtureManifest.dependencies = {};
-  writeFileSync(fixtureManifestPath, `${JSON.stringify(fixtureManifest, null, 2)}\n`, "utf8");
+  // Keep the actual reviewed dependency declarations and npm shrinkwrap.
+  // Trusted package materialization installs that real closure; changing only
+  // package.json would fail the baseline before exercising source portability.
   return archive;
 }
 

@@ -81,8 +81,10 @@ test("negative capability creation clauses produce no durable request while pres
   ]) {
     assert.deepEqual(durableCapabilityRequestsFromTask(task), [], task);
     const result = packet(task);
-    assert.equal(result.decision, "use_global_directly", task);
+    assert.equal(result.decision, "preparation_only", task);
     assert.deepEqual(result.decisions, [], "A denial must not create a project capability candidate");
+    assert.equal(result.requestedCapabilityCount, 0);
+    assert.equal(result.targetPath, null);
   }
   const separate = durableCapabilityRequestsFromTask("不创建 skill alpha；请创建 command beta，用于检查仓库状态。");
   assert.equal(separate.length, 1);

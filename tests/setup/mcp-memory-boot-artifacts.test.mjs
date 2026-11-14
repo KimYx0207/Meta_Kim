@@ -488,7 +488,7 @@ test("global install and update run automatic orphan repair before dependency wo
     'installStep("automatic MCP Memory boot repair", runAutomaticMcpMemoryBootRepair())',
     updateStart,
   );
-  const updateNpm = setupSource.indexOf("// ── 1. npm install", updateStart);
+  const updateNpm = setupSource.indexOf('spawnCliSync("npm", ["install"]', updateStart);
   assert.ok(installStart < installRepair && installRepair < installMemory);
   assert.ok(updateStart < updateRepair && updateRepair < updateNpm);
 });

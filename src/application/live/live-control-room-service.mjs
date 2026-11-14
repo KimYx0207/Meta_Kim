@@ -938,6 +938,47 @@ function completionIsProven(artifact, runId = null) {
 }
 
 /** Project the existing revision chain; status words alone never close a fix. */
+function buildProductOutcomeReview(artifact, runId) {
+  const review = artifact?.outcomeReviewPacket ?? artifact?.coreLoop?.outcomeReviewPacket;
+  if (!review || review.runId !== runId) return null;
+  const criteria = boundedArray(review.outcomeEvaluation?.results, 128).map(row => ({
+    criterionId: row.criterionId, required: row.required !== false, status: row.status,
+  }));
+  const required = new Map(criteria.map(row => [row.criterionId, row.required]));
+  return sanitizeProductOutcomeReview({ schemaVersion: "meta-kim-live-product-outcome-v1", runId, provenance: "recorded", status: review.status,
+    reviewDigest: review.reviewDigest, criteria,
+    taskCriteria: boundedArray(review.coveredTaskCriteria, 128).map(row => ({ taskPacketId: publicTaskBinding(row.taskId),
+      criterionId: row.criterionId, required: required.get(row.criterionId) ?? row.required !== false, verdict: row.verdict })),
+    revisionTaskPacketIds: boundedArray(review.revisionRequests, 128).filter(row => required.get(row.criterionId) !== false).map(row => publicTaskBinding(row.taskId)),
+    nextAction: { action: review.nextAction?.action, stage: review.nextAction?.stage,
+      taskPacketIds: boundedArray(review.nextAction?.taskIds, 128).map(publicTaskBinding), criterionIds: review.nextAction?.criterionIds ?? [] },
+  }, runId);
+}
+
+/** Preserve current outcome and ownership only; this display grants no
+ * invocation, verification or public-ready authority. */
+function sanitizeProductOutcomeReview(value, runId) {
+  if (value?.schemaVersion !== "meta-kim-live-product-outcome-v1" || value.runId !== runId || value.provenance !== "recorded" ||
+      !["pass", "fail", "incomplete"].includes(value.status) || !/^[a-f0-9]{64}$/u.test(value.reviewDigest ?? "")) return null;
+  const states = ["pass", "fail", "missing", "inconclusive", "invalid"];
+  const criteria = boundedArray(value.criteria, 128).flatMap(row => {
+    const criterionId = safeId(row?.criterionId, null);
+    return criterionId && states.includes(row.status) ? [{ criterionId, required: row.required !== false, status: row.status }] : [];
+  });
+  const byCriterion = new Map(criteria.map(row => [row.criterionId, row]));
+  const taskCriteria = boundedArray(value.taskCriteria, 128).flatMap(row => {
+    const criterion = byCriterion.get(row?.criterionId), taskPacketId = publicTaskBinding(row?.taskPacketId);
+    return criterion && taskPacketId && states.includes(row.verdict) ? [{ taskPacketId, criterionId: criterion.criterionId, required: criterion.required, verdict: row.verdict }] : [];
+  });
+  const action = ["revise", "prepare_revision", "continue_verification", "obtain_missing_outcome_evidence"].includes(value.nextAction?.action) ? value.nextAction.action : null;
+  return { schemaVersion: value.schemaVersion, runId, provenance: "recorded", status: value.status, reviewDigest: value.reviewDigest,
+    criteria, taskCriteria, revisionTaskPacketIds: [...new Set(boundedArray(value.revisionTaskPacketIds, 128).map(publicTaskBinding).filter(Boolean))],
+    nextAction: { action, stage: normalizeStage(value.nextAction?.stage),
+      taskPacketIds: [...new Set(boundedArray(value.nextAction?.taskPacketIds, 128).map(publicTaskBinding).filter(Boolean))],
+      criterionIds: boundedArray(value.nextAction?.criterionIds, 128).map(id => safeId(id, null)).filter(id => byCriterion.has(id)) },
+    nativeInvocationVerified: false, publicReady: false };
+}
+
 function buildRevisionReview(artifact, runId) {
   if (!artifact || normalizeLiveRunId(artifact.runId) !== runId) return { state: "not_reported", items: [] };
   const belongs = (record) => record && typeof record === "object" && !Array.isArray(record) && (!record.runId || record.runId === runId);
@@ -2427,6 +2468,7 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
     contextTransfers,
     deliverables: collectLiveDeliverables(artifact).map((item) => publicLiveDeliverable(item, publicTaskBinding, { contentObserved: true })).filter(Boolean),
     revisionReview: buildRevisionReview(artifact, runId),
+    productOutcomeReview: buildProductOutcomeReview(artifact, runId),
     humanGates: buildLiveHumanGateProjection({ progress: artifact?.machineExecution?.humanGateProgress, runId,
       stageNodes: artifact?.coreLoop?.stageDagPacket?.nodes, resolveNodeId: taskId => nodeByTaskId.get(taskId), limit: LIVE_MAX_NODES }),
     scheduling,
@@ -3163,6 +3205,7 @@ function sanitizeCompactProjection(value) {
       .filter((item) => item?.runId === runId)
       .map((item) => publicLiveDeliverable(item, publicTaskBinding)).filter(Boolean),
     revisionReview: sanitizeRevisionReview(value.revisionReview, runId),
+    productOutcomeReview: sanitizeProductOutcomeReview(value.productOutcomeReview, runId),
     humanGates: sanitizeLiveHumanGateProjection(value.humanGates, { runId, knownNodeIds: new Set(sanitizedNodes.map(node => node.id)), limit: LIVE_MAX_NODES }),
     scheduling,
     nonGoalConstraints,
@@ -3430,6 +3473,8 @@ export function buildLiveSnapshot({
       .map((item) => publicLiveDeliverable(item, publicTaskBinding, { contentObserved: Boolean(compatibleArtifact && compatibleArtifact.schemaVersion !== LIVE_COMPACT_PROJECTION_SCHEMA_VERSION) })).filter(Boolean),
     revisionReview: compatibleArtifact && compatibleArtifact.schemaVersion !== LIVE_COMPACT_PROJECTION_SCHEMA_VERSION
       ? buildRevisionReview(compatibleArtifact, run.runId) : sanitizeRevisionReview(projection.revisionReview, run.runId),
+    productOutcomeReview: compatibleArtifact && compatibleArtifact.schemaVersion !== LIVE_COMPACT_PROJECTION_SCHEMA_VERSION
+      ? buildProductOutcomeReview(compatibleArtifact, run.runId) : sanitizeProductOutcomeReview(projection.productOutcomeReview, run.runId),
     humanGates: sanitizeLiveHumanGateProjection(projection.humanGates, { runId: run.runId, knownNodeIds: new Set(nodes.map(node => node.id)), limit: LIVE_MAX_NODES }),
     scheduling,
     nonGoalConstraints: sanitizeNonGoalConstraints(projection.nonGoalConstraints),

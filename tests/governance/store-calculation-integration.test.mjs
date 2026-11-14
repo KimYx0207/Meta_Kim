@@ -8,7 +8,7 @@ import { syncBuiltinESMExports } from "node:module";
 import { Transform } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runtime-fixture.mjs";
-import { connectFixtureMcpWithDiagnostics, fixtureCalculationAssessment, runWithCalculationHostThinking } from "../helpers/calculation-host-fixture.mjs";
+import { calculationProjectOwnerId, connectFixtureMcpWithDiagnostics, fixtureCalculationAssessment, runWithCalculationHostThinking } from "../helpers/calculation-host-fixture.mjs";
 import { refreshFixtureSourcePins } from "../helpers/host-reasoning-fixture.mjs";
 
 const dependencyRoot = process.env.META_KIM_TEST_KIM_SERVICE_SOURCE;
@@ -163,6 +163,7 @@ test("formal stage runner passes complete materials and receipt to the verified 
   const report = await runner(config);
   assert.equal(report.executionResult.workerExecutionEvidence[0].ownerMethodBinding?.sourceVerified, true,
     "formal route annotation must not invalidate the observed owner method binding");
+  assert.equal(report.executionResult.workerExecutionEvidence[0].ownerMethodBinding.ownerAgent, "kim-service:store-performance-analyst");
   assert.equal(report.stageRunnerBridgePacket.status, "pass");
   assert.equal(report.dependencyCalculationPacket.status, "ready_for_worker");
   assert.equal(captures.length, 1);
@@ -170,15 +171,17 @@ test("formal stage runner passes complete materials and receipt to the verified 
   assert.equal(context.materials.inputJson, JSON.stringify(input));
   assert.equal(context.calculation.receipt.calculationTable.length, 20);
   assert.ok(JSON.stringify(context.calculation.receipt).length > 2000);
-  assert.equal(packet.ownerAgent, "kim-service:store-performance-analyst");
+  assert.equal(packet.ownerAgent, calculationProjectOwnerId("kim-service:store-performance-analyst"));
+  assert.equal(packet.methodOwner.id, "kim-service:store-performance-analyst");
+  assert.equal(packet.projectCapabilityBinding.status, "project_owned_ready");
   assert.match(prompt, /selected AGENT.md method and its declared output contract/);
   assert.match(prompt, /dataQuality/); assert.match(prompt, /metricsTable/); assert.match(prompt, /hypotheses/);
   assert.doesNotMatch(prompt, /conditional shortlist|normalized quotes|供应商短名单/iu);
   const plan = await bridgeApi.prepareReadOnlyRuntimeInvocation({ runtime: "claude", workspaceRoot: fixture.repoRoot, packet, prompt, env });
   assert.equal(plan.ownerMethodBinding.sourceVerified, true);
   assert.deepEqual(JSON.parse(plan.args[plan.args.indexOf("--agents") + 1])["store-performance-analyst"].tools, ["Read"]);
-  assert.deepEqual(packet.ownerContract.input.required, ["metrics"]);
-  assert.equal(packet.ownerContract.output.deliveryFormat, "conceptual-human-delivery");
+  assert.deepEqual(packet.methodOwner.ownerContract.input.required, ["metrics"]);
+  assert.equal(packet.methodOwner.ownerContract.output.deliveryFormat, "conceptual-human-delivery");
   assert.equal(report.dependencyCalculationPacket.nativeAgentInvocation, false);
   assert.equal(report.stageRunnerBridgePacket.executionProjection.invocationTruth.nativeRuntimeInvoked, false);
   assert.equal(report.executionResult.actualWorkerExecution, false);
@@ -286,7 +289,7 @@ test("altered source and route, owner or receipt handoff bindings cannot gain ex
     workerTaskPackets: planned.workerTaskPackets, environment: { ...process.env, META_KIM_KIM_SERVICE_ROOT: dependencyRoot }, projectRoot: config.projectRoot };
   const rejectedRoute = structuredClone(args.route); rejectedRoute.routeExecutionGate.canHandoffToHost = false;
   assert.equal((await handoffApi.prepareDependencyCalculationHandoff({ ...args, route: rejectedRoute })).summary.code, "calculation_route_not_ready");
-  const badPackets = structuredClone(args.workerTaskPackets); badPackets[0].ownerContract.contentDigest = "a".repeat(64);
+  const badPackets = structuredClone(args.workerTaskPackets); badPackets[0].methodOwner.ownerContract.contentDigest = "a".repeat(64);
   assert.equal((await handoffApi.prepareDependencyCalculationHandoff({ ...args, workerTaskPackets: badPackets })).summary.code, "calculation_owner_source_rejected");
   const prepared = await handoffApi.prepareDependencyCalculationHandoff(args);
   assert.equal(prepared.summary.status, "ready_for_worker");

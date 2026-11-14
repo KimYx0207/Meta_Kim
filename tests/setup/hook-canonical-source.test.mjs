@@ -162,7 +162,9 @@ test("cross-runtime hook core has one canonical owner", () => {
     "conversation-binding.mjs",
     "spine-state-utils.mjs",
     "spine-state-gates.mjs",
+    "live-record-origin.mjs",
     "spine-state.mjs",
+    "live-workspace-gate.mjs",
     "governed-task-reference.mjs",
     "task-progress.mjs",
     "governed-host-checkpoint.mjs",
@@ -175,6 +177,8 @@ test("cross-runtime hook core has one canonical owner", () => {
   for (const runtime of ["claude", "codex", "cursor"]) {
     assert.equal(runtimeHookSourceOwner(runtime, "governed-host-checkpoint.mjs"), "shared");
     assert.equal(runtimeHookSourceOwner(runtime, "governed-task-reference.mjs"), "shared");
+    assert.equal(runtimeHookSourceOwner(runtime, "live-record-origin.mjs"), "shared");
+    assert.equal(runtimeHookSourceOwner(runtime, "live-workspace-gate.mjs"), "shared");
   }
 
   for (const fileName of SHARED_RUNTIME_HOOK_FILES) {

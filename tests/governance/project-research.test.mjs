@@ -66,6 +66,22 @@ test("research follows decisions and retains explicit user source constraints, f
   const repeated = structuredClone(input); repeated.topics[0].queries.push(repeated.topics[0].queries[0]);
   assert.equal(normalize(repeated).topics[0].queries.length, 2);
 });
+
+test("decision research retains alternatives, version conditions and unresolved risks in the actual worker handoff", () => {
+  const input = researchInput();
+  input.topics[0].decisionContext = { alternatives: [
+    { id: "existing", mechanism: "Retain keyword search", tradeoffs: ["Exact terms remain necessary"], sourceIds: ["one"] },
+    { id: "semantic", mechanism: "Add retrieval with the verified model", tradeoffs: ["Model loading adds memory cost"], sourceIds: ["two"] }],
+    selectedAlternativeId: "existing", selectionRationale: "The observed task only needs exact identifiers",
+    compatibility: [{ component: "search-runtime", version: "1.2.0", status: "tested", conditions: "The current Linux fixture", sourceIds: ["one"] }],
+    remainingUnknowns: [{ id: "volume", question: "Will growth change the route?", impact: "Revisit only after measured growth", blocking: false }],
+    stopReason: "The current decision is resolved; other volume scenarios remain outside the accepted scope" };
+  const research = normalizeResearchEvidence({ input, taskHash: "task" });
+  const [handoff] = researchForTask({ research, sourceIds: ["one"] });
+  assert.deepEqual(handoff.decisionContexts[0].context, input.topics[0].decisionContext);
+  input.topics[0].decisionContext.remainingUnknowns[0].blocking = true;
+  assert.ok(normalizeResearchEvidence({ input, taskHash: "task" }).gaps.includes("decision_context_unknown:design:volume"));
+});
 test("immutable research survives a later turn; selected task evidence reaches the actual worker prompt and can be reread", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "meta-research-"));
   try {
@@ -112,6 +128,8 @@ test("immutable research survives a later turn; selected task evidence reaches t
 });
 test("the ordinary runner prepares Critical first and only explicit decision research blocks Fetch", async t => {
   const fixture = createGovernanceRuntimeFixtureScope(t);
+  const refreshed = fixture.run(["scripts/refresh-runtime-evidence-pins.mjs"]);
+  assert.equal(refreshed.status, 0, refreshed.stderr || refreshed.stdout);
   const { runMetaTheoryGovernedExecution } = await fixture.import("scripts/run-meta-theory-governed-execution.mjs");
   const task = "Create a complete design for the requested product";
   const goal = buildTaskGoalContract({ task });
@@ -138,7 +156,7 @@ test("Critical numerical criteria preserve their rule, and real outcome review r
   const root = await mkdtemp(path.join(os.tmpdir(), "meta-measured-"));
   try {
     const measurement = { kind: "count", unit: "events", scope: "selected data", conditions: "same fixture", comparison: "gte", target: 1 };
-    const critical = { successCriteria: [{ id: "measured", condition: "At least one event", evidenceRequired: "Saved event log", measurement }], nonGoals: [], blockingUnknowns: [] };
+    const critical = { realIntent: "Count events", successCriteria: [{ id: "measured", condition: "At least one event", evidenceRequired: "Saved event log", measurement }], nonGoals: [], blockingUnknowns: [] };
     const acceptanceCriteria = hostCriticalGoalCriteria({ task: "Count events", critical });
     assert.deepEqual(acceptanceCriteria[0].measurement, measurement);
     assert.equal(sameHostCriticalMeaning(critical, { ...critical, successCriteria: [{ ...critical.successCriteria[0], measurement: { ...measurement, target: 2 } }] }), false);

@@ -6,6 +6,23 @@ User-facing changes for each release. Detailed test results live in the linked v
 
 ## [Unreleased]
 
+## [3.14.0] - 2026-11-15
+
+### Project-owned professional capabilities
+
+- Persistent professional work creates or reuses the project's own capabilities after inspecting shared foundations and project requirements. Project identity, local rules and the upstream professional method have distinct bindings; the actual worker receives the applicable project rules.
+- Carry researched alternatives, technology versions, value context, professional requirements and project experience into the same product design and task handoff. Missing evidence remains a research or verification task.
+- Reject ambiguous capability slots instead of silently keeping the last entry. Record the upstream baseline for project copies; report version and content changes while preserving project-owned edits.
+- Connect design preparation, host method handoff and outcome review to the existing governed entry and Live continuation. The current host supplies actual operations and result evidence.
+- Explain independent project expertise in all four READMEs with matching localized diagrams. Everyday use continues in the current agent; Live and capability browsing remain optional.
+- Preserve project identity and the selected Service method across calculation handoffs. Include required Live and Hook modules in installation and upgrade packages.
+
+### Migration and verification
+
+Existing project capabilities are reused when suitable. A global professional role can research or prepare a project capability; persistent project delivery now requires a discovered, loaded project owner. Truly general foundations and read-only diagnostics can still use global methods. Installation ownership and protected project copies retain their existing boundaries.
+
+See [the implementation and verification record](docs/verification/project-specialization-20261115.md). Publication uses the existing main-branch CI and exact package checks alongside the recorded regressions. Native-host acceptance and the observed forward trial have their own stated scope.
+
 ## [3.13.0] - 2026-11-14
 
 ### Desktop Skill import and PRD task continuity

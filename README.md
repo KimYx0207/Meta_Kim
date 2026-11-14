@@ -76,6 +76,20 @@ Accepting the outline makes the next module available to the host; accepting a m
 
 The value is in these connections. Changing a module interface updates the relevant work. A branch awaiting your decision can leave independent work moving. An ineffective method needs a new basis before another attempt.
 
+## Shared foundations, project-owned expertise
+
+**Every ongoing project develops its own professional capabilities.** Global Agents and Skills provide general methods. The project researches its users, value, actual technology versions, domain, brand and tools, then creates or updates its own Agents, Skills and rules. Later tasks rediscover and load those project capabilities.
+
+For example, an equipment-maintenance project needs units, operating limits and alarm handling; an apparel shop needs brand, fit, inventory and returns. Both use general UX principles, while their project rules and acceptance cases remain independent. Meta_Kim records the source baseline, detects conflicting rules and preserves project changes when the global source is updated.
+
+<p align="center">
+  <a href="docs/images/animated-project-specialization.en.svg"><img src="docs/images/animated-project-specialization.en.svg" alt="Shared general foundations lead to separate project-owned Agents, Skills, rules and acceptance cases" width="720"></a>
+  <br>
+  <a href="docs/images/animated-project-specialization.en.svg">Open full-size image</a>
+</p>
+
+Continue in the same agent conversation. Describe the result and provide existing project materials; the host researches consequential unknowns, compares feasible options and carries the chosen professional requirements into the design and tasks. Existing project capabilities are reused and improved. Global methods can also support preparation and routine diagnostics. Live and the Service catalog are optional views into this work.
+
 ## First PRD pass: turn an idea into a system and module outline
 
 **A PRD, or product requirements document, explains what to build, why it matters and how to judge the result.** In Meta_Kim, the system outline and module details are two passes over the same PRD. Earlier decisions remain part of the later design.
@@ -320,7 +334,7 @@ Use optional `workContext` in the ordinary API or CLI `--work-context-input`; ap
 
 ## Start with your own project
 
-You need **Node.js 22.13.0+**, Git and an AI client with its model connection configured. Current release: **[v3.13.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.13.0)**. Version history and migration notes are maintained separately in [CHANGELOG.md](CHANGELOG.md).
+You need **Node.js 22.13.0+**, Git and an AI client with its model connection configured. This source is the **v3.14.0 candidate** in release preparation. The published release is **[v3.13.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.13.0)**. See [CHANGELOG.md](CHANGELOG.md) for changes and migration, and the [verification record](docs/verification/project-specialization-20261115.md) for the completed checks and their scope.
 
 ### 1. Install Meta_Kim
 
@@ -331,7 +345,7 @@ npm install
 node setup.mjs
 ```
 
-Choose your client, then choose the installation scope. **Global** installs reusable capabilities for your account; **project** installs for a project directory you select. Keep the Meta_Kim checkout for updates. Your working project can be a different directory.
+Choose your client, then choose the installation scope. The default install reuses capabilities globally as shared foundations; **project** installation targets a directory you select. Each persistent project still creates or updates its own professional Agents, Skills and rules. Keep the Meta_Kim checkout for updates. Your working project can be a different directory.
 
 For example, to install Codex support for one project directly:
 
@@ -423,7 +437,7 @@ Older runs without the new client, operating-system and model binding remain his
 
 **Usage conditions:** this is a method import route; actual execution uses the client's available model, tools and permissions. Meta CLI and Live features need a separately installed Meta runtime. Package export and local integrity checks are implemented; client import, execution and continuation are checked in your own task using the steps below.
 
-Start from the Meta_Kim **v3.13.0** source checkout or unpacked source release, with **Node.js 22.13.0+**. Open a terminal in that root directory. Run the block for your operating system to export and check both hosts; each output directory must be new. If a command fails, fix the reported problem before importing anything.
+Start from your Meta_Kim **v3.14.0 candidate source**, or the published **v3.13.0** source package, with **Node.js 22.13.0+**. Open a terminal in the selected source root. Run the block for your operating system to export and check both clients; each output directory must be new. Release assets become available after publication.
 
 **Windows · PowerShell**
 
@@ -467,7 +481,7 @@ If resources, permissions or the Meta CLI are missing, list the gap explicitly.
 Keep import success, actual execution and verified results separate.
 ```
 
-To add specialist methods, use the paired **Kim_Service V1.16** source. From its root, export one Agent or Skill at a time through its wrapper (replace the absolute paths):
+For specialist methods, pair the Meta_Kim v3.14.0 candidate with **Kim_Service V1.17 candidate source**. The published pair is Meta_Kim v3.13.0 and Kim_Service V1.16. From the selected Service source root, export one Agent or Skill at a time through its wrapper (replace the absolute paths):
 
 ```bash
 node scripts/build-desktop-skill-package.mjs --meta-root "/absolute/Meta_Kim" --host workbuddy --component reliability-engineer --output "/absolute/new-reliability-method"
@@ -534,6 +548,28 @@ When a conversation is interrupted, reopen the **same working project** and ask 
 > “Continue the sign-up improvement. Check the saved decisions and completed work against the current project, confirm the outcome of any interrupted operation, and carry on from the next unfinished task.”
 
 For another iteration, say what to preserve and what should change: “Keep the mobile layout and the existing fields; improve the confirmation message.” This makes the new work build on the accepted result. An optional Memory service can help retain selected information across sessions; project task records already provide the basis for continuing the current work.
+
+<details>
+<summary>Optional: check Memory across sessions</summary>
+
+When you enable MCP Memory, service health, actual writes, reads and cross-session recall are checked separately:
+
+| Evidence | What to observe |
+| --- | --- |
+| Service health | The configured service answers its health request. |
+| Actual write | Save an agreed test note and retain its write receipt or record identifier. |
+| Actual read | Retrieve that record and compare the returned content with the note. |
+| Cross-session recall | Open a new conversation for the same project, retrieve the note again and retain that result. |
+
+For the default local endpoint, the health check is:
+
+```bash
+curl -fsS --max-time 3 http://127.0.0.1:8000/api/health
+```
+
+The `.mcp.json` entry and hook registrations describe the connection. Repository maintainers can run `npm run meta:test:mcp` for code regressions; keep the four actual service observations alongside those test results.
+
+</details>
 
 To update a source installation, run these commands in the Meta_Kim checkout:
 

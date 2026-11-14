@@ -39,7 +39,7 @@ function parseArgs(argv) {
     const arg = argv[index];
     if (arg === "--apply") result.apply = true;
     else if (arg === "--json") result.json = true;
-    else if (["--project-dir", "--runtime", "--type", "--id", "--source", "--mode"].includes(arg)) {
+    else if (["--project-dir", "--runtime", "--type", "--id", "--source", "--mode", "--source-version"].includes(arg)) {
       const value = argv[index + 1];
       if (!value || value.startsWith("--")) throw new Error(`Missing value for ${arg}`);
       result[arg.slice(2).replace(/-([a-z])/gu, (_, letter) => letter.toUpperCase())] = value;
@@ -199,6 +199,40 @@ export function copyProjectCapability(options) {
   const previous = manifest.capabilities.find((entry) => entry.capabilityKey === capabilityKey) ?? null;
   const resolvedSource = capabilitySourceRoot(options.source, type);
   const files = mappedSourceFiles(resolvedSource, runtime, type, id);
+  const sourceFiles = files.map(file => ({ relPath: file.relPath, sha256: sha256Buffer(readFileSync(file.source)) }))
+    .sort((left, right) => left.relPath.localeCompare(right.relPath));
+  const candidateDigest = `sha256:${sha256(JSON.stringify(sourceFiles))}`;
+  const candidateContentDigest = `sha256:${sha256(JSON.stringify(sourceFiles.map(({ relPath, sha256: baselineHash }) => ({ relPath, baselineHash }))))}`;
+  const update = options.reviewedUpdate;
+  if (update) {
+    if (mode !== "iterate" || !previous || !Array.isArray(update.expectedProjectFiles) || !update.approvalRef) throw new Error("Reviewed project update needs an existing owned capability and expected file hashes.");
+    const approvalPath = resolve(projectRoot, update.approvalRef);
+    const approvalFile = inspectTrustedPath(dirname(approvalPath), basename(approvalPath));
+    if (!approvalFile || !lstatSync(approvalFile.target).isFile()) throw new Error("Reviewed project update approval is unavailable.");
+    const approval = JSON.parse(readFileSync(approvalFile.target, "utf8"));
+    if (approval.status !== "approved" || resolve(approval.projectRoot ?? "") !== projectRoot || approval.runtime !== runtime ||
+        approval.capabilityType !== type || safeId(approval.requestedCapability) !== id ||
+        approval.contentDigest !== candidateContentDigest || update.contentDigest !== candidateContentDigest ||
+        JSON.stringify(approval.expectedProjectFiles) !== JSON.stringify(update.expectedProjectFiles)) throw new Error("Reviewed project update approval binding differs.");
+    const expected = new Map(update.expectedProjectFiles.map(file => [file.relPath, file.sha256]));
+    if (expected.size !== update.expectedProjectFiles.length) throw new Error("Reviewed project update has duplicate file expectations.");
+    for (const file of files) {
+      const current = inspectTrustedPath(projectRoot, file.relPath, { allowMissing: true });
+      if (!current || !expected.has(file.relPath) || expected.get(file.relPath) !== sha256ManagedFile(current.target)) throw new Error("Reviewed project update expected file hash changed: " + file.relPath);
+    }
+  }
+  // A later copy request observes upstream; it never silently rewrites the
+  // source from which the independent project package was originally derived.
+  const sourceBaseline = previous?.sourceBaseline ?? (previous ? {
+    sourceRef: previous.sourceRef, contentDigest: null, version: null,
+    files: previous.files.map(file => ({ relPath: file.relPath, sha256: file.baselineHash })),
+    evidenceKind: "legacy_recorded_hashes_original_source_not_recovered",
+  } : { sourceRef: sourceRef(resolvedSource), contentDigest: candidateDigest,
+    version: options.sourceVersion ?? null, files: sourceFiles, evidenceKind: "observed_source_bytes" });
+  const previousFiles = new Map(sourceBaseline.files.map(file => [file.relPath, file.sha256]));
+  const incomingFiles = new Map(sourceFiles.map(file => [file.relPath, file.sha256]));
+  const changedPaths = [...new Set([...previousFiles.keys(), ...incomingFiles.keys()])]
+    .filter(rel => previousFiles.get(rel) !== incomingFiles.get(rel)).sort();
   const plannedFiles = [];
   const operations = [];
   for (const file of files) {
@@ -210,6 +244,11 @@ export function copyProjectCapability(options) {
     const priorFile = previous?.files?.find((entry) => entry.relPath === file.relPath) ?? null;
     if (existingHash && existingHash !== sourceHash) {
       if (!priorFile) throw new Error(`Unmanaged project capability conflict: ${file.relPath}`);
+      if (update) {
+        operations.push({ kind: "write", relPath: file.relPath, content, expectedOldHash: existingHash, phase: "content" });
+        plannedFiles.push({ relPath: file.relPath, baselineHash: sourceHash, projectHashAtLastRecord: sourceHash, state: "reviewed_project_update" });
+        continue;
+      }
       plannedFiles.push({
         relPath: file.relPath,
         baselineHash: priorFile.baselineHash,
@@ -233,6 +272,9 @@ export function copyProjectCapability(options) {
       state: existingHash ? "adopted_identical" : "copied_to_project",
     });
   }
+  for (const file of previous?.files ?? []) if (!plannedFiles.some(candidate => candidate.relPath === file.relPath)) {
+    plannedFiles.push({ ...file, state: "retained_project_file" });
+  }
 
   const now = new Date().toISOString();
   const capability = {
@@ -246,7 +288,15 @@ export function copyProjectCapability(options) {
     ownership: "project",
     detachedFromDependencyUpdates: true,
     dependencyUpdatePolicy: "preserve_project_copy",
-    sourceRef: sourceRef(resolvedSource),
+    sourceRef: previous?.sourceRef ?? sourceRef(resolvedSource),
+    sourceBaseline,
+    ...(previous?.derivation || options.derivation ? { derivation: previous?.derivation ?? structuredClone(options.derivation) } : {}),
+    ...(update ? { lastReviewedUpdate: { contentDigest: candidateContentDigest, approvalRef: update.approvalRef,
+      expectedProjectFiles: structuredClone(update.expectedProjectFiles), previousSourceDigest: previous.lastReviewedUpdate?.contentDigest ?? sourceBaseline.contentDigest } } : previous?.lastReviewedUpdate ? { lastReviewedUpdate: previous.lastReviewedUpdate } : {}),
+    upstreamComparison: { status: changedPaths.length ? "source_changed_project_preserved" : "unchanged",
+      candidateSourceRef: sourceRef(resolvedSource), candidateVersion: options.sourceVersion ?? null,
+      candidateDigest, changedPaths, action: changedPaths.length ? "review_project_adaptation_against_recorded_base" : "none",
+      claimBoundary: "Source comparison only; no semantic merge, project acceptance or native loading is attested." },
     createdAt: previous?.createdAt ?? now,
     updatedAt: now,
     files: plannedFiles,

@@ -163,16 +163,45 @@ export function normalizeLiveHumanGates(value, runId) {
 }
 
 /** Root and organization rows do not turn seven finished work items into eight. */
+export function normalizeLiveProductOutcomeReview(value, runId) {
+  if (value?.schemaVersion !== "meta-kim-live-product-outcome-v1" || value.runId !== runId || value.provenance !== "recorded" ||
+      !["pass", "fail", "incomplete"].includes(value.status) || !Array.isArray(value.criteria) || !Array.isArray(value.taskCriteria)) return null;
+  const states = ["pass", "fail", "missing", "inconclusive", "invalid"];
+  const criteria = value.criteria.slice(0, 128).filter(row => overviewText(row?.criterionId) && states.includes(row.status))
+    .map(row => ({ criterionId: row.criterionId, required: row.required !== false, status: row.status }));
+  const taskCriteria = value.taskCriteria.slice(0, 128).flatMap(row => {
+    const criterion = criteria.find(item => item.criterionId === row?.criterionId);
+    return criterion && /^task:[a-f0-9]{20}$/u.test(row.taskPacketId ?? "") && states.includes(row.verdict)
+      ? [{ ...row, required: criterion.required }] : [];
+  });
+  return { ...value, criteria, taskCriteria,
+    revisionTaskPacketIds: (Array.isArray(value.revisionTaskPacketIds) ? value.revisionTaskPacketIds : []).filter(id => /^task:[a-f0-9]{20}$/u.test(id)),
+    hasRequiredFailure: value.status === "fail" || criteria.some(row => row.required && row.status === "fail"),
+    nativeInvocationVerified: false, publicReady: false };
+}
+
+function liveProductTaskFailure(node, snapshot) {
+  const runId = overviewText(snapshot?.run?.id || snapshot?.run?.runId);
+  const review = normalizeLiveProductOutcomeReview(snapshot?.productOutcomeReview, runId);
+  if (!review || node?.runId && node.runId !== runId) return false;
+  return review.revisionTaskPacketIds.includes(node?.taskPacketId) || review.taskCriteria.some(row =>
+    row.taskPacketId === node?.taskPacketId && row.required && row.verdict === "fail");
+}
+
 export function resolveLiveRunTaskLifecycle(snapshot) {
   const run = snapshot?.run;
   const runId = overviewText(run?.id || run?.runId);
   const nodes = liveRunTaskNodes(snapshot);
-  const tasks = nodes.map((node) => resolveLiveTaskLifecycle(node, runId));
+  const tasks = nodes.map((node) => liveProductTaskFailure(node, snapshot) ? { state: "in_progress", detail: "outcome_revision_required" } : resolveLiveTaskLifecycle(node, runId));
   const counts = { totalCount: tasks.length, completedCount: tasks.filter((task) => task.state === "completed").length,
     notStartedCount: tasks.filter((task) => task.state === "not_started").length,
     inProgressCount: tasks.filter((task) => task.state === "in_progress").length,
     verificationPendingCount: tasks.filter((task) => task.detail === "verification_pending").length };
   if (!runId) return { state: "not_started", detail: "no_tasks", ...counts };
+  const productReview = normalizeLiveProductOutcomeReview(snapshot.productOutcomeReview, runId);
+  if (productReview?.hasRequiredFailure || tasks.some(task => task.detail === "outcome_revision_required")) {
+    return { state: "in_progress", detail: "outcome_revision_required", ...counts };
+  }
   const states = [overviewState(run.displayState), overviewState(run.status)];
   if (states.includes("planned") || run.executionEvidenceState === "structural_planning_only") return { state: "not_started", detail: "not_dispatched", ...counts };
   const failure = states.find((state) => ["failed", "blocked", "cancelled"].includes(state));
@@ -199,6 +228,7 @@ export function resolveLiveNodeTaskLifecycle(node, snapshot) {
   const runId = overviewText(snapshot?.run?.id || snapshot?.run?.runId);
   if (node?.isMain === true && runId && (!node.runId || node.runId === runId)
     && (Array.isArray(snapshot.nodes) ? snapshot.nodes : []).some((item) => item?.id === node.id && item.isMain === true)) return resolveLiveRunTaskLifecycle(snapshot);
+  if (liveProductTaskFailure(node, snapshot)) return { state: "in_progress", detail: "outcome_revision_required" };
   const pending = normalizeLiveHumanGates(snapshot?.humanGates, runId)?.gates.find(gate => gate.nodeId === node?.id
     && ["awaiting_human", "invalidated", "revision_required", "returned"].includes(gate.state));
   if (pending && (!node.runId || node.runId === runId)) return { state: "in_progress",
@@ -210,10 +240,10 @@ export function resolveLiveNodeTaskLifecycle(node, snapshot) {
 export function liveTaskLifecycleCopy(lifecycle, language = "zh") {
   const copy = {
     zh: { not_started: "未开始", in_progress: "进行中", completed: "已完成", not_dispatched: "尚未派发", waiting: "等待开始",
-      verification_pending: "执行者已完成，独立验证待完成", human_acceptance_pending: "成果待人工验收", human_revision_required: "验收要求修改，相关后续工作等待中", failed: "执行失败，仍需处理", blocked: "工作受阻，等待处理", cancelled: "执行已取消，尚未完成",
+      verification_pending: "执行者已完成，独立验证待完成", outcome_revision_required: "产品结果评审未通过，需按评审意见修正", human_acceptance_pending: "成果待人工验收", human_revision_required: "验收要求修改，相关后续工作等待中", failed: "执行失败，仍需处理", blocked: "工作受阻，等待处理", cancelled: "执行已取消，尚未完成",
       result_unconfirmed: "执行已返回，结果待确认", unconfirmed: "缺少执行记录，状态待确认", unfinished: "还有工作未完成", no_tasks: "尚无工作项记录", native_unconfirmed: "原生执行证据尚未确认。", observed: "已观察到执行", inspect: "查看任务" },
     en: { not_started: "Not started", in_progress: "In progress", completed: "Completed", not_dispatched: "Not dispatched", waiting: "Waiting to start",
-      verification_pending: "Worker finished; independent verification pending", human_acceptance_pending: "Output awaits human acceptance", human_revision_required: "Acceptance requires changes; dependent work is waiting", failed: "Execution failed; action required", blocked: "Work blocked; action required", cancelled: "Execution cancelled; work unfinished",
+      verification_pending: "Worker finished; independent verification pending", outcome_revision_required: "Product outcome review requires revision", human_acceptance_pending: "Output awaits human acceptance", human_revision_required: "Acceptance requires changes; dependent work is waiting", failed: "Execution failed; action required", blocked: "Work blocked; action required", cancelled: "Execution cancelled; work unfinished",
       result_unconfirmed: "Execution returned; outcome unconfirmed", unconfirmed: "Execution record missing; status unconfirmed", unfinished: "Work remains unfinished", no_tasks: "No work-item records yet", native_unconfirmed: "Native execution evidence is unconfirmed.", observed: "Execution observed", inspect: "Inspect task" },
   };
   const selected = copy[language === "zh" || language === "zh-CN" ? "zh" : "en"];
@@ -371,16 +401,19 @@ export function resolveLiveRunOverview(snapshot, language = "zh") {
   blockers.sort((left, right) => overviewText(left.id).localeCompare(overviewText(right.id)));
   const blocked = blockers[0];
   const runBlocked = ["blocked", "failed"].includes(state);
+  const productReview = normalizeLiveProductOutcomeReview(snapshot.productOutcomeReview, runId);
+  const productFailed = productReview?.hasRequiredFailure || nodes.some(node => liveProductTaskFailure(node, snapshot));
   const deliverables = normalizeLiveDeliverables(snapshot.deliverables, runId);
   return {
-    state: planned ? "planned" : active ? "active" : state === "completed" ? "completed" : runBlocked ? "blocked" : governance?.active ? "governance_active" : "historical",
+    state: productFailed ? "blocked" : planned ? "planned" : active ? "active" : state === "completed" ? "completed" : runBlocked ? "blocked" : governance?.active ? "governance_active" : "historical",
     taskLifecycle: resolveLiveRunTaskLifecycle(snapshot),
     governance,
     task: current ? { label: liveTaskDisplayLabel(current, language), nodeId: overviewText(current.id), moreCount: activeNodes.length - 1 } : null,
     ownerReported: reported ? { count: ownerReports.length, task: { label: liveTaskDisplayLabel(reported.node, language),
       nodeId: overviewText(reported.node.id), summary: reported.report.summary, reportedAt: reported.report.reportedAt } } : null,
     result: { items: deliverables.filter((item) => item.availability === "available"), declaredCount: deliverables.filter((item) => item.availability === "declared").length },
-    blocker: blocked ? { kind: "blocked", label: overviewText(blocked.statusReason), nodeLabel: liveTaskDisplayLabel(blocked, language), nodeId: overviewText(blocked.id), moreCount: blockers.length - 1 }
+    blocker: productFailed ? { kind: "blocked", label: liveTaskLifecycleCopy({ detail: "outcome_revision_required" }, language).detail, nodeLabel: "", nodeId: "", moreCount: 0 }
+      : blocked ? { kind: "blocked", label: overviewText(blocked.statusReason), nodeLabel: liveTaskDisplayLabel(blocked, language), nodeId: overviewText(blocked.id), moreCount: blockers.length - 1 }
       : runBlocked ? { kind: "blocked", label: overviewText(run.statusReason), nodeLabel: "", nodeId: "", moreCount: 0 }
         : overviewText(run.statusReason) ? { kind: "status", label: overviewText(run.statusReason), nodeLabel: "", nodeId: "", moreCount: 0 } : null,
     activity,
@@ -391,6 +424,6 @@ export function resolveLiveRunOverview(snapshot, language = "zh") {
 
 /** Ship the same tested selectors into the dependency-free page. */
 export function serializeLiveRunOverviewResolvers() {
-  return [overviewText, overviewState, overviewActivityState, normalizeLiveExecutionSummary, normalizeLiveRevisionReview, normalizeLiveGovernance, normalizeLiveHumanGates, resolveLiveNativeActivity, overviewTimestamp, normalizeLiveOwnerReport, normalizeLiveNativeTaskReturn, resolveLiveTaskLifecycle, liveRunTaskNodes, resolveLiveRunTaskLifecycle, resolveLiveNodeTaskLifecycle, liveTaskLifecycleCopy, liveWorkOverviewCopy, plainLiveTaskLabel, liveTaskDisplayLabel, liveRunDisplayTitle, overviewHostExecutionEvent, overviewExecutionActivity, resolveLiveRunOverview]
+  return [overviewText, overviewState, overviewActivityState, normalizeLiveExecutionSummary, normalizeLiveRevisionReview, normalizeLiveGovernance, normalizeLiveHumanGates, normalizeLiveProductOutcomeReview, liveProductTaskFailure, resolveLiveNativeActivity, overviewTimestamp, normalizeLiveOwnerReport, normalizeLiveNativeTaskReturn, resolveLiveTaskLifecycle, liveRunTaskNodes, resolveLiveRunTaskLifecycle, resolveLiveNodeTaskLifecycle, liveTaskLifecycleCopy, liveWorkOverviewCopy, plainLiveTaskLabel, liveTaskDisplayLabel, liveRunDisplayTitle, overviewHostExecutionEvent, overviewExecutionActivity, resolveLiveRunOverview]
     .map((resolver) => resolver.toString()).join("\n");
 }
