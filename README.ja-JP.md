@@ -17,7 +17,9 @@
 日常の言葉では、**依頼を分解する → 探す → 調べる → 考える → 作る**です。Critical、Fetch（検索と調査）、Thinking、Execution に対応し、その後に Review、Meta-Review、Verification、Evolution が続きます。以下では予約アプリを例に、依頼から設計、タスク、実ファイル、受け入れ確認までを説明します。
 
 <p align="center">
-  <img src="docs/images/system-panorama.ja-JP.svg" alt="Meta_Kim のシステム図：8 段階、依存関係による実行、人の判断、差し戻し、記録先" width="1200">
+  <a href="docs/images/system-panorama.ja-JP.svg"><img src="docs/images/system-panorama.ja-JP.svg" alt="Meta_Kim のシステム図：8 段階、依存関係による実行、人の判断、差し戻し、記録先" width="1000"></a>
+  <br>
+  <a href="docs/images/system-panorama.ja-JP.svg">原寸の画像を開く</a>
 </p>
 
 01–08 を上から順に読みます。濃い緑の領域で目的と根拠を確認し、一つの PRD でシステム全体とモジュールを設計します。実行領域は現在のクライアントが提供する能力を使い、品質確認で実際の成果を検証します。橙色は必要に応じた人の判断で、有効な既存の決定は再利用します。紫色は実行上の問題を該当タスクへ戻す経路です。目的・事実・設計の問題は、それぞれの段階に戻ります。破線は記録への書き込みで、Work の採用と効果は宿主が報告します。経験は審査して反映または候補として保存し、反映不要なら理由を残して引き渡します。
@@ -35,7 +37,9 @@
 AI クライアントでプロジェクトを開き、依頼、既存資料、制約を伝えます。**Live は継続する仕事の統一ワークスペースです。** 八段階、システム全体の PRD、各モジュールの詳細、採用した版、修正依頼と受領記録を確認できます。実際の作業は現在の AI ホストが引き継ぎます。
 
 <p align="center">
-  <img src="docs/images/meta-kim-workspace.ja-JP.png" alt="八段階と次のシステム概要レビューを表示する Meta_Kim Live の実際の統合ワークスペース" width="1200">
+  <a href="docs/images/meta-kim-workspace.ja-JP.png"><img src="docs/images/meta-kim-workspace.ja-JP.png" alt="八段階と次のシステム概要レビューを表示する Meta_Kim Live の実際の統合ワークスペース" width="900"></a>
+  <br>
+  <a href="docs/images/meta-kim-workspace.ja-JP.png">原寸の画像を開く</a>
 </p>
 
 *受入テスト用サンプルと明示された、実際に動作する Live ワークスペースです。ブラウザーは実際の Hub、レビュー操作、現在のホスト CLI を使用し、モデルは呼び出していません。PRD からシステム概要と各モジュールの詳細を読めます。*
@@ -50,7 +54,11 @@ AI クライアントでプロジェクトを開き、依頼、既存資料、�
 
 ## マインドマップで全体をつかむ
 
-![Meta_Kim のマインドマップ：目標、設計、タスク、品質、継続的な改善](docs/images/animated-system-map.ja-JP.svg)
+<p align="center">
+  <a href="docs/images/animated-system-map.ja-JP.svg"><img src="docs/images/animated-system-map.ja-JP.svg" alt="Meta_Kim のマインドマップ：目標、設計、タスク、品質、継続的な改善" width="520"></a>
+  <br>
+  <a href="docs/images/animated-system-map.ja-JP.svg">原寸の画像を開く</a>
+</p>
 
 **利用者の目標から、四つの枝をたどります。** 目的の理解、設計、タスク、交付が目標とどう関わるかを見ます。役割の分担も確認してください。Meta_Kim が全体を組み立て、専門能力が具体的な作業を担います。
 
@@ -66,7 +74,11 @@ AI クライアントでプロジェクトを開き、依頼、既存資料、�
 
 **PRD は製品要求文書です。「何を作るか、なぜ必要か、何をもって良しとするか」を明確にします。** Meta_Kim のシステム概要とモジュール詳細は、同じ PRD を二段階で具体化したものです。先に決めた内容が、後の設計にも引き継がれます。
 
-![一回目の PRD：目標、現状、調査から構成、モジュール概要、未決事項を作る](docs/images/animated-prd-architecture.ja-JP.svg)
+<p align="center">
+  <a href="docs/images/animated-prd-architecture.ja-JP.svg"><img src="docs/images/animated-prd-architecture.ja-JP.svg" alt="一回目の PRD：目標、現状、調査から構成、モジュール概要、未決事項を作る" width="420"></a>
+  <br>
+  <a href="docs/images/animated-prd-architecture.ja-JP.svg">原寸の画像を開く</a>
+</p>
 
 **生成の一巡を追ってください。** 一言の依頼から現状確認と調査、案の比較へ進み、同じ PRD の利用者の流れ、技術と範囲、モジュール概要、共通の取り決めにまとまります。
 
@@ -91,7 +103,9 @@ AI クライアントでプロジェクトを開き、依頼、既存資料、�
 **全体が成立するかを見てから、実装の詳細へ進みます。** 探索中は未決事項を残せます。モジュールを実行に移す前に、必要な決定と接続条件を確定します。小さな修正では合意済みの設計を使い、影響する部分だけ詳しくします。
 
 <p align="center">
-  <img src="docs/images/prd-to-tasks.ja-JP.svg" alt="同じ PRD のシステム構成とモジュール詳細を、文脈・範囲・依存関係・受入条件を持つ実行用の工票へつなぐ図" width="1200">
+  <a href="docs/images/prd-to-tasks.ja-JP.svg"><img src="docs/images/prd-to-tasks.ja-JP.svg" alt="同じ PRD のシステム構成とモジュール詳細を、文脈・範囲・依存関係・受入条件を持つ実行用の工票へつなぐ図" width="1000"></a>
+  <br>
+  <a href="docs/images/prd-to-tasks.ja-JP.svg">原寸の画像を開く</a>
 </p>
 
 まず左右の 2 回の設計を読み、矢印に沿って下の工票と実行へ進みます。第 1 回は範囲、構成、モジュールの境界、共有インターフェースを定めます。第 2 回は同じ全体設計の中で、フロー、状態、例外、データ、受入条件を具体化します。工票はその PRD の該当部分を参照し、文脈、範囲、依存関係、成果要件を引き継ぎます。判断の分岐は一つのモジュールの例です。既存の決定を先に使い、必要な人の判断と理由を記録して該当設計へ戻ります。待機するのは影響を受ける依存関係だけで、その他の実行可能な独立タスクは宿主の能力に応じて並行できます。要求変更は影響するモジュールと設計基準を特定して関連工票を更新し、検証失敗は該当タスクへ戻します。
@@ -99,7 +113,9 @@ AI クライアントでプロジェクトを開き、依頼、既存資料、�
 [拡大できる原図を開く](docs/images/prd-to-tasks.ja-JP.svg)
 
 <p align="center">
-  <img src="docs/images/meta-kim-prd-outline.ja-JP.png" alt="現在の資料バージョンに対する採用、修正依頼、差し戻しを表示する Live のシステム概要画面" width="1200">
+  <a href="docs/images/meta-kim-prd-outline.ja-JP.png"><img src="docs/images/meta-kim-prd-outline.ja-JP.png" alt="現在の資料バージョンに対する採用、修正依頼、差し戻しを表示する Live のシステム概要画面" width="900"></a>
+  <br>
+  <a href="docs/images/meta-kim-prd-outline.ja-JP.png">原寸の画像を開く</a>
 </p>
 
 *一回目の内容は Live の「PRD → システム概要」に表示されます。実際の資料を読んだうえで、現在の版に対する判断を記録します。画面には同じ受入テスト用サンプルを使っています。*
@@ -108,7 +124,11 @@ AI クライアントでプロジェクトを開き、依頼、既存資料、�
 
 方向が定まったら、AI は各モジュールの詳細を設計し、同じ PRD にまとめます。モジュール同士は、すでに定めた用語、状態、インターフェースを共有します。
 
-![二回目の PRD：モジュールを操作、状態、ルール、接続、受け入れ基準、実装タスクへ展開](docs/images/animated-prd-modules.ja-JP.svg)
+<p align="center">
+  <a href="docs/images/animated-prd-modules.ja-JP.svg"><img src="docs/images/animated-prd-modules.ja-JP.svg" alt="二回目の PRD：モジュールを操作、状態、ルール、接続、受け入れ基準、実装タスクへ展開" width="400"></a>
+  <br>
+  <a href="docs/images/animated-prd-modules.ja-JP.svg">原寸の画像を開く</a>
+</p>
 
 **一つのモジュールが具体化する過程を見ます。** 前のシステム基準を引き継ぎ、「予約作成」の操作、状態、ルール、連携と受け入れ条件を補い、下の画面・API・検証タスクへ渡します。
 
@@ -133,14 +153,20 @@ AI クライアントでプロジェクトを開き、依頼、既存資料、�
 後からキャンセル時の空き枠回復ルールを変えれば、関連する決定、モジュール、依存関係から影響するタスクを特定します。有効な成果は残し、必要な範囲を変更します。
 
 <p align="center">
-  <img src="docs/images/meta-kim-prd-module.ja-JP.png" alt="現在のホストから実ファイルを受け取った後の Live モジュール詳細画面とレビュー操作" width="1200">
+  <a href="docs/images/meta-kim-prd-module.ja-JP.png"><img src="docs/images/meta-kim-prd-module.ja-JP.png" alt="現在のホストから実ファイルを受け取った後の Live モジュール詳細画面とレビュー操作" width="900"></a>
+  <br>
+  <a href="docs/images/meta-kim-prd-module.ja-JP.png">原寸の画像を開く</a>
 </p>
 
 *二回目の内容は「PRD → モジュール詳細」に表示されます。概要の採用と現在のホストによる実ファイルの報告後に撮影しました。モジュールを採用すると次のモジュールに進めます。本文は受入テスト用サンプルです。*
 
 ## 八つの段階：何を残し、次へ何を渡すか
 
-![八段階の主な流れ：Critical、Fetch、Thinking、Execution、Review、Meta-Review、Verification、Evolution と問題発見時の戻り先](docs/images/animated-eight-stages.ja-JP.svg)
+<p align="center">
+  <a href="docs/images/animated-eight-stages.ja-JP.svg"><img src="docs/images/animated-eight-stages.ja-JP.svg" alt="八段階の主な流れ：Critical、Fetch、Thinking、Execution、Review、Meta-Review、Verification、Evolution と問題発見時の戻り先" width="400"></a>
+  <br>
+  <a href="docs/images/animated-eight-stages.ja-JP.svg">原寸の画像を開く</a>
+</p>
 
 **01 から 08 へ、強調表示を追います。** 各カードには、その段階が残す成果が書かれています。次の段階はそれを受け取り、問題があれば解決できる段階へ戻ります。
 
@@ -161,7 +187,11 @@ AI クライアントでプロジェクトを開き、依頼、既存資料、�
 
 **動的な編成とは、どのタスクが今進められるかを実行中も判断し続けることです。** 前提となる成果、変更するファイルの範囲、リソース、権限、クライアントが現在使える並行実行数を確認します。
 
-![同じ段階で予約タスクを依存関係に沿って並行実行し、一部の待機と統合を経て審査へ進む](docs/images/animated-orchestration.ja-JP.svg)
+<p align="center">
+  <a href="docs/images/animated-orchestration.ja-JP.svg"><img src="docs/images/animated-orchestration.ja-JP.svg" alt="同じ段階で予約タスクを依存関係に沿って並行実行し、一部の待機と統合を経て審査へ進む" width="460"></a>
+  <br>
+  <a href="docs/images/animated-orchestration.ja-JP.svg">原寸の画像を開く</a>
+</p>
 
 **上部の共通仕様から、左右の分岐を同時に見ます。** 左の画面が選択待ちでも、右の API は進みます。画面が再開した後、両方の成果を下部で統合します。この着手条件の変化を扱うのが動的な編成です。
 
@@ -179,7 +209,11 @@ AI クライアントでプロジェクトを開き、依頼、既存資料、�
 
 **意図的な余白は、現在の判断と利用者の注意のための時間です。** いつ情報を出すか、短く伝えるか、待つかを調整します。PRD の未決事項は情報や決定の不足を示すもので、別々に記録します。
 
-![状況の変化から、今進める、後に回す、余白を置く、重要な対応を先にする判断を行う](docs/images/animated-rhythm.ja-JP.svg)
+<p align="center">
+  <a href="docs/images/animated-rhythm.ja-JP.svg"><img src="docs/images/animated-rhythm.ja-JP.svg" alt="状況の変化から、今進める、後に回す、余白を置く、重要な対応を先にする判断を行う" width="400"></a>
+  <br>
+  <a href="docs/images/animated-rhythm.ja-JP.svg">原寸の画像を開く</a>
+</p>
 
 **上部の新しい情報から読みます。** 決定済みか、事実が足りないか、利用者が選べる状態か、緊急かを判断し、次のカードを選びます。Pause は理解する時間をつくり、再開条件を記録します。
 
@@ -235,7 +269,11 @@ AI クライアントでプロジェクトを開き、依頼、既存資料、�
 
 ## 中断した仕事を続け、次の仕事をより良くする
 
-![計画、発見、進捗、成果を再開の根拠にし、評価済みの経験を次へつなぐ](docs/images/animated-continuity.ja-JP.svg)
+<p align="center">
+  <a href="docs/images/animated-continuity.ja-JP.svg"><img src="docs/images/animated-continuity.ja-JP.svg" alt="計画、発見、進捗、成果を再開の根拠にし、評価済みの経験を次へつなぐ" width="500"></a>
+  <br>
+  <a href="docs/images/animated-continuity.ja-JP.svg">原寸の画像を開く</a>
+</p>
 
 **今回の作業 → 記録の保存 → 次回の再開を追います。** 下の二つの分岐は実際の成果を使い、残作業を続けることと、残す価値のある経験の評価を行います。
 
@@ -251,7 +289,11 @@ Meta_Kim は、計画、発見、進捗、決定、成果物、検査結果を�
 
 ## 会社の一つの案件を、複数の実行につなぐ
 
-![会社の同じ案件に複数の実行を結び、成果、検証、採用、効果を区別して学習候補を残す](docs/images/animated-work-context.ja-JP.svg)
+<p align="center">
+  <a href="docs/images/animated-work-context.ja-JP.svg"><img src="docs/images/animated-work-context.ja-JP.svg" alt="会社の同じ案件に複数の実行を結び、成果、検証、採用、効果を区別して学習候補を残す" width="400"></a>
+  <br>
+  <a href="docs/images/animated-work-context.ja-JP.svg">原寸の画像を開く</a>
+</p>
 
 **長期の案件（Work）は会社の業務システムが保持し、Meta_Kim は各実行をその案件に結びます。** 一人の会社でも、今後メンバーが増えても同じ任意のインターフェースを使えます。ホストが会社、案件、コンテキストの版、アクセス範囲、情報源の参照を渡し、現在の作業指示と結果を結びます。コンテキストが変われば新しい実行に進み、以前の記録も追跡できます。
 
@@ -315,7 +357,11 @@ node bin/meta-kim.mjs live --project-root "/path/to/your-project"
 
 最初に「仕事」で八段階と次の操作を確認し、「PRD」でシステム概要やモジュール詳細を読みます。タスクの依存関係や検査結果は「実行マップ」でタスクを選び、「証拠」を開いて確認できます。
 
-![Meta_Kim Live でタスクを選択し、詳細と記録された証拠を確認](docs/images/meta-kim-live-detail.ja-JP.png)
+<p align="center">
+  <a href="docs/images/meta-kim-live-detail.ja-JP.png"><img src="docs/images/meta-kim-live-detail.ja-JP.png" alt="Meta_Kim Live でタスクを選択し、詳細と記録された証拠を確認" width="900"></a>
+  <br>
+  <a href="docs/images/meta-kim-live-detail.ja-JP.png">原寸の画像を開く</a>
+</p>
 
 *内蔵デモでタスクを選び、証拠を開いた画面です。記録を通して、そのタスクの状態を理解できます。*
 
@@ -344,7 +390,11 @@ node bin/meta-kim.mjs live --project-root "/path/to/your-project"
 
 ### クライアントとモデルを別々に設定する
 
-![依頼とホスト情報からクライアントとモデルを選び、連携能力を確認し、要求・適用・観測を別々に記録する](docs/images/animated-runtime-selection.ja-JP.svg)
+<p align="center">
+  <a href="docs/images/animated-runtime-selection.ja-JP.svg"><img src="docs/images/animated-runtime-selection.ja-JP.svg" alt="依頼とホスト情報からクライアントとモデルを選び、連携能力を確認し、要求・適用・観測を別々に記録する" width="500"></a>
+  <br>
+  <a href="docs/images/animated-runtime-selection.ja-JP.svg">原寸の画像を開く</a>
+</p>
 
 **専門の方法、実行クライアント、モデルは別々の選択です。** 同じ PRD、八段階、引き継ぎ、検証の方法を複数のクライアントで使えます。Claude Code、Codex、Gemini CLI、ZCode などは利用する入口であり、モデルは接続設定と今回の要求で決まります。Claude Code で MiniMax モデルを使っても、クライアントは Claude Code として、モデルは別項目として記録します。
 
@@ -490,7 +540,11 @@ node setup.mjs --check
 
 ## ソースと生成ファイル
 
-![共通の設定と方法が編成へ入り、ホスト連携が実行結果を返し、データ層が記録し、表示層が状態を示す](docs/images/animated-layers.ja-JP.svg)
+<p align="center">
+  <a href="docs/images/animated-layers.ja-JP.svg"><img src="docs/images/animated-layers.ja-JP.svg" alt="共通の設定と方法が編成へ入り、ホスト連携が実行結果を返し、データ層が記録し、表示層が状態を示す" width="520"></a>
+  <br>
+  <a href="docs/images/animated-layers.ja-JP.svg">原寸の画像を開く</a>
+</p>
 
 **事実の種類ごとに正本を一つに保ち、アプリ・データ・表示を接続します。** 以下は現在の実装の配置です。
 

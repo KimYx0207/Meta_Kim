@@ -17,7 +17,9 @@ Use it to investigate a business problem, create a report or content, improve an
 In everyday terms: **break down the request → search → research → think → make**. These map to Critical, Fetch (search and research), Thinking and Execution, followed by Review, Meta-Review, Verification and Evolution. The booking example below follows this complete journey from a request to designs, tasks, working files and acceptance checks.
 
 <p align="center">
-  <img src="docs/images/system-panorama.en.svg" alt="Meta_Kim system flow with eight stages, dependency routing, human decisions, revision paths, and saved records" width="1200">
+  <a href="docs/images/system-panorama.en.svg"><img src="docs/images/system-panorama.en.svg" alt="Meta_Kim system flow with eight stages, dependency routing, human decisions, revision paths, and saved records" width="1000"></a>
+  <br>
+  <a href="docs/images/system-panorama.en.svg">Open full-size image</a>
 </p>
 
 Read stages 01–08 from top to bottom. The dark section establishes the goal and evidence, then develops the system and its modules in one PRD. The execution section uses capabilities supplied by the current host; quality gates check actual results. Orange paths request a human decision when needed and reuse existing valid decisions. Purple paths return execution issues to affected tasks; scope, evidence, or design issues return to the responsible stage. Dashed paths write records. The host supplies Work adoption and effect feedback. Reusable learning is reviewed before updating methods or retaining a candidate; when no update is needed, the reason is recorded before delivery.
@@ -35,7 +37,9 @@ The outcome should be concrete: for this example, a working booking page, a mana
 Open your project in your AI client and describe the result, existing materials and constraints. **Live is the single visual workspace for continuing project work:** inspect all eight stages, read both PRD passes, accept the current version or submit module feedback. The current AI host performs the next step.
 
 <p align="center">
-  <img src="docs/images/meta-kim-workspace.en.png" alt="The actual Meta_Kim Live workspace with the eight stages and the next system-outline review" width="1200">
+  <a href="docs/images/meta-kim-workspace.en.png"><img src="docs/images/meta-kim-workspace.en.png" alt="The actual Meta_Kim Live workspace with the eight stages and the next system-outline review" width="900"></a>
+  <br>
+  <a href="docs/images/meta-kim-workspace.en.png">Open full-size image</a>
 </p>
 
 *Actual Live workspace with a clearly marked acceptance sample. The browser uses the real Hub, review controls and current-host CLI; the sample does not call a model. Open PRD to read the system outline and individual module designs.*
@@ -56,7 +60,11 @@ Accepting the outline makes the next module available to the host; accepting a m
 
 ## A mind map of the whole system
 
-![Meta_Kim mind map: goals, design, tasks, quality and continued improvement](docs/images/animated-system-map.en.svg)
+<p align="center">
+  <a href="docs/images/animated-system-map.en.svg"><img src="docs/images/animated-system-map.en.svg" alt="Meta_Kim mind map: goals, design, tasks, quality and continued improvement" width="520"></a>
+  <br>
+  <a href="docs/images/animated-system-map.en.svg">Open full-size image</a>
+</p>
 
 **Start at the user’s goal and follow the four branches.** See how understanding, design, tasks and delivery relate to that goal, together with their division of responsibility: Meta_Kim organizes the work and specialist capabilities carry it out.
 
@@ -72,7 +80,11 @@ The value is in these connections. Changing a module interface updates the relev
 
 **A PRD, or product requirements document, explains what to build, why it matters and how to judge the result.** In Meta_Kim, the system outline and module details are two passes over the same PRD. Earlier decisions remain part of the later design.
 
-![The first PRD pass turns goals, project context and research into architecture, module outlines and pending decisions](docs/images/animated-prd-architecture.en.svg)
+<p align="center">
+  <a href="docs/images/animated-prd-architecture.en.svg"><img src="docs/images/animated-prd-architecture.en.svg" alt="The first PRD pass turns goals, project context and research into architecture, module outlines and pending decisions" width="400"></a>
+  <br>
+  <a href="docs/images/animated-prd-architecture.en.svg">Open full-size image</a>
+</p>
 
 **Follow one generation cycle:** the request leads to project inspection and research, then option comparison, then four parts of the same PRD: user journey, technology and scope, module outline, and shared agreements.
 
@@ -97,7 +109,9 @@ For example, “tapping twice should produce one booking” becomes an acceptanc
 **You can assess the whole approach before implementation details grow.** Exploration can retain open questions. Before a module is ready for execution, its required decisions and interfaces must be settled. A small repair reuses its accepted design and expands only the affected part.
 
 <p align="center">
-  <img src="docs/images/prd-to-tasks.en.svg" alt="Two passes of one PRD become system and module design, then task packets with context, scope, dependencies, and acceptance criteria" width="1200">
+  <a href="docs/images/prd-to-tasks.en.svg"><img src="docs/images/prd-to-tasks.en.svg" alt="Two passes of one PRD become system and module design, then task packets with context, scope, dependencies, and acceptance criteria" width="1000"></a>
+  <br>
+  <a href="docs/images/prd-to-tasks.en.svg">Open full-size image</a>
 </p>
 
 Read the two design passes from left to right, then follow the arrows down to task packets and execution. The first pass establishes scope, architecture, module boundaries, and shared interfaces. The second details module flows, states, failures, data, and acceptance within that same system baseline. Task packets reference the corresponding parts of this PRD and carry context, scope, dependencies, and output requirements. The decision branch illustrates one module: reuse valid decisions first, record a necessary human choice, and return to its design. Only affected dependencies wait; the host may execute other ready, independent tasks in parallel. Requirement changes identify the affected module and design baseline before updating linked tasks; failed verification returns to the relevant task.
@@ -105,7 +119,9 @@ Read the two design passes from left to right, then follow the arrows down to ta
 [Open the scalable diagram](docs/images/prd-to-tasks.en.svg)
 
 <p align="center">
-  <img src="docs/images/meta-kim-prd-outline.en.png" alt="Actual Live system-outline view with version-bound adoption, request-changes and return controls" width="1200">
+  <a href="docs/images/meta-kim-prd-outline.en.png"><img src="docs/images/meta-kim-prd-outline.en.png" alt="Actual Live system-outline view with version-bound adoption, request-changes and return controls" width="900"></a>
+  <br>
+  <a href="docs/images/meta-kim-prd-outline.en.png">Open full-size image</a>
 </p>
 
 *In Live, the first pass appears under PRD → System overview. Read the actual material and record your judgment against its current version. This screenshot uses the same labeled acceptance sample.*
@@ -114,7 +130,11 @@ Read the two design passes from left to right, then follow the arrows down to ta
 
 Once the direction is settled, the AI develops each module's detailed design and synthesizes it into the same PRD. Modules continue to share the concepts, state and interfaces established above.
 
-![The second PRD pass expands a module into journeys, states, rules, interfaces, acceptance and implementation tasks](docs/images/animated-prd-modules.en.svg)
+<p align="center">
+  <a href="docs/images/animated-prd-modules.en.svg"><img src="docs/images/animated-prd-modules.en.svg" alt="The second PRD pass expands a module into journeys, states, rules, interfaces, acceptance and implementation tasks" width="400"></a>
+  <br>
+  <a href="docs/images/animated-prd-modules.en.svg">Open full-size image</a>
+</p>
 
 **Follow one module being developed:** carry forward the system baseline, select booking creation, fill in actions, states, rules, contracts and acceptance, then hand those details to the UI, API and verification tasks below.
 
@@ -139,14 +159,20 @@ Each worker receives **the current system baseline, its complete relevant module
 If you later change the rule for releasing capacity after cancellation, related decisions, modules and dependencies identify the affected tasks. Valid completed work remains useful while changes focus on their actual impact.
 
 <p align="center">
-  <img src="docs/images/meta-kim-prd-module.en.png" alt="Actual Live module-detail view after a real current-host file report, with module summary and review controls" width="1200">
+  <a href="docs/images/meta-kim-prd-module.en.png"><img src="docs/images/meta-kim-prd-module.en.png" alt="Actual Live module-detail view after a real current-host file report, with module summary and review controls" width="900"></a>
+  <br>
+  <a href="docs/images/meta-kim-prd-module.en.png">Open full-size image</a>
 </p>
 
 *The second pass appears under PRD → Module design. This capture follows a real outline approval and current-host file report; adopting a module makes the next one available. The text shown is an acceptance sample.*
 
 ## Eight stages: what each step produces for the next
 
-![The eight-stage loop: Critical, Fetch, Thinking, Execution, Review, Meta-Review, Verification and Evolution, with returns when problems are found](docs/images/animated-eight-stages.en.svg)
+<p align="center">
+  <a href="docs/images/animated-eight-stages.en.svg"><img src="docs/images/animated-eight-stages.en.svg" alt="The eight-stage loop: Critical, Fetch, Thinking, Execution, Review, Meta-Review, Verification and Evolution, with returns when problems are found" width="400"></a>
+  <br>
+  <a href="docs/images/animated-eight-stages.en.svg">Open full-size image</a>
+</p>
 
 **Follow the highlights from 01 to 08.** Each card names the result its stage leaves behind. The next stage uses that result; a problem returns to the stage equipped to resolve it.
 
@@ -167,7 +193,11 @@ This is the operating backbone. **Stages follow their defined order; independent
 
 **Dynamic orchestration keeps asking which tasks are ready to proceed.** It considers prerequisites, file scopes, resources, permissions and the current client's available execution capacity.
 
-![Booking tasks run within one stage using dependencies, parallel work, local waits and a merge before review](docs/images/animated-orchestration.en.svg)
+<p align="center">
+  <a href="docs/images/animated-orchestration.en.svg"><img src="docs/images/animated-orchestration.en.svg" alt="Booking tasks run within one stage using dependencies, parallel work, local waits and a merge before review" width="420"></a>
+  <br>
+  <a href="docs/images/animated-orchestration.en.svg">Open full-size image</a>
+</p>
 
 **Start with the shared contract, then watch both branches.** The UI branch waits for a choice while API work continues. Once the UI resumes, both outputs meet at the merge. That change in readiness is what dynamic orchestration handles.
 
@@ -185,7 +215,11 @@ Repeated ineffective attempts on the same basis pause the affected task so its m
 
 **Intentional silence leaves room for the current decision and your attention.** It governs when to show information, say less or wait. Open PRD items instead describe missing information or unsettled decisions; those are tracked separately.
 
-![Rhythm control chooses whether to act now, defer, pause or insert a more important intervention](docs/images/animated-rhythm.en.svg)
+<p align="center">
+  <a href="docs/images/animated-rhythm.en.svg"><img src="docs/images/animated-rhythm.en.svg" alt="Rhythm control chooses whether to act now, defer, pause or insert a more important intervention" width="400"></a>
+  <br>
+  <a href="docs/images/animated-rhythm.en.svg">Open full-size image</a>
+</p>
 
 **Start with the new information at the top:** is it settled, missing facts, ready for your choice, or urgent? Those conditions determine the next card. Pause leaves time to absorb the result and records how work can resume.
 
@@ -241,7 +275,11 @@ Search the project and client’s existing capabilities first, then consider con
 
 ## Resume interrupted work and improve the next round
 
-![Plans, findings, progress and outputs establish a recovery point, while evaluated lessons inform the next round](docs/images/animated-continuity.en.svg)
+<p align="center">
+  <a href="docs/images/animated-continuity.en.svg"><img src="docs/images/animated-continuity.en.svg" alt="Plans, findings, progress and outputs establish a recovery point, while evaluated lessons inform the next round" width="440"></a>
+  <br>
+  <a href="docs/images/animated-continuity.en.svg">Open full-size image</a>
+</p>
 
 **Follow current work → saved records → the next session.** The two lower branches use the actual results to continue unfinished work and evaluate which lessons are worth retaining.
 
@@ -257,7 +295,11 @@ To retain a lesson, record the observed problem and proposed improvement, evalua
 
 ## One company Work can span many runs
 
-![One company Work connects multiple runs, keeps production, verification, adoption and effect separate, then collects learning candidates](docs/images/animated-work-context.en.svg)
+<p align="center">
+  <a href="docs/images/animated-work-context.en.svg"><img src="docs/images/animated-work-context.en.svg" alt="One company Work connects multiple runs, keeps production, verification, adoption and effect separate, then collects learning candidates" width="400"></a>
+  <br>
+  <a href="docs/images/animated-work-context.en.svg">Open full-size image</a>
+</p>
 
 **The company's business system owns the long-lived Work; Meta_Kim links each execution back to it.** The same optional interface supports a one-person company and a growing team. The host supplies organization, Work, context revision, scope and source references. These bind the current work orders and results. Changed context starts a new run while earlier records remain traceable.
 
@@ -321,7 +363,11 @@ Open the local URL printed by the command. Live reads that project's saved task 
 
 The default **Work** view shows the stages and next action. Use **PRD** for the system outline and module detail. To inspect dependencies and task evidence, open **Run map**, select a task, and choose **Evidence**. Only registered materials and existing run records appear in the workspace.
 
-![A selected task in Meta_Kim Live with its details and recorded evidence](docs/images/meta-kim-live-detail.png)
+<p align="center">
+  <a href="docs/images/meta-kim-live-detail.png"><img src="docs/images/meta-kim-live-detail.png" alt="A selected task in Meta_Kim Live with its details and recorded evidence" width="900"></a>
+  <br>
+  <a href="docs/images/meta-kim-live-detail.png">Open full-size image</a>
+</p>
 
 *The built-in demo after selecting a task and opening its evidence. The panel helps explain the task's state through its records.*
 
@@ -350,7 +396,11 @@ After installation, reopen the client in your working project so it loads the co
 
 ### Configure the client and model separately
 
-![Select a client and model from task inputs and host evidence, check adapter capability, and keep requested, applied and observed values separate](docs/images/animated-runtime-selection.en.svg)
+<p align="center">
+  <a href="docs/images/animated-runtime-selection.en.svg"><img src="docs/images/animated-runtime-selection.en.svg" alt="Select a client and model from task inputs and host evidence, check adapter capability, and keep requested, applied and observed values separate" width="460"></a>
+  <br>
+  <a href="docs/images/animated-runtime-selection.en.svg">Open full-size image</a>
+</p>
 
 **A professional method, an execution client and a model are separate choices.** The same PRD, eight-stage workflow, handoff and verification methods can be used in different clients. Names such as Claude Code, Codex, Gemini CLI and ZCode describe the client; its connection settings and the current request determine the model. A Claude Code client connected to a MiniMax model remains a Claude Code client, with the model recorded separately.
 
@@ -497,7 +547,11 @@ If installation or client loading needs attention, `node bin/meta-kim.mjs doctor
 
 ## Source and generated files
 
-![Authoritative configuration feeds application orchestration, host adapters return results, data stores records, and views present state](docs/images/animated-layers.en.svg)
+<p align="center">
+  <a href="docs/images/animated-layers.en.svg"><img src="docs/images/animated-layers.en.svg" alt="Authoritative configuration feeds application orchestration, host adapters return results, data stores records, and views present state" width="420"></a>
+  <br>
+  <a href="docs/images/animated-layers.en.svg">Open full-size image</a>
+</p>
 
 **Each kind of fact has one authoritative source; application, data and views connect through those sources.** These paths describe the current implementation:
 

@@ -17,7 +17,9 @@
 일상적인 표현으로는 **요구 분해 → 검색 → 연구 → 방법 검토 → 제작**입니다. Critical, Fetch(검색과 연구), Thinking, Execution에 대응하며 Review, Meta-Review, Verification, Evolution이 이어집니다. 아래에서는 예약 앱을 사례로 요청이 설계, 작업, 실제 파일과 검수 결과가 되는 과정을 설명합니다.
 
 <p align="center">
-  <img src="docs/images/system-panorama.ko-KR.svg" alt="Meta_Kim 시스템 흐름: 8단계, 의존성에 따른 실행, 사람의 판단, 수정 경로와 기록 위치" width="1200">
+  <a href="docs/images/system-panorama.ko-KR.svg"><img src="docs/images/system-panorama.ko-KR.svg" alt="Meta_Kim 시스템 흐름: 8단계, 의존성에 따른 실행, 사람의 판단, 수정 경로와 기록 위치" width="1000"></a>
+  <br>
+  <a href="docs/images/system-panorama.ko-KR.svg">원본 이미지 열기</a>
 </p>
 
 01–08을 위에서 아래로 읽습니다. 짙은 초록 영역에서 목표와 근거를 정리하고 하나의 PRD에서 시스템과 모듈을 설계합니다. 실행 영역은 현재 호스트가 제공하는 역량을 사용하며, 품질 확인 단계에서 실제 결과를 검증합니다. 주황색은 필요할 때 사람의 판단을 요청하는 경로이며 유효한 기존 결정은 재사용합니다. 보라색은 실행 문제를 해당 작업으로 되돌립니다. 목표·사실·설계 문제는 각각의 담당 단계로 돌아갑니다. 점선은 기록 저장을 뜻하며 Work의 채택과 효과는 호스트가 전달합니다. 경험은 검토 후 방법에 반영하거나 후보로 보관하고, 반영할 필요가 없으면 이유를 남긴 뒤 전달을 마칩니다.
@@ -35,7 +37,9 @@
 AI 클라이언트에서 프로젝트를 열고 요청, 기존 자료와 제약을 전달하세요. **Live는 계속되는 프로젝트 작업의 통합 작업 공간입니다.** 여덟 단계, 시스템 PRD, 모듈 상세, 채택한 버전, 수정 의견과 처리 기록을 한곳에서 확인합니다. 실제 실행은 현재 AI 호스트가 이어갑니다.
 
 <p align="center">
-  <img src="docs/images/meta-kim-workspace.ko-KR.png" alt="여덟 단계와 다음 시스템 개요 검토를 보여 주는 Meta_Kim Live의 실제 통합 작업 공간" width="1200">
+  <a href="docs/images/meta-kim-workspace.ko-KR.png"><img src="docs/images/meta-kim-workspace.ko-KR.png" alt="여덟 단계와 다음 시스템 개요 검토를 보여 주는 Meta_Kim Live의 실제 통합 작업 공간" width="900"></a>
+  <br>
+  <a href="docs/images/meta-kim-workspace.ko-KR.png">원본 이미지 열기</a>
 </p>
 
 *인수 테스트용 예시라고 명시된 실제 Live 작업 공간입니다. 브라우저는 실제 Hub, 검토 조작과 현재 호스트 CLI를 사용하며 모델을 호출하지 않았습니다. PRD에서 시스템 개요와 각 모듈의 상세 설계를 읽을 수 있습니다.*
@@ -50,7 +54,11 @@ AI 클라이언트에서 프로젝트를 열고 요청, 기존 자료와 제약�
 
 ## 마인드맵으로 전체 구조부터 보기
 
-![Meta_Kim 마인드맵: 목표, 설계, 작업, 품질과 지속적인 개선](docs/images/animated-system-map.ko-KR.svg)
+<p align="center">
+  <a href="docs/images/animated-system-map.ko-KR.svg"><img src="docs/images/animated-system-map.ko-KR.svg" alt="Meta_Kim 마인드맵: 목표, 설계, 작업, 품질과 지속적인 개선" width="520"></a>
+  <br>
+  <a href="docs/images/animated-system-map.ko-KR.svg">원본 이미지 열기</a>
+</p>
 
 **사용자 목표에서 네 갈래를 따라갑니다.** 목표 이해, 설계, 작업과 전달이 목표와 어떻게 연결되는지, 역할은 어떻게 나뉘는지 봅니다. Meta_Kim이 전체를 구성하고 전문 역량이 실제 작업을 맡습니다.
 
@@ -66,7 +74,11 @@ AI 클라이언트에서 프로젝트를 열고 요청, 기존 자료와 제약�
 
 **PRD는 제품 요구사항 문서입니다. 무엇을 만들고, 왜 만들며, 어떤 결과를 잘된 것으로 볼지 설명합니다.** Meta_Kim의 시스템 개요와 모듈 상세는 같은 PRD를 두 차례 구체화한 것입니다. 앞서 내린 결정이 다음 설계로 이어집니다.
 
-![첫 번째 PRD: 목표, 현황, 조사에서 구조와 모듈 개요, 미결정을 도출](docs/images/animated-prd-architecture.ko-KR.svg)
+<p align="center">
+  <a href="docs/images/animated-prd-architecture.ko-KR.svg"><img src="docs/images/animated-prd-architecture.ko-KR.svg" alt="첫 번째 PRD: 목표, 현황, 조사에서 구조와 모듈 개요, 미결정을 도출" width="420"></a>
+  <br>
+  <a href="docs/images/animated-prd-architecture.ko-KR.svg">원본 이미지 열기</a>
+</p>
 
 **한 번의 생성 과정을 따라가 보세요.** 한 문장의 요청이 현황 확인과 조사, 방안 비교를 거쳐 같은 PRD의 사용자 흐름, 기술과 범위, 모듈 개요, 공통 약속으로 정리됩니다.
 
@@ -91,7 +103,9 @@ AI 클라이언트에서 프로젝트를 열고 요청, 기존 자료와 제약�
 **전체 구성이 성립하는지 확인한 뒤 구현 상세로 들어갑니다.** 탐색 중에는 미결정을 남길 수 있습니다. 모듈을 실행하기 전에는 필요한 결정과 인터페이스를 확정합니다. 작은 수정은 합의한 설계를 재사용하고 영향받는 부분만 구체화합니다.
 
 <p align="center">
-  <img src="docs/images/prd-to-tasks.ko-KR.svg" alt="하나의 PRD에서 시스템 개요와 모듈 상세를 만든 뒤 맥락, 범위, 의존성과 인수 조건을 갖춘 실행 작업 지시서로 연결하는 그림" width="1200">
+  <a href="docs/images/prd-to-tasks.ko-KR.svg"><img src="docs/images/prd-to-tasks.ko-KR.svg" alt="하나의 PRD에서 시스템 개요와 모듈 상세를 만든 뒤 맥락, 범위, 의존성과 인수 조건을 갖춘 실행 작업 지시서로 연결하는 그림" width="1000"></a>
+  <br>
+  <a href="docs/images/prd-to-tasks.ko-KR.svg">원본 이미지 열기</a>
 </p>
 
 두 차례 설계를 왼쪽에서 오른쪽으로 읽은 뒤 화살표를 따라 아래의 작업 지시서와 실행으로 이동합니다. 1차는 범위, 구조, 모듈 경계와 공유 인터페이스를 정합니다. 2차는 같은 시스템 기준 안에서 흐름, 상태, 예외, 데이터와 인수 조건을 구체화합니다. 작업 지시서는 해당 PRD를 참조하며 맥락, 범위, 의존성과 산출물 요구 사항을 전달합니다. 판단 분기는 한 모듈의 사례입니다. 기존 결정을 먼저 재사용하고 필요한 사람의 판단과 이유를 기록한 뒤 해당 설계로 돌아갑니다. 영향을 받는 의존성만 기다리고, 다른 준비된 독립 작업은 호스트 역량에 따라 병렬 실행할 수 있습니다. 요구 변경은 영향을 받는 모듈과 설계 기준을 찾아 연결된 작업을 갱신하며, 검증 실패는 해당 작업으로 돌아갑니다.
@@ -99,7 +113,9 @@ AI 클라이언트에서 프로젝트를 열고 요청, 기존 자료와 제약�
 [확대 가능한 원본 그림 열기](docs/images/prd-to-tasks.ko-KR.svg)
 
 <p align="center">
-  <img src="docs/images/meta-kim-prd-outline.ko-KR.png" alt="현재 자료 버전에 대한 채택, 수정 요청, 반려 조작을 보여 주는 실제 Live 시스템 개요 화면" width="1200">
+  <a href="docs/images/meta-kim-prd-outline.ko-KR.png"><img src="docs/images/meta-kim-prd-outline.ko-KR.png" alt="현재 자료 버전에 대한 채택, 수정 요청, 반려 조작을 보여 주는 실제 Live 시스템 개요 화면" width="900"></a>
+  <br>
+  <a href="docs/images/meta-kim-prd-outline.ko-KR.png">원본 이미지 열기</a>
 </p>
 
 *첫 번째 내용은 Live의 「PRD → 시스템 개요」에 표시됩니다. 실제 자료를 읽고 현재 버전에 대한 판단을 기록합니다. 위와 동일하게 인수 테스트용으로 표시한 예시입니다.*
@@ -108,7 +124,11 @@ AI 클라이언트에서 프로젝트를 열고 요청, 기존 자료와 제약�
 
 방향이 정해지면 AI는 각 모듈의 상세 설계를 보완하고 같은 PRD에 통합합니다. 모듈은 앞서 정한 개념, 상태와 인터페이스를 계속 공유합니다.
 
-![두 번째 PRD: 모듈을 사용자 흐름, 상태, 규칙, 인터페이스, 검수와 구현 작업으로 확장](docs/images/animated-prd-modules.ko-KR.svg)
+<p align="center">
+  <a href="docs/images/animated-prd-modules.ko-KR.svg"><img src="docs/images/animated-prd-modules.ko-KR.svg" alt="두 번째 PRD: 모듈을 사용자 흐름, 상태, 규칙, 인터페이스, 검수와 구현 작업으로 확장" width="400"></a>
+  <br>
+  <a href="docs/images/animated-prd-modules.ko-KR.svg">원본 이미지 열기</a>
+</p>
 
 **한 모듈이 구체화되는 과정을 봅니다.** 앞선 시스템 기준을 유지하고 ‘예약 생성’의 행동, 상태, 규칙, 연동과 검수 내용을 채운 뒤 아래 화면·API·검증 작업에 전달합니다.
 
@@ -133,14 +153,20 @@ AI 클라이언트에서 프로젝트를 열고 요청, 기존 자료와 제약�
 나중에 취소 시 정원을 돌려주는 규칙이 바뀌면 관련 결정, 모듈과 의존 관계를 따라 영향받는 작업을 찾습니다. 유효한 결과는 보존하고 실제로 영향을 받는 부분을 변경합니다.
 
 <p align="center">
-  <img src="docs/images/meta-kim-prd-module.ko-KR.png" alt="현재 호스트가 실제 파일을 보고한 후 모듈 설명과 상세 설계, 검토 조작을 보여 주는 Live 화면" width="1200">
+  <a href="docs/images/meta-kim-prd-module.ko-KR.png"><img src="docs/images/meta-kim-prd-module.ko-KR.png" alt="현재 호스트가 실제 파일을 보고한 후 모듈 설명과 상세 설계, 검토 조작을 보여 주는 Live 화면" width="900"></a>
+  <br>
+  <a href="docs/images/meta-kim-prd-module.ko-KR.png">원본 이미지 열기</a>
 </p>
 
 *두 번째 내용은 「PRD → 모듈 상세」에 표시됩니다. 실제 개요 채택과 현재 호스트의 파일 보고 후에 촬영했습니다. 모듈을 채택하면 호스트가 다음 모듈을 이어갈 수 있습니다. 본문은 인수 테스트용 예시입니다.*
 
 ## 여덟 단계: 무엇을 남기고 다음 단계에 무엇을 넘기나요?
 
-![여덟 단계 흐름: Critical, Fetch, Thinking, Execution, Review, Meta-Review, Verification, Evolution과 문제 발견 시 돌아갈 단계](docs/images/animated-eight-stages.ko-KR.svg)
+<p align="center">
+  <a href="docs/images/animated-eight-stages.ko-KR.svg"><img src="docs/images/animated-eight-stages.ko-KR.svg" alt="여덟 단계 흐름: Critical, Fetch, Thinking, Execution, Review, Meta-Review, Verification, Evolution과 문제 발견 시 돌아갈 단계" width="400"></a>
+  <br>
+  <a href="docs/images/animated-eight-stages.ko-KR.svg">원본 이미지 열기</a>
+</p>
 
 **01에서 08까지 강조 표시를 따라갑니다.** 각 카드 아래에는 해당 단계가 남길 결과가 있습니다. 다음 단계는 그 결과를 받아 사용하고, 문제가 생기면 해결할 수 있는 단계로 돌아갑니다.
 
@@ -161,7 +187,11 @@ AI 클라이언트에서 프로젝트를 열고 요청, 기존 자료와 제약�
 
 **동적 편성은 어떤 작업이 지금 진행 가능한지 실행 중에도 계속 판단하는 것입니다.** 선행 결과, 파일 범위, 자원, 권한과 현재 클라이언트가 제공하는 병렬 실행 능력을 함께 봅니다.
 
-![같은 단계 안에서 예약 작업을 의존 관계에 따라 병렬 실행하고 일부 대기와 통합을 거쳐 검토로 이동](docs/images/animated-orchestration.ko-KR.svg)
+<p align="center">
+  <a href="docs/images/animated-orchestration.ko-KR.svg"><img src="docs/images/animated-orchestration.ko-KR.svg" alt="같은 단계 안에서 예약 작업을 의존 관계에 따라 병렬 실행하고 일부 대기와 통합을 거쳐 검토로 이동" width="480"></a>
+  <br>
+  <a href="docs/images/animated-orchestration.ko-KR.svg">원본 이미지 열기</a>
+</p>
 
 **위쪽 공통 규약에서 시작해 양쪽 갈래를 함께 봅니다.** 왼쪽 화면 작업이 선택을 기다리는 동안 오른쪽 API 작업은 계속됩니다. 화면 작업이 재개되면 두 결과를 아래에서 통합합니다. 동적 편성은 이런 준비 상태의 변화를 처리합니다.
 
@@ -179,7 +209,11 @@ AI 클라이언트에서 프로젝트를 열고 요청, 기존 자료와 제약�
 
 **의도적인 여백은 현재 결정과 사용자의 주의를 위한 공간입니다.** 정보를 언제 보여 주고, 짧게 말하고, 기다릴지 조절합니다. PRD의 미결정은 정보나 결정이 아직 부족하다는 뜻으로, 별도로 기록합니다.
 
-![상황 변화에 따라 즉시 진행, 나중으로 미루기, 잠시 멈추기, 중요한 대응을 먼저 삽입하는 리듬 제어](docs/images/animated-rhythm.ko-KR.svg)
+<p align="center">
+  <a href="docs/images/animated-rhythm.ko-KR.svg"><img src="docs/images/animated-rhythm.ko-KR.svg" alt="상황 변화에 따라 즉시 진행, 나중으로 미루기, 잠시 멈추기, 중요한 대응을 먼저 삽입하는 리듬 제어" width="420"></a>
+  <br>
+  <a href="docs/images/animated-rhythm.ko-KR.svg">원본 이미지 열기</a>
+</p>
 
 **위쪽의 새 정보부터 봅니다.** 이미 결정됐는지, 사실이 부족한지, 사용자가 선택할 준비가 됐는지, 긴급한지를 판단해 다음 카드를 고릅니다. Pause는 이해할 시간을 남기고 재개 조건을 기록합니다.
 
@@ -235,7 +269,11 @@ AI 클라이언트에서 프로젝트를 열고 요청, 기존 자료와 제약�
 
 ## 중단한 작업을 이어서 하고 다음 작업도 개선하기
 
-![계획, 발견, 진행 상태와 결과를 재개 근거로 삼고 평가한 경험을 다음 작업에 연결](docs/images/animated-continuity.ko-KR.svg)
+<p align="center">
+  <a href="docs/images/animated-continuity.ko-KR.svg"><img src="docs/images/animated-continuity.ko-KR.svg" alt="계획, 발견, 진행 상태와 결과를 재개 근거로 삼고 평가한 경험을 다음 작업에 연결" width="500"></a>
+  <br>
+  <a href="docs/images/animated-continuity.ko-KR.svg">원본 이미지 열기</a>
+</p>
 
 **이번 작업 → 기록 저장 → 다음 대화의 재개를 따라갑니다.** 아래 두 갈래는 실제 결과를 근거로 남은 일을 계속하고, 어떤 경험을 남길 가치가 있는지 평가합니다.
 
@@ -251,7 +289,11 @@ Meta_Kim은 계획, 발견, 진행 상황, 결정, 결과물과 검사 기록을
 
 ## 회사의 한 업무를 여러 실행에 연결하기
 
-![같은 회사 업무에 여러 실행을 연결하고 산출, 검증, 채택, 효과를 구분하여 학습 후보를 남깁니다](docs/images/animated-work-context.ko-KR.svg)
+<p align="center">
+  <a href="docs/images/animated-work-context.ko-KR.svg"><img src="docs/images/animated-work-context.ko-KR.svg" alt="같은 회사 업무에 여러 실행을 연결하고 산출, 검증, 채택, 효과를 구분하여 학습 후보를 남깁니다" width="400"></a>
+  <br>
+  <a href="docs/images/animated-work-context.ko-KR.svg">원본 이미지 열기</a>
+</p>
 
 **장기간 이어지는 업무(Work)는 회사의 업무 시스템이 보관하고, Meta_Kim은 각 실행을 그 업무에 연결합니다.** 지금은 1인 회사여도, 나중에 구성원이 늘어나도 같은 선택적 인터페이스를 사용합니다. 호스트가 회사, 업무, 맥락 버전, 접근 범위, 출처 참조를 제공하면 현재 작업 지시와 결과에 연결됩니다. 맥락이 바뀌면 새 실행을 시작하며 이전 기록도 추적할 수 있습니다.
 
@@ -315,7 +357,11 @@ node bin/meta-kim.mjs live --project-root "/path/to/your-project"
 
 먼저 작업 화면에서 여덟 단계와 다음 행동을 확인하고, PRD에서 시스템 개요와 모듈 상세를 읽으세요. 작업 의존성과 검사 결과는 실행 지도에서 작업을 선택하고 근거를 열어 확인할 수 있습니다.
 
-![Meta_Kim Live에서 선택한 작업의 상세 내용과 기록된 근거](docs/images/meta-kim-live-detail.ko-KR.png)
+<p align="center">
+  <a href="docs/images/meta-kim-live-detail.ko-KR.png"><img src="docs/images/meta-kim-live-detail.ko-KR.png" alt="Meta_Kim Live에서 선택한 작업의 상세 내용과 기록된 근거" width="900"></a>
+  <br>
+  <a href="docs/images/meta-kim-live-detail.ko-KR.png">원본 이미지 열기</a>
+</p>
 
 *내장 데모에서 작업을 선택하고 근거를 연 화면입니다. 기록을 통해 해당 작업의 상태를 이해할 수 있습니다.*
 
@@ -344,7 +390,11 @@ node bin/meta-kim.mjs live --project-root "/path/to/your-project"
 
 ### 클라이언트와 모델을 따로 설정하기
 
-![작업과 호스트 정보로 클라이언트와 모델을 선택하고 실제 기능을 확인하며 요청·전달·관측을 따로 기록](docs/images/animated-runtime-selection.ko-KR.svg)
+<p align="center">
+  <a href="docs/images/animated-runtime-selection.ko-KR.svg"><img src="docs/images/animated-runtime-selection.ko-KR.svg" alt="작업과 호스트 정보로 클라이언트와 모델을 선택하고 실제 기능을 확인하며 요청·전달·관측을 따로 기록" width="500"></a>
+  <br>
+  <a href="docs/images/animated-runtime-selection.ko-KR.svg">원본 이미지 열기</a>
+</p>
 
 **전문 방법, 실행 클라이언트, 모델은 각각 선택합니다.** 같은 PRD, 여덟 단계, 인계와 검증 방법을 여러 클라이언트에서 사용할 수 있습니다. Claude Code, Codex, Gemini CLI, ZCode 등은 사용 환경이며 모델은 연결 설정과 이번 요청으로 결정합니다. Claude Code에서 MiniMax 모델을 사용해도 클라이언트는 Claude Code로, 모델은 별도 항목으로 기록합니다.
 
@@ -490,7 +540,11 @@ node setup.mjs --check
 
 ## 소스와 생성 파일
 
-![설정과 공통 방법이 앱 편성으로 연결되고 호스트 어댑터가 결과를 반환하며 데이터가 기록을 저장하고 화면이 상태를 표시](docs/images/animated-layers.ko-KR.svg)
+<p align="center">
+  <a href="docs/images/animated-layers.ko-KR.svg"><img src="docs/images/animated-layers.ko-KR.svg" alt="설정과 공통 방법이 앱 편성으로 연결되고 호스트 어댑터가 결과를 반환하며 데이터가 기록을 저장하고 화면이 상태를 표시" width="480"></a>
+  <br>
+  <a href="docs/images/animated-layers.ko-KR.svg">원본 이미지 열기</a>
+</p>
 
 **각 정보에 하나의 기준 원본을 두고 앱, 데이터, 화면을 연결합니다.** 다음은 현재 구현의 실제 위치입니다.
 

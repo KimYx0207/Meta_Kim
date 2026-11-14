@@ -17,7 +17,9 @@
 用日常说法就是：**拆解需求 → 搜索资料 → 研究问题 → 思考方案 → 制作交付**。它们对应 Critical、Fetch（搜索与研究）、Thinking、Execution，随后接上 Review、Meta-Review、Verification、Evolution。下面用预约工具走完这条工作链，说明一句需求怎样变成设计、任务、实际文件和验收结果。
 
 <p align="center">
-  <img src="docs/images/system-panorama.zh-CN.svg" alt="Meta_Kim 系统运行图：八阶段主线、依赖调度、人的决定、问题回退和过程记录" width="1200">
+  <a href="docs/images/system-panorama.zh-CN.svg"><img src="docs/images/system-panorama.zh-CN.svg" alt="Meta_Kim 系统运行图：八阶段主线、依赖调度、人的决定、问题回退和过程记录" width="1000"></a>
+  <br>
+  <a href="docs/images/system-panorama.zh-CN.svg">打开原图</a>
 </p>
 
 从上往下沿 01–08 阅读：深绿区确定目标、收集证据，并在同一份 PRD 中完成系统与模块设计；执行区把就绪任务交给当前宿主提供的能力，质量关口核验实际成果。橙线表示按需调用人的判断，已有有效决定直接沿用；紫线将执行问题退回相关任务，目标、事实和设计问题退回对应阶段。虚线指向记录，Work 的采用与效果由宿主回传。经验经审阅后写回、留作候选，或记明无需写回，再完成交付。
@@ -35,7 +37,9 @@
 实际使用时，在 AI 客户端里打开你的项目，用自己的话描述目标，并提供现有资料和限制。**Live 是持续项目的统一可视化工作区**：查看八阶段和具体工作，阅读两轮 PRD，采纳当前版本，或针对模块提交修改意见。实际执行由当前 AI 宿主接续。
 
 <p align="center">
-  <img src="docs/images/meta-kim-workspace.zh-CN.png" alt="Meta_Kim Live 的真实统一工作区，展示八阶段和当前系统模块大纲的审阅入口" width="1200">
+  <a href="docs/images/meta-kim-workspace.zh-CN.png"><img src="docs/images/meta-kim-workspace.zh-CN.png" alt="Meta_Kim Live 的真实统一工作区，展示八阶段和当前系统模块大纲的审阅入口" width="900"></a>
+  <br>
+  <a href="docs/images/meta-kim-workspace.zh-CN.png">打开原图</a>
 </p>
 
 *真实运行的 Live 工作区，使用明确标记的验收样例。浏览器经过实际 Hub、审阅控件和当前宿主 CLI；样例没有调用模型。进入 PRD，可阅读系统大纲和每个模块的详细设计。*
@@ -56,7 +60,11 @@
 
 ## 一张思维导图，先看清整套系统
 
-![Meta_Kim 系统思维导图：目标、方案、任务、质量与持续改进](docs/images/animated-system-map.zh-CN.svg)
+<p align="center">
+  <a href="docs/images/animated-system-map.zh-CN.svg"><img src="docs/images/animated-system-map.zh-CN.svg" alt="Meta_Kim 系统思维导图：目标、方案、任务、质量与持续改进" width="520"></a>
+  <br>
+  <a href="docs/images/animated-system-map.zh-CN.svg">打开原图</a>
+</p>
 
 **看图顺序：** 从用户目标出发，沿四条分支看清目标理解、设计、任务与交付的关系，同时看清分工：Meta_Kim 组织工作，专业能力完成具体任务。
 
@@ -72,7 +80,11 @@
 
 **PRD 就是产品需求文档：把“做什么、为什么做、怎样算做好”写清楚。** 在 Meta_Kim 里，系统大纲和模块详情是同一份 PRD 的两次展开，前面的决定会带进后面的设计。
 
-![第一轮 PRD 如何由目标、现状和调研形成架构、模块大纲及待定决策](docs/images/animated-prd-architecture.zh-CN.svg)
+<p align="center">
+  <a href="docs/images/animated-prd-architecture.zh-CN.svg"><img src="docs/images/animated-prd-architecture.zh-CN.svg" alt="第一轮 PRD 如何由目标、现状和调研形成架构、模块大纲及待定决策" width="420"></a>
+  <br>
+  <a href="docs/images/animated-prd-architecture.zh-CN.svg">打开原图</a>
+</p>
 
 **跟着动画看一次生成过程：** 一句需求先进入现状与调研，再比较方案，最后写入同一份 PRD 的四个部分：用户路径、技术与范围、模块大纲、共同约定。
 
@@ -97,7 +109,9 @@
 **你先看到整体怎么成立，再进入具体模块。** 探索期间可以保留待定项；准备执行某个模块时，它依赖的关键决定和接口必须明确。小修正则直接沿用已有设计，只展开受影响部分。
 
 <p align="center">
-  <img src="docs/images/prd-to-tasks.zh-CN.svg" alt="同一份 PRD 从系统大纲展开为模块设计，再成为包含上下文、边界、依赖和验收要求的可执行工单" width="1200">
+  <a href="docs/images/prd-to-tasks.zh-CN.svg"><img src="docs/images/prd-to-tasks.zh-CN.svg" alt="同一份 PRD 从系统大纲展开为模块设计，再成为包含上下文、边界、依赖和验收要求的可执行工单" width="1000"></a>
+  <br>
+  <a href="docs/images/prd-to-tasks.zh-CN.svg">打开原图</a>
 </p>
 
 先从左到右看两轮设计，再沿箭头向下看工单与执行。第一轮建立范围、架构、模块边界和共享接口；第二轮沿同一份系统基线展开模块的流程、状态、异常、数据与验收。工单引用这份 PRD 的相应部分，并携带上下文、边界、依赖和产物要求。图中以一个模块的未决取舍为例：先复用已有决定，必要时记录你的判断并返回相关设计；只等待受影响依赖，其他就绪的独立任务可由宿主并行执行。需求变更先定位受影响模块与设计基线，再更新关联工单；验证失败回到相关任务。
@@ -105,7 +119,9 @@
 [查看可缩放原图](docs/images/prd-to-tasks.zh-CN.svg)
 
 <p align="center">
-  <img src="docs/images/meta-kim-prd-outline.zh-CN.png" alt="Live 系统大纲的真实界面，显示绑定当前材料版本的采纳、要求修改和退回操作" width="1200">
+  <a href="docs/images/meta-kim-prd-outline.zh-CN.png"><img src="docs/images/meta-kim-prd-outline.zh-CN.png" alt="Live 系统大纲的真实界面，显示绑定当前材料版本的采纳、要求修改和退回操作" width="900"></a>
+  <br>
+  <a href="docs/images/meta-kim-prd-outline.zh-CN.png">打开原图</a>
 </p>
 
 *第一轮内容显示在 Live 的「PRD → 系统总览」。阅读实际材料后，对当前版本记录采纳、要求修改或退回。截图使用上方同一份已标记的验收样例。*
@@ -114,7 +130,11 @@
 
 整体方向明确后，AI 继续补齐每个模块的详细设计，并把它们合成同一份 PRD。模块之间继续共享前面确定的概念、数据和接口。
 
-![第二轮 PRD 把一个模块展开为用户流程、状态、规则、接口、验收和执行任务](docs/images/animated-prd-modules.zh-CN.svg)
+<p align="center">
+  <a href="docs/images/animated-prd-modules.zh-CN.svg"><img src="docs/images/animated-prd-modules.zh-CN.svg" alt="第二轮 PRD 把一个模块展开为用户流程、状态、规则、接口、验收和执行任务" width="400"></a>
+  <br>
+  <a href="docs/images/animated-prd-modules.zh-CN.svg">打开原图</a>
+</p>
 
 **跟着动画看一次模块展开：** 带着上一轮的系统基线，选中“创建预约”，补齐操作、状态、规则和接口验收，再把这些内容交给下方的页面、接口和验证任务。
 
@@ -139,14 +159,20 @@
 以后你把“取消后自动释放名额”改成另一条规则，系统会沿关联决定、模块和依赖找出受影响的任务。仍然有效的成果继续保留，修改集中在实际受影响的部分。
 
 <p align="center">
-  <img src="docs/images/meta-kim-prd-module.zh-CN.png" alt="Live 在实际宿主回传文件后的模块详情界面，显示模块说明、详细设计和人工审阅操作" width="1200">
+  <a href="docs/images/meta-kim-prd-module.zh-CN.png"><img src="docs/images/meta-kim-prd-module.zh-CN.png" alt="Live 在实际宿主回传文件后的模块详情界面，显示模块说明、详细设计和人工审阅操作" width="900"></a>
+  <br>
+  <a href="docs/images/meta-kim-prd-module.zh-CN.png">打开原图</a>
 </p>
 
 *第二轮内容显示在「PRD → 模块详情」。这张图来自实际的大纲采纳和当前宿主文件回传；采纳一个模块后，下一个模块可由宿主接续。图中文字是验收样例。*
 
 ## 八个阶段：每一步留下什么，下一步接什么
 
-![八阶段主流程：关键澄清、调研、思考规划、执行、审查、复核、验证、进化，以及发现问题后的回返](docs/images/animated-eight-stages.zh-CN.svg)
+<p align="center">
+  <a href="docs/images/animated-eight-stages.zh-CN.svg"><img src="docs/images/animated-eight-stages.zh-CN.svg" alt="八阶段主流程：关键澄清、调研、思考规划、执行、审查、复核、验证、进化，以及发现问题后的回返" width="420"></a>
+  <br>
+  <a href="docs/images/animated-eight-stages.zh-CN.svg">打开原图</a>
+</p>
 
 **按 01 到 08 跟着高亮阅读。** 每张卡下面写着本阶段要留下的结果；下一阶段接着使用它，发现问题时再回到能解决问题的阶段。
 
@@ -167,7 +193,11 @@
 
 **动态编排，就是执行中持续判断“现在有哪些任务具备条件”。** 它同时看前置结果、文件范围、资源、权限和客户端当前能并行多少工作。
 
-![预约任务在同一阶段内按依赖并行、局部等待、合并并进入审查](docs/images/animated-orchestration.zh-CN.svg)
+<p align="center">
+  <a href="docs/images/animated-orchestration.zh-CN.svg"><img src="docs/images/animated-orchestration.zh-CN.svg" alt="预约任务在同一阶段内按依赖并行、局部等待、合并并进入审查" width="500"></a>
+  <br>
+  <a href="docs/images/animated-orchestration.zh-CN.svg">打开原图</a>
+</p>
 
 **先看顶部的共同接口，再同时看左右两条线。** 左侧页面任务暂时等待选择时，右侧接口仍在推进；左侧恢复后，两边在底部合并。这个等待过程正是动态编排要处理的变化。
 
@@ -185,7 +215,11 @@
 
 **留白是给当前决策和用户注意力留出空间。** 它关注的是何时展示信息、何时少说、何时等待；PRD 中的待定项则关注信息和决定是否齐备，这两件事分别记录。
 
-![节奏控制根据任务变化选择立即推进、延后、留白或插入更重要的处理](docs/images/animated-rhythm.zh-CN.svg)
+<p align="center">
+  <a href="docs/images/animated-rhythm.zh-CN.svg"><img src="docs/images/animated-rhythm.zh-CN.svg" alt="节奏控制根据任务变化选择立即推进、延后、留白或插入更重要的处理" width="440"></a>
+  <br>
+  <a href="docs/images/animated-rhythm.zh-CN.svg">打开原图</a>
+</p>
 
 **从顶部的新信息往下看：** 系统判断它是否已解决、是否还缺事实、是否需要你选择、是否有紧急变化，再决定当前该推哪张卡。底部的 Pause 留出消化空间，并保存恢复条件。
 
@@ -241,7 +275,11 @@
 
 ## 中断后接着做，做完后还能变得更好
 
-![计划、发现、进度和成果形成恢复依据，经过评估的经验再进入下一轮](docs/images/animated-continuity.zh-CN.svg)
+<p align="center">
+  <a href="docs/images/animated-continuity.zh-CN.svg"><img src="docs/images/animated-continuity.zh-CN.svg" alt="计划、发现、进度和成果形成恢复依据，经过评估的经验再进入下一轮" width="520"></a>
+  <br>
+  <a href="docs/images/animated-continuity.zh-CN.svg">打开原图</a>
+</p>
 
 **沿着“本轮工作 → 保存记录 → 下次恢复”往下看。** 下方两条线分别处理继续完成当前任务，以及评估哪些经验值得留下，二者使用本轮的实际成果作为依据。
 
@@ -257,7 +295,11 @@ Meta_Kim 把计划、发现、进度、决定、产物和检查记录保存在�
 
 ## 一件公司的事，可以跨越多次执行
 
-![同一公司事项承接多次执行，分别记录产出、核验、采用和效果，再整理候选经验](docs/images/animated-work-context.zh-CN.svg)
+<p align="center">
+  <a href="docs/images/animated-work-context.zh-CN.svg"><img src="docs/images/animated-work-context.zh-CN.svg" alt="同一公司事项承接多次执行，分别记录产出、核验、采用和效果，再整理候选经验" width="400"></a>
+  <br>
+  <a href="docs/images/animated-work-context.zh-CN.svg">打开原图</a>
+</p>
 
 **公司业务系统保存长期事项，Meta_Kim 把每次执行接回同一件事。** 公司现在只有一个人，也可以使用同一套接口；以后增加成员，事项和已有决定继续保留。宿主提供公司、事项、上下文版本、访问范围与来源引用，Meta_Kim 将它们绑定到本轮工单和结果。上下文变了就开新一轮，已有记录仍可追溯。
 
@@ -321,7 +363,11 @@ node bin/meta-kim.mjs live --project-root "/path/to/your-project"
 
 默认进入**工作**视图，先看八阶段与当前下一步；进入 **PRD** 阅读系统总览和模块详情。需要核对任务依赖或产物证据时，打开 **运行图**，点选任务，再查看 **证据**。只有宿主已登记的材料和实际记录会出现在工作区。
 
-![在 Meta_Kim Live 中选中任务后查看详情与证据](docs/images/meta-kim-live-detail.zh-CN.png)
+<p align="center">
+  <a href="docs/images/meta-kim-live-detail.zh-CN.png"><img src="docs/images/meta-kim-live-detail.zh-CN.png" alt="在 Meta_Kim Live 中选中任务后查看详情与证据" width="900"></a>
+  <br>
+  <a href="docs/images/meta-kim-live-detail.zh-CN.png">打开原图</a>
+</p>
 
 *内置演示中，选中任务并打开证据页签后的真实界面。通过这些记录，可以理解任务为什么处于当前状态。*
 
@@ -350,7 +396,11 @@ node bin/meta-kim.mjs live --project-root "/path/to/your-project"
 
 ### 客户端与模型分别配置
 
-![从任务和宿主信号选择客户端与模型，核对适配能力，并分别记录请求、应用和实际观测](docs/images/animated-runtime-selection.zh-CN.svg)
+<p align="center">
+  <a href="docs/images/animated-runtime-selection.zh-CN.svg"><img src="docs/images/animated-runtime-selection.zh-CN.svg" alt="从任务和宿主信号选择客户端与模型，核对适配能力，并分别记录请求、应用和实际观测" width="520"></a>
+  <br>
+  <a href="docs/images/animated-runtime-selection.zh-CN.svg">打开原图</a>
+</p>
 
 **专业方法、执行客户端和模型是三个独立选择。** 同一套 PRD、八阶段、交接和核验方法可以供不同客户端使用。Claude Code、Codex、Gemini CLI、ZCode 等名称描述使用入口；模型由该客户端的连接和本轮请求决定。例如，Claude Code 接入 MiniMax 模型时，客户端仍是 Claude Code，模型单独记录。
 
@@ -495,7 +545,11 @@ node setup.mjs --check
 
 ## 源码与生成文件
 
-![配置与共享方法进入应用编排，宿主适配器返回实际结果，数据层保存记录，展示层读取状态](docs/images/animated-layers.zh-CN.svg)
+<p align="center">
+  <a href="docs/images/animated-layers.zh-CN.svg"><img src="docs/images/animated-layers.zh-CN.svg" alt="配置与共享方法进入应用编排，宿主适配器返回实际结果，数据层保存记录，展示层读取状态" width="520"></a>
+  <br>
+  <a href="docs/images/animated-layers.zh-CN.svg">打开原图</a>
+</p>
 
 **每类事实有自己的唯一权威，应用、数据和展示围绕这些来源连接。** 当前职责分布如下，目录名对应仓库中的实际实现：
 
