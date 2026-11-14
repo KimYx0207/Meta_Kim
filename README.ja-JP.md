@@ -328,7 +328,7 @@ Meta_Kim は、計画、発見、進捗、決定、成果物、検査結果を�
 
 ## 自分のプロジェクトで始める
 
-**Node.js 22.13.0+**、Git、モデルへの接続を設定した AI クライアントが必要です。このソースはリリース準備中の **v3.14.0 候補版**です。現在の公開版は **[v3.13.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.13.0)** です。変更と移行は [CHANGELOG.ja-JP.md](CHANGELOG.ja-JP.md)、完了した検査とその範囲は[検証記録](docs/verification/project-specialization-20261115.md)を参照してください。
+**Node.js 22.13.0+**、Git、モデルへの接続を設定した AI クライアントが必要です。ソースバージョン： **[v3.14.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.14.0)** です。変更と移行は [CHANGELOG.ja-JP.md](CHANGELOG.ja-JP.md)、完了した検査とその範囲は[検証記録](docs/verification/project-specialization-20261115.md)を参照してください。
 
 ### 1. Meta_Kim をインストールする
 
@@ -431,7 +431,7 @@ node bin/meta-kim.mjs live --project-root "/path/to/your-project"
 
 **利用条件：** 方法を取り込む経路で、実際の実行にはクライアントのモデル、ツール、権限を使います。Meta CLI と Live の機能には別途 Meta ランタイムが必要です。エクスポートとローカル整合性検証は実装済みで、取り込み、実行、継続は以下の手順で自分のタスクを使って確認します。
 
-Meta_Kim **v3.14.0 候補ソース**、または公開済みの **v3.13.0** ソースパッケージと **Node.js 22.13.0+** を用意します。選んだソースのルートでターミナルを開き、OS に合うコマンドで両クライアントのインポート用パッケージを生成・確認します。出力先は新しいディレクトリにしてください。正式な配布ファイルは公開後に提供します。
+Meta_Kim **v3.14.0** のソースと **Node.js 22.13.0+** を用意します。この版のダウンロード先は [v3.14.0 Release](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.14.0) です。ソースのルートでターミナルを開き、OS に合うコマンドで両クライアントのインポート用パッケージを生成・確認します。出力先は新しいディレクトリにしてください。
 
 **Windows · PowerShell**
 
@@ -474,7 +474,7 @@ done
 インポート成功、実際の実行、成果の検証を区別してください。
 ```
 
-専門手法を加える場合、Meta_Kim v3.14.0 候補版には **Kim_Service V1.17 候補ソース**を組み合わせます。公開済みの組み合わせは Meta_Kim v3.13.0 と Kim_Service V1.16 です。選んだ Service ソースのルートでラッパーを使い、Agent または Skill を一つずつエクスポートします。絶対パスを実際の場所に置き換えてください。
+専門手法を加える場合、Meta_Kim v3.14.0 と **[Kim_Service V1.17](https://github.com/KimYx0207/Kim_Service/releases/tag/V1.17)**を組み合わせます。Service ソースのルートでラッパーを使い、Agent または Skill を一つずつエクスポートします。絶対パスを実際の場所に置き換えてください。
 
 ```bash
 node scripts/build-desktop-skill-package.mjs --meta-root "/absolute/Meta_Kim" --host workbuddy --component reliability-engineer --output "/absolute/new-reliability-method"

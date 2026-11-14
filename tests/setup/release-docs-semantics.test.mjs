@@ -28,11 +28,36 @@ describe("release documentation semantics", () => {
   const publishedReleaseLabels = [
     "The published release is", "当前正式版为", "現在の公開版は", "현재 공개 버전은",
   ];
+  const sourceVersionLabels = [
+    "Source version:", "源码版本：", "ソースバージョン：", "소스 버전:",
+  ];
   const sourceCandidateLabels = ["candidate", "候选版", "候補版", "후보 버전"];
   const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 
-  function assertReleaseVersionDeclarations({ packageVersion, readmes, changelog }) {
+  function assertReleaseVersionDeclarations({ packageVersion, readmes, changelog, changelogs }) {
     assert.equal(readmes.length, readmeFiles.length, "all four localized release declarations are required");
+    if (readmes.some((raw, index) => raw.includes(sourceVersionLabels[index]))) {
+      const versions = readmes.map((raw, index) => {
+        const declarations = [...raw.matchAll(new RegExp(
+          `${escapeRegExp(sourceVersionLabels[index])}\\s*(?:\\*\\*)?` +
+            String.raw`\[v(\d+\.\d+\.\d+)\]\(https://github\.com/KimYx0207/Meta_Kim/releases/tag/v\1\)`,
+          "gu",
+        ))];
+        assert.equal(declarations.length, 1, `${readmeFiles[index]} must have one source version with a matching version label and URL`);
+        assert.ok(!raw.includes(publishedReleaseLabels[index]), "source version declarations must not also declare a different publication state");
+        return declarations[0][1];
+      });
+      assert.ok(versions.every((version) => version === packageVersion), "all localized source versions must match package version");
+      const histories = changelogs ?? [changelog];
+      if (changelogs) assert.equal(histories.length, readmeFiles.length, "all four localized changelogs are required");
+      const dates = histories.map((history) => {
+        const entries = [...history.matchAll(new RegExp(`^## \\[${escapeRegExp(packageVersion)}\\] - (\\d{4}-\\d{2}-\\d{2})$`, "gmu"))];
+        assert.equal(entries.length, 1, "the declared source version must have one dated changelog entry in every language");
+        return entries[0][1];
+      });
+      assert.ok(dates.every((date) => date === dates[0]), "localized source changelog dates must agree");
+      return packageVersion;
+    }
     const versions = readmes.map((raw, index) => {
       const declaration = new RegExp(
         `${escapeRegExp(publishedReleaseLabels[index])}\\s*(?:\\*\\*)?` +
@@ -232,6 +257,35 @@ describe("release documentation semantics", () => {
     assert.throws(() => assertReleaseVersionDeclarations(missingHistory), /dated changelog entry/u);
   });
 
+  test("release version declarations accept stable source versions with exact localized links and history", () => {
+    const fixture = {
+      packageVersion: "3.14.0",
+      readmes: sourceVersionLabels.map(label => `${label} **[v3.14.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.14.0)**.`),
+      changelogs: readmeFiles.map(() => "## [3.14.0] - 2026-11-15\n"),
+    };
+    assert.equal(assertReleaseVersionDeclarations(fixture), "3.14.0");
+    const mismatchedLink = structuredClone(fixture);
+    mismatchedLink.readmes[0] = mismatchedLink.readmes[0].replace("tag/v3.14.0", "tag/v3.13.0");
+    assert.throws(() => assertReleaseVersionDeclarations(mismatchedLink), /matching version label and URL/u);
+    const wrongSource = { ...fixture, packageVersion: "3.15.0" };
+    assert.throws(() => assertReleaseVersionDeclarations(wrongSource), /source versions must match package version/u);
+    const disagreement = structuredClone(fixture);
+    disagreement.readmes[2] = disagreement.readmes[2].replaceAll("v3.14.0", "v3.13.0");
+    assert.throws(() => assertReleaseVersionDeclarations(disagreement), /source versions must match package version/u);
+    const duplicate = structuredClone(fixture);
+    duplicate.readmes[1] += duplicate.readmes[1];
+    assert.throws(() => assertReleaseVersionDeclarations(duplicate), /one source version/u);
+    const mixed = structuredClone(fixture);
+    mixed.readmes[1] = releaseVersionFixture("3.14.0").readmes[1];
+    assert.throws(() => assertReleaseVersionDeclarations(mixed), /matching version label and URL/u);
+    const missingHistory = structuredClone(fixture);
+    missingHistory.changelogs[3] = "## [3.13.0] - 2026-11-14\n";
+    assert.throws(() => assertReleaseVersionDeclarations(missingHistory), /dated changelog entry/u);
+    const mismatchedDate = structuredClone(fixture);
+    mismatchedDate.changelogs[2] = "## [3.14.0] - 2026-11-16\n";
+    assert.throws(() => assertReleaseVersionDeclarations(mismatchedDate), /changelog dates must agree/u);
+  });
+
   test("localized product overviews explain client use and output review inline", () => {
     const betaNames = ["DSH", "Qoder", "Trae"];
     const taskResultScope = [
@@ -263,19 +317,20 @@ describe("release documentation semantics", () => {
       /\*\*Cursor\*\*\s*\|\s*완전 지원/,
     ];
 
-    // Dated release notes can be prepared before publication. Check the explicit
-    // published declaration; a newer package remains a separately named candidate.
+    // Source-version guidance stays true inside the package before and after
+    // publication. Legacy published/candidate declarations remain supported.
     const releasedVersion = assertReleaseVersionDeclarations({
       packageVersion: JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).version,
       readmes: readmeFiles.map((file) => readFileSync(path.join(root, file), "utf8")),
       changelog: readFileSync(path.join(root, "CHANGELOG.md"), "utf8"),
+      changelogs: readmeFiles.map((file) => readFileSync(path.join(root, file.replace("README", "CHANGELOG")), "utf8")),
     });
 
     for (const [index, file] of readmeFiles.entries()) {
       const raw = readFileSync(path.join(root, file), "utf8");
 
       for (const client of ["Codex", "Claude Code", "Cursor", "OpenClaw", "Gemini CLI", "ZCode"]) assert.match(raw, new RegExp(client), `${file} missing requested client ${client}`);
-      assert.ok(raw.includes(`[v${releasedVersion}](https://github.com/KimYx0207/Meta_Kim/releases/tag/v${releasedVersion})`), `${file} must label and link the current released version`);
+      assert.ok(raw.includes(`[v${releasedVersion}](https://github.com/KimYx0207/Meta_Kim/releases/tag/v${releasedVersion})`), `${file} must label and link its declared version`);
       assert.doesNotMatch(raw, /\]\([^)]*technical-notes[^)]*\)/u, `${file} must keep common usage guidance on the page`);
       assert.match(raw, taskResultScope[index], `${file} must explain checking the actual task deliverable`);
       for (const operation of ["install", "check", "update", "uninstall"]) {

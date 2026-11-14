@@ -334,7 +334,7 @@ Use optional `workContext` in the ordinary API or CLI `--work-context-input`; ap
 
 ## Start with your own project
 
-You need **Node.js 22.13.0+**, Git and an AI client with its model connection configured. This source is the **v3.14.0 candidate** in release preparation. The published release is **[v3.13.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.13.0)**. See [CHANGELOG.md](CHANGELOG.md) for changes and migration, and the [verification record](docs/verification/project-specialization-20261115.md) for the completed checks and their scope.
+You need **Node.js 22.13.0+**, Git and an AI client with its model connection configured. Source version: **[v3.14.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.14.0)**. See [CHANGELOG.md](CHANGELOG.md) for changes and migration, and the [verification record](docs/verification/project-specialization-20261115.md) for the completed checks and their scope.
 
 ### 1. Install Meta_Kim
 
@@ -437,7 +437,7 @@ Older runs without the new client, operating-system and model binding remain his
 
 **Usage conditions:** this is a method import route; actual execution uses the client's available model, tools and permissions. Meta CLI and Live features need a separately installed Meta runtime. Package export and local integrity checks are implemented; client import, execution and continuation are checked in your own task using the steps below.
 
-Start from your Meta_Kim **v3.14.0 candidate source**, or the published **v3.13.0** source package, with **Node.js 22.13.0+**. Open a terminal in the selected source root. Run the block for your operating system to export and check both clients; each output directory must be new. Release assets become available after publication.
+Use Meta_Kim **v3.14.0** source with **Node.js 22.13.0+**. The [v3.14.0 Release page](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.14.0) is the download location for this version. Open a terminal in the source root. Run the block for your operating system to export and check both clients; each output directory must be new.
 
 **Windows · PowerShell**
 
@@ -481,7 +481,7 @@ If resources, permissions or the Meta CLI are missing, list the gap explicitly.
 Keep import success, actual execution and verified results separate.
 ```
 
-For specialist methods, pair the Meta_Kim v3.14.0 candidate with **Kim_Service V1.17 candidate source**. The published pair is Meta_Kim v3.13.0 and Kim_Service V1.16. From the selected Service source root, export one Agent or Skill at a time through its wrapper (replace the absolute paths):
+For specialist methods, pair Meta_Kim v3.14.0 with **[Kim_Service V1.17](https://github.com/KimYx0207/Kim_Service/releases/tag/V1.17)**. From the Service source root, export one Agent or Skill at a time through its wrapper (replace the absolute paths):
 
 ```bash
 node scripts/build-desktop-skill-package.mjs --meta-root "/absolute/Meta_Kim" --host workbuddy --component reliability-engineer --output "/absolute/new-reliability-method"

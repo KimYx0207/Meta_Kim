@@ -334,7 +334,7 @@ Meta_Kim 把计划、发现、进度、决定、产物和检查记录保存在�
 
 ## 在自己的项目里开始
 
-先准备 **Node.js 22.13.0+**、Git，以及已经配置好模型连接的 AI 客户端。这份源码为正在准备发布的 **v3.14.0 候选版**；当前正式版为 **[v3.13.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.13.0)**。版本变化和迁移说明见 [CHANGELOG.zh-CN.md](CHANGELOG.zh-CN.md)，已完成的检查及其范围见[验证记录](docs/verification/project-specialization-20261115.md)。
+先准备 **Node.js 22.13.0+**、Git，以及已经配置好模型连接的 AI 客户端。源码版本： **[v3.14.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.14.0)**。版本变化和迁移说明见 [CHANGELOG.zh-CN.md](CHANGELOG.zh-CN.md)，已完成的检查及其范围见[验证记录](docs/verification/project-specialization-20261115.md)。
 
 ### 1. 安装 Meta_Kim
 
@@ -437,7 +437,7 @@ node bin/meta-kim.mjs live --project-root "/path/to/your-project"
 
 **使用条件：** 这是方法导入路线，实际执行使用客户端已有的模型、工具和权限；Meta CLI 和 Live 功能需要另行安装 Meta 运行时。包导出和本地完整性核验已实现，客户端导入、执行和续做按下面步骤在自己的任务中核对。
 
-准备 Meta_Kim **v3.14.0 候选源码**，或已发布的 **v3.13.0** 源码包，以及 **Node.js 22.13.0+**。在所选源码根目录打开终端，按操作系统复制下面一组命令，即可生成并核验两个客户端的导入包；每个输出目录都必须是新目录。正式下载包在发布完成后提供。
+准备 Meta_Kim **v3.14.0** 源码和 **Node.js 22.13.0+**。本版下载位置为 [v3.14.0 Release](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.14.0)。在源码根目录打开终端，按操作系统复制下面一组命令，即可生成并核验两个客户端的导入包；每个输出目录都必须是新目录。
 
 **Windows · PowerShell**
 
@@ -479,7 +479,7 @@ done
 缺少资源、权限或 Meta CLI 时明确列出，不把导入成功、实际执行和结果验证混为一谈。
 ```
 
-需要专业方法时，Meta_Kim v3.14.0 候选版配对 **Kim_Service V1.17 候选源码**；已发布的配对为 Meta_Kim v3.13.0 与 Kim_Service V1.16。在所选 Service 源码根目录使用入口，每次导出一个 Agent 或 Skill；把下面的绝对路径替换为实际目录：
+需要专业方法时，Meta_Kim v3.14.0 配对 **[Kim_Service V1.17](https://github.com/KimYx0207/Kim_Service/releases/tag/V1.17)**。在 Service 源码根目录使用入口，每次导出一个 Agent 或 Skill；把下面的绝对路径替换为实际目录：
 
 ```bash
 node scripts/build-desktop-skill-package.mjs --meta-root "/absolute/Meta_Kim" --host workbuddy --component reliability-engineer --output "/absolute/new-reliability-method"

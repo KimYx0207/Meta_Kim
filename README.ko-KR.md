@@ -328,7 +328,7 @@ Meta_Kim은 계획, 발견, 진행 상황, 결정, 결과물과 검사 기록을
 
 ## 내 프로젝트에서 시작하기
 
-**Node.js 22.13.0+**, Git, 모델 연결을 설정한 AI 클라이언트가 필요합니다. 이 소스는 출시를 준비 중인 **v3.14.0 후보 버전**입니다. 현재 공개 버전은 **[v3.13.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.13.0)** 입니다. 변경과 이전 안내는 [CHANGELOG.ko-KR.md](CHANGELOG.ko-KR.md), 완료한 검사와 그 범위는 [검증 기록](docs/verification/project-specialization-20261115.md)을 참고하세요.
+**Node.js 22.13.0+**, Git, 모델 연결을 설정한 AI 클라이언트가 필요합니다. 소스 버전: **[v3.14.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.14.0)** 입니다. 변경과 이전 안내는 [CHANGELOG.ko-KR.md](CHANGELOG.ko-KR.md), 완료한 검사와 그 범위는 [검증 기록](docs/verification/project-specialization-20261115.md)을 참고하세요.
 
 ### 1. Meta_Kim 설치하기
 
@@ -431,7 +431,7 @@ node bin/meta-kim.mjs live --project-root "/path/to/your-project"
 
 **사용 조건:** 방법을 가져오는 경로이며 실제 실행은 클라이언트의 모델, 도구와 권한을 사용합니다. Meta CLI와 Live 기능에는 별도로 설치한 Meta 런타임이 필요합니다. 패키지 내보내기와 로컬 무결성 확인은 구현되어 있으며 가져오기, 실행과 작업 재개는 아래 절차로 자신의 작업에서 확인합니다.
 
-Meta_Kim **v3.14.0 후보 소스** 또는 공개된 **v3.13.0** 소스 패키지와 **Node.js 22.13.0+**를 준비하세요. 선택한 소스 루트에서 터미널을 열고 운영체제에 맞는 코드로 두 클라이언트의 가져오기 패키지를 만들고 확인합니다. 출력 디렉터리는 새 경로여야 합니다. 정식 배포 파일은 출시 후 제공됩니다.
+Meta_Kim **v3.14.0** 소스와 **Node.js 22.13.0+**를 준비하세요. 이 버전의 다운로드 위치는 [v3.14.0 Release](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.14.0)입니다. 소스 루트에서 터미널을 열고 운영체제에 맞는 코드로 두 클라이언트의 가져오기 패키지를 만들고 확인합니다. 출력 디렉터리는 새 경로여야 합니다.
 
 **Windows · PowerShell**
 
@@ -474,7 +474,7 @@ done
 가져오기 성공, 실제 실행과 결과 검증을 구분하세요.
 ```
 
-전문 방법을 추가할 때 Meta_Kim v3.14.0 후보 버전에는 **Kim_Service V1.17 후보 소스**를 함께 사용합니다. 공개된 조합은 Meta_Kim v3.13.0과 Kim_Service V1.16입니다. 선택한 Service 소스 루트에서 래퍼를 사용해 Agent 또는 Skill을 하나씩 내보냅니다. 절대 경로를 실제 경로로 바꾸세요.
+전문 방법을 추가할 때 Meta_Kim v3.14.0과 **[Kim_Service V1.17](https://github.com/KimYx0207/Kim_Service/releases/tag/V1.17)**을 함께 사용합니다. Service 소스 루트에서 래퍼를 사용해 Agent 또는 Skill을 하나씩 내보냅니다. 절대 경로를 실제 경로로 바꾸세요.
 
 ```bash
 node scripts/build-desktop-skill-package.mjs --meta-root "/absolute/Meta_Kim" --host workbuddy --component reliability-engineer --output "/absolute/new-reliability-method"
