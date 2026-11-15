@@ -4741,8 +4741,10 @@ function parsePositiveInteger(value) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
-function parseAgentsMaxThreadsFromToml(text) {
+export function parseAgentsMaxThreadsFromToml(text) {
   let inAgentsSection = false;
+  let configuredKey = null;
+  let capacity = null;
   for (const rawLine of String(text ?? "").split(/\r?\n/u)) {
     const line = rawLine.replace(/#.*/u, "").trim();
     if (!line) continue;
@@ -4752,10 +4754,15 @@ function parseAgentsMaxThreadsFromToml(text) {
       continue;
     }
     if (!inAgentsSection) continue;
-    const match = line.match(/^max_threads\s*=\s*(\d+)\s*$/u);
-    if (match) return parsePositiveInteger(match[1]);
+    const match = line.match(/^(max_concurrent_threads_per_session|max_threads)\s*=\s*(.*?)\s*$/u);
+    if (!match) continue;
+    if (configuredKey !== null) {
+      throw new Error(`Duplicate Codex agents capacity: ${configuredKey} and ${match[1]}`);
+    }
+    configuredKey = match[1];
+    capacity = /^\d+$/u.test(match[2]) ? parsePositiveInteger(match[2]) : null;
   }
-  return null;
+  return capacity;
 }
 
 function readAgentsMaxThreadsCandidate(filePath) {
@@ -4791,8 +4798,8 @@ function resolveCodexAgentMaxThreads() {
   }
   return {
     value: CODEX_DEFAULT_AGENT_MAX_THREADS,
-    source: "codex_official_default_agents.max_threads",
-    sourceKind: "official_default",
+    source: "meta_kim_default_agents.max_threads",
+    sourceKind: "project_default",
   };
 }
 

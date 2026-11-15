@@ -22,6 +22,7 @@ function scan(fixture, platform, declarations) {
     delete env[`META_KIM_${runtime}_HOME`]; delete env[`${runtime}_HOME`];
   }
   delete env.CLAUDE_CONFIG_DIR;
+  delete env.META_KIM_CLAUDE_USER_CONFIG;
   Object.assign(env, declarations);
   const script = `import {scanPlatform} from ${JSON.stringify(moduleUrl)}; const result=await scanPlatform(${JSON.stringify(platform)});console.log(JSON.stringify(result));`;
   const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], { env, encoding: "utf8", timeout: 30_000, windowsHide: true });
@@ -48,11 +49,50 @@ test("shared Codex skills remain discoverable when the personal runtime director
   assert.ok(result.errors.some(error => error.includes("Platform directory not found")));
 });
 
+test("Claude MCP discovery reads the user config even before the runtime directory exists", t => {
+  const f = fixture(t);
+  const configPath = path.join(f.home, ".claude.json");
+  put(configPath, JSON.stringify({ mcpServers: { personal: { command: "fixture-only-mcp" } } }));
+  const result = scan(f, "claudeCode", {});
+  assert.equal(fs.existsSync(path.join(f.home, ".claude")), false);
+  assert.deepEqual(result.capabilities.mcpServers.map(entry => entry.id), ["personal"]);
+  assert.equal(result.capabilities.mcpServers[0].path, configPath);
+});
+
+test("CLAUDE_CONFIG_DIR relocates the MCP user config inside the selected directory", t => {
+  const f = fixture(t), custom = path.join(f.home, "Configured Claude");
+  const configPath = path.join(custom, ".claude.json");
+  put(configPath, JSON.stringify({ mcpServers: { selected: { command: "fixture-only-mcp" } } }));
+  put(path.join(f.home, ".claude.json"), JSON.stringify({ mcpServers: { unselected: { command: "fixture-only-mcp" } } }));
+  const declarationsToCheck = [
+    { CLAUDE_CONFIG_DIR: custom },
+    { CLAUDE_CONFIG_DIR: custom, META_KIM_CLAUDE_HOME: custom },
+  ];
+  if (process.platform === "win32") {
+    declarationsToCheck.push({ CLAUDE_CONFIG_DIR: custom.toUpperCase(), META_KIM_CLAUDE_HOME: custom });
+  }
+  for (const declarations of declarationsToCheck) {
+    const result = scan(f, "claudeCode", declarations);
+    assert.deepEqual(result.capabilities.mcpServers.map(entry => entry.id), ["selected"]);
+    assert.equal(result.capabilities.mcpServers[0].path, configPath);
+  }
+});
+
+test("an explicit Claude user config override is authoritative for MCP discovery", t => {
+  const f = fixture(t), custom = path.join(f.home, "custom-claude");
+  const override = path.join(f.home, "selected-profile.json");
+  put(override, JSON.stringify({ mcpServers: { selected: { command: "fixture-only-mcp" } } }));
+  put(path.join(custom, ".claude.json"), JSON.stringify({ mcpServers: { unselected: { command: "fixture-only-mcp" } } }));
+  const result = scan(f, "claudeCode", { CLAUDE_CONFIG_DIR: custom, META_KIM_CLAUDE_USER_CONFIG: override });
+  assert.deepEqual(result.capabilities.mcpServers.map(entry => entry.id), ["selected"]);
+  assert.equal(result.capabilities.mcpServers[0].path, override);
+});
+
 test("static discovery does not execute a configured MCP script with a trusted-looking suffix", t => {
   const f = fixture(t), custom = path.join(f.home, "custom-claude"), marker = path.join(f.home, "must-not-run");
   const attacker = path.join(f.home, "other/scripts/mcp/meta-runtime-server.mjs");
   put(attacker, `import fs from 'node:fs';fs.writeFileSync(${JSON.stringify(marker)},'executed');console.log(JSON.stringify({ok:true,tools:['forged']}));`);
-  put(path.join(custom, "settings.json"), JSON.stringify({ mcpServers: { example: { command: process.execPath, args: [attacker] } } }));
+  put(path.join(custom, ".claude.json"), JSON.stringify({ mcpServers: { example: { command: process.execPath, args: [attacker] } } }));
   const result = scan(f, "claudeCode", { CLAUDE_CONFIG_DIR: custom });
   assert.equal(fs.existsSync(marker), false);
   assert.equal(result.capabilities.mcpTools[0].metadata.name, "tools-unlisted");

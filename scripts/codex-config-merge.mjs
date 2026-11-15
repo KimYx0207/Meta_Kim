@@ -419,6 +419,14 @@ export function hasCodexRequestUserInputFeature(configText = "") {
     .some((line) => settingRe.test(line));
 }
 
+export function hasCodexRequestUserInputConfiguration(configText = "") {
+  const parsed = parseCodexConfigLocators(configText);
+  if (parsed.tables.get("features")?.length !== 1) return false;
+  const assignments = parsed.assignments.get(`features\u0000${CODEX_REQUEST_USER_INPUT_FEATURE}`) ?? [];
+  return assignments.length === 1 &&
+    (sameTomlScalar(assignments[0].rhs, "true") || sameTomlScalar(assignments[0].rhs, "false"));
+}
+
 function tomlString(value) {
   return JSON.stringify(value);
 }
@@ -829,41 +837,41 @@ function ensureOpenAiBundledMarketplace(lines, options = {}) {
   removeSectionSetting(lines, sectionName, "source");
 }
 
+function codexAppNativeDefaultSettings(lines, platformName) {
+  const settings = [
+    ["features", CODEX_REQUEST_USER_INPUT_FEATURE, "true"],
+    ["features", CODEX_JS_REPL_FEATURE, "true"],
+  ];
+  // Existing values are user-owned, including former Meta_Kim defaults. Either
+  // capacity spelling suppresses a default; keep the legacy key for old clients.
+  if (
+    sectionSettingValue(lines, "agents", "max_threads") === null &&
+    sectionSettingValue(lines, "agents", "max_concurrent_threads_per_session") === null
+  ) {
+    settings.push(["agents", "max_threads", String(CODEX_DEFAULT_AGENT_MAX_THREADS)]);
+  }
+  settings.push(["agents", "max_depth", String(CODEX_DEFAULT_AGENT_MAX_DEPTH)]);
+  if (platformName === "win32") {
+    settings.push(
+      ["windows", "sandbox", tomlString("unelevated")],
+      ...CODEX_APP_NATIVE_PLUGIN_IDS.map((pluginId) => [
+        `plugins."${pluginId}"`, "enabled", "true",
+      ]),
+    );
+  }
+  return settings.filter(([table, key]) => sectionSettingValue(lines, table, key) === null);
+}
+
 export function ensureCodexAppNativeControls(configText = "", options = {}) {
   assertCodexConfigTomlMergeable(configText);
 
   const lines = normalizeLines(configText);
   const platformName = options.platformName ?? process.platform;
-
-  ensureSectionSetting(lines, "features", CODEX_REQUEST_USER_INPUT_FEATURE, "true");
-  ensureSectionSetting(lines, "features", CODEX_JS_REPL_FEATURE, "true");
-  const configuredMaxThreads = sectionSettingValue(lines, "agents", "max_threads");
-  if (
-    configuredMaxThreads === null ||
-    configuredMaxThreads === String(CODEX_LEGACY_META_KIM_AGENT_MAX_THREADS)
-  ) {
-    ensureSectionSetting(
-      lines,
-      "agents",
-      "max_threads",
-      String(CODEX_DEFAULT_AGENT_MAX_THREADS),
-    );
-  }
-  if (sectionSettingValue(lines, "agents", "max_depth") === null) {
-    ensureSectionSetting(
-      lines,
-      "agents",
-      "max_depth",
-      String(CODEX_DEFAULT_AGENT_MAX_DEPTH),
-    );
+  for (const [table, key, value] of codexAppNativeDefaultSettings(lines, platformName)) {
+    ensureSectionSetting(lines, table, key, value);
   }
   if (platformName === "win32") {
-    ensureSectionSetting(lines, "windows", "sandbox", tomlString("unelevated"));
     ensureOpenAiBundledMarketplace(lines, { ...options, platformName });
-
-    for (const pluginId of CODEX_APP_NATIVE_PLUGIN_IDS) {
-      ensureSectionSetting(lines, `plugins."${pluginId}"`, "enabled", "true");
-    }
   }
 
   normalizeCodexMcpServerTransportConflicts(lines);
@@ -1386,31 +1394,11 @@ export function planCodexAppNativeControls(configText = "", options = {}) {
   assertCodexConfigTomlMergeable(configText);
   let text = String(configText ?? "");
   const mutations = [];
-  const settings = [
-    ["features", CODEX_REQUEST_USER_INPUT_FEATURE, "true"],
-    ["features", CODEX_JS_REPL_FEATURE, "true"],
-  ];
-  const initialLines = normalizeLines(text);
-  const configuredMaxThreads = sectionSettingValue(initialLines, "agents", "max_threads");
-  if (
-    configuredMaxThreads === null ||
-    configuredMaxThreads === String(CODEX_LEGACY_META_KIM_AGENT_MAX_THREADS)
-  ) {
-    settings.push(["agents", "max_threads", String(CODEX_DEFAULT_AGENT_MAX_THREADS)]);
-  }
-  if (sectionSettingValue(initialLines, "agents", "max_depth") === null) {
-    settings.push(["agents", "max_depth", String(CODEX_DEFAULT_AGENT_MAX_DEPTH)]);
-  }
   const platformName = options.platformName ?? process.platform;
+  const settings = codexAppNativeDefaultSettings(normalizeLines(text), platformName);
   if (platformName === "win32") {
     settings.push(
-      ["windows", "sandbox", tomlString("unelevated")],
       ["marketplaces.openai-bundled", "source_type", tomlString("local")],
-      ...CODEX_APP_NATIVE_PLUGIN_IDS.map((pluginId) => [
-        `plugins."${pluginId}"`,
-        "enabled",
-        "true",
-      ]),
     );
   }
   for (const [table, key, value] of settings) {

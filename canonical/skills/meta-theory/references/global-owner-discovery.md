@@ -73,7 +73,7 @@ When multiple candidates match:
 
 - Prefer the most local durable owner (canonical asset > capability index > global home > local).
 - Among ties, prefer the agent whose scope statement already includes the current architecture type.
-- If a global owner fits without modification, dispatch to it. Do not copy it into the project.
+- If a global owner fits shared foundations, preparation, or read-only diagnostics without modification, use it directly. Persistent professional project delivery follows the independent project-owner rule above, reusing or preparing the appropriate project-owned capability.
 
 ## Cross-runtime portability
 

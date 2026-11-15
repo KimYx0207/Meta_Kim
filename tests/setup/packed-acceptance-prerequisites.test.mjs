@@ -5,9 +5,10 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
-import { copyRuntimeCapabilityObservationSnapshot, isolatedEnvironment, makeIsolatedRoots } from "../../scripts/verify-packed-user-install-update.mjs";
+import { copyRuntimeCapabilityObservationSnapshot, preparePackedNativeObservationSnapshot, isolatedEnvironment, makeIsolatedRoots } from "../../scripts/verify-packed-user-install-update.mjs";
 import { assertExactStandardRuntimeObservationSet, standardRuntimeObservationSet } from "../../scripts/runtime-execution-gate.mjs";
-import { requirePackedRuntimeObservationPrerequisites, requirePackedRuntimePrerequisites } from "../../scripts/packed-runtime-prerequisites.mjs";
+import { preparePackedRuntimeVersionFixtures, requirePackedRuntimeObservationPrerequisites, requirePackedRuntimePrerequisites } from "../../scripts/packed-runtime-prerequisites.mjs";
+import { resolveCliInvocation } from "../../scripts/runtime-cli-invocation.mjs";
 
 function fixture(t) {
   const root = mkdtempSync(path.join(os.tmpdir(), "meta-kim-packed-prerequisites-"));
@@ -77,6 +78,18 @@ test("missing native observations remain a strict ten-item failure with no advis
   assert.equal(existsSync(path.join(roots.ordinaryCwd, ".meta-kim/state/default/runtime-capability-acceptance/advisory-snapshot.json")), false);
 });
 
+test("default packed snapshot preparation does not read or fabricate native evidence and explicit certification stays strict", t => {
+  const { roots } = fixture(t);
+  mkdirSync(path.join(roots.projectDir, ".git"));
+  const options = { sourceProjectRoot: roots.projectDir, targetProjectRoot: roots.ordinaryCwd };
+  assert.deepEqual(preparePackedNativeObservationSnapshot(options), {
+    status: "not_requested", evidenceClass: "not_requested", observedInCurrentRun: false, executionAuthority: false, count: 0, bindings: [],
+  });
+  assert.equal(existsSync(path.join(roots.ordinaryCwd, ".meta-kim")), false);
+  assert.throws(() => preparePackedNativeObservationSnapshot({ ...options, nativeCertificationRequested: true }), error => error.code === "environment_unavailable");
+  assert.equal(existsSync(path.join(roots.ordinaryCwd, ".meta-kim")), false);
+});
+
 test("missing official runtime executables produce environment diagnostics without a model call", t => {
   const { roots, env } = fixture(t);
   assert.throws(() => requirePackedRuntimePrerequisites({ env: { ...env, PATH: "", Path: "" }, cwd: roots.ordinaryCwd }), error => {
@@ -87,6 +100,27 @@ test("missing official runtime executables produce environment diagnostics witho
     assert.equal(error.runtimePrerequisites.executionAuthority, false);
     return true;
   });
+});
+
+test("deterministic packed installation uses version-only fixtures that refuse model execution", t => {
+  const { roots, env } = fixture(t);
+  const locatorPath = process.platform === "win32" ? path.join(env.SystemRoot ?? env.SYSTEMROOT, "System32") : "/usr/bin:/bin";
+  const prepared = preparePackedRuntimeVersionFixtures({ root: roots.laneRoot, environment: { ...env, PATH: locatorPath, Path: locatorPath } });
+  assert.equal(prepared.evidenceClass, "deterministic_install_fixture");
+  assert.equal(prepared.modelInvocation, false);
+  assert.equal(prepared.executionAuthority, false);
+  const prerequisite = requirePackedRuntimePrerequisites({ env: prepared.environment, cwd: roots.ordinaryCwd });
+  assert.equal(prerequisite.status, "available");
+  assert.equal(prerequisite.observations.every(entry => entry.version.includes("version-only install fixture")), true);
+  for (const runtime of ["claude", "codex"]) {
+    const command = path.join(prepared.binDir, process.platform === "win32" ? `${runtime}.cmd` : runtime);
+    for (const args of [[], ["exec", "fixture task"], ["--version", "--model", "fixture-model"]]) {
+      const invocation = resolveCliInvocation(command, args, { env: prepared.environment });
+      const refused = spawnSync(invocation.command, invocation.args, { env: prepared.environment, cwd: roots.ordinaryCwd, encoding: "utf8" });
+      assert.equal(refused.status, 64, `${runtime}: ${refused.stderr}`);
+      assert.equal(refused.stdout, "");
+    }
+  }
 });
 
 test("duplicate or unexpected native keys remain invalid rather than an environment skip", () => {

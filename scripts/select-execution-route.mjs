@@ -1569,6 +1569,7 @@ const ownerDiscoveryPacket = {
     "~/.claude/commands",
     "~/.claude/hooks",
     "~/.claude/settings.json",
+    "~/.claude.json",
     "~/.cursor/agents",
     "~/.cursor/skills",
     "~/.cursor/rules",
@@ -2417,7 +2418,7 @@ function buildCapabilityTeamBlueprint(lanes, omittedLanesWithReason, evidence) {
       localProviderTypes: ["agent", "skill", "mcp", "command", "runtimeTool", "hook", "plugin", "memory", "dependency"],
       externalDiscoveryTrigger: "only_after_local_multi_provider_gap_is_proven",
       runtimeBinding: runtime === "codex"
-        ? "top_level_spawn_agent_task_name_message_fork_turns"
+        ? "active_host_schema_native_spawn_agent"
         : runtime === "claude_code"
           ? "native_agent_or_task_surface"
           : "current_runtime_native_agent_surface",
@@ -4598,7 +4599,7 @@ const output = {
         (packet) => packet.externalWritePolicy === "forbidden",
       ),
       hostInvocationBoundary: runtime === "codex"
-        ? "probe current top-level spawn_agent surface before invocation"
+        ? "probe current native spawn_agent surface and schema before invocation"
         : "use the current runtime native agent surface",
     },
     orderedExecutionReadiness: {

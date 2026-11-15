@@ -2031,10 +2031,12 @@ test("controlled producer CLI help and invalid options never invoke a runtime", 
   assert.match(binHelp.stdout, /meta-kim runtime status/u);
 });
 
-test("standard verification reads fresh controlled evidence instead of invoking producers", async () => {
-  const { buildVerificationStages } = await import("../../scripts/run-verify-all.mjs");
+test("standard verification reports native evidence while explicit certification requires fresh observations", async () => {
+  const { buildVerificationStages, LIVE_CERTIFIED_STAGE } = await import("../../scripts/run-verify-all.mjs");
   const stage = buildVerificationStages().find((entry) => entry.name === "meta:runtime:produce");
-  assert.match(stage.cmd, /--status --require-fresh/u);
+  assert.match(stage.cmd, /--status$/u);
+  assert.doesNotMatch(stage.cmd, /--require-fresh/u);
+  assert.match(LIVE_CERTIFIED_STAGE.cmd, /--status --require-fresh/u);
   assert.doesNotMatch(stage.cmd, /--source|--codex-engineering-composite/u);
 });
 

@@ -406,9 +406,9 @@ const nativeControlsOut = ensureCodexAppNativeControls(
 hasAll(
   nativeControlsOut,
   [
-    "default_mode_request_user_input = true",
+    "default_mode_request_user_input = false",
     "js_repl = true",
-    '[plugins."browser@openai-bundled"]',
+    '[plugins."browser@openai-bundled"]\nenabled = false',
     '[plugins."chrome@openai-bundled"]',
     '[plugins."computer-use@openai-bundled"]',
     "[mcp_servers.github]",

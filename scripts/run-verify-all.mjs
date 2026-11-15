@@ -37,7 +37,7 @@ import {
   runPackedUserInstallUpdateAcceptance,
 } from "./verify-packed-user-install-update.mjs";
 import { resolveRuntimeProfilesFromManifest } from "./meta-kim-sync-config.mjs";
-import { packedProductProofComplete } from "./packed-product-proof.mjs";
+import { packedProductProofComplete, packedNativeObservationProofComplete } from "./packed-product-proof.mjs";
 import { SMOKE_BEHAVIOR_STAGES } from "./verification-stage-manifest.mjs";
 import { buildIsolatedUserHomeEnv } from "./isolated-user-home-env.mjs";
 import { resolveCliInvocation } from "./runtime-cli-invocation.mjs";
@@ -166,7 +166,7 @@ const STANDARD_STAGE_COMMANDS = Object.freeze([
   ],
   ["meta:check:global:release", [npmCommand("meta:check:global:release")]],
   ["eval-meta-agents", [nodeCommand("scripts/eval-meta-agents.mjs")]],
-  ["meta:runtime:produce", [nodeCommand("scripts/run-runtime-capability-producers.mjs", "--status", "--require-fresh")]],
+  ["meta:runtime:produce", [nodeCommand("scripts/run-runtime-capability-producers.mjs", "--status")]],
   ...SMOKE_BEHAVIOR_STAGES.map(({ name }) => [name, [npmCommand(name)]]),
   ["meta:test:process-guard", [npmCommand("meta:test:process-guard")]],
   ["meta:test:setup", [npmCommand("meta:test:setup")]],
@@ -187,8 +187,8 @@ export const STAGES = Object.freeze(
 
 export const LIVE_CERTIFIED_STAGE = Object.freeze({
   name: "meta:acceptance:clean-room:require",
-  cmd: "npm run meta:acceptance:clean-room:require",
-  commands: [npmCommand("meta:acceptance:clean-room:require")],
+  cmd: "node scripts/run-runtime-capability-producers.mjs --status --require-fresh && npm run meta:acceptance:clean-room:require",
+  commands: [nodeCommand("scripts/run-runtime-capability-producers.mjs", "--status", "--require-fresh"), npmCommand("meta:acceptance:clean-room:require")],
   timeoutMs: resolveReleaseStageTimeout("meta:acceptance:clean-room:require"),
 });
 
@@ -597,6 +597,7 @@ export function runAllRuntimeGlobalInstallUpdateProbe({
 export function runReleasePreflight({
   repoRoot = REPO_ROOT,
   environment = process.env,
+  nativeCertificationRequested = false,
   captureSnapshot = () => captureReleaseSourceSnapshot(repoRoot),
   runProbe = ({ onProgress: probeProgress } = {}) =>
     runAllRuntimeGlobalInstallUpdateProbe({
@@ -607,6 +608,7 @@ export function runReleasePreflight({
     runPackedUserInstallUpdateAcceptance({
       repoRoot,
       environment,
+      nativeCertificationRequested,
       onProgress: probeProgress,
     }),
   onProgress = null,
@@ -716,8 +718,9 @@ export function computeLiveCertified({
   releaseGrade,
   results,
   startIndex,
+  packedUserProof = null,
 }) {
-  if (!requested || !releaseGrade || startIndex !== 0) return false;
+  if (!requested || !releaseGrade || startIndex !== 0 || !packedNativeObservationProofComplete(packedUserProof)) return false;
   const liveResult = results[STAGES.length];
   return (
     liveResult?.name === LIVE_CERTIFIED_STAGE.name &&
@@ -747,6 +750,7 @@ export function computeVerificationClaims({
     releaseGrade,
     results,
     startIndex,
+    packedUserProof,
   });
   return {
     releaseGrade,
@@ -898,7 +902,7 @@ function runWithTimeout(stage, { captureStdout = false, environment: stageEnviro
 const startedAt = new Date().toISOString();
 const releasePreflight =
   startIndex === 0
-    ? runReleasePreflight({ onProgress: printReleasePreflightProgress })
+    ? runReleasePreflight({ onProgress: printReleasePreflightProgress, nativeCertificationRequested: liveCertifiedRequested })
     : (() => {
         const invocation = captureReleaseSourceSnapshot(process.cwd());
         return {
@@ -1024,7 +1028,7 @@ let report = {
         : `All ${STAGES.length} standard release-grade stages passed in one complete run.`,
   liveCertificationReason: liveCertifiedRequested
     ? liveCertified
-      ? "The optional external clean-room signature gate passed after the complete standard release-grade run."
+      ? "Explicit native certification passed fresh native observation checks, packed observation portability, and the external clean-room signature gate after the complete standard run."
       : startIndex > 0
         ? "A resumed run cannot self-promote to live-certified."
         : failedStage?.name === LIVE_CERTIFIED_STAGE.name

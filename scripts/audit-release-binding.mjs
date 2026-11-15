@@ -21,7 +21,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { getProfilePaths } from "./meta-kim-local-state.mjs";
-import { packedProductProofComplete } from "./packed-product-proof.mjs";
+import { packedProductProofComplete, packedNativeObservationProofComplete } from "./packed-product-proof.mjs";
 import { canonicalJson, sha256 } from "./release-binding-canonical.mjs";
 import {
   DEFAULT_RELEASE_ASSET_TIMEOUT_MS,
@@ -488,6 +488,10 @@ export function readVerificationEvidence(reportBytes, gitFacts) {
   const verifiedPackageSha256 =
     currentPackage?.packageSha256 ?? null;
   const packedCandidateProofComplete = packedProductProofComplete(packedUserProof);
+  const verificationStages = report.stages ?? report.results;
+  const liveCertified = report.liveCertified === true && report.liveCertificationStatus === "passed" &&
+    packedNativeObservationProofComplete(packedUserProof) && Array.isArray(verificationStages) &&
+    verificationStages.some(stage => stage?.name === "meta:acceptance:clean-room:require" && stage.status === "passed");
   const requiredSnapshots = [source?.invocation, source?.postProbe, source?.end];
   const allSnapshots = [source?.invocation, source?.postProbe, source?.start, source?.end]
     .filter(Boolean);
@@ -542,6 +546,7 @@ export function readVerificationEvidence(reportBytes, gitFacts) {
     sha256: sha256(reportBytes),
     ok: report.ok === true,
     releaseGrade: report.releaseGrade === true,
+    liveCertified,
     startedAt: report.startedAt ?? null,
     completedAt: report.completedAt ?? null,
     sourceSnapshot,
@@ -1085,6 +1090,10 @@ export async function runReleaseBindingAudit({
     path.basename(path.resolve(auditOutputDir)) === "release-binding-audit" &&
     path.basename(path.dirname(path.resolve(auditOutputDir)))
   ) {
+    if (written.record.evidence?.verification?.liveCertified !== true) {
+      written.acceptancePromotion = { status: "not_run", reason: "native_certification_not_requested" };
+      return written;
+    }
     const profileRoot = path.dirname(path.resolve(auditOutputDir));
     const stateRoot = path.dirname(profileRoot);
     const metaKimRoot = path.dirname(stateRoot);

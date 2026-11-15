@@ -242,7 +242,7 @@ describe("SKILL.md structural integrity", async () => {
       assert.doesNotMatch(command, /For any non-trivial task,\s*first apply `agent-teams-playbook`/i);
     });
 
-    test("Codex /meta-theory command surfaces governed output and uses the adaptive top-level spawn contract", async () => {
+    test("Codex /meta-theory command surfaces governed output and uses the adaptive native spawn contract", async () => {
       const command = await readFile("canonical/runtime-assets/codex/commands/meta-theory.md");
       const pkg = await readJson("package.json");
       assert.match(command, /__META_KIM_PACKAGE_ROOT__\/scripts\/run-meta-theory-governed-execution\.mjs/);
@@ -252,7 +252,9 @@ describe("SKILL.md structural integrity", async () => {
       assert.match(command, /stdout as the single final machine-readable JSON summary/i);
       assert.match(command, /Windows\/npm paths strip forwarded flags/i);
       assert.match(pkg.scripts["meta:theory:run:notice"], /--emit-conversation-notice/);
-      assert.match(command, /top-level `spawn_agent`/i);
+      assert.match(command, /actual native `spawn_agent` schema/i);
+      assert.match(command, /collaboration\.spawn_agent/);
+      assert.match(command, /`task_name` only when the schema exposes it/);
       assert.match(command, /`task_name`/);
       assert.match(command, /`message`/);
       assert.match(command, /`fork_turns`/);
@@ -260,15 +262,18 @@ describe("SKILL.md structural integrity", async () => {
       assert.match(command, /active schema exposes `agent_type`/i);
       assert.match(command, /run_scoped_owner_contract/i);
       assert.match(command, /omit `nativeAgentType`\/`agent_type`/i);
-      assert.doesNotMatch(command, /fork_context/);
-      assert.match(command, /Do not discover or fall back to a legacy namespaced spawn API/);
+      assert.match(command, /`fork_context`/);
+      assert.match(command, /namespaced tool is valid only when the current host exposes it/);
+      assert.doesNotMatch(command, /Do not discover or fall back to a legacy namespaced spawn API/);
       assert.doesNotMatch(command, /multi_agent_v1\.spawn_agent/);
     });
 
-    test("Codex runtime reference uses the adaptive top-level spawn task contract", async () => {
+    test("Codex runtime reference uses the adaptive native spawn task contract", async () => {
       const reference = await readFile("canonical/skills/meta-theory/references/runtime-codex.md");
       assert.match(reference, /Codex global or project owners?/);
-      assert.match(reference, /top-level `spawn_agent`/);
+      assert.match(reference, /active native `spawn_agent` schema/);
+      assert.match(reference, /collaboration\.spawn_agent/);
+      assert.match(reference, /field names below are conditional/);
       assert.match(reference, /`task_name`/);
       assert.match(reference, /`message`/);
       assert.match(reference, /`fork_turns`/);
@@ -276,7 +281,7 @@ describe("SKILL.md structural integrity", async () => {
       assert.match(reference, /schema-confirmed `agent_type`/i);
       assert.match(reference, /run_scoped_owner_contract/i);
       assert.match(reference, /omit `nativeAgentType`\/`agent_type`/i);
-      assert.doesNotMatch(reference, /fork_context/);
+      assert.match(reference, /`fork_context`/);
       assert.doesNotMatch(reference, /multi_agent_v1\.spawn_agent/);
     });
 

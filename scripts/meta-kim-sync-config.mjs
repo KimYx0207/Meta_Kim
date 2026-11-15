@@ -783,6 +783,19 @@ export function resolveRuntimeHomeDir(runtimeId) {
   return resolveRuntimeHomeInfo(runtimeId).dir;
 }
 
+/** Claude's MCP/account config is separate from settings.json. */
+export function resolveClaudeUserConfigPath(runtimeHomeInfo = resolveRuntimeHomeInfo("claude")) {
+  const explicitFile = process.env.META_KIM_CLAUDE_USER_CONFIG?.trim();
+  if (explicitFile) return path.resolve(explicitFile);
+  const configuredDir = process.env.CLAUDE_CONFIG_DIR?.trim();
+  // CLAUDE_CONFIG_DIR moves .claude.json inside that directory, even when it
+  // points at ~/.claude. Preserve the legacy Meta_Kim-only home override layout.
+  const configRoot = configuredDir && path.relative(path.resolve(configuredDir), runtimeHomeInfo.dir) === ""
+    ? runtimeHomeInfo.dir
+    : path.dirname(runtimeHomeInfo.dir);
+  return path.join(configRoot, ".claude.json");
+}
+
 export function resolveRuntimeProjection(
   runtimeId,
   scope = "project",

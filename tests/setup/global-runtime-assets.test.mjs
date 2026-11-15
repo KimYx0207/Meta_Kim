@@ -772,18 +772,23 @@ test("global agent collision is preserved and blocks sync", () => {
 test("hook check ignores event key order while retaining strict hook array order", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "meta-kim-global-hook-order-"));
   try {
-    const sync = runSync(root, ["--targets", "claude", "--with-global-hooks"]);
+    // runSync declares CLAUDE_CONFIG_DIR; let that official path determine the
+    // MCP location instead of the fixture's usual explicit file override.
+    const env = { META_KIM_CLAUDE_USER_CONFIG: "" };
+    const sync = runSync(root, ["--targets", "claude", "--with-global-hooks"], env);
     assert.equal(sync.status, 0, `${sync.stderr}\n${sync.stdout}`);
+    const mcpConfig = JSON.parse(readFileSync(path.join(root, ".claude", ".claude.json"), "utf8"));
+    assert.ok(mcpConfig.mcpServers["meta-kim-runtime"]);
     const settingsPath = path.join(root, ".claude", "settings.json");
     const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
     settings.hooks = Object.fromEntries(Object.entries(settings.hooks).reverse());
     writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
-    const reordered = runSync(root, ["--check", "--targets", "claude", "--with-global-hooks"]);
+    const reordered = runSync(root, ["--check", "--targets", "claude", "--with-global-hooks"], env);
     assert.equal(reordered.status, 0, `${reordered.stderr}\n${reordered.stdout}`);
 
     settings.hooks.Stop[0].hooks.reverse();
     writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
-    const hookOrderChanged = runSync(root, ["--check", "--targets", "claude", "--with-global-hooks"]);
+    const hookOrderChanged = runSync(root, ["--check", "--targets", "claude", "--with-global-hooks"], env);
     assert.notEqual(hookOrderChanged.status, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -793,14 +798,19 @@ test("hook check ignores event key order while retaining strict hook array order
 test("Codex hook check ignores object key order while retaining strict array order", () => {
   const root = mkdtempSync(path.join(os.tmpdir(), "meta-kim-codex-hook-order-"));
   try {
+    const configPath = path.join(root, ".codex", "config.toml");
+    mkdirSync(path.dirname(configPath), { recursive: true });
+    writeFileSync(configPath, "[features]\ndefault_mode_request_user_input = false\n");
     const sync = runSync(root, ["--targets", "codex", "--with-global-hooks"]);
     assert.equal(sync.status, 0, `${sync.stderr}\n${sync.stdout}`);
+    assert.match(readFileSync(configPath, "utf8"), /default_mode_request_user_input\s*=\s*false/u);
     const hooksPath = path.join(root, ".codex", "hooks.json");
     const config = JSON.parse(readFileSync(hooksPath, "utf8"));
     config.hooks = Object.fromEntries(Object.entries(config.hooks).reverse());
     writeFileSync(hooksPath, `${JSON.stringify(config, null, 2)}\n`);
     const reordered = runSync(root, ["--check", "--targets", "codex", "--with-global-hooks"]);
     assert.equal(reordered.status, 0, `${reordered.stderr}\n${reordered.stdout}`);
+    assert.match(reordered.stdout, /explicitly disabled/u);
 
     const arrays = [];
     const collectArrays = (value) => {

@@ -72,7 +72,7 @@ import {
   resolveMcpMemoryBootArtifactDescriptors,
 } from "./mcp-memory-boot-artifacts.mjs";
 import { writePackedServiceFixture } from "./packed-service-fixture.mjs";
-import { requirePackedRuntimePrerequisites, requirePackedRuntimeObservationPrerequisites } from "./packed-runtime-prerequisites.mjs";
+import { preparePackedRuntimeVersionFixtures, requirePackedRuntimePrerequisites, requirePackedRuntimeObservationPrerequisites } from "./packed-runtime-prerequisites.mjs";
 import { PACKED_REUSE_REVIEWER, runPackedGlobalReusePlanning } from "./packed-global-reuse-acceptance.mjs";
 
 export { PACKED_USER_TARGETS } from "./packed-user-targets.mjs";
@@ -966,7 +966,7 @@ function seedPortableRuntimeUserState(
     "utf8",
   );
 
-  const claudeUserConfigPath = path.join(roots.userHome, ".claude.json");
+  const claudeUserConfigPath = path.join(roots.claudeHome, ".claude.json");
   const legacyPackageRoot = path.join(roots.laneRoot, "retired-package-root");
   const legacyServer = {
     type: "stdio",
@@ -1339,6 +1339,11 @@ export function copyRuntimeCapabilityObservationSnapshot({ sourceProjectRoot, ta
   return { evidenceClass: snapshot.evidenceClass, observedInCurrentRun: false, executionAuthority: false, sourceValidatedAt: snapshot.sourceValidatedAt, count: bindings.length, bindings };
 }
 
+export function preparePackedNativeObservationSnapshot({ nativeCertificationRequested = false, ...options } = {}) {
+  if (nativeCertificationRequested) return copyRuntimeCapabilityObservationSnapshot(options);
+  return { status: "not_requested", evidenceClass: "not_requested", observedInCurrentRun: false, executionAuthority: false, count: 0, bindings: [] };
+}
+
 export function assertPackedAdvisoryEffectiveMatrix(actualMatrix, expectedMatrix, effectiveState) {
   assertExactRuntimeCapabilityMatrix(
     effectiveState.baselineMatrix,
@@ -1545,10 +1550,15 @@ function finalizePortableRuntimeProof(prepared, packageInfo, timeoutMs) {
     forbiddenRoots,
     prepared.context.descriptor,
   );
-  const populatedStatus = requireSuccess("installed packed CLI advisory observation status", runCli(descriptor.command, ["runtime", "status", "--require-fresh"], { cwd: roots.ordinaryCwd, env: portableHookEnv, timeoutMs }));
-  const populatedPayload = JSON.parse(populatedStatus.stdout);
-  assertExactStandardRuntimeObservationSet(populatedPayload.results);
-  if (populatedPayload.results.length !== 10 || populatedPayload.executionAuthority !== false || populatedPayload.observedInCurrentRun !== false) throw new Error("installed packed CLI did not preserve exactly 10 advisory observations");
+  const nativeCertificationRequested = prepared.context.nativeCertificationRequested === true;
+  let populatedMcpTransport = { status: "not_requested", reason: "native_certification_not_requested", liveHostInvocation: false };
+  if (nativeCertificationRequested) {
+    const populatedStatus = requireSuccess("installed packed CLI advisory observation status", runCli(descriptor.command, ["runtime", "status", "--require-fresh"], { cwd: roots.ordinaryCwd, env: portableHookEnv, timeoutMs }));
+    const populatedPayload = JSON.parse(populatedStatus.stdout);
+    assertExactStandardRuntimeObservationSet(populatedPayload.results);
+    if (populatedPayload.results.length !== 10 || populatedPayload.executionAuthority !== false || populatedPayload.observedInCurrentRun !== false) throw new Error("installed packed CLI did not preserve exactly 10 advisory observations");
+    populatedMcpTransport = probePackedMcpTransport(server, prepared.context, timeoutMs, { expectedObservationCount: 10 });
+  }
   const emptyProject = path.join(roots.userHome, "empty-runtime-observation-project");
   mkdirSync(path.join(emptyProject, ".meta-kim", "state", "default"), { recursive: true });
   writeFileSync(path.join(emptyProject, ".meta-kim", "state", "default", "project-bootstrap.json"), "{}\n", "utf8");
@@ -1557,11 +1567,11 @@ function finalizePortableRuntimeProof(prepared, packageInfo, timeoutMs) {
   const emptyPayload = JSON.parse(emptyStatus.stdout);
   assertExactStandardRuntimeObservationSet(emptyPayload.missing);
   if (emptyPayload.missing.length !== 10 || JSON.stringify(emptyPayload).includes(packageInfo.sourceRoot)) throw new Error("empty packed project status did not report exact sanitized 10-item absence");
-  const populatedMcpTransport = probePackedMcpTransport(server, prepared.context, timeoutMs, { expectedObservationCount: 10 });
   const emptyMcpTransport = probePackedMcpTransport(server, prepared.context, timeoutMs, { projectCwd: emptyProject, expectedObservationCount: 0 });
   return {
     ...prepared.proof,
     status: "passed",
+    nativeObservationVerification: { requested: nativeCertificationRequested, status: nativeCertificationRequested ? "passed" : "not_requested" },
     populatedMcpTransport,
     emptyMcpTransport,
     advisorySnapshot: prepared.context.advisorySnapshot,
@@ -3329,6 +3339,7 @@ export function runPackedUserInstallUpdateAcceptance({
   allowMissingHistory = false,
   onProgress = null,
   stopAfterGlobalIdempotence = false,
+  nativeCertificationRequested = false,
 } = {}) {
   let currentVersionTagCheck = null;
   let tempRoot = null;
@@ -3346,9 +3357,15 @@ export function runPackedUserInstallUpdateAcceptance({
       mkdtempSync(path.join(os.tmpdir(), "meta-kim-packed-user-")),
     );
     const prerequisiteRoots = makeIsolatedRoots(tempRoot, "runtime-prerequisites");
+    // Default package verification exercises real installed-product code with
+    // deterministic --version plumbing, never a model or live-host claim.
+    if (!nativeCertificationRequested) {
+      environment = preparePackedRuntimeVersionFixtures({ root: tempRoot, environment }).environment;
+    }
     runtimePrerequisites = requirePackedRuntimePrerequisites({
       env: isolatedEnvironment(environment, prerequisiteRoots), cwd: prerequisiteRoots.ordinaryCwd,
     });
+    runtimePrerequisites.evidenceClass = nativeCertificationRequested ? "native_cli_version_only" : "deterministic_install_fixture";
     let historicalResolution = null;
     let historicalResolutionError = null;
     if (!stopAfterGlobalIdempotence && includeHistorical) {
@@ -3408,7 +3425,9 @@ export function runPackedUserInstallUpdateAcceptance({
         proof: currentPackage.portableRuntime,
         context: currentPackage._portableRuntimeContext,
       };
-      prepared.context.advisorySnapshot = copyRuntimeCapabilityObservationSnapshot({
+      prepared.context.nativeCertificationRequested = nativeCertificationRequested;
+      prepared.context.advisorySnapshot = preparePackedNativeObservationSnapshot({
+        nativeCertificationRequested,
         sourceProjectRoot: packageInfo.sourceRoot,
         targetProjectRoot: prepared.context.roots.ordinaryCwd,
       });
@@ -3447,6 +3466,7 @@ export function runPackedUserInstallUpdateAcceptance({
       currentVersionTagAbsent: currentVersionTagCheck.currentVersionTagAbsent,
       currentVersionTagCheck,
       runtimePrerequisites,
+      nativeCertificationRequested,
       currentPackage,
       historicalUpdate: {
         ...historicalUpdate,
@@ -3505,6 +3525,7 @@ function main() {
       "  --skip-history                 Skip historical-version update coverage.",
       "  --allow-missing-history        Allow missing historical release baseline.",
       "  --stop-after-global-idempotence Stop after the global idempotence lane.",
+      "  --live-certified               Also require original native observations and their packed readback.",
       "  -h, --help                     Show this help message.",
       "",
     ].join("\n"));
@@ -3513,10 +3534,12 @@ function main() {
   const includeHistorical = !args.includes("--skip-history");
   const allowMissingHistory = args.includes("--allow-missing-history");
   const stopAfterGlobalIdempotence = args.includes("--stop-after-global-idempotence");
+  const nativeCertificationRequested = args.includes("--live-certified");
   const result = runPackedUserInstallUpdateAcceptance({
     includeHistorical,
     allowMissingHistory,
     stopAfterGlobalIdempotence,
+    nativeCertificationRequested,
   });
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   process.exit(result.status === "failed" ? 1 : 0);

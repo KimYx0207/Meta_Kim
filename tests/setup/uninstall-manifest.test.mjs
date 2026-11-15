@@ -1636,7 +1636,7 @@ describe("uninstall / managed TOML fragment transaction", () => {
     });
   });
 
-  test("restores false from true while preserving BOM CRLF comments and unmanaged bytes", () => {
+  test("removes inserted defaults while preserving explicit false BOM CRLF comments and unmanaged bytes", () => {
     withTmpRepo((repo) => {
       const target = path.join(repo, "config.toml");
       const original = [
@@ -1650,6 +1650,7 @@ describe("uninstall / managed TOML fragment transaction", () => {
       const planned = planCodexAppNativeControls(original, {
         platformName: "linux",
       });
+      assert.match(planned.text, /default_mode_request_user_input = false # user comment/u);
       writeFileSync(target, planned.text, "utf8");
 
       const result = revertManagedTomlFragments({
@@ -1676,8 +1677,8 @@ describe("uninstall / managed TOML fragment transaction", () => {
         platformName: "linux",
       });
       const drifted = planned.text.replace(
-        "default_mode_request_user_input = true",
-        "default_mode_request_user_input = false # user took ownership",
+        "max_threads = 2",
+        "max_threads = 4 # user took ownership",
       );
       writeFileSync(target, drifted);
 

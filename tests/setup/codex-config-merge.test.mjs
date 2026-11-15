@@ -11,6 +11,7 @@ import {
   ensureCodexWindowsNotifyCompat,
   ensureCodexRequestUserInputFeature,
   hasCodexRequestUserInputFeature,
+  hasCodexRequestUserInputConfiguration,
   invertCodexConfigMutations,
   mergeCodexConfigAddOnly,
   normalizeCodexConfigMutations,
@@ -254,20 +255,52 @@ describe("Codex config merge", () => {
     assert.match(planned.text, /js_repl = true/u);
   });
 
-  test("resource-safe agent defaults migrate the legacy Meta_Kim value and preserve explicit overrides", () => {
-    const legacy = ensureCodexAppNativeControls(
-      `[agents]\nmax_threads = ${CODEX_LEGACY_META_KIM_AGENT_MAX_THREADS}\n`,
-      { platformName: "linux" },
-    );
-    assert.match(legacy, new RegExp(`max_threads = ${CODEX_DEFAULT_AGENT_MAX_THREADS}`));
-    assert.match(legacy, /max_depth = 1/);
+  test("native controls preserve explicit user switches and Windows sandbox choices", (t) => {
+    const fixture = appMaterializationFixture(t);
+    const input = [
+      "[features]",
+      "default_mode_request_user_input = false # user choice",
+      "js_repl = false",
+      "[windows]",
+      'sandbox = "elevated"',
+      ...["browser", "chrome", "computer-use"].flatMap((name) => [
+        `[plugins."${name}@openai-bundled"]`,
+        "enabled = false",
+      ]),
+      "",
+    ].join("\n");
+    for (const merge of [ensureCodexAppNativeControls, (text, options) => planCodexAppNativeControls(text, options).text]) {
+      const out = merge(input, fixture.options);
+      assert.match(sectionBlock(out, "features"), /default_mode_request_user_input = false # user choice/u);
+      assert.match(sectionBlock(out, "features"), /js_repl = false/u);
+      assert.match(sectionBlock(out, "windows"), /sandbox = "elevated"/u);
+      for (const name of ["browser", "chrome", "computer-use"]) {
+        assert.match(sectionBlock(out, `plugins."${name}@openai-bundled"`), /enabled = false/u);
+      }
+    }
+  });
 
-    const explicit = ensureCodexAppNativeControls(
-      "[agents]\nmax_threads = 3\nmax_depth = 2\n",
-      { platformName: "linux" },
-    );
-    assert.match(explicit, /max_threads = 3/);
-    assert.match(explicit, /max_depth = 2/);
+  test("resource defaults preserve explicit legacy and current capacity keys without adding an alias", () => {
+    for (const merge of [ensureCodexAppNativeControls, (text, options) => planCodexAppNativeControls(text, options).text]) {
+      for (const capacity of [
+        `max_threads = ${CODEX_LEGACY_META_KIM_AGENT_MAX_THREADS}`,
+        "max_threads = 3 # user capacity",
+        "max_concurrent_threads_per_session = 5 # current client",
+      ]) {
+        const input = `[agents]\n${capacity}\nmax_depth = 2\n`;
+        const out = merge(input, { platformName: "linux" });
+        assert.equal(sectionBlock(out, "agents").trim(), input.trim());
+      }
+    }
+  });
+
+  test("missing capacity keeps the resource default compatible with legacy clients", () => {
+    for (const merge of [ensureCodexAppNativeControls, (text, options) => planCodexAppNativeControls(text, options).text]) {
+      const out = merge("", { platformName: "linux" });
+      assert.match(out, new RegExp(`max_threads = ${CODEX_DEFAULT_AGENT_MAX_THREADS}`));
+      assert.match(out, /max_depth = 1/u);
+      assert.doesNotMatch(out, /max_concurrent_threads_per_session/u);
+    }
   });
 
   test("upstream dependency output cannot resurrect deleted MCPs or temporary projects", () => {
@@ -364,21 +397,16 @@ describe("Codex config merge", () => {
       "",
     ].join("\r\n");
     const planned = planCodexAppNativeControls(input, { platformName: "linux" });
-    assert.equal(planned.mutations.length, 3);
-    assert.deepEqual(planned.mutations[0], {
-      kind: "replace",
-      locator: { table: "features", key: "default_mode_request_user_input" },
-      beforeFragment: "default_mode_request_user_input = false # preserve comment",
-      afterFragment: "default_mode_request_user_input = true # preserve comment",
-    });
+    assert.equal(planned.mutations.length, 2);
+    assert.ok(planned.mutations.every((mutation) => mutation.kind === "insert"));
     assert.deepEqual(
-      planned.mutations.slice(1).map((mutation) => mutation.locator),
+      planned.mutations.map((mutation) => mutation.locator),
       [
         { table: "agents", key: "max_threads" },
         { table: "agents", key: "max_depth" },
       ],
     );
-    assert.match(planned.text, /true # preserve comment\r\n/u);
+    assert.match(planned.text, /false # preserve comment\r\n/u);
     assert.equal(invertCodexConfigMutations(planned.text, planned.mutations), input);
   });
 
@@ -397,8 +425,8 @@ describe("Codex config merge", () => {
     assert.match(inverted, /default_mode_request_user_input = false/u);
 
     const drifted = planned.text.replace(
-      "default_mode_request_user_input = true",
-      "default_mode_request_user_input = false # user took ownership",
+      "max_threads = 2",
+      "max_threads = 4 # user took ownership",
     );
     assert.throws(
       () => invertCodexConfigMutations(drifted, planned.mutations),
@@ -550,7 +578,7 @@ describe("Codex config merge", () => {
   });
 
   test("inverse fails closed when a managed table becomes duplicated", () => {
-    const input = "[features]\ndefault_mode_request_user_input = false\njs_repl = true\n";
+    const input = "[features]\njs_repl = true\n";
     const planned = planCodexAppNativeControls(input, { platformName: "linux" });
     const duplicated = `${planned.text}\n[features]\nuser = true\n`;
     assert.throws(
@@ -560,7 +588,7 @@ describe("Codex config merge", () => {
   });
 
   test("inverse fails closed when a managed table key becomes duplicated", () => {
-    const input = "[features]\ndefault_mode_request_user_input = false\njs_repl = true\n";
+    const input = "[features]\njs_repl = true\n";
     const planned = planCodexAppNativeControls(input, { platformName: "linux" });
     const duplicated = planned.text.replace(
       "js_repl = true",
@@ -683,9 +711,9 @@ describe("Codex config merge", () => {
   });
 
   test("planner fails closed on a managed multiline scalar it cannot replace", () => {
-    const input = "[features]\njs_repl = [\n  false\n]\n";
+    const input = '[marketplaces.openai-bundled]\nsource_type = [\n  "local"\n]\n';
     assert.throws(
-      () => planCodexAppNativeControls(input, { platformName: "linux" }),
+      () => planCodexAppNativeControls(input, { platformName: "win32" }),
       /cannot safely locate multiline/u,
     );
   });
@@ -694,6 +722,23 @@ describe("Codex config merge", () => {
     const out = ensureCodexRequestUserInputFeature('model = "gpt-5.5"\n');
     assert.match(out, /\[features\]\ndefault_mode_request_user_input = true/);
     assert.equal(hasCodexRequestUserInputFeature(out), true);
+  });
+
+  test("request-input configuration distinguishes an explicit disable from a missing or invalid value", () => {
+    for (const value of ["true", "false"]) {
+      const input = `\uFEFF[features]\r\ndefault_mode_request_user_input = ${value} # user choice\r\n`;
+      assert.equal(hasCodexRequestUserInputConfiguration(input), true);
+      assert.equal(hasCodexRequestUserInputFeature(input), value === "true");
+    }
+    for (const input of [
+      "[features]\njs_repl = true\n",
+      '[features]\ndefault_mode_request_user_input = "false"\n',
+      "[features]\ndefault_mode_request_user_input = true\ndefault_mode_request_user_input = false\n",
+      '[features]\ndefault_mode_request_user_input = false\ndefault_mode_request_user_input = "false"\n',
+      "[features]\ndefault_mode_request_user_input = false\n[features]\njs_repl = true\n",
+    ]) {
+      assert.equal(hasCodexRequestUserInputConfiguration(input), false);
+    }
   });
 
   test("enables existing false value without changing unrelated settings", () => {
@@ -962,10 +1007,10 @@ describe("Codex config merge", () => {
 
     assert.doesNotMatch(out, /terminal-notifier/);
     assert.match(out, /"powershell\.exe"/);
-    assert.match(out, /default_mode_request_user_input = true/);
+    assert.match(out, /default_mode_request_user_input = false/);
     assert.match(out, /js_repl = true/);
-    assert.match(out, /\[windows\]\nsandbox = "unelevated"/);
-    assert.match(out, /\[plugins\."browser@openai-bundled"\]\nenabled = true/);
+    assert.match(out, /\[windows\]\nsandbox = "elevated"/);
+    assert.match(out, /\[plugins\."browser@openai-bundled"\]\nenabled = false/);
     assert.match(out, /\[plugins\."chrome@openai-bundled"\]\nenabled = true/);
     assert.match(out, /\[plugins\."computer-use@openai-bundled"\]\nenabled = true/);
     assert.match(out, /\[marketplaces\.openai-bundled\][\s\S]*source_type = "local"/);

@@ -88,7 +88,7 @@ Install scope and governed runtime sedimentation are separate contracts:
 - Distribution scope does not erase existing project topology. A normal `global` install/update automatically refreshes only current, explicit, or saved directories with a valid project-bootstrap manifest, using the configured project merge/delta strategy. No valid project state means no project copy and no extra confirmation. Cleanup is a separate explicit operation and never runs as a normal global install/update side effect.
 - Under `project_bootstrap_merge_delta`, bootstrap-manifest-owned generated projections are backed up inside the transaction and replaced with the current package version; shared JSON and managed text blocks merge instead. Unknown user files and `runtime_sedimented_project_copy` capabilities are outside that replacement boundary and remain preserved.
 - If a governed run proves a current-project Agent, Skill, or Command must be created or iterated, write or copy it into the runtime-native project directory. Record that asset as `runtime_sedimented_project_copy`; later global dependency or install projection updates must preserve it.
-- A global search hit that already fits and needs no iteration stays global: use `use_global_directly` and do not copy it into the project. Only project-specific iteration uses `copy_to_project_for_modification`; a real project gap uses `create_project_local_capability`.
+- A global search hit that fits shared foundations, preparation, or read-only diagnostics may stay global via `use_global_directly`. Persistent professional project delivery requires an independent project owner with substantive project rules: reuse a suitable project owner, use `copy_to_project_for_modification` for a qualified global source that needs project ownership, or `create_project_local_capability` for a real gap.
 
 For Gemini CLI, `global_only` retains at most an inert project adapter, removing owned project configuration and durable projections. ZCode adds no project hook registration. Both reuse the existing ownership journal, immutable execution package and transactional bootstrap lifecycle; they do not create a second installer or stage runner. An enrolled native project keeps its shared execution package alive during global uninstall.
 
@@ -379,7 +379,7 @@ Use supporting commands as needed:
 - `npm run meta:sync:global`
 - `npm run prompt:next-iteration`
 
-`AGENTS.md` owns the release policy. `npm run meta:verify:all` begins with packed-product install/update acceptance, including original native-host observation prerequisites, before the standard verification stages. A missing prerequisite leaves subsequent stages unrun; separate diagnostic passes do not fill them in. Optional `meta:verify:live-certified` adds external attestation as described by that same policy.
+`AGENTS.md` owns the release policy. `npm run meta:verify:all` begins with isolated packed-product install/update acceptance before the standard verification stages; it does not require Claude Code and Codex to complete native model tasks. Structural CLI fixtures and missing native observations must remain explicitly labeled and never count as live proof. Missing required structural evidence still leaves subsequent stages unrun. Only an explicit `meta:verify:live-certified` request adds the strict native observation prerequisites and external attestation.
 
 ## Install And Packaging Notes
 

@@ -379,6 +379,21 @@ test("release audit accepts an exact immutable v2 verification attempt", () => {
   }
 });
 
+test("release audit requires explicit certification facts and never infers them from a legacy release pass", () => {
+  const facts = { peeledCommitSha: "a".repeat(40), peeledTreeSha: "b".repeat(40), tagPackageJsonSha256: "c".repeat(64) };
+  const report = JSON.parse(exactReport(facts).toString("utf8"));
+  const read = value => readVerificationEvidence(Buffer.from(JSON.stringify(value)), facts);
+  assert.equal(read(report).exact, true);
+  assert.equal(read(report).liveCertified, false);
+  report.liveCertified = true;
+  report.liveCertificationStatus = "passed";
+  assert.equal(read(report).liveCertified, false, "flags alone cannot replace the certification gate");
+  report.stages = [{ name: "meta:acceptance:clean-room:require", status: "passed" }];
+  assert.equal(read(report).liveCertified, true);
+  report.releasePreflight.packedUserProof.currentPackage.portableRuntime.nativeObservationVerification = { requested: false, status: "not_requested" };
+  assert.equal(read(report).liveCertified, false, "unrequested native proof cannot be promoted by a report flag");
+});
+
 test("release Git facts ignore inherited GIT_DIR and GIT_WORK_TREE redirection", () => {
   const root = createReleaseRepo();
   try {
@@ -1121,6 +1136,7 @@ test("end-to-end audit binds annotated tag, clean report, GitHub asset digest, a
     const reportPath = path.join(root, "verification-report.json");
     writeFileSync(tgzPath, tgz);
     writeFileSync(reportPath, exactReport(gitFacts, { packageSha256: sha256(tgz) }));
+    mkdirSync(path.join(root, ".meta-kim/state/default/verification-reports/attempts"), { recursive: true });
     const payload = githubPayload(gitFacts, sha256(tgz), tgz.length);
     const fetchImpl = async (url) => {
       let responsePayload = payload;
@@ -1147,6 +1163,8 @@ test("end-to-end audit binds annotated tag, clean report, GitHub asset digest, a
     assert.equal(first.record.status, "published_bound");
     assert.equal(first.record.promotionEligible, true);
     assert.equal(first.record.evidence.verification.bindingStatus, "exact_commit_tree");
+    assert.deepEqual(first.acceptancePromotion, { status: "not_run", reason: "native_certification_not_requested" });
+    assert.equal(first.record.evidence.verification.liveCertified, false);
 
     const second = await runReleaseBindingAudit({
       repoRoot: root,
@@ -1160,6 +1178,13 @@ test("end-to-end audit binds annotated tag, clean report, GitHub asset digest, a
     assert.equal(second.record.status, "published_bound");
     assert.equal(second.record.evidenceFingerprint, first.record.evidenceFingerprint);
     assert.equal(second.record.previousRecordHash, first.record.recordHash);
+    const certified = JSON.parse(exactReport(gitFacts, { packageSha256: sha256(tgz) }).toString("utf8"));
+    certified.liveCertified = true;
+    certified.liveCertificationStatus = "passed";
+    certified.stages = [{ name: "meta:acceptance:clean-room:require", status: "passed" }];
+    writeFileSync(reportPath, JSON.stringify(certified));
+    await assert.rejects(() => runReleaseBindingAudit({ repoRoot: root, tagName: "v9.9.9", verificationReportPath: reportPath,
+      localPackagePath: tgzPath, outputDir, fetchImpl }), /published audit verification digest has no exact local verification attempt/u);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

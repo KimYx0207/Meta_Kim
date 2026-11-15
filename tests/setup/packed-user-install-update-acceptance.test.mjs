@@ -1337,17 +1337,17 @@ test("packed release proof migrates durable Claude MCP registration and proves t
     "runPortableRuntimePreparation",
     "probePackedMcpTransport",
   );
-  assert.match(acceptanceSource, /claudeUserConfigPath = path\.join\(roots\.userHome, "\.claude\.json"\)/u);
+  assert.match(acceptanceSource, /claudeUserConfigPath = path\.join\(roots\.claudeHome, "\.claude\.json"\)/u);
   assert.match(acceptanceSource, /meta_kim_runtime/u);
   assert.match(acceptanceSource, /event: "packed_legacy_mcp_migration_complete"/u);
   assert.ok(
     acceptanceSource.indexOf('event: "packed_legacy_mcp_migration_complete"') <
-      acceptanceSource.indexOf("prepared.context.advisorySnapshot = copyRuntimeCapabilityObservationSnapshot"),
+      acceptanceSource.indexOf("prepared.context.advisorySnapshot = preparePackedNativeObservationSnapshot"),
     "historical-user migration proof must be emitted before unrelated live observation evidence is copied",
   );
   const historicalUpdateCall = acceptanceSource.lastIndexOf("runHistoricalUpdateLane({");
   const advisorySnapshotCapture = acceptanceSource.indexOf(
-    "prepared.context.advisorySnapshot = copyRuntimeCapabilityObservationSnapshot",
+    "prepared.context.advisorySnapshot = preparePackedNativeObservationSnapshot",
   );
   const portableReadbackCall = acceptanceSource.lastIndexOf("finalizePortableRuntimeProof(");
   assert.ok(

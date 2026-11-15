@@ -36,6 +36,7 @@
     "compatibility"
   ],
   "primaryRequiredEvidenceKind": "runtime_live_pass",
+  "primaryRequiredEvidenceScope": "Explicit native certification or a native live support claim; not default source/package verification, installation, or current-host task execution.",
   "compatibilityAllowedEvidenceKinds": [
     "compatibility_smoke_pass",
     "projection_smoke",

@@ -202,6 +202,51 @@ function automaticOrphanBootRepairProofComplete(currentPackage) {
     proof?.reason === "windows_startup_vbs_only";
 }
 
+export function packedNativeObservationProofComplete(packedUserProof) {
+  const portableRuntime = packedUserProof?.currentPackage?.portableRuntime;
+  const certification = portableRuntime?.nativeObservationVerification;
+  if (certification && (certification.requested !== true || certification.status !== "passed")) return false;
+  return (
+    portableRuntime?.populatedMcpTransport?.status === "passed" &&
+    portableRuntime.populatedMcpTransport?.evidenceTier === "packed_isolated_transport" &&
+    portableRuntime.populatedMcpTransport?.liveHostInvocation === false &&
+    portableRuntime.populatedMcpTransport?.semanticMatrixMatched === true &&
+    portableRuntime.populatedMcpTransport?.staticEvidenceMatched === true &&
+    portableRuntime.populatedMcpTransport?.projectOverlayObserved === true &&
+    portableRuntime.populatedMcpTransport?.observationCount === 10 &&
+    portableRuntime.populatedMcpTransport?.missingCount === 0 &&
+    portableRuntime.populatedMcpTransport?.executionAuthority === false &&
+    portableRuntime.populatedMcpTransport?.observedInCurrentRun === false &&
+    portableRuntime.populatedMcpTransport?.currentHostAdapter === "unavailable_over_mcp_resource_read" &&
+    portableRuntime.populatedMcpTransport?.externalOverlayStayedNonExecutable === true &&
+    Number.isSafeInteger(portableRuntime.populatedMcpTransport?.platformCount) &&
+    portableRuntime.populatedMcpTransport.platformCount === PACKED_USER_TARGETS.length &&
+    portableRuntime.populatedMcpTransport?.stubFree === true &&
+    portableRuntime.emptyMcpTransport?.platformCount === portableRuntime.populatedMcpTransport.platformCount &&
+    portableRuntime.advisorySnapshot?.evidenceClass === "read_only_advisory_snapshot" &&
+    portableRuntime.advisorySnapshot?.observedInCurrentRun === false &&
+    portableRuntime.advisorySnapshot?.executionAuthority === false &&
+    portableRuntime.advisorySnapshot?.count === 10 &&
+    Array.isArray(portableRuntime.advisorySnapshot?.bindings) &&
+    portableRuntime.advisorySnapshot.bindings.length === 10
+  );
+}
+
+function packedObservationProofComplete(packedUserProof) {
+  const portable = packedUserProof?.currentPackage?.portableRuntime;
+  if (portable?.nativeObservationVerification?.requested !== false) return packedNativeObservationProofComplete(packedUserProof);
+  return portable.nativeObservationVerification.status === "not_requested" &&
+    portable.populatedMcpTransport?.status === "not_requested" &&
+    portable.populatedMcpTransport?.reason === "native_certification_not_requested" &&
+    portable.populatedMcpTransport?.liveHostInvocation === false &&
+    portable.advisorySnapshot?.status === "not_requested" &&
+    portable.advisorySnapshot?.evidenceClass === "not_requested" &&
+    portable.advisorySnapshot?.observedInCurrentRun === false &&
+    portable.advisorySnapshot?.executionAuthority === false &&
+    portable.advisorySnapshot?.count === 0 &&
+    Array.isArray(portable.advisorySnapshot?.bindings) && portable.advisorySnapshot.bindings.length === 0;
+}
+
 export function packedProductProofComplete(packedUserProof) {
   const currentPackage = packedUserProof?.currentPackage;
   const portableRuntime = currentPackage?.portableRuntime;
@@ -280,25 +325,7 @@ export function packedProductProofComplete(packedUserProof) {
     portableRuntime.ownershipManifest?.overlappingWriterPathCount === 0 &&
     portableRuntime.hookProjection?.status === "passed" &&
     portableRuntime.mcpRegistration?.status === "passed" &&
-    portableRuntime.populatedMcpTransport?.status === "passed" &&
-    portableRuntime.populatedMcpTransport?.evidenceTier ===
-      "packed_isolated_transport" &&
-    portableRuntime.populatedMcpTransport?.liveHostInvocation === false &&
-    portableRuntime.populatedMcpTransport?.semanticMatrixMatched === true &&
-    portableRuntime.populatedMcpTransport?.staticEvidenceMatched === true &&
-    portableRuntime.populatedMcpTransport?.projectOverlayObserved === true &&
-    portableRuntime.populatedMcpTransport?.observationCount === 10 &&
-    portableRuntime.populatedMcpTransport?.missingCount === 0 &&
-    portableRuntime.populatedMcpTransport?.executionAuthority === false &&
-    portableRuntime.populatedMcpTransport?.observedInCurrentRun === false &&
-    portableRuntime.populatedMcpTransport?.currentHostAdapter ===
-      "unavailable_over_mcp_resource_read" &&
-    portableRuntime.populatedMcpTransport
-      ?.externalOverlayStayedNonExecutable === true &&
-    Number.isSafeInteger(portableRuntime.populatedMcpTransport?.platformCount) &&
-    portableRuntime.populatedMcpTransport.platformCount ===
-      PACKED_USER_TARGETS.length &&
-    portableRuntime.populatedMcpTransport?.stubFree === true &&
+    packedObservationProofComplete(packedUserProof) &&
     portableRuntime.emptyMcpTransport?.status === "passed" &&
     portableRuntime.emptyMcpTransport?.evidenceTier === "packed_isolated_transport" &&
     portableRuntime.emptyMcpTransport?.liveHostInvocation === false &&
@@ -315,16 +342,7 @@ export function packedProductProofComplete(packedUserProof) {
     Number.isSafeInteger(portableRuntime.emptyMcpTransport?.platformCount) &&
     portableRuntime.emptyMcpTransport.platformCount ===
       PACKED_USER_TARGETS.length &&
-    portableRuntime.emptyMcpTransport.platformCount ===
-      portableRuntime.populatedMcpTransport.platformCount &&
     portableRuntime.emptyMcpTransport?.stubFree === true &&
-    portableRuntime.advisorySnapshot?.evidenceClass ===
-      "read_only_advisory_snapshot" &&
-    portableRuntime.advisorySnapshot?.observedInCurrentRun === false &&
-    portableRuntime.advisorySnapshot?.executionAuthority === false &&
-    portableRuntime.advisorySnapshot?.count === 10 &&
-    Array.isArray(portableRuntime.advisorySnapshot?.bindings) &&
-    portableRuntime.advisorySnapshot.bindings.length === 10 &&
     portableRuntime.portability?.status === "passed" &&
     portableRuntime.portability?.packExtractionDeletedBeforeTransport === true &&
     portableRuntime.portability?.tarballDeletedBeforeInstalledChecks === true &&

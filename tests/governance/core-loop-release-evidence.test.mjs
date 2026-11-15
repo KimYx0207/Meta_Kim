@@ -353,7 +353,11 @@ test("release verification path includes governance tests", () => {
     { command: "node", args: ["scripts/eval-meta-agents.mjs"] },
   ]);
   assert.deepEqual(LIVE_CERTIFIED_STAGE.commands, [
+    { command: "node", args: ["scripts/run-runtime-capability-producers.mjs", "--status", "--require-fresh"] },
     { command: "npm", args: ["run", "meta:acceptance:clean-room:require"] },
+  ]);
+  assert.deepEqual(STAGES.find(({ name }) => name === "meta:runtime:produce").commands, [
+    { command: "node", args: ["scripts/run-runtime-capability-producers.mjs", "--status"] },
   ]);
   assert.doesNotMatch(
     packageJson.scripts["meta:verify:all:chain"],
@@ -602,6 +606,7 @@ test("standard release-grade and optional live certification remain separate", (
       releaseGrade,
       results: liveResults,
       startIndex: 0,
+      packedUserProof: completePackedProductProof(),
     }),
     true,
   );
@@ -625,6 +630,33 @@ test("standard release-grade and optional live certification remain separate", (
     }),
     false,
   );
+});
+
+test("default packed proof permits explicit unrequested native certification without fabricating observations", () => {
+  const proof = completePackedProductProof();
+  const portable = proof.currentPackage.portableRuntime;
+  portable.nativeObservationVerification = { requested: false, status: "not_requested" };
+  portable.populatedMcpTransport = { status: "not_requested", reason: "native_certification_not_requested", liveHostInvocation: false };
+  portable.advisorySnapshot = { status: "not_requested", evidenceClass: "not_requested", observedInCurrentRun: false, executionAuthority: false, count: 0, bindings: [] };
+  assert.equal(packedProductProofComplete(proof), true);
+  const results = STAGES.map(stage => ({ name: stage.name, status: "passed" }));
+  assert.deepEqual(computeVerificationClaims({ requested: false, results, startIndex: 0, packedUserProof: proof }), {
+    releaseGrade: true, liveCertified: false, liveCertificationStatus: "not_requested",
+  });
+  assert.equal(computeLiveCertified({ requested: true, releaseGrade: true, results: [...results, { name: LIVE_CERTIFIED_STAGE.name, status: "passed" }], startIndex: 0, packedUserProof: proof }), false);
+  for (const mutate of [
+    value => { delete value.nativeObservationVerification; },
+    value => { value.nativeObservationVerification.requested = true; },
+    value => { value.advisorySnapshot.count = 10; },
+    value => { value.advisorySnapshot.bindings = [{}]; },
+    value => { value.advisorySnapshot.executionAuthority = true; },
+    value => { value.emptyMcpTransport.missingCount = 0; },
+    value => { value.emptyMcpTransport.liveHostInvocation = true; },
+  ]) {
+    const malformed = structuredClone(proof);
+    mutate(malformed.currentPackage.portableRuntime);
+    assert.equal(packedProductProofComplete(malformed), false);
+  }
 });
 
 test("release-grade requires a stable captured source snapshot and all-runtime install/update proof", () => {

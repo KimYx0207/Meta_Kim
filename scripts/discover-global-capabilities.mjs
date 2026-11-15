@@ -27,6 +27,7 @@ import {
   loadSyncManifest,
   resolveRuntimeProjection,
   resolveRuntimeHomeDir,
+  resolveClaudeUserConfigPath,
 } from "./meta-kim-sync-config.mjs";
 import {
   manifestPathFor,
@@ -228,10 +229,10 @@ const PLATFORMS = {
         scanPluginFiles(path.join(baseDir, "plugins")),
       commands: async (baseDir) =>
         scanCommandFiles(path.join(baseDir, "commands")),
-      mcpServers: async (baseDir) =>
-        scanMcpConfig(path.join(baseDir, "settings.json")).then((result) => result.servers),
-      mcpTools: async (baseDir) =>
-        scanMcpConfig(path.join(baseDir, "settings.json")).then((result) => result.tools),
+      mcpServers: async () =>
+        scanMcpConfig(resolveClaudeUserConfigPath()).then((result) => result.servers),
+      mcpTools: async () =>
+        scanMcpConfig(resolveClaudeUserConfigPath()).then((result) => result.tools),
     },
   },
   openclaw: {

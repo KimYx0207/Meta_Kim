@@ -30,6 +30,7 @@ import {
   resolveGlobalAgentProjectionTargets,
   resolveTargetContext,
   resolveRuntimeHomeInfo,
+  resolveClaudeUserConfigPath,
   resolveRuntimeProjection,
   localStateRoot,
   GLOBAL_PROJECTION_OWNER_SYNC_GLOBAL,
@@ -38,6 +39,7 @@ import {
   CODEX_REQUEST_USER_INPUT_FEATURE,
   assertCodexConfigTomlMergeable,
   hasCodexRequestUserInputFeature,
+  hasCodexRequestUserInputConfiguration,
   planCodexAppNativeControls,
 } from "./codex-config-merge.mjs";
 import {
@@ -1047,8 +1049,7 @@ async function materializeDurableMcpRuntime(plan) {
 }
 
 function claudeUserConfigPath() {
-  return process.env.META_KIM_CLAUDE_USER_CONFIG ||
-    path.join(path.dirname(runtimeHomes.claude.dir), ".claude.json");
+  return resolveClaudeUserConfigPath(runtimeHomes.claude);
 }
 
 async function buildClaudeUserMcpPlan() {
@@ -3111,9 +3112,11 @@ async function runCheck() {
     const configRaw = (await pathExists(configPath))
       ? await fs.readFile(configPath, "utf8")
       : "";
+    let featureConfigured = false;
     let featureEnabled = false;
     try {
       assertCodexConfigTomlMergeable(configRaw);
+      featureConfigured = hasCodexRequestUserInputConfiguration(configRaw);
       featureEnabled = hasCodexRequestUserInputFeature(configRaw);
     } catch (error) {
       console.log(
@@ -3123,9 +3126,9 @@ async function runCheck() {
       failed = true;
     }
     console.log(
-      `${featureEnabled ? `${C.green}✓${C.reset}` : `${C.yellow}⊘${C.reset}`} ${C.dim}Codex ${CODEX_REQUEST_USER_INPUT_FEATURE}: ${configPath}${C.reset}`,
+      `${featureConfigured ? `${C.green}✓${C.reset}` : `${C.yellow}⊘${C.reset}`} ${C.dim}Codex ${CODEX_REQUEST_USER_INPUT_FEATURE}: ${configPath} (${featureEnabled ? "enabled" : featureConfigured ? "explicitly disabled" : "not configured"})${C.reset}`,
     );
-    if (!featureEnabled) {
+    if (!featureConfigured) {
       failed = true;
     }
   }

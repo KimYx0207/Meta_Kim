@@ -1,5 +1,30 @@
 import { probeRuntimeCli } from "./runtime-cli-probe.mjs";
 import { assertExactStandardRuntimeObservationSet, standardRuntimeObservationSet } from "./runtime-execution-gate.mjs";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
+/** Isolated install plumbing only. These fixtures cannot run a model or attest a host. */
+export function preparePackedRuntimeVersionFixtures({ root, environment = process.env }) {
+  const binDir = path.join(root, "version-only-runtime-fixtures");
+  mkdirSync(binDir, { recursive: true });
+  for (const runtime of ["claude", "codex"]) {
+    const version = `Meta_Kim ${runtime} version-only install fixture 0.0.0`;
+    const body = `if (process.argv.length !== 3 || process.argv[2] !== "--version") { process.stderr.write("Version-only install fixture refuses execution.\\n"); process.exitCode = 64; } else { console.log(${JSON.stringify(version)}); }\n`;
+    if (process.platform === "win32") {
+      writeFileSync(path.join(binDir, `${runtime}-fixture.cjs`), body);
+      writeFileSync(path.join(binDir, `${runtime}.cmd`), `@ECHO off\r\n"node" "%~dp0\\${runtime}-fixture.cjs" %*\r\n`);
+    } else {
+      const commandPath = path.join(binDir, runtime);
+      writeFileSync(commandPath, `#!/usr/bin/env node\n${body}`);
+      chmodSync(commandPath, 0o755);
+    }
+  }
+  const inheritedPath = environment.PATH ?? environment.Path ?? "";
+  const fixtureEnvironment = Object.fromEntries(Object.entries(environment).filter(([key]) => key.toUpperCase() !== "PATH"));
+  fixtureEnvironment.PATH = [binDir, path.dirname(process.execPath), inheritedPath].filter(Boolean).join(path.delimiter);
+  if (process.platform === "win32" && !fixtureEnvironment.PATHEXT) fixtureEnvironment.PATHEXT = ".COM;.EXE;.BAT;.CMD";
+  return { environment: fixtureEnvironment, binDir, evidenceClass: "deterministic_install_fixture", modelInvocation: false, executionAuthority: false };
+}
 
 /** Free executable/version checks do not establish native invocation evidence. */
 export function requirePackedRuntimePrerequisites({ env, cwd, targets = ["claude", "codex"] }) {
