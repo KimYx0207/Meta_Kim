@@ -856,15 +856,104 @@ describe("eval-meta-agents Claude smoke", () => {
   });
 
   test("OpenClaw smoke can structurally validate without local auth secrets", () => {
-    const source = readFileSync(
-      path.join(repoRoot, "scripts", "eval-meta-agents.mjs"),
-      "utf8",
-    );
+    const tempHome = mkdtempSync(path.join(os.tmpdir(), "meta-kim-openclaw-no-auth-"));
+    try {
+      const result = spawnSync(
+        process.execPath,
+        ["scripts/eval-meta-agents.mjs", "--runtime=openclaw"],
+        {
+          cwd: repoRoot,
+          env: isolatedHomeEnvironment(tempHome),
+          encoding: "utf8",
+          timeout: 60_000,
+        },
+      );
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+      const report = JSON.parse(result.stdout);
+      assert.equal(report.mode, "smoke");
+      assert.equal(report.openclaw.status, "passed");
+      assert.equal(report.openclaw.source, "structural-template");
+      assert.equal(report.openclaw.runtimeAuthHydration.skipped, true);
+      assert.equal(report.openclaw.runtimeAuthHydration.reason, "openclaw_auth_not_configured");
+      assert.equal(existsSync(path.join(tempHome, ".openclaw", "agents")), false);
+    } finally {
+      rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
 
-    assert.match(source, /function isMissingOpenClawAuthError/);
-    assert.match(source, /async function runOpenClawStructuralSmoke/);
-    assert.match(source, /openclaw_auth_not_configured/);
-    assert.match(source, /source: "structural-template"/);
+  test("OpenClaw missing-auth fallback accepts only its normal prepare failure", async () => {
+    const source = readFileSync(path.join(repoRoot, "scripts", "eval-meta-agents.mjs"), "utf8");
+    const helperSource = source.match(
+      /function isMissingOpenClawAuthError\(error\) \{[\s\S]*?\n\}/u,
+    )?.[0];
+    assert.ok(helperSource);
+    const classify = Function(`"use strict"; ${helperSource}; return isMissingOpenClawAuthError;`)();
+    const tempHome = mkdtempSync(path.join(os.tmpdir(), "meta-kim-openclaw-error-"));
+    const options = { cwd: repoRoot, env: isolatedHomeEnvironment(tempHome), timeout: 60_000 };
+    try {
+      let prepareError;
+      await assert.rejects(
+        evalProcessRunner.runCommandWithIgnoredStdin(
+          process.execPath, [path.join(repoRoot, "scripts", "prepare-openclaw-local.mjs")], options,
+        ),
+        (error) => {
+          prepareError = error;
+          assert.equal(error.code, "META_KIM_CHILD_COMMAND_FAILED");
+          assert.equal(error.exitCode, 1);
+          assert.doesNotMatch(error.message, /Missing source OpenClaw auth file:/u);
+          assert.match(error.stderr, /^Missing source OpenClaw auth file:/u);
+          return classify(error);
+        },
+      );
+      const normal = { ...prepareError, message: prepareError.message };
+      assert.equal(classify({ ...normal, secondaryCleanupFailures: [] }), true);
+      assert.equal(classify(new Error(prepareError.stderr.trim())), true);
+      const rejected = [
+        { code: "META_KIM_COMMAND_TIMEOUT" },
+        { code: "META_KIM_COMMAND_ABORTED" },
+        { code: "META_KIM_COMMAND_OUTPUT_LIMIT_EXCEEDED" },
+        { code: "META_KIM_CHILD_COMMAND_LAUNCH_FAILED" },
+        { code: "META_KIM_COMMAND_CLEANUP_FAILED" },
+        { exitCode: 7 },
+        { signal: "SIGTERM" },
+        { killed: true },
+        { command: "node <REPO>/scripts/another-step.mjs" },
+        { ownedProcessGroupCleanupVerified: false },
+        { ownedProcessGroupCleanupVerified: undefined },
+        { ownedProcessGroupCleanupFailure: true },
+        { ownedProcessGroupCleanupReason: "cleanup_unverified" },
+        { ownedProcessGroupSurvivorCount: 1 },
+        { launcherStillAlive: true },
+        { runnerControlDirectoryRetained: true },
+        { secondaryCleanupFailures: [{ code: "META_KIM_RUNNER_CONTROL_DIRECTORY_CLEANUP_FAILED" }] },
+        { stderr: "", stdout: normal.stderr },
+        { stderr: "Missing source OpenClaw authentication file: example" },
+        { stderr: "Missing source OpenClaw auth file:" },
+        { stderr: `unrelated failure\n${normal.stderr}` },
+        { stderr: `${normal.stderr}unrelated failure\n` },
+        { stderr: "ERR_MODULE_NOT_FOUND", message: normal.stderr.trim() },
+      ];
+      for (const override of rejected) {
+        assert.equal(classify({ ...normal, ...override }), false, JSON.stringify(override));
+      }
+      assert.equal(classify({ message: normal.stderr.trim(), signal: "SIGTERM" }), false);
+      assert.equal(classify({ message: `unrelated failure\n${normal.stderr}` }), false);
+      await assert.rejects(
+        evalProcessRunner.runCommandWithIgnoredStdin(
+          process.execPath,
+          ["-e", 'console.error("ERR_MODULE_NOT_FOUND: diagnostic module is unavailable"); process.exit(1);'],
+          options,
+        ),
+        (error) => {
+          assert.equal(error.code, "META_KIM_CHILD_COMMAND_FAILED");
+          assert.equal(classify(error), false);
+          return true;
+        },
+      );
+      assert.equal(existsSync(path.join(tempHome, ".openclaw", "agents")), false);
+    } finally {
+      rmSync(tempHome, { recursive: true, force: true });
+    }
   });
 
   test("OpenClaw local prepare can hydrate from an existing meta agent when main auth is absent", () => {

@@ -16,6 +16,7 @@ professional methods or add a new automation framework.
 | Release verification | Dual-host native model certification is opt-in. Package installation, update, uninstall, portability, permissions, ownership and rollback checks remain required in their existing lanes. |
 | Diagnostic source reads | The configured Service analyst receives its existing required method inputs from the actual task and inspected scope. Custom provider selection and production input guards remain unchanged. |
 | Work-order ownership | Routes already verified from current Thinking bindings retain their selected owner, source contract and scope when the overall task contains multiple durable capability requests. Candidate generation remains separate. |
+| OpenClaw smoke | Recognize the exact missing-auth stderr from the normally exited, cleanup-verified preparation command so the existing structural smoke can run without credentials. Other process failures remain errors. |
 | Other hosts | Gemini/ZCode source-checkout self-install keeps the same execution root as source sync; external projects retain the immutable root and user edits remain protected. Source context files are not merged back into themselves. Shared Skill summaries name the selected clients. Correct three obsolete OpenClaw documentation paths. |
 
 ## Observed checks
@@ -108,6 +109,26 @@ are not a claim that every host completed a real model task.
   canonical writes and no actual worker execution. An unknown owner still
   failed source validation, and removing any of the three required inputs
   still returned `needs_input`, `canExecute: false` and `not_invoked`.
+- The standard attempt at `7a21ad17` passed packed preflight and stages 1–7,
+  then exposed an OpenClaw smoke compatibility error: the guarded runner kept
+  the prepare command's exact missing-auth diagnostic in `stderr`, while the
+  old classifier read only its now-generic `message`. The classifier now
+  recognizes only that command's normal exit 1 with verified cleanup and the
+  exact single diagnostic line. Timeouts, aborts, output limits, launch and
+  cleanup failures, other commands, stdout and mixed or approximate messages
+  remain rejected. Direct legacy missing-auth errors remain compatible;
+  authentication preparation, structural checks and live behavior are unchanged.
+  All 44 targeted evaluator, preparation and process-runner tests passed with
+  no skips. The original public OpenClaw smoke passed in the same isolated
+  home as `structural-template`, `openclaw_auth_not_configured` and
+  `strictReleasePass: false`; the original evidence-pin check required no
+  ledger changes. The previously unreached stage 9–17 commands then ran
+  independently in order, all nine exiting 0 with original arguments and
+  timeouts. Meta-theory reported 1,678 passes, 5 existing skips and no failures.
+  These diagnostics used official Node 22.13.0 / npm 10.9.2 and the existing
+  isolated homes and discovery-only fixtures, with no added authentication or
+  model calls. The failed full attempt remains unchanged; these targeted
+  results do not replace a clean, complete standard gate or certify native tasks.
 
 Repository CI and the release workflow bind their final results and package
 hashes to the exact published commit. The release attachments are the authority

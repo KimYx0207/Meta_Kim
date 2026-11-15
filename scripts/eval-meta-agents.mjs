@@ -4285,7 +4285,31 @@ async function collectOpenClawBaseStatus({ useMainConfig = false } = {}) {
 }
 
 function isMissingOpenClawAuthError(error) {
-  return String(error?.message ?? "").includes("Missing source OpenClaw auth file:");
+  const missingAuthLine = /^Missing source OpenClaw auth file: [^\r\n]+$/u;
+  const secondaryFailures = error?.secondaryCleanupFailures;
+  if (
+    error?.signal != null || error?.killed === true ||
+    error?.ownedProcessGroupCleanupVerified === false ||
+    error?.ownedProcessGroupCleanupFailure === true ||
+    error?.ownedProcessGroupCleanupReason != null ||
+    error?.ownedProcessGroupSurvivorCount > 0 ||
+    error?.launcherStillAlive === true ||
+    error?.runnerControlDirectoryRetained === true ||
+    (secondaryFailures != null && secondaryFailures !== false &&
+      (!Array.isArray(secondaryFailures) || secondaryFailures.length > 0))
+  ) return false;
+
+  // Preserve direct legacy errors; typed process failures must prove this prepare step.
+  if (error?.code == null) {
+    return (error?.exitCode == null || error.exitCode === 1) &&
+      missingAuthLine.test(String(error?.message ?? "").trim());
+  }
+  return error.code === "META_KIM_CHILD_COMMAND_FAILED" &&
+    error.exitCode === 1 &&
+    error.ownedProcessGroupCleanupVerified === true &&
+    String(error.command ?? "").replaceAll("\\", "/")
+      .endsWith(" <REPO>/scripts/prepare-openclaw-local.mjs") &&
+    missingAuthLine.test(String(error.stderr ?? "").trim());
 }
 
 async function runOpenClawStructuralSmoke(authError) {
