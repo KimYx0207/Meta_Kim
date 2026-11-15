@@ -4,6 +4,13 @@
 
 User-facing changes for each release. Detailed test results live in the linked verification records.
 
+## [3.16.1] - 2026-11-15
+
+### Complete the Yuan verification record in source and releases
+
+- Track the public Yuan interaction and continuation verification record so source checkouts and release packages include the document already linked by the READMEs and changelogs.
+- Refresh version references and verify the package against the committed Git tree. The conditional questions, independent modules and same-host continuation introduced in 3.16.0 remain the runtime behavior.
+
 ## [3.16.0] - 2026-11-15
 
 ### Current decisions, independent modules and host continuation
