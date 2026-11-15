@@ -60,6 +60,24 @@ are not a claim that every host completed a real model task.
   candidate checks passed 31 tests without model calls. They include isolated
   project/global updates, uninstall, preserved user configuration, portable
   execution references and native Hook protocol fixtures.
+- The next CI attempt caught the stale reviewed `meta-theory/SKILL.md` source
+  binding. Main thread `/root`, acting in the `meta-warden` review role, reviewed
+  all four host-delegation/schema wording changes and confirmed every other
+  source byte, Fetch/Thinking, owner, permissions, verification and project
+  ownership requirement remained unchanged. The existing candidate, exact
+  v0.2 approval and repository CAS upgraded only that binding, revision 18 to
+  19, retaining all 18 prior history entries and both other current bindings.
+  An exact replay was idempotent. All 16 lifecycle hygiene tests and the runtime
+  evidence-pin check passed. This was an internal source review, not a native
+  custom-agent call, external signature, human approval or model-task certification.
+  The approval ID is
+  `meta-warden:/root:reviewed-host-delegation-source:2026-11-15T12:45:13.650Z`;
+  the candidate digest is
+  `sha256:01353e11fdd26fbdeeb56e810d58776b802548fb5831cac457ec2f23ce271aa9`
+  and the approval digest is
+  `sha256:e00474df9627e1612f30a57caaa718df0cb358666cde3514bbf46ff1d7421220`.
+  Rollback remains a separately reviewed upgrade to the exact prior source,
+  preserving unknown state and granting no deletion authority.
 
 Repository CI and the release workflow bind their final results and package
 hashes to the exact published commit. The release attachments are the authority

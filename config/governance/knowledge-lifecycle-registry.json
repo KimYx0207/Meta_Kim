@@ -130,6 +130,16 @@
       "targetRef": "config/contracts/core-loop-contract.json",
       "toStatus": "active"
     },
+    "minimal-compatibility-20261115:reviewed-host-delegation-source": {
+      "appliedAt": "2026-11-15T12:45:13.650Z",
+      "approvalDigest": "sha256:e00474df9627e1612f30a57caaa718df0cb358666cde3514bbf46ff1d7421220",
+      "candidateDigest": "sha256:01353e11fdd26fbdeeb56e810d58776b802548fb5831cac457ec2f23ce271aa9",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "rollbackPlanDigest": "sha256:a7017f5a6bf499dea7da53661d2bd089d12a63f8332095f2fffcde52b1d7022e",
+      "targetRef": "canonical/skills/meta-theory/SKILL.md",
+      "toStatus": "active"
+    },
     "project-specialization-20261115:canonical-project-owner": {
       "appliedAt": "2026-11-14T21:24:35.626Z",
       "approvalDigest": "sha256:bcb76021d5bc301dff7fc5ad6d2c14081f8018d1953fa330aeccd2c027e84542",
@@ -187,9 +197,9 @@
       "foundational": true,
       "kind": "knowledge",
       "lifecycle": {
-        "changedAt": "2026-11-14T21:24:35.626Z",
-        "lastTransitionId": "project-specialization-20261115:canonical-project-owner",
-        "reason": "Require evidence-backed independent capabilities for persistent professional projects, reuse current project owners, retain versioned shared foundations and existing ownership/review lifecycle; remove global reuse plus project state as an exemption."
+        "changedAt": "2026-11-15T12:45:13.650Z",
+        "lastTransitionId": "minimal-compatibility-20261115:reviewed-host-delegation-source",
+        "reason": "Fresh current-session exact-delta review by /root/all_runtime_countercheck compared the registered source bytes at 98cb66a27bb74987531cf3c90a496a9db8b1ffae with d461be6bfc02256d112aea063f8472f46d24fc55. The complete delta is four instruction-line replacements: replace Claude-specific Agent calls with the active host native delegation tool in the dispatcher and Type A/Type C routes, require the observed schema, and remove the top-level-only assumption for Codex spawn_agent. Fetch/Thinking readiness, callable-tool and permission checks, native custom-agent schema/owner validation, bounded fallback ownership, role labels, verification and project-owned delivery rules are unchanged. All other source bytes match the registered baseline. This is a local source review under the user-authorized compatibility correction; it is not external signature, human-performed approval or native model-task certification."
       },
       "provenance": {
         "evidenceRefs": [
@@ -201,7 +211,7 @@
         ]
       },
       "replacementRefs": [],
-      "sourceDigest": "sha256:7630fb69ae985baeea3f652d3604bc649be7af4ea9cd1fe0cfdfb3fd5d41f82c",
+      "sourceDigest": "sha256:7793b14b946d2398754ce03bc7774e1efedc1cd1ec00497680cfa6d61330db85",
       "status": "active",
       "targetRef": "canonical/skills/meta-theory/SKILL.md"
     },
@@ -846,6 +856,39 @@
       "targetRef": "config/contracts/core-loop-contract.json",
       "toStatus": "active",
       "transitionId": "current-research-comparison-20261115:reviewed-core-loop-source"
+    },
+    {
+      "appliedAt": "2026-11-15T12:45:13.650Z",
+      "approvalDigest": "sha256:e00474df9627e1612f30a57caaa718df0cb358666cde3514bbf46ff1d7421220",
+      "candidateDigest": "sha256:01353e11fdd26fbdeeb56e810d58776b802548fb5831cac457ec2f23ce271aa9",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "previousEntry": {
+        "executionClass": "execution_eligible",
+        "foundational": true,
+        "kind": "knowledge",
+        "lifecycle": {
+          "changedAt": "2026-11-14T21:24:35.626Z",
+          "lastTransitionId": "project-specialization-20261115:canonical-project-owner",
+          "reason": "Require evidence-backed independent capabilities for persistent professional projects, reuse current project owners, retain versioned shared foundations and existing ownership/review lifecycle; remove global reuse plus project state as an exemption."
+        },
+        "provenance": {
+          "evidenceRefs": [
+            "AGENTS.md#Meta-Theory-Activation"
+          ],
+          "recordedAt": "2026-08-12T00:00:00.000Z",
+          "sourceRefs": [
+            "canonical/skills/meta-theory/SKILL.md"
+          ]
+        },
+        "replacementRefs": [],
+        "sourceDigest": "sha256:7630fb69ae985baeea3f652d3604bc649be7af4ea9cd1fe0cfdfb3fd5d41f82c",
+        "status": "active",
+        "targetRef": "canonical/skills/meta-theory/SKILL.md"
+      },
+      "targetRef": "canonical/skills/meta-theory/SKILL.md",
+      "toStatus": "active",
+      "transitionId": "minimal-compatibility-20261115:reviewed-host-delegation-source"
     }
   ],
   "policy": {
@@ -855,7 +898,7 @@
     "referenceOnlyPromotion": false,
     "retiredRecordsRemainTombstones": true
   },
-  "revision": 18,
+  "revision": 19,
   "schemaVersion": "knowledge-lifecycle-registry-v1",
-  "updatedAt": "2026-11-15T00:50:03.331Z"
+  "updatedAt": "2026-11-15T12:45:13.650Z"
 }
