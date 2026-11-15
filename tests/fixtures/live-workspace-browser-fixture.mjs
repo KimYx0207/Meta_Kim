@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { createInitialState, activateSpineState } from "../../canonical/runtime-assets/shared/hooks/spine-state.mjs";
 import { joinProjectRegistry } from "../../scripts/project-registry.mjs";
 import { startLiveControlRoom } from "../../src/infrastructure/live/live-control-room-server.mjs";
+import { buildLiveWorkspaceCompletionArguments } from "../../scripts/live-workspace-host.mjs";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const option = (name) => { const index = process.argv.indexOf(name); return index < 0 ? undefined : process.argv[index + 1]; };
@@ -110,8 +111,8 @@ if (action === "init") {
     const receipt = path.join(projectRoot, ".meta-kim/work/receipt.json");
     await writeFile(receipt, JSON.stringify({ outcome: "produced", summary: copy.alpha.receiptSummary,
       evidenceRefs: [{ ref: "outputs/alpha.md", sha256: digest(text) }] }));
-    const result = execute(fixture, ["--complete-request", "--command-id", claim.commandId, "--claim-token", claim.claimToken,
-      "--input", receipt, "--expected-revision", String(inspect().revision)]);
+    const result = execute(fixture, buildLiveWorkspaceCompletionArguments({ commandId: claim.commandId,
+      claimToken: claim.claimToken, input: receipt, expectedRevision: inspect().revision }));
     assert.equal(result.status, "host_reported");
     assert.equal(result.completionVerified, false);
     console.log(JSON.stringify(result));

@@ -86,10 +86,12 @@ node scripts/live-workspace-host.mjs \
 node scripts/live-workspace-host.mjs \
   --project-root "/path/to/project" --profile default \
   --run-id RUN_ID --conversation-id CHAT_ID \
-  --complete-request --command-id COMMAND_ID --claim-token CLAIM_TOKEN \
+  --complete-request --command-id COMMAND_ID --claim-token=CLAIM_TOKEN \
   --input "/path/to/project/.meta-kim/work/receipt.json" \
   --expected-revision REVISION
 ```
+
+领取凭证按原值放进一个 `--claim-token=值` 参数，保留可能出现的前导 `-`；代码调用使用 `buildLiveWorkspaceCompletionArguments` 生成参数数组，不拼接成 shell 命令。
 
 `--next-work` 不写状态、不领取租约、不启动模型。仅当返回 `ready` 且 `continuation.mayContinue=true`，宿主仍在运行、本次授权仍有效、用户没有暂停或取消时，才使用返回的 `claimArguments` 领取。参数带新鲜修订号；冲突后重新读，不盲目重试副作用。完成回执附带下一次读取结果；这不能把文件提交变成业务验收。`waiting_human`、`waiting_host`、`in_doubt`、`idle` 均不触发后台轮询；已领走但结果不确定的任务先核对原执行者，独立且就绪的任务仍可继续。
 

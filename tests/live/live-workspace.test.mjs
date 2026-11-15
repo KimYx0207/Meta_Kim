@@ -5,7 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import crypto, { createHash } from "node:crypto";
+import { syncBuiltinESMExports } from "node:module";
+import { buildLiveWorkspaceCompletionArguments } from "../../scripts/live-workspace-host.mjs";
 import { createLiveWorkspaceService } from "../../src/application/live/live-workspace-service.mjs";
 import { createWorkspaceReview, workspaceDigest } from "../../src/domain/live/live-workspace.mjs";
 import { loadLiveWorkspacePolicy, normalizeLiveWorkspacePolicy } from "../../src/application/live/live-workspace-policy.mjs";
@@ -567,8 +569,8 @@ test("synthetic host CLI reads repository material, rejects foreign sessions, an
   const receipt = { outcome: "produced", summary: "Extracted and checked the repository-documented host entrypoint",
     evidenceRefs: [{ ref: "outputs/entrypoint.json", sha256: sha(output) }] };
   await writeFile(path.join(f.root, ".meta-kim/work/receipt.json"), JSON.stringify(receipt));
-  const completeArgs = ["--complete-request", "--command-id", claim.commandId, "--claim-token", claim.claimToken,
-    "--input", ".meta-kim/work/receipt.json", "--expected-revision", String(claim.revision)];
+  const completeArgs = buildLiveWorkspaceCompletionArguments({ commandId: claim.commandId, claimToken: claim.claimToken,
+    input: ".meta-kim/work/receipt.json", expectedRevision: claim.revision });
   assert.equal(cli(completeArgs, { conversation: "foreign-conversation", success: false }).code, "workspace_host_scope_or_revision_conflict");
   const returned = cli(completeArgs);
   assert.equal(returned.status, "host_reported"); assert.equal(returned.completionVerified, false);
@@ -580,6 +582,59 @@ test("synthetic host CLI reads repository material, rejects foreign sessions, an
   assert.equal(sha(await readFile(path.join(f.root, observed.receipt.ref))), observed.receipt.sha256);
   assert.equal(observed.receipt.nativeInvocationVerified, false);
   assert.equal((await f.overview()).requests.find(request => request.commandId === claim.commandId).receipt.sha256, observed.receipt.sha256);
+});
+
+test("real host CLI completes ordinary and dash-leading opaque claims without weakening strict arguments or claim checks", async t => {
+  for (const [label, prefixBytes, prefix] of [
+    ["ordinary", [0, 0], "AA"], ["leading dash", [0xf8, 0], "-A"], ["leading double dash", [0xfb, 0xe0], "--"],
+  ]) await t.test(label, async subtest => {
+    const f = await fixture(subtest);
+    await f.publish(designInput());
+    const accepted = await f.vote("outline");
+    const entropy = Buffer.alloc(32); entropy.set(prefixBytes);
+    const originalRandomBytes = crypto.randomBytes;
+    let claim;
+    // Control only the issuer's entropy in this test. The production token,
+    // hash, scope, CAS and real CLI receipt path remain unchanged.
+    crypto.randomBytes = (size, ...args) => size === 32 && args.length === 0
+      ? Buffer.from(entropy) : originalRandomBytes(size, ...args);
+    syncBuiltinESMExports();
+    try {
+      claim = await f.service.claimRequest({ runId: f.runId, conversationId: CHAT,
+        commandId: accepted.result.nextAction.commandId, expectedRevision: (await f.overview()).revision });
+    } finally { crypto.randomBytes = originalRandomBytes; syncBuiltinESMExports(); }
+    assert.ok(claim.claimToken.startsWith(prefix));
+    const storedClaim = (await f.service.repository.readState()).liveWorkspace.requests.find(item => item.commandId === claim.commandId).claim;
+    assert.equal(storedClaim.tokenSha256, sha(claim.claimToken));
+    const content = "Actual bounded claim completion artifact\n";
+    await writeFile(path.join(f.root, "outputs/claim.txt"), content);
+    await writeFile(path.join(f.root, ".meta-kim/work/receipt.json"), JSON.stringify({ outcome: "produced",
+      summary: "Verified the issued opaque claim through the real CLI",
+      evidenceRefs: [{ ref: "outputs/claim.txt", sha256: sha(content) }] }));
+    const completion = { commandId: claim.commandId, claimToken: claim.claimToken,
+      input: ".meta-kim/work/receipt.json", expectedRevision: claim.revision };
+    const invoke = (args, { conversation = CHAT, success = true } = {}) => {
+      const result = spawnSync(process.execPath, [CLI, "--project-root", f.root, "--profile", "default",
+        "--run-id", f.runId, "--conversation-id", conversation, ...args], { encoding: "utf8" });
+      assert.equal(result.status, success ? 0 : 1, result.stderr);
+      return JSON.parse(success ? result.stdout : result.stderr);
+    };
+    const before = await f.service.repository.readState();
+    assert.equal(invoke(["--complete-request", "--claim-token"], { success: false }).code, "ERR_PARSE_ARGS_INVALID_OPTION_VALUE");
+    assert.equal(invoke(["--inspect", "--unknown-option"], { success: false }).code, "ERR_PARSE_ARGS_UNKNOWN_OPTION");
+    assert.equal(invoke(buildLiveWorkspaceCompletionArguments({ ...completion, claimToken: "incorrect-token" }),
+      { success: false }).code, "workspace_host_claim_conflict");
+    assert.equal(invoke(buildLiveWorkspaceCompletionArguments({ ...completion, expectedRevision: claim.revision - 1 }),
+      { success: false }).code, "workspace_host_scope_or_revision_conflict");
+    const args = buildLiveWorkspaceCompletionArguments(completion);
+    assert.equal(invoke(args, { conversation: "foreign-conversation", success: false }).code, "workspace_host_scope_or_revision_conflict");
+    assert.deepEqual(await f.service.repository.readState(), before, "rejected arguments and claims cannot mutate state");
+    const returned = invoke(args);
+    assert.equal(returned.status, "host_reported"); assert.equal(returned.completionVerified, false);
+    assert.equal(invoke(args).replay, true, "exact receipt replay retains the original claim identity");
+    const observed = invoke(["--list-requests", "--command-id", claim.commandId]).requests[0];
+    assert.deepEqual(observed.receipt.evidenceRefs, [{ ref: "outputs/claim.txt", sha256: sha(content) }]);
+  });
 });
 
 test("a copied workspace cannot be consumed under another project authority", async t => {

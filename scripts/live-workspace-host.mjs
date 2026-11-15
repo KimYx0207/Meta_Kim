@@ -4,6 +4,13 @@ import { parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
 import { createLiveWorkspaceService } from "../src/application/live/live-workspace-service.mjs";
 
+/** Keep an opaque claim value in one argv entry, including leading dashes.
+ * Return an argument array; callers must not evaluate it as shell text. */
+export function buildLiveWorkspaceCompletionArguments({ commandId, claimToken, input, expectedRevision }) {
+  return ["--complete-request", "--command-id", commandId, `--claim-token=${claimToken}`,
+    "--input", input, "--expected-revision", String(expectedRevision)];
+}
+
 /** Current-host pull port: it never starts a provider process or spends quota. */
 export async function runLiveWorkspaceHost(argv = process.argv.slice(2)) {
   const { values } = parseArgs({ args: argv, options: {
@@ -14,7 +21,7 @@ export async function runLiveWorkspaceHost(argv = process.argv.slice(2)) {
     inspect: { type: "boolean" }, "next-work": { type: "boolean" }, "list-requests": { type: "boolean" }, "publish-design": { type: "boolean" }, "claim-request": { type: "boolean" }, "complete-request": { type: "boolean" },
     help: { type: "boolean" },
   }, strict: true });
-  if (values.help) return { usage: "node scripts/live-workspace-host.mjs --project-root ROOT --profile PROFILE --run-id RUN --conversation-id CHAT [--inspect | --next-work | --list-requests [--cursor CURSOR | --command-id ID] | --publish-design --input PROJECT_JSON --expected-revision N | --read-material --artifact-id ID --version SHA256_VERSION [--cursor CURSOR] | --claim-request --command-id ID --expected-revision N | --complete-request --command-id ID --claim-token TOKEN --input RECEIPT_JSON --expected-revision N]",
+  if (values.help) return { usage: "node scripts/live-workspace-host.mjs --project-root ROOT --profile PROFILE --run-id RUN --conversation-id CHAT [--inspect | --next-work | --list-requests [--cursor CURSOR | --command-id ID] | --publish-design --input PROJECT_JSON --expected-revision N | --read-material --artifact-id ID --version SHA256_VERSION [--cursor CURSOR] | --claim-request --command-id ID --expected-revision N | --complete-request --command-id ID --claim-token=TOKEN --input RECEIPT_JSON --expected-revision N]",
     boundary: "Use the exact bound profile; no profile fallback is attempted. Inspect reports request totals, truncation and next-page arguments. List requests is a bounded, revision-bound history page, not proof feedback was applied. Actual current-host scope and existing spine CAS are required. Claims and reports never imply native model invocation or business completion." };
   if (typeof values["project-root"] !== "string" || !path.isAbsolute(values["project-root"])) throw new Error("workspace_project_root_required");
   if (["inspect", "next-work", "list-requests", "publish-design", "claim-request", "complete-request", "read-material"].filter(key => values[key]).length !== 1) throw new Error("workspace_one_host_operation_required");
