@@ -107,4 +107,3 @@ test("new kernel revisions need explicit current workspace context; Evolution ne
   f.host.evolutionDecision = { runId: f.runId, decision: "writeback", reason: "A reusable method changed" };
   assert.equal((await f.create())[moduleStageNodeId("alpha", "Evolution")], undefined, "triggered Evolution retains its professional path");
 });
-
