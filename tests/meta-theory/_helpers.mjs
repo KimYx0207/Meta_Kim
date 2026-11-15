@@ -82,6 +82,7 @@ export const REFERENCE_FILES = [
   "evolution-writeback.md",
   "rhythm-orchestration.md",
   "intent-amplification.md",
+  "cross-agent-thinking-patterns.md",
   // Legacy file name kept as a compatibility alias for the 11-phase workflow reference.
   "ten-step-governance.md",
   "create-agent.md",

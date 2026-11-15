@@ -1,5 +1,7 @@
 import { LIVE_WORKSPACE_MESSAGES } from "./live-workspace-copy.mjs";
+import { buildLivePrdGraph } from "../../application/live/live-prd-knowledge-graph.mjs";
 export { LIVE_WORKSPACE_MESSAGES };
+export { buildLivePrdGraph };
 
 
 export function workspaceStatusKey(status) {
@@ -30,7 +32,24 @@ export function workspaceMaterialMatches(item, page) {
 export function workspaceMaterialReady(item, material) {
   return Boolean(item?.artifactId && item.status !== "material_changed" && material?.verified === true && material.identity === workspaceMaterialIdentity(item)
     && typeof material.sha256 === "string" && (!item.sha256 || material.sha256 === item.sha256)
-    && material.conflict !== true && material.sourceState !== "changed");
+    && material.conflict !== true && material.sourceState !== "changed" && material.loading !== true && !material.nextCursor
+    && (!Number.isSafeInteger(material.totalBytes) || material.loadedBytes === material.totalBytes));
+}
+
+/** Readable PRD sections are projections of a completely read, source-bound
+ * design material. Markdown and old free-form materials retain their original
+ * reader; partial JSON must never be presented as complete requirements. */
+export function workspaceStructuredPrdMaterial(item, material) {
+  if (!item || !material?.verified || material.loading || material.conflict || material.nextCursor || typeof material.text !== "string") return null;
+  if (material.format && material.format !== "json") return null;
+  let source;
+  try { source = JSON.parse(material.text); } catch { return null; }
+  if (!source || typeof source !== "object" || Array.isArray(source)) return null;
+  if (item.kind === "outline" && source.architecture?.id === item.id && !Array.isArray(source.architecture)) {
+    return { kind: "outline", architecture: source.architecture, modules: Array.isArray(source.modules) ? source.modules : [] };
+  }
+  if (item.kind === "module" && source.id === item.id) return { kind: "module", module: source };
+  return null;
 }
 
 export function workspaceReviewForArtifact(workspace, item) {
@@ -51,6 +70,6 @@ export function workspaceCommandMessage(status, kind) {
 export function serializeLiveWorkspaceModel() {
   return `const LIVE_WORKSPACE_MESSAGES = ${JSON.stringify(LIVE_WORKSPACE_MESSAGES)};\n${[
     workspaceStatusKey, workspaceArtifactItems, workspaceMaterialIdentity, workspaceMaterialMatches, workspaceMaterialReady,
-    workspaceReviewForArtifact, workspaceCommandMessage,
+    workspaceStructuredPrdMaterial, workspaceReviewForArtifact, workspaceCommandMessage, buildLivePrdGraph,
   ].map((fn) => fn.toString()).join("\n")}`;
 }

@@ -1,5 +1,6 @@
 import { LIVE_WORKSPACE_MESSAGES, serializeLiveWorkspaceModel, workspaceArtifactItems, workspaceMaterialIdentity, workspaceMaterialMatches, workspaceMaterialReady, workspaceCommandMessage } from "./live-workspace-model.mjs";
 import { createLiveWorkspaceRenderer } from "./live-workspace-renderer.mjs";
+import { createPrdKnowledgeGraph } from "./live-prd-knowledge-graph.mjs";
 
 export const LIVE_WORKSPACE_UI_POLICY = Object.freeze({ pageSize: 50, refreshMs: 15000, requestTimeoutMs: 12000, refreshCoalesceMs: 1500 });
 
@@ -14,9 +15,9 @@ export function createLiveWorkspaceController(options) {
   const token = options.config?.controlHeader === "x-meta-kim-workspace-token" && typeof options.config?.controlToken === "string" && options.config.controlToken.length >= 16 ? options.config.controlToken : null;
   const emptyHistory = () => ({ rows: [], revision: null, total: null, nextCursor: null, loading: false, loaded: false, attempted: false, stale: false, error: null });
   const state = {
-    view: "work", externalView: null, prdMode: "overview", selectedModuleId: null, detail: null, opener: null,
+    view: "work", externalView: null, prdMode: "overview", prdDepth: 2, prdGraphLimit: 40, selectedModuleId: null, detail: null, opener: null,
     language: options.language(), snapshot: null, project: null, workspace: null, fallbackStages: [], origin: null,
-    selection: {}, selectionKey: "", tasks: [], taskPage: 0, taskFilter: "all", query: "", recordPage: 0, pageSize: policy.pageSize,
+    selection: {}, selectionKey: "", tasks: [], taskPage: 0, taskFilter: "all", query: "", moduleSearch: "", recordPage: 0, pageSize: policy.pageSize,
     loading: false, error: null, notice: "", material: null, command: null, history: emptyHistory(), drafts: new Map(), canWrite: options.config?.enabled === true && Boolean(token),
   };
   let generation = 0;
@@ -59,6 +60,7 @@ export function createLiveWorkspaceController(options) {
     const url = new URL(win.location.href);
     url.searchParams.set("view", state.externalView || state.view);
     if (state.view === "prd") url.searchParams.set("prdView", state.prdMode); else url.searchParams.delete("prdView");
+    if (state.view === "prd" && state.prdMode === "module") url.searchParams.set("prdDepth", String(state.prdDepth)); else url.searchParams.delete("prdDepth");
     if (state.selectedModuleId) url.searchParams.set("moduleId", state.selectedModuleId); else url.searchParams.delete("moduleId");
     win.history.replaceState(null, "", url.href);
   }
@@ -78,7 +80,7 @@ export function createLiveWorkspaceController(options) {
     if (!state.externalView) { void refresh(); ensureMaterial(); ensureRecords(); }
   }
   function selectModule(id) {
-    state.selectedModuleId = id; state.prdMode = "module"; state.material = null; state.detail = null;
+    state.selectedModuleId = id; state.prdMode = "module"; state.prdGraphLimit = 40; state.material = null; state.detail = null;
     setView("prd");
     renderer.content.scrollTop = 0;
   }
@@ -86,6 +88,15 @@ export function createLiveWorkspaceController(options) {
     state.prdMode = mode === "module" ? "module" : "overview";
     state.material = null; state.detail = null; materialGeneration += 1;
     updateLocation(); renderer.render(); ensureMaterial();
+  }
+  function setPrdDepth(level) {
+    if (![1, 2, 3, "all"].includes(level)) return;
+    state.prdDepth = level;
+    updateLocation(); renderer.renderMain();
+  }
+  function openOverview() {
+    state.prdMode = "overview"; state.prdGraphLimit = 40; state.detail = null; state.material = null;
+    setView("prd");
   }
   function openDetail(detail, opener) {
     state.detail = detail; state.opener = opener;
@@ -114,7 +125,7 @@ export function createLiveWorkspaceController(options) {
     const currentMaterialGeneration = ++materialGeneration;
     const identity = workspaceMaterialIdentity(item);
     const previous = append && state.material?.identity === identity ? state.material : null;
-    state.material = { identity, text: previous?.text || "", loadedBytes: previous?.loadedBytes || 0, totalBytes: previous?.totalBytes, nextCursor: previous?.nextCursor, sha256: previous?.sha256, sourceState: previous?.sourceState, verified: previous?.verified === true, loading: true, error: null, conflict: false };
+    state.material = { identity, text: previous?.text || "", format: previous?.format, loadedBytes: previous?.loadedBytes || 0, totalBytes: previous?.totalBytes, nextCursor: previous?.nextCursor, sha256: previous?.sha256, sourceState: previous?.sourceState, verified: previous?.verified === true, loading: true, error: null, conflict: false };
     renderer.renderMain();
     try {
       const page = await request("/api/workspace/material", { query: { artifactId: item.artifactId, version: item.version, cursor: previous?.nextCursor } });
@@ -122,7 +133,7 @@ export function createLiveWorkspaceController(options) {
       if (!workspaceMaterialMatches(item, page) || previous && previous.sha256 !== page.sha256) {
         state.material.loading = false; state.material.error = copy("materialSourceMismatch"); state.material.conflict = true; renderer.renderMain(); return;
       }
-      state.material = { identity, text: (previous?.text || "") + page.text, loadedBytes: (previous?.loadedBytes || 0) + new TextEncoder().encode(page.text).byteLength, totalBytes: page.totalBytes, nextCursor: page.nextCursor, sha256: page.sha256, sourceState: page.sourceState, verified: true, loading: false, error: page.sourceState === "changed" ? copy("archivedSource") : null, conflict: false };
+      state.material = { identity, text: (previous?.text || "") + page.text, format: page.format, loadedBytes: (previous?.loadedBytes || 0) + new TextEncoder().encode(page.text).byteLength, totalBytes: page.totalBytes, nextCursor: page.nextCursor, sha256: page.sha256, sourceState: page.sourceState, verified: true, loading: false, error: page.sourceState === "changed" ? copy("archivedSource") : null, conflict: false };
     } catch (error) {
       if (generation !== currentGeneration || materialGeneration !== currentMaterialGeneration || disposed) return;
       state.material.loading = false;
@@ -317,7 +328,8 @@ export function createLiveWorkspaceController(options) {
     }
   }
   const actions = {
-    selectModule, setPrdMode, openDetail, closeDetail, loadMaterial, loadRecords,
+    selectModule, setPrdMode, setPrdDepth, openOverview, openDetail, closeDetail, loadMaterial, loadRecords,
+    expandPrdGraph: () => { state.prdGraphLimit = Math.min(2000, state.prdGraphLimit + 40); renderer.renderMain(); },
     openRecords: () => setView("records"),
     openNextAction: (action) => {
       if (action.moduleId) selectModule(action.moduleId);
@@ -361,6 +373,8 @@ export function createLiveWorkspaceController(options) {
   state.view = ["work", "prd", "records"].includes(requestedView) ? requestedView : "work";
   state.externalView = ["graph", "repository"].includes(requestedView) ? requestedView : null;
   state.prdMode = initial.searchParams.get("prdView") === "module" ? "module" : "overview";
+  const requestedDepth = initial.searchParams.get("prdDepth");
+  state.prdDepth = requestedDepth === "all" ? "all" : ["1", "2", "3"].includes(requestedDepth) ? Number(requestedDepth) : 2;
   state.selectedModuleId = initial.searchParams.get("moduleId");
   const interval = win.setInterval(() => { if (doc.visibilityState === "visible" && !state.externalView) void refresh({ force: true }); }, policy.refreshMs);
   renderer.render();
@@ -389,5 +403,5 @@ export function createLiveWorkspaceController(options) {
 }
 
 export function serializeLiveWorkspaceClient() {
-  return `${serializeLiveWorkspaceModel()}\nconst LIVE_WORKSPACE_UI_POLICY = ${JSON.stringify(LIVE_WORKSPACE_UI_POLICY)};\n${createLiveWorkspaceRenderer.toString()}\n${createLiveWorkspaceController.toString()}`;
+  return `${serializeLiveWorkspaceModel()}\nconst LIVE_WORKSPACE_UI_POLICY = ${JSON.stringify(LIVE_WORKSPACE_UI_POLICY)};\n${createPrdKnowledgeGraph.toString()}\n${createLiveWorkspaceRenderer.toString()}\n${createLiveWorkspaceController.toString()}`;
 }

@@ -64,6 +64,8 @@ Important: Architecture Type Distinction. Meta Architecture means agent governan
 
 Meta_Kim governs goals across domains: decisions, research, operations, learning, writing, engineering, and combinations discovered from the request. Industry packages supply capabilities; they do not define the framework's scope. Bind the actual user request to a run-scoped goal before choosing a route. Framework roadmap IDs, schema checks and runtime installation checks are not the user's success criteria.
 
+**Cross-Agent thinking methods:** Any professional Agent may use the same transferable ways to clarify a problem, challenge assumptions, reverse-plan a goal, compare expertise or tradeoffs, probe opportunity, practice and receive feedback, design a repeatable routine, extract knowledge or focus strategy. At Critical/Fetch identify the *specific* uncertainty or feedback need; use capability-first discovery to find Kim_Service's optional `agent-thinking-patterns` Skill (or an already qualified equivalent), then bind only the needed thinking pattern as a method/loadout of the existing professional owner in Thinking. Do not route every learning/practice request to an education Agent, force all patterns on each task, require a new user decision for an internal method choice, or substitute the Skill for the professional Agent. If no provider is installed or actually loaded, say so rather than claim its invocation. Read [cross-Agent thinking patterns](references/cross-agent-thinking-patterns.md) when the choice of method could materially change the task result.
+
 Choose the best evidenced feasible route under the user's constraints, compare meaningful alternatives, and record uncertainty; never promise a globally optimal answer or universal proven capability. Reuse capability discovery and the existing stage DAG for execution. Validate structure, routing/boundaries and actual task outcomes separately. The default runner's `traceEvalControlPlane.outcomeEvaluation` remains incomplete until task-bound criterion observations exist. Read `references/outcome-evaluation.md` for the source-backed evaluation method and material/pacing boundaries.
 
 ## Type-First Route Invariant
@@ -500,6 +502,7 @@ Load only references needed for the run:
 - `runtime-claude.md`: Claude Code-specific native question surface, Agent / Skill / Command / prompt / MCP dispatch, and no-self-execution behavior.
 - `verification-evidence.md`: verified claim and public-ready evidence.
 - `intent-amplification.md`: real intent, first action, pass/kill, userGoalDone.
+- `cross-agent-thinking-patterns.md`: choose optional, transferable reasoning, evidence, strategy or practice-feedback methods for any domain Agent; use discovered provider contracts without creating another route or task state.
 - `evolution-writeback.md`: writeback, scars, reuse keys.
 - `rhythm-orchestration.md`: choice/card timing.
 - `native-host-interaction.md`: current-host work consumption, native parent/child returns and supported resumption.

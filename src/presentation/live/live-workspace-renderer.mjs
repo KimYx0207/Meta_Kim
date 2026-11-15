@@ -1,4 +1,5 @@
-import { workspaceStatusKey, workspaceArtifactItems, workspaceMaterialIdentity, workspaceMaterialReady, workspaceReviewForArtifact, workspaceCommandMessage } from "./live-workspace-model.mjs";
+import { workspaceStatusKey, workspaceArtifactItems, workspaceMaterialIdentity, workspaceMaterialReady, workspaceReviewForArtifact, workspaceCommandMessage, workspaceStructuredPrdMaterial, buildLivePrdGraph } from "./live-workspace-model.mjs";
+import { createPrdKnowledgeGraph } from "./live-prd-knowledge-graph.mjs";
 
 /** DOM-only workspace rendering. Inputs are retained across refreshes. */
 export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, taskOutputs }) {
@@ -157,17 +158,53 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
     nav.querySelector("[data-uw-module-count]").textContent = String(state.workspace?.design?.totalModules ?? modules.length);
     const host = nav.querySelector("[data-uw-modules]");
     const selectedFocus = doc.activeElement?.dataset?.liveWorkspaceModule;
+    const searchFocused = doc.activeElement?.className === "uw-structure-search";
+    const searchCaret = searchFocused ? [doc.activeElement.selectionStart, doc.activeElement.selectionEnd] : null;
     replace(host);
-    if (!modules.length) host.append(e("p", "uw-nav-empty", copy("noModules")));
+    const architecture = state.workspace?.design?.architecture;
+    if (architecture) {
+      const overview = e("button", "uw-structure-root"); overview.type = "button";
+      overview.dataset.liveWorkspaceOutline = architecture.id;
+      overview.dataset.selected = String(state.prdMode === "overview" && state.view === "prd");
+      overview.title = [architecture.title || copy("overview"), copy("prdFirstLayer")].join(" · ");
+      overview.append(e("span", "uw-structure-number", "01"), e("span", "", architecture.title || copy("overview")));
+      overview.addEventListener("click", actions.openOverview);
+      host.append(overview);
+    }
+    const children = e("div", "uw-structure-children");
+    const search = e("input", "uw-structure-search"); search.type = "search";
+    search.placeholder = copy("prdGraphSearch"); search.setAttribute("aria-label", copy("prdGraphSearch"));
+    search.value = state.moduleSearch;
+    const searchEmpty = e("p", "uw-nav-empty", copy("prdGraphSearchEmpty")); searchEmpty.hidden = true;
+    const filterModules = () => {
+      const query = state.moduleSearch.trim().toLocaleLowerCase();
+      let visible = 0;
+      for (const node of children.querySelectorAll("[data-live-workspace-module]")) {
+        const match = !query || node.title.toLocaleLowerCase().includes(query) || node.dataset.liveWorkspaceModule.toLocaleLowerCase().includes(query);
+        node.hidden = !match;
+        if (match) visible += 1;
+      }
+      searchEmpty.hidden = visible > 0 || !query;
+    };
+    search.addEventListener("input", () => { state.moduleSearch = search.value; filterModules(); });
+    if (modules.length) host.append(search);
+    if (!modules.length) children.append(e("p", "uw-nav-empty", copy("noModules")));
     for (const module of modules) {
       const item = e("button"); item.type = "button";
       item.dataset.liveWorkspaceModule = module.id;
       item.dataset.selected = String(state.selectedModuleId === module.id && state.prdMode === "module");
-      item.title = module.title || module.id;
+      item.title = [module.title || module.id, module.id].join(" · ");
       item.append(e("span", "", module.title || module.id));
       item.addEventListener("click", () => actions.selectModule(module.id));
-      host.append(item);
-      if (selectedFocus === module.id) item.focus({ preventScroll: true });
+      children.append(item);
+    }
+    host.append(children, searchEmpty);
+    filterModules();
+    if (selectedFocus) [...children.querySelectorAll("[data-live-workspace-module]")]
+      .find(node => node.dataset.liveWorkspaceModule === selectedFocus)?.focus({ preventScroll: true });
+    if (searchFocused) {
+      search.focus({ preventScroll: true });
+      if (searchCaret.every(Number.isInteger)) search.setSelectionRange(...searchCaret);
     }
     if (state.workspace?.design?.nextCursor) host.append(button(copy("loadMore"), actions.loadModules, { "data-live-workspace-modules-more": "" }, true));
     const reviewCount = (state.workspace?.reviews || []).filter((review) => review.state === "awaiting_human").length;
@@ -292,6 +329,48 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
     }
     flush();
   }
+  function appendStructuredPrd(host, structured) {
+    // Human-facing headings are derived from the validated material currently
+    // being viewed; no derived summary replaces its source JSON or review gate.
+    const bulletSection = (title, rows, format) => {
+      if (!Array.isArray(rows) || !rows.length) return;
+      const list = e("ul", "uw-prd-facts-list");
+      for (const row of rows) {
+        const item = e("li", "", format ? format(row) : String(row));
+        list.append(item);
+      }
+      host.append(section(title, list));
+    };
+    const refSection = (title, rows) => bulletSection(title, rows, row => typeof row === "string" ? row : String(row?.id || row?.name || ""));
+    const architecture = structured.kind === "outline" ? structured.architecture : null;
+    const module = structured.kind === "module" ? structured.module : null;
+    if (architecture) {
+      host.append(section(copy("overview"), architecture.summary || copy("noMaterialNote")));
+      bulletSection(copy("prdTechnology"), architecture.technologyChoices, choice => [choice.name, choice.version, choice.rationale,
+        ...(Array.isArray(choice.evidenceRefs) ? choice.evidenceRefs : [])].filter(Boolean).join(" · "));
+      bulletSection(copy("prdConstraints"), architecture.constraints, constraint => [constraint.requirement, constraint.verification].filter(Boolean).join(" · "));
+      refSection(copy("prdModules"), (structured.modules || []).map(row => [row.id, row.purpose].filter(Boolean).join(" · ")));
+      refSection(copy("decision"), architecture.decisionRefs);
+    }
+    if (module) {
+      host.append(section(copy("prdPurpose"), module.purpose || copy("moduleSummary")));
+      if (module.implementationNotes) {
+        const notes = Array.isArray(module.implementationNotes) ? module.implementationNotes.join("\n") : module.implementationNotes;
+        host.append(section(copy("prdImplementation"), notes));
+      }
+      bulletSection(copy("prdBusinessRules"), module.businessRules);
+      bulletSection(copy("prdStates"), module.states, row => [row.name, row.behavior].filter(Boolean).join(" — "));
+      const links = e("div", "uw-prd-reference-grid");
+      for (const [key, rows] of [["prdJourneys", module.journeyRefs], ["prdInterfaces", module.interfaceRefs],
+        ["prdSharedState", module.stateRefs], ["tasks", module.taskIds], ["prdAcceptance", module.acceptanceCriterionIds], ["decision", module.decisionRefs]]) {
+        if (!Array.isArray(rows) || !rows.length) continue;
+        links.append(section(copy(key), rows.join(" · ")));
+      }
+      if (links.children.length) host.append(links);
+      bulletSection(copy("prdRemovalCandidates"), module.removalCandidates, row =>
+        [row.path, row.replacement, row.reason, ...(Array.isArray(row.evidenceRefs) ? row.evidenceRefs : [])].filter(Boolean).join(" · "));
+    }
+  }
   function renderCommand(host, item) {
     const command = state.command;
     if (!command || command.targetIdentity !== workspaceMaterialIdentity(item)) return;
@@ -361,6 +440,12 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
       return;
     }
     if (item.moduleId && !state.selectedModuleId) state.selectedModuleId = item.moduleId;
+    const layout = e("div", "uw-prd-layout");
+    const focusId = state.prdMode === "module" ? state.selectedModuleId : null;
+    const graph = buildLivePrdGraph(state.workspace?.design || {}, { focusId, depth: state.prdDepth === "all" ? "all" : state.prdDepth, limit: state.prdGraphLimit || 40 });
+    layout.append(createPrdKnowledgeGraph({ doc, graph, copy, focusId: graph.focusKind === "module" ? focusId : null,
+      depth: state.prdDepth, onSelect: node => node.kind === "architecture" ? actions.openOverview() : actions.selectModule(node.sourceId),
+      onDepthChange: actions.setPrdDepth, onExpand: actions.expandPrdGraph }));
     const article = e("article", "uw-document");
     article.dataset.liveWorkspaceArtifact = item.artifactId || item.id;
     const header = e("header", "uw-document-header");
@@ -384,7 +469,14 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
         article.append(note);
       }
       const body = e("div", "uw-document-body"); body.dataset.liveWorkspaceMaterial = ""; body.dataset.version = String(item.version ?? ""); body.dataset.sha256 = item.sha256 || "";
-      appendDocumentText(body, material.text);
+      const structured = workspaceStructuredPrdMaterial(item, material);
+      if (structured) {
+        appendStructuredPrd(body, structured);
+        const full = e("details", "uw-prd-raw");
+        full.append(e("summary", "", copy("prdRawMaterial")));
+        const original = e("pre", "", material.text);
+        full.append(original); body.append(full);
+      } else appendDocumentText(body, material.text);
       article.append(body);
       if (material.nextCursor && !material.conflict) {
         const more = button(copy(material.loading ? "loadingMaterial" : "loadMore"), () => actions.loadMaterial(item, true), { "data-live-workspace-material-more": "" }, true);
@@ -393,7 +485,8 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
       if (Number.isFinite(material.totalBytes)) article.append(e("p", "uw-source-ref", copy("source") + " · " + material.loadedBytes + " / " + material.totalBytes + " bytes"));
     }
     renderFeedback(article, item);
-    content.append(article);
+    layout.append(article);
+    content.append(layout);
     text("footer", copy("itemTotal") + " " + (state.workspace?.design?.totalModules ?? (state.workspace?.design?.modules || []).length) + " " + copy("moduleCount"));
   }
   function renderRecords() {
@@ -468,19 +561,37 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
   function renderMain() {
     const active = doc.activeElement;
     const activeTask = active?.dataset?.liveWorkspaceTask;
+    const activeGraphDepth = active?.dataset?.livePrdGraphDepth;
+    const activeGraphNode = active?.dataset?.livePrdGraphNode;
     const selection = typeof active?.selectionStart === "number" ? [active.selectionStart, active.selectionEnd] : null;
     const scroll = content.scrollTop;
+    const previousGraph = content.querySelector(".uw-knowledge-graph");
+    const previousCanvas = previousGraph?.querySelector(".uw-knowledge-canvas");
+    const previousPosition = previousCanvas ? { focus: previousGraph.dataset.livePrdKnowledgeFocus,
+      depth: previousGraph.dataset.livePrdKnowledgeDepth, left: previousCanvas.scrollLeft, top: previousCanvas.scrollTop } : null;
     replace(content); text("footer", "");
     if (state.loading && !state.workspace && !state.snapshot) content.append(skeleton());
     else if (state.view === "prd") renderPrd();
     else if (state.view === "records") renderRecords();
     else renderTasks();
     content.scrollTop = scroll;
+    const nextGraph = content.querySelector(".uw-knowledge-graph");
+    const nextCanvas = nextGraph?.querySelector(".uw-knowledge-canvas");
+    if (nextCanvas) {
+      if (previousPosition?.focus === nextGraph.dataset.livePrdKnowledgeFocus && previousPosition?.depth === nextGraph.dataset.livePrdKnowledgeDepth) {
+        nextCanvas.scrollLeft = previousPosition.left;
+        nextCanvas.scrollTop = previousPosition.top;
+      } else if (Number.isFinite(Number(nextCanvas.dataset.focusCenterX)) && nextCanvas.clientWidth > 0) {
+        nextCanvas.scrollLeft = Math.max(0, Number(nextCanvas.dataset.focusCenterX) - nextCanvas.clientWidth / 2);
+      }
+    }
     if (active?.isConnected && active !== doc.body) {
       active.focus({ preventScroll: true });
       if (selection) active.setSelectionRange(...selection);
     }
     else if (activeTask) [...content.querySelectorAll("[data-live-workspace-task]")].find((node) => node.dataset.liveWorkspaceTask === activeTask)?.focus({ preventScroll: true });
+    else if (activeGraphDepth) content.querySelector(`[data-live-prd-graph-depth="${activeGraphDepth}"]`)?.focus({ preventScroll: true });
+    else if (activeGraphNode) [...content.querySelectorAll("[data-live-prd-graph-node]")].find(node => node.dataset.livePrdGraphNode === activeGraphNode)?.focus({ preventScroll: true });
   }
   return {
     render() { root.dataset.view = state.view; renderHeader(); renderNavigation(); renderStages(); renderToolbar(); renderMain(); renderDetail(); },

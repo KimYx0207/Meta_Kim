@@ -370,7 +370,7 @@ test("a malformed refresh keeps the last valid workspace visible", async (t) => 
   assert.ok(h.state.error);
 });
 
-test("review and feedback require a successfully read current page, while later-page failure preserves readiness", async (t) => {
+test("review and feedback require the entire current material; later-page failure preserves text but blocks submission", async (t) => {
   let initialFailure = true;
   const h = harness(({ url, method, body }) => {
     if (method === "POST") return reply({ commandId: "decision-1", nonce: JSON.parse(body).nonce, status: "recorded" });
@@ -393,9 +393,32 @@ test("review and feedback require a successfully read current page, while later-
   initialFailure = false;
   await h.actions.loadMaterial(architecture, false);
   assert.equal(h.state.material.text, "\uFEFF首段😀");
-  assert.equal(workspaceMaterialReady(architecture, h.state.material), true);
+  assert.equal(workspaceMaterialReady(architecture, h.state.material), false);
   await h.actions.loadMaterial(architecture, true);
   assert.equal(h.state.material.text, "\uFEFF首段😀");
+  assert.equal(workspaceMaterialReady(architecture, h.state.material), false);
+  h.actions.review(review(architecture), architecture, "accept"); await settled();
+  assert.equal(h.calls.filter((call) => call.method === "POST").length, 0);
+});
+
+test("two-page PRD enables human review only after every byte has been read", async (t) => {
+  const first = "第一段😀";
+  const second = "第二段，验收条件。";
+  const totalBytes = Buffer.byteLength(first + second);
+  const h = harness(({ url, method, body }) => {
+    if (method === "POST") return reply({ commandId: "complete-read-decision", nonce: JSON.parse(body).nonce, status: "recorded" });
+    if (url.pathname.endsWith("/material")) return reply({ artifactId: architecture.artifactId, version: 1, sha256: architecture.sha256,
+      text: url.searchParams.has("cursor") ? second : first, nextCursor: url.searchParams.has("cursor") ? null : "page-two", totalBytes, sourceState: "current" });
+    return reply(workspace());
+  });
+  t.after(() => h.controller.dispose());
+  h.update(); await settled();
+  await h.actions.loadMaterial(architecture, false);
+  assert.equal(workspaceMaterialReady(architecture, h.state.material), false);
+  h.actions.review(review(architecture), architecture, "accept"); await settled();
+  assert.equal(h.calls.filter((call) => call.method === "POST").length, 0);
+  await h.actions.loadMaterial(architecture, true);
+  assert.equal(h.state.material.text, first + second);
   assert.equal(workspaceMaterialReady(architecture, h.state.material), true);
   h.actions.review(review(architecture), architecture, "accept"); await settled();
   assert.equal(h.calls.filter((call) => call.method === "POST").length, 1);
@@ -493,15 +516,17 @@ test("capacity refusal is explicit, preserves the draft, and is not treated as u
 function presentationHarness({ language = "zh", mode = "overview" } = {}) {
   class Element {
     constructor(tag = "div") { this.tagName = tag; this.children = []; this.dataset = {}; this.attributes = new Map(); this.listeners = new Map(); this.hidden = false; this.scrollTop = 0; this.textContent = ""; }
+    get lastChild() { return this.children.at(-1) || null; }
     append(...nodes) { this.children.push(...nodes); }
     replaceChildren(...nodes) { this.children = nodes; }
     setAttribute(name, value) { this.attributes.set(name, String(value)); }
     addEventListener(name, action) { this.listeners.set(name, action); }
     click() { this.listeners.get("click")?.(); }
+    querySelector() { return null; }
     querySelectorAll() { return []; }
   }
   const nodes = new Map();
-  const doc = { createElement: (tag) => new Element(tag), activeElement: null };
+  const doc = { createElement: (tag) => new Element(tag), createElementNS: (_namespace, tag) => new Element(tag), activeElement: null };
   const root = new Element(); root.ownerDocument = doc;
   root.querySelector = (selector) => { if (!nodes.has(selector)) nodes.set(selector, new Element()); return nodes.get(selector); };
   const fullVersion = "sha256:" + "0123456789abcdef".repeat(4);
@@ -516,7 +541,10 @@ function presentationHarness({ language = "zh", mode = "overview" } = {}) {
   const feedbackSubmissions = [];
   const renderer = createLiveWorkspaceRenderer({ app: { querySelector: () => null }, root, state, copy: (key) => LIVE_WORKSPACE_MESSAGES[language][key] || key,
     actions: { openNextAction: (action) => openedActions.push(action), feedback: (item, original) => feedbackSubmissions.push({ item, original }) } });
-  return { state, renderer, fullVersion, openedActions, feedbackSubmissions, node: (name) => root.querySelector("[data-uw-" + name + "]"), article: () => root.querySelector("[data-uw-content]").children[0] };
+  return { state, renderer, fullVersion, openedActions, feedbackSubmissions, node: (name) => root.querySelector("[data-uw-" + name + "]"), article: () => {
+    const first = root.querySelector("[data-uw-content]").children[0];
+    return first?.className === "uw-prd-layout" ? first.children.find(node => node.className === "uw-document") : first;
+  } };
 }
 
 test("a retained feedback form keeps its input while using the latest material descriptor after source recovery", () => {
@@ -580,6 +608,26 @@ test("rendered module summaries use module-specific headings in all four languag
     h.renderer.render();
     assert.equal(h.article().children[1].children[0].textContent, LIVE_WORKSPACE_MESSAGES[language].overview, language);
   }
+});
+
+test("level-two PRD displays real rules, states, references and unapproved removal candidates while retaining raw source", () => {
+  const h = presentationHarness({ mode: "module" });
+  const moduleSource = { id: "alpha", purpose: "维护客户订单", implementationNotes: "处理重试与幂等", businessRules: ["不可重复扣款"],
+    states: [{ name: "已下单", behavior: "显示待支付" }], journeyRefs: ["journey:checkout"], interfaceRefs: ["interface:order"],
+    stateRefs: ["state:order"], taskIds: ["task:create"], acceptanceCriterionIds: ["criteria:create"], decisionRefs: ["decision:checkout"],
+    removalCandidates: [{ path: "src/old-flow.js", replacement: "src/new-flow.js", reason: "重复逻辑", evidenceRefs: ["ref:test"] }] };
+  const text = JSON.stringify(moduleSource);
+  h.state.material = { ...h.state.material, text, format: "json", verified: true, nextCursor: null,
+    totalBytes: Buffer.byteLength(text), loadedBytes: Buffer.byteLength(text) };
+  h.renderer.render();
+  const body = h.article().children.find(node => node.className === "uw-document-body");
+  const allText = (node) => [node.textContent, ...(node.children || []).map(allText)].join(" ");
+  for (const value of ["不可重复扣款", "已下单 — 显示待支付", "journey:checkout", "interface:order", "state:order",
+    "task:create", "criteria:create", "decision:checkout", "src/old-flow.js", "重复逻辑", LIVE_WORKSPACE_MESSAGES.zh.prdRawMaterial]) {
+    assert.ok(allText(body).includes(value), value);
+  }
+  assert.ok(body.children.some(node => node.tagName === "details"), "Full original JSON remains available on demand");
+  assert.equal(h.state.material.text, text, "Presentation never changes the source material");
 });
 
 test("module actions show ready work before dependency waits in four languages without repeating the global fallback", () => {

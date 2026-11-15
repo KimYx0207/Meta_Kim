@@ -60,6 +60,8 @@ The eight stages organize execution; eleven business phases describe planning, r
 
 Accepting the outline makes the next module available to the host; accepting a module advances to the next item. **Recorded, host claimed, file reported and verified are distinct states.** An absent host leaves the request waiting. See [the unified workspace and host protocol](docs/live-workspace.md) for registration, continuation, revision and bounded material loading.
 
+The PRD view also contains an interactive **human-readable knowledge graph**: the system outline, modules, containment and prerequisite arrows. Select a node to read its source-bound design; expand hidden nodes and inspect unavailable dependencies. This is separate from Graphify's code graph and does not replace the existing system panorama.
+
 ## A mind map of the whole system
 
 <p align="center">
