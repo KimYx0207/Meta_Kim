@@ -5,6 +5,14 @@ Graphify producer version and the digest of the npm dependency lock. It describe
 the selected compatibility baseline. It does not prove that a user has installed
 a dependency, granted permission or completed a native task.
 
+Current main selects Kim_Service commit
+`fc25e418dac785d07f06aa8896da7b66836bfd84`, which adds ecommerce,
+global-expansion and short-drama strategy methods after published V1.17.
+Their actual local contracts, component hashes and default professional references
+were discovered and loaded by Meta_Kim. This source integration check is separate
+from native-host and business-outcome acceptance; see the
+[focused verification record](verification/current-research-comparison-20261115.md).
+
 ## Installation and updates
 
 - Ordinary and managed Graphify installation both use `graphifyy==0.9.56` from

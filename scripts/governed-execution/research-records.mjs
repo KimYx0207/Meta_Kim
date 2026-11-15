@@ -10,6 +10,8 @@ const canonical = value => Array.isArray(value) ? value.map(canonical) : value &
   ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
 const digest = value => createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex");
 const validDate = value => text(value) && Number.isFinite(Date.parse(value));
+const withinSourceAge = (source, constraints, now) => constraints?.maxSourceAgeHours == null
+  || now - Date.parse(source.observedAt) <= constraints.maxSourceAgeHours * 60 * 60 * 1000;
 const policy = JSON.parse(readFileSync(new URL("../../config/contracts/core-loop-contract.json", import.meta.url), "utf8")).projectResearchPolicy;
 
 /** Normalize host-collected evidence once. Source declarations are reviewable
@@ -51,6 +53,8 @@ export function normalizeResearchEvidence({ input = null, taskHash, intentDigest
       requireThat(constraints[key] == null || Number.isSafeInteger(constraints[key]) && constraints[key] >= 0, "Invalid explicit research constraint");
     }
     requireThat(constraints.requiredChannels == null || list(constraints.requiredChannels), "Explicit query channels must be a list");
+    requireThat(constraints.maxSourceAgeHours == null || Number.isFinite(constraints.maxSourceAgeHours) && constraints.maxSourceAgeHours > 0,
+      "Explicit source age must be a positive number of hours");
   }
   const topics = input.topics.map(topic => {
     requireThat(text(topic.id) && !topicIds.has(topic.id), "Research topic IDs must be unique"); topicIds.add(topic.id);
@@ -75,17 +79,28 @@ export function normalizeResearchEvidence({ input = null, taskHash, intentDigest
     if (topic.status !== "not_applicable" && !topic.sourceIds.length) gaps.push(`topic_sources_missing:${topic.id}`);
     for (const source of sources.filter(source => topic.sourceIds.includes(source.id))) {
       if (source.expiresAt && Date.parse(source.expiresAt) < now) gaps.push(`research_source_expired:${source.id}`);
+      if (!withinSourceAge(source, constraints, now)) gaps.push(`research_source_stale:${source.id}`);
     }
     const context = topic.decisionContext == null ? null : structuredClone(topic.decisionContext);
     if (context) {
-      requireThat(Array.isArray(context.alternatives) && context.alternatives.length > 0 && text(context.selectionRationale) && text(context.stopReason), "Decision context needs actual alternatives, selection rationale and a stopping reason");
+      requireThat(context.phase == null || ["comparison", "selected"].includes(context.phase), "Unknown research decision phase");
+      const comparing = context.phase === "comparison";
+      requireThat(Array.isArray(context.alternatives) && context.alternatives.length > 0 &&
+        text(comparing ? context.recommendationRationale : context.selectionRationale) && text(context.stopReason),
+      "Decision context needs actual alternatives, a recommendation or selection rationale and a stopping reason");
       const alternatives = new Set();
       for (const option of context.alternatives) {
         requireThat(text(option.id) && !alternatives.has(option.id) && text(option.mechanism) && list(option.tradeoffs) &&
           list(option.sourceIds) && option.sourceIds.length > 0 && option.sourceIds.every(id => topic.sourceIds.includes(id)), "Decision alternative needs a distinct identity, mechanism, tradeoffs and topic-bound sources");
         alternatives.add(option.id);
       }
-      requireThat(alternatives.has(context.selectedAlternativeId), "Decision context selected alternative is unknown");
+      if (comparing) {
+        requireThat(context.selectedAlternativeId == null, "A comparison cannot assert a selected alternative");
+        requireThat(text(context.decisionQuestionId) && (topic.decisionRefs ?? []).includes(context.decisionQuestionId),
+          "A comparison must reference its existing decision question");
+        requireThat(context.recommendedAlternativeId == null || alternatives.has(context.recommendedAlternativeId),
+          "Decision context recommended alternative is unknown");
+      } else requireThat(alternatives.has(context.selectedAlternativeId), "Decision context selected alternative is unknown");
       requireThat(Array.isArray(context.compatibility ?? []) && Array.isArray(context.remainingUnknowns ?? []), "Decision compatibility and unknowns must be lists");
       for (const item of context.compatibility ?? []) {
         requireThat(text(item.component) && text(item.version) && text(item.conditions) &&
@@ -107,7 +122,8 @@ export function normalizeResearchEvidence({ input = null, taskHash, intentDigest
   });
   if (input.required && !topics.length) gaps.push("research_topics_missing");
   const referenced = new Set(topics.flatMap(topic => topic.sourceIds));
-  const currentSources = sources.filter(source => referenced.has(source.id) && (!source.expiresAt || Date.parse(source.expiresAt) >= now));
+  const currentSources = sources.filter(source => referenced.has(source.id) && (!source.expiresAt || Date.parse(source.expiresAt) >= now)
+    && withinSourceAge(source, constraints, now));
   const accepted = currentSources.filter(source => source.kind === "github" && (constraints?.minimumObservedStars == null || source.stars >= constraints.minimumObservedStars));
   const repositories = [...new Set(accepted.map(source => source.repository))];
   if (constraints?.minimumSources != null && currentSources.length < constraints.minimumSources) gaps.push("explicit_minimum_sources_unmet");
@@ -189,8 +205,13 @@ export async function readTaskResearchEvidence({ projectRoot, evidence, taskHash
     requireThat(topics.length > 0 && topics.every(topic => topic.status === "resolved" || topic.status === "not_applicable"), "Selected research still has unresolved or conflicting decision evidence; return to Fetch");
     requireThat(!record.gaps.some(gap => topics.some(topic => gap.startsWith(`decision_context_unknown:${topic.id}:`) || gap.startsWith(`decision_context_compatibility:${topic.id}:`))), "Selected research has unresolved decision or compatibility risks; return to Fetch");
     requireThat(!record.gaps.some(gap => gap.startsWith("explicit_") || gap.startsWith("keyword_query_missing:")), "Explicit task research constraints are not satisfied");
-    const source = record.sources.find(source => source.id === item.sourceId);
-    requireThat(!source.expiresAt || Date.parse(source.expiresAt) >= now, "Selected research source expired; return to Fetch");
+    // A carried decision includes the topic's supporting sources. Revalidate
+    // those sources too, without blocking independent topics or source-only reads.
+    const requiredSourceIds = new Set([item.sourceId, ...topics.filter(topic => topic.decisionContext).flatMap(topic => topic.sourceIds)]);
+    for (const source of record.sources.filter(source => requiredSourceIds.has(source.id))) {
+      requireThat(!source.expiresAt || Date.parse(source.expiresAt) >= now, "Selected research or carried decision source expired; return to Fetch");
+      requireThat(withinSourceAge(source, record.constraints, now), "Selected research or carried decision source is stale under the current source age requirement; return to Fetch");
+    }
   }
   return evidence.map(item => structuredClone(records.get(item.recordRef).sources.find(source => source.id === item.sourceId)));
 }

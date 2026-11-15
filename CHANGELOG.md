@@ -6,6 +6,14 @@ User-facing changes for each release. Detailed test results live in the linked v
 
 ## [Unreleased]
 
+### Current research and business alternatives
+
+- Require actual online research and relevant external GitHub reading for requests that explicitly need current information. Separate publication date, observation time, stable releases and development revisions; record constraints that change the choice.
+- Preserve researched alternatives and a conditional recommendation before a material user choice. Reuse the existing decision frontier, and prevent delivery design from treating an unresolved comparison as a selected route.
+- Support task-specific source observation-age limits and check them again when evidence is read for dispatch. Existing research without this optional constraint retains its previous contract.
+- Explain industry, customer, value, channel, economics and a small first experiment before product design in all four READMEs. See [the focused verification record](docs/verification/current-research-comparison-20261115.md) for scope and remaining limits.
+- Pin the reviewed Kim_Service main source containing ecommerce, global-expansion and short-drama methods; verify their actual local discovery and structured method loading without claiming native execution.
+
 ## [3.14.0] - 2026-11-15
 
 ### Project-owned professional capabilities

@@ -94,7 +94,13 @@ export function normalizeRequirementsDiscovery({ input = null, dialogue }) {
   const normalized = { schemaVersion: 1, taskHash: input.taskHash, intentDigest: input.intentDigest ?? null,
     evidenceRefs: [...input.evidenceRefs], findings: structuredClone(input.findings ?? []), resolvedFacts: structuredClone(input.resolvedFacts ?? []), decisionItems };
   const research = normalizeResearchEvidence({ input: input.research, taskHash: dialogue.taskHash, intentDigest: dialogue.intentDigest ?? null });
-  if (research) normalized.research = research;
+  if (research) {
+    for (const topic of research.topics) if (topic.decisionContext?.phase === "comparison") {
+      requireThat(decisionItems.some(item => item.questionId === topic.decisionContext.decisionQuestionId && item.resolutionClass === "material_user_decision"),
+        "A research comparison must use the existing material decision frontier");
+    }
+    normalized.research = research;
+  }
   requireThat(Array.isArray(normalized.resolvedFacts) && normalized.resolvedFacts.every((fact) => decisionItems.some((item) => item.questionId === fact.questionId && item.resolutionClass === "discoverable_fact") && text(fact.value) && list(fact.evidenceRefs) && fact.evidenceRefs.length > 0), "Resolved facts require a fact question and source evidence");
   return { ...normalized, discoveryDigest: productDesignDigest(normalized),
     claimBoundary: "Proposed requirements exploration. Answers, authorization and native invocation come from the current host, not this content." };
@@ -144,6 +150,12 @@ export function normalizeProductDesign({ input = null, dialogue, goalContract, r
   const researchRefs = input.researchRefs ?? [];
   requireThat(list(researchRefs) && researchRefs.every(id => knownResearch.has(id)), "Design references unknown research evidence");
   const researchGaps = researchRequired ? [...research?.gaps ?? ["required_research_missing"]] : [];
+  if (input.mode === "delivery") {
+    const usedSources = new Set([...researchRefs, ...slices.flatMap(slice => slice.researchRefs ?? [])]);
+    for (const topic of research?.topics ?? []) if (topic.decisionContext?.phase === "comparison" && topic.sourceIds.some(id => usedSources.has(id))) {
+      researchGaps.push(`research_choice_pending:${topic.decisionContext.decisionQuestionId}`);
+    }
+  }
   checkDag(slices, "id");
   for (const slice of slices) {
     requireThat(slice.projectCapabilityRefs === undefined || list(slice.projectCapabilityRefs) && slice.projectCapabilityRefs.every(role => projectRoles.has(role)), "Task references unknown project capability role");

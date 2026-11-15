@@ -90,6 +90,14 @@ For example, an equipment-maintenance project needs units, operating limits and 
 
 Continue in the same agent conversation. Describe the result and provide existing project materials; the host researches consequential unknowns, compares feasible options and carries the chosen professional requirements into the design and tasks. Existing project capabilities are reused and improved. Global methods can also support preparation and routine diagnostics. Live and the Service catalog are optional views into this work.
 
+## Research the business direction before choosing a product
+
+Requests such as “start an ecommerce business,” “expand internationally,” or “make short dramas” begin with the industry and customer problem. The AI checks current primary sources and relevant external GitHub projects, distinguishing publication and reading dates, stable releases and development branches, and the implementation details that change the choice.
+
+Comparable options describe the customer, value, channel, revenue model, initial and ongoing effort, constraints and a small first experiment. Marketplace operations, creator-led commerce and an independent brand imply different businesses; software, physical goods and localized content need different market-entry conditions. Recommendations carry evidence and conditions, while material choices stay open for your judgment before design.
+
+Current main can retain a researched comparison without claiming a selected direction and recheck source observation age when the task requires it. Work continues in the current AI conversation, using the same PRD and decision history.
+
 ## First PRD pass: turn an idea into a system and module outline
 
 **A PRD, or product requirements document, explains what to build, why it matters and how to judge the result.** In Meta_Kim, the system outline and module details are two passes over the same PRD. Earlier decisions remain part of the later design.
