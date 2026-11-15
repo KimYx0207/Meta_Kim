@@ -1,5 +1,7 @@
 # Codex Runtime Adapter
 
+For current-host continuation, native parent/child returns and version-dependent delegation/resume surfaces, use [native host interaction](native-host-interaction.md). Cross-chat notification retains its separate authorization boundary.
+
 ## Ordinary entry: current host produces C/F/T
 
 The current Codex AI is the producer. Node can read bound records and run the existing execution adapter; it cannot call the top-level native question tool on the host's behalf. Keep record/tool exchanges in the task's owned private directory. The user continues speaking ordinary language.

@@ -394,7 +394,10 @@ test("host claims reject an unpublished outline edit and invalidated dependency 
       original: "Alpha needs a scoped correction", expectedWorkspaceRevision: before.revision, nonce: "scoped-alpha-feedback" });
     const claim = { runId: f.runId, conversationId: CHAT, expectedRevision: (await f.overview()).revision,
       commandId: alpha.result.nextAction.commandId };
-    if (dependent) await assert.rejects(f.service.claimRequest(claim), { code: "workspace_dependency_review_required" });
+    if (dependent) {
+      assert.equal((await f.service.getRequests({ runId: f.runId, commandId: claim.commandId })).requests[0].status, "superseded");
+      await assert.rejects(f.service.claimRequest(claim), { code: "workspace_request_not_claimable" });
+    }
     else assert.equal((await f.service.claimRequest(claim)).status, "host_claimed");
   }
 });
@@ -604,6 +607,8 @@ test("global readiness sees off-page sources and outline drift without erasing s
   assert.equal(page.design.modules[0].id, "alpha");
   assert.equal(page.design.modules[0].status, "accepted", "independent visible module remains accepted");
   assert.equal(page.design.status, "material_changed");
+  assert.deepEqual(page.design.materialInvalidation, { architecture: false, moduleIds: ["beta"] },
+    "every page identifies invalidated off-page material without discarding independent modules");
   assert.equal(page.nextAction.kind, "refresh_design_material", "off-page drift cannot advertise continuation");
   const inspected = await f.service.hostInspect({ runId: f.runId, conversationId: CHAT });
   assert.equal(inspected.designStatus, "material_changed");
@@ -612,12 +617,34 @@ test("global readiness sees off-page sources and outline drift without erasing s
   await writeFile(path.join(f.root, "outputs/outline.md"), "Changed system outline\n");
   page = await paged.getOverview({ runId: f.runId });
   assert.equal(page.design.architecture.status, "material_changed");
+  assert.deepEqual(page.design.materialInvalidation, { architecture: true, moduleIds: ["alpha", "beta"] });
   assert.equal(page.design.modules[0].status, "material_changed");
   assert.equal(page.nextAction.kind, "refresh_design_material");
   assert.ok(page.reviews.every(review => review.available === false));
   await writeFile(path.join(f.root, "outputs/outline.md"), "Original system outline\n");
   page = await paged.getOverview({ runId: f.runId });
   assert.equal(page.design.status, "accepted", "read-only drift projection does not destroy exact stored acceptance");
+  assert.deepEqual(page.design.materialInvalidation, { architecture: false, moduleIds: [] });
+});
+
+test("expired outline review offers an explicit refresh instead of an unanswerable review", async t => {
+  let time = Date.now();
+  const f = await fixture(t, { clock: () => new Date(time).toISOString() });
+  const input = designInput();
+  await f.publish(input);
+  time += loadLiveWorkspacePolicy().reviewValidityMs + 1;
+  const expired = await f.overview();
+  assert.equal(expired.design.architecture.status, "expired");
+  assert.equal(expired.reviews.find(review => review.kind === "outline").available, false);
+  assert.equal(expired.nextAction.kind, "refresh_design_review");
+  assert.equal(expired.nextAction.moduleId, null);
+  const next = await f.service.hostNextWork({ runId: f.runId, conversationId: CHAT });
+  assert.equal(next.continuation.mayContinue, false);
+  assert.equal(next.status, "waiting_host");
+  assert.equal(next.continuation.reason, "current_design_review_refresh_required");
+  await f.publish(input);
+  assert.equal((await f.overview()).design.architecture.status, "awaiting_human");
+  assert.equal((await f.vote("outline")).result.nextAction.kind, "design_module");
 });
 
 test("display polling caches stable file hashes while mutation verification stays fresh", async t => {
@@ -708,6 +735,184 @@ function taskBoundDesign() {
   for (const module of input.design.softwareDesign.modules) module.taskIds = [`task-${module.id}`];
   return input;
 }
+
+test("an accepted independent module is claimable while another waits without completing global Thinking", async t => {
+  const f = await fixture(t), input = taskBoundDesign();
+  await f.publish(input); await f.vote("outline"); await f.vote("alpha");
+  const before = await readSpineState(f.root);
+  assert.equal(before.currentStage, "thinking");
+  assert.equal(before.liveWorkspace.designStatus, "in_progress");
+  assert.equal((await inspectLiveWorkspaceGate(before, f.root)).ready, false);
+  const scoped = await inspectLiveWorkspaceGate(before, f.root, { moduleIds: ["alpha"] });
+  assert.equal(scoped.ready, true); assert.equal(scoped.aggregateDesignAccepted, false);
+  const fresh = await f.service.hostNextWork({ runId: f.runId, conversationId: CHAT });
+  assert.equal(fresh.status, "ready"); assert.equal(fresh.request.kind, "continue_module");
+  assert.deepEqual(fresh.scope.taskIds, ["task-alpha"]);
+  assert.deepEqual(await readSpineState(f.root), before, "discovering work does not mutate the authority");
+  const claim = await f.service.claimRequest({ runId: f.runId, conversationId: CHAT,
+    expectedRevision: fresh.revision, commandId: fresh.request.commandId });
+  assert.equal(claim.workOrder.commandId, claim.commandId);
+  assert.equal(claim.workOrder.projectRoot, f.root);
+  assert.equal(claim.workOrder.profile, "default");
+  assert.equal(claim.workOrder.conversationId, CHAT);
+  assert.equal(claim.workOrder.claimToken, undefined, "the secret remains only in the claim response");
+  assert.equal(claim.workOrder.moduleScopePlan.modules.length, 2, "the single graph keeps both module identities");
+  assert.deepEqual(claim.workOrder.scope.moduleIds, ["alpha"]);
+  assert.ok(claim.workOrder.designReviewBindings.every(binding => binding.decisionId && /^[a-f0-9]{64}$/.test(binding.materialSha256)));
+  assert.equal((await readSpineState(f.root)).currentStage, "thinking", "module handoff never pretends aggregate Thinking completed");
+  assert.equal(claim.completionVerified, false); assert.equal(claim.nativeInvocationVerified, false);
+});
+
+test("unrelated material drift blocks the final gate but not a current independent module", async t => {
+  const f = await fixture(t), input = taskBoundDesign();
+  await writeFile(path.join(f.root, "outputs/beta.md"), "Registered beta\n");
+  input.materialRefs = { modules: { beta: "outputs/beta.md" } };
+  await f.publish(input); await f.vote("outline"); await f.vote("alpha");
+  await writeFile(path.join(f.root, "outputs/beta.md"), "Changed independent beta\n");
+  const overview = await f.overview();
+  assert.equal(overview.design.status, "material_changed");
+  assert.ok(overview.readyActions.some(action => action.kind === "continue_module" && action.moduleId === "alpha"));
+  const ready = await f.service.hostNextWork({ runId: f.runId, conversationId: CHAT });
+  assert.equal(ready.status, "ready"); assert.equal(ready.request.targetId, "alpha");
+  await f.service.claimRequest({ runId: f.runId, conversationId: CHAT, expectedRevision: ready.revision, commandId: ready.request.commandId });
+  const state = await readSpineState(f.root);
+  assert.equal((await inspectLiveWorkspaceGate(state, f.root, { moduleIds: ["beta"] })).ready, false);
+  assert.equal((await inspectLiveWorkspaceGate(state, f.root, { moduleIds: ["missing"] })).reason, "live_design_module_scope_invalid");
+});
+
+test("shared tasks wait for every owning module review rather than creating duplicate execution permission", async t => {
+  const f = await fixture(t), input = taskBoundDesign();
+  input.design.softwareDesign.modules[1].taskIds.push("task-alpha");
+  await f.publish(input); await f.vote("outline"); await f.vote("alpha");
+  const state = await readSpineState(f.root);
+  assert.equal((await inspectLiveWorkspaceGate(state, f.root, { moduleIds: ["alpha"] })).ready, false);
+  const ready = await f.service.hostNextWork({ runId: f.runId, conversationId: CHAT });
+  assert.equal(ready.status, "waiting_human"); assert.equal(ready.continuation.mayContinue, false);
+  assert.ok(!(await f.overview()).readyActions.some(action => action.kind === "continue_module"));
+  assert.ok(!(await f.service.getRequests({ runId: f.runId })).requests.some(request => request.kind === "continue_module"));
+});
+
+test("aggregate continuation binds reaccepted module versions without reviving its superseded request", async t => {
+  const f = await fixture(t), input = designInput({ full: true });
+  await f.publish(input); await f.vote("outline"); await f.vote("alpha"); await f.vote("beta");
+  const original = await f.service.hostNextWork({ runId: f.runId, conversationId: CHAT });
+  assert.equal(original.status, "ready"); assert.equal(original.request.kind, "continue_governed_run");
+  input.design.softwareDesign.modules[0].implementationNotes += " Revised actual detail.";
+  await f.publish(input);
+  assert.equal((await f.service.getRequests({ runId: f.runId, commandId: original.request.commandId })).requests[0].status, "superseded");
+  await f.vote("alpha");
+  const fresh = await f.service.hostNextWork({ runId: f.runId, conversationId: CHAT });
+  assert.equal((await f.overview()).design.status, "accepted");
+  assert.equal(fresh.status, "ready"); assert.equal(fresh.request.kind, "continue_governed_run");
+  assert.notEqual(fresh.request.commandId, original.request.commandId);
+  assert.notEqual(fresh.request.nonce, original.request.nonce);
+  await f.publish(input);
+  assert.equal((await f.service.hostNextWork({ runId: f.runId, conversationId: CHAT })).request.commandId, fresh.request.commandId,
+    "unchanged registration keeps the same current request");
+  const continuations = (await f.service.getRequests({ runId: f.runId })).requests.filter(request => request.kind === "continue_governed_run");
+  assert.equal(continuations.length, 2);
+  assert.deepEqual(continuations.map(request => request.status), ["waiting_host", "superseded"]);
+});
+
+test("a missing earlier module source blocks only that candidate while fresh discovery finds independent work", async t => {
+  const f = await fixture(t), input = designInput();
+  await writeFile(path.join(f.root, "outputs/alpha.md"), "Registered alpha\n");
+  input.materialRefs = { modules: { alpha: "outputs/alpha.md" } };
+  await f.publish(input); await f.vote("outline");
+  const alpha = (await f.service.getRequests({ runId: f.runId })).requests.find(request => request.targetId === "alpha" && request.status === "waiting_host");
+  await rm(path.join(f.root, "outputs/alpha.md"));
+  const before = await readSpineState(f.root);
+  const fresh = await f.service.hostNextWork({ runId: f.runId, conversationId: CHAT });
+  assert.equal(fresh.status, "ready"); assert.equal(fresh.request.targetId, "beta");
+  assert.ok(fresh.blockers.some(blocker => blocker.commandId === alpha.commandId && blocker.reason === "workspace_material_path_untrusted"));
+  assert.deepEqual(await readSpineState(f.root), before, "candidate failure handling does not change the authority");
+  await assert.rejects(f.service.claimRequest({ runId: f.runId, conversationId: CHAT, expectedRevision: fresh.revision,
+    commandId: alpha.commandId }), { code: "workspace_material_path_untrusted", status: 403 });
+  const beta = await f.service.claimRequest({ runId: f.runId, conversationId: CHAT,
+    expectedRevision: fresh.revision, commandId: fresh.request.commandId });
+  assert.equal(beta.status, "host_claimed"); assert.equal(beta.workOrder.targetId, "beta");
+});
+
+test("shared review owners do not pull their unrelated tasks or owners into a module execution scope", async t => {
+  const f = await fixture(t), input = taskBoundDesign();
+  input.design.softwareDesign.architecture.moduleIds.push("gamma", "delta");
+  input.design.softwareDesign.modules[1].taskIds = ["task-alpha", "task-beta"];
+  input.design.softwareDesign.modules.push({ id: "gamma", purpose: "Own beta's separate task", taskIds: ["task-beta"], ...detailed("gamma") },
+    { id: "delta", purpose: "Keep an independent design open", taskIds: [], ...detailed("delta") });
+  await f.publish(input); await f.vote("outline"); await f.vote("alpha"); await f.vote("beta");
+  const state = await readSpineState(f.root);
+  const fresh = await f.service.hostNextWork({ runId: f.runId, conversationId: CHAT });
+  assert.equal(fresh.status, "ready"); assert.equal(fresh.request.targetId, "alpha");
+  assert.deepEqual(fresh.scope, { kind: "module", moduleIds: ["alpha"], requiredModuleIds: ["alpha", "beta"], taskIds: ["task-alpha"] });
+  assert.equal((await f.overview()).design.modules.find(module => module.id === "gamma").status, "awaiting_human");
+  const packets = input.design.taskSlices.map(task => ({ taskPacketId: `worker-${task.id}`, roleInstanceId: task.id,
+    acceptanceCriterionIds: task.criterionIds, progressBasisEvidence: [state.liveWorkspace.designRef], dependsOn: [] }));
+  const gate = workerTaskPackets => inspectLiveWorkspaceGate(state, f.root, { moduleIds: ["alpha"], workerTaskPackets });
+  assert.equal((await gate(packets.filter(packet => packet.roleInstanceId === "task-alpha"))).ready, true);
+  assert.equal((await gate(packets)).reason, "live_design_worker_task_binding_missing", "a co-owner's unrelated task cannot widen the requested scope");
+  const claim = await f.service.claimRequest({ runId: f.runId, conversationId: CHAT,
+    expectedRevision: fresh.revision, commandId: fresh.request.commandId });
+  assert.deepEqual(claim.workOrder.scope, fresh.scope);
+  assert.deepEqual(claim.workOrder.designReviewBindings.map(binding => binding.targetId), ["review-system", "alpha", "beta"]);
+  await f.vote("gamma");
+  const beta = (await f.service.getRequests({ runId: f.runId })).requests.find(request => request.kind === "continue_module" && request.targetId === "beta" && request.status === "waiting_host");
+  assert.ok(beta);
+  await assert.rejects(f.service.claimRequest({ runId: f.runId, conversationId: CHAT,
+    expectedRevision: (await f.overview()).revision, commandId: beta.commandId }), { code: "workspace_target_has_unresolved_claim" },
+  "actual shared-task claims remain exclusive");
+});
+
+test("scoped worker coverage still includes actual task dependencies", async t => {
+  const f = await fixture(t), input = taskBoundDesign();
+  input.design.taskSlices[1].dependsOn = ["task-alpha"];
+  await f.publish(input); await f.vote("outline"); await f.vote("alpha"); await f.vote("beta");
+  const state = await readSpineState(f.root);
+  const packets = input.design.taskSlices.map(task => ({ taskPacketId: `worker-${task.id}`, roleInstanceId: task.id,
+    acceptanceCriterionIds: task.criterionIds, progressBasisEvidence: [state.liveWorkspace.designRef], dependsOn: task.dependsOn.map(id => `worker-${id}`) }));
+  const gate = workerTaskPackets => inspectLiveWorkspaceGate(state, f.root, { moduleIds: ["beta"], workerTaskPackets });
+  assert.equal((await gate(packets)).ready, true);
+  assert.equal((await gate(packets.filter(packet => packet.roleInstanceId === "task-beta"))).reason, "live_design_worker_task_binding_missing");
+});
+
+test("an independent design can advance past an earlier module awaiting human review", async t => {
+  const f = await fixture(t), input = designInput();
+  Object.assign(input.design.softwareDesign.modules[0], detailed("alpha"));
+  await f.publish(input); await f.vote("outline");
+  const overview = await f.overview();
+  assert.equal(overview.nextAction.moduleId, "beta");
+  assert.ok(overview.blockedActions.some(action => action.moduleId === "alpha" && action.kind === "awaiting_review"));
+  const next = await f.service.hostNextWork({ runId: f.runId, conversationId: CHAT });
+  assert.equal(next.request.targetId, "beta");
+  assert.equal((await f.service.claimRequest({ runId: f.runId, conversationId: CHAT,
+    expectedRevision: next.revision, commandId: next.request.commandId })).status, "host_claimed");
+});
+
+test("an uncertain claim does not redispatch or block unrelated ready work; receipt reveals the next bounded read", async t => {
+  let milliseconds = Date.parse("2026-11-15T00:00:00Z");
+  const f = await fixture(t, { clock: () => new Date(milliseconds).toISOString() });
+  await f.publish(designInput()); await f.vote("outline");
+  const first = await f.service.hostNextWork({ runId: f.runId, conversationId: CHAT });
+  const alpha = await f.service.claimRequest({ runId: f.runId, conversationId: CHAT,
+    expectedRevision: first.revision, commandId: first.request.commandId });
+  milliseconds += f.service.policy.hostLeaseMs + 1;
+  const second = await f.service.hostNextWork({ runId: f.runId, conversationId: CHAT });
+  assert.equal(second.status, "ready"); assert.equal(second.request.targetId, "beta");
+  const beta = await f.service.claimRequest({ runId: f.runId, conversationId: CHAT,
+    expectedRevision: second.revision, commandId: second.request.commandId });
+  const pending = await f.service.hostNextWork({ runId: f.runId, conversationId: CHAT });
+  assert.equal(pending.status, "in_doubt"); assert.equal(pending.claimArguments, undefined);
+  await writeFile(path.join(f.root, "outputs/receipt.txt"), "Observed host output\n");
+  const receipt = { outcome: "produced", summary: "Actual fixture file", evidenceRefs: [{ ref: "outputs/receipt.txt", sha256: sha("Observed host output\n") }] };
+  const complete = await f.service.completeRequest({ runId: f.runId, conversationId: CHAT,
+    expectedRevision: (await f.overview()).revision, commandId: alpha.commandId, claimToken: alpha.claimToken, input: receipt });
+  assert.equal(complete.status, "host_reported"); assert.equal(complete.nextWork.status, "waiting_host");
+  assert.equal(complete.nextWork.continuation.mayContinue, false);
+  assert.equal(complete.nextWork.completionVerified, false);
+  const replay = await f.service.completeRequest({ runId: f.runId, conversationId: CHAT,
+    commandId: alpha.commandId, claimToken: alpha.claimToken, input: receipt });
+  assert.equal(replay.replay, true);
+  assert.equal((await f.service.getRequests({ runId: f.runId, commandId: beta.commandId })).requests[0].status, "host_claimed");
+});
 
 test('synthetic Live task contract change invalidates only affected module reviews', async t => {
   const f = await fixture(t), input = taskBoundDesign();

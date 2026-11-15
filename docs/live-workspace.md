@@ -22,20 +22,22 @@ Live 集中展示已登记项目的八阶段、工作项、系统模块大纲、
 ```mermaid
 flowchart TD
   O["登记系统大纲与文件版本"] --> H{"审阅大纲"}
-  H -->|"采纳"| M["宿主领取下一个模块"]
+  H -->|"采纳"| M["宿主领取依赖已就绪的模块"]
   H -->|"修改或退回"| F["保存意见并修订"]
   F --> O
   M --> D["登记模块详情与文件证据"]
   D --> R{"审阅模块"}
-  R -->|"采纳，仍有模块"| M
+  R -->|"采纳"| E["本模块执行、审阅与核验"]
   R -->|"需要修改"| C["仅修订受影响内容"]
   C --> D
-  R -->|"全部采纳"| G["回到既有阶段关口"]
+  E -->|"全部必需模块及集成检查通过"| G["整体验收"]
 ```
 
 大纲和模块审阅复用现有 Decision 领域模型。审阅绑定运行、产物、文件 SHA-256、设计边界和修订号。修改内容或模块依赖时，受影响的旧采纳失效；仍然有效的独立模块继续保留。模块的审阅依据同时绑定依赖模块的结构和真实文件 SHA-256，因此只修改依赖的 Markdown 文件也会使传递下游重新审阅。分页只限制展示范围；全局就绪状态仍校验全部登记文件，页外变化不会继续显示“可继续”。大纲文件漂移时模块显示材料已变化；这些只读提示不会删除原审阅。轮询使用可信路径、设备/inode、大小及纳秒修改/变更时间校验展示缓存，稳定文件不会每次重新读完整正文；采纳、领取与回执仍做实时哈希校验。并发修改用状态修订号比较交换，重复提交同一请求返回原回执，同一请求编号携带不同内容会被拒绝。
 
-`nextAction` 从当前设计及有效审阅结果推导，不另设一套执行数据库。系统大纲采纳后得到第一个待设计模块；模块采纳后继续下一个。提交修改意见会保存原文并优先形成对应修订工作单。
+`readyActions` 和 `blockedActions` 从同一设计、依赖和有效审阅记录推导；`nextAction` 保留兼容并推荐当前一项工作。系统大纲采纳后，互不依赖的模块可以分别准备，不因排在前面的模块等待判断就一起停下。已有任务分解且设计采纳有效的模块可领取 `continue_module`，其工作单带当前模块范围、架构和模块依据、任务成员以及实际审阅记录。一个任务属于多个模块时，必须满足所有相关设计约束，但任务本身只执行一次。提交修改意见仍保存原文，并优先生成对应修订工作单。
+
+设计采纳只说明材料获采纳，不能显示为实现已完成。模块阶段走同一个任务图和持久运行内核；实际依赖、共享资源、权限和最后整体验收继续约束执行。独立模块的当前工作不因另一模块的私有材料变化而失效；整套设计的最终关口仍校验全部必需材料。
 
 这条接续由**当前宿主拉取工作单**完成。Live 不启动一个固定模型，也不因收到请求就宣称工作完成：
 
@@ -51,16 +53,20 @@ flowchart TD
 
 ## 宿主怎样接入
 
-正常 Thinking 检查点会读取已登记的工作区设计关口。尚未采纳的当前设计不能直接跳到 Execution；全部采纳后仍需通过既有 Thinking 和后续验证。Live 本地审阅不会冒充 Codex/Claude 的原生回答，也不会自动放行既有 P118 原生宿主关口。
+正常 Thinking 检查点保留整个设计的完成语义。模块领取走明确的模块范围关口，只消费当前架构、目标模块、真实依赖及共享任务所有者的有效审阅和材料；它不会把整个 Thinking 标成完成。未通过本模块设计关口的任务不能开始执行。Live 本地审阅不冒充客户端原生回答，领取与回传也不代替专业审阅、验证或用户最终接受。
 
 宿主使用同一条 CLI 查看状态、登记文件、领取请求和提交回执。下列 `RUN_ID`、`CHAT_ID`、`REVISION`、`COMMAND_ID` 和 `CLAIM_TOKEN` 均取自当前运行或上一步返回值。`--project-root` 使用真实项目的绝对路径。`--profile` 必须使用本次登记设计时绑定的精确 profile；下面的 `default` 只是示例，不能替代项目实际使用的值。
 
-正常宿主 handoff 返回已绑定的 `hostEntry` 和 `arguments`，可将它们原样传给 Node 进程执行；参数已经包含项目、profile、run 和会话。错误 profile 会被拒绝，旧记录没有绑定 profile 时会明确显示不可用，需要在已验证的当前 profile 中重新登记。不得尝试其他 profile，也不得回退到 `default` 或环境中的另一个档案。
+正常宿主 handoff 返回已绑定的 `hostEntry`、兼容检查参数 `arguments` 和读取当前下一件工作的 `nextWorkArguments`；参数包含项目、profile、run 和已验证会话。将参数作为 argv 数组传给 Node，不求值拼接的命令文本。旧的 `nextAction` 只是快照，接单前和回传后都通过 `--next-work` 重新读取。错误 profile 会被拒绝；没有绑定 profile 或会话时不给可执行参数。不得尝试其他 profile，也不得回退到 `default` 或环境中的另一个档案。
 
 ```bash
 node scripts/live-workspace-host.mjs \
   --project-root "/path/to/project" --profile default \
   --run-id RUN_ID --conversation-id CHAT_ID --inspect
+
+node scripts/live-workspace-host.mjs \
+  --project-root "/path/to/project" --profile default \
+  --run-id RUN_ID --conversation-id CHAT_ID --next-work
 
 node scripts/live-workspace-host.mjs \
   --project-root "/path/to/project" --profile default \
@@ -84,6 +90,14 @@ node scripts/live-workspace-host.mjs \
   --input "/path/to/project/.meta-kim/work/receipt.json" \
   --expected-revision REVISION
 ```
+
+`--next-work` 不写状态、不领取租约、不启动模型。仅当返回 `ready` 且 `continuation.mayContinue=true`，宿主仍在运行、本次授权仍有效、用户没有暂停或取消时，才使用返回的 `claimArguments` 领取。参数带新鲜修订号；冲突后重新读，不盲目重试副作用。完成回执附带下一次读取结果；这不能把文件提交变成业务验收。`waiting_human`、`waiting_host`、`in_doubt`、`idle` 均不触发后台轮询；已领走但结果不确定的任务先核对原执行者，独立且就绪的任务仍可继续。
+
+恢复模块阶段时会重新核对当前材料、Decision 和领取身份；旧阶段通过记录仍保留，但失效事实不能放行新的执行。领取租约用于判定是否需要对账，不代替宿主的实时授权；原宿主仍须在每次实际派工时检查授权，不能自动重领不确定工作。准确迟到回执仍走 `--complete-request`。审阅过期显示重新登记提示，不保留无法操作的待审入口。
+
+分页概览会附带全设计的 `design.materialInvalidation` 只读投影。即使修订号没有变化，已加载页外的失效模块也会撤下“可继续”；无关模块和用户草稿保留。材料恢复后，点击现有刷新按钮重新读取已加载页，恢复结果以服务端当前事实为准。
+
+父子 Agent 的派工、返回和恢复按[原生宿主交互约定](../canonical/skills/meta-theory/references/native-host-interaction.md)选择当前实际工具。子 Agent 无法继续派工时，将有边界的工作单交回原生父级；不要求用户额外安装 Codex，也不拿跨聊天发消息替代原生返回。
 
 `--inspect` 的 `requests` 是最新优先的一页请求索引，包含 `recorded` 等历史状态。它不是“所有待办已读取”的证明，同时返回以下字段：
 

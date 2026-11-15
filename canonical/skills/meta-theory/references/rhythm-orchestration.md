@@ -70,14 +70,14 @@ card:
 |------|---------------|---------|--------|-----------|------------|
 | **Clarify** | Clarify | Ambiguous need | ≤2 rounds of questions | low | Gather before act |
 | **Shrink scope** | Scope shrink | Repo too large / many files / clashes | Narrow boundary | low | Complexity → reckless edits |
-| **Options** | Options | Clear need, many paths | Routes + tradeoffs + pick | mid | Map before code |
+| **Options** | Options | Unanswered, dependency-ready material choice | Routes + tradeoffs + pick | mid | Map before code |
 | **Execute** | Execute | Plan done, risk OK | Assign metas, change code | high | Plan before code |
 | **Verify** | Verify | Execution done | Build / types / deps / reqs | mid | First pass ≠ correct |
 | **Fix** | Fix | Verify fails | Repair until pass | mid | Cap iterations |
 | **Rollback** | Rollback | Risk or blast radius grows | Last stable state | high | Retreat = maturity |
 | **Risk** | Risk | Shared parts / auth / global / multi-party | Surface risk; preempt | high | Safety / global first |
 | **Nudge** | Nudge | User stuck, light touch | Low-cost next step | low | Helpful, not loud |
-| **Pause** | Pause | Streak done / digest / ≥3 high-cost | Stop pushing; short status | zero | Designed silence |
+| **Pause** | Pause | Pending user action / ≥3 consecutive high-cost | Short status; existing gates own execution | zero | Designed silence |
 
 ### Plan challenge as a card overlay
 
@@ -102,7 +102,7 @@ The overlay ends when no question can materially improve the route, the recommen
 
 1. **Default**: deal by `priority`
 2. **After each card**: evaluate next `skip_condition` — if true, skip
-3. **After ≥3 consecutive `high` cost**: force **Pause**
+3. **After ≥3 consecutive `high` cost**: force a presentation **Pause**. Mid/low/zero-cost cards and an inserted Pause reset the streak; total high-cost count is not consecutive count.
 4. **If `interrupt_trigger` fires**: preempting card to front
 5. **Iteration cards**: at most `max_iterations`; else escalate to Warden
 
@@ -174,19 +174,18 @@ NPCs, boards, campsites are **delivery interfaces**, not the content itself.
 
 ### 3. Pause mechanism
 
-Pause does not advance work; it **reduces noise**, prevents overload, leaves room to digest, preserves a sense of exploration.
+Pause **reduces noise** and leaves room to digest. It is a presentation decision, not an additional execution gate.
 
 **Triggers**:
 
-- ≥3 dense pushes in a row
-- User did not respond to last output
-- Information density above digest threshold
+- ≥3 consecutive high-cost pushes
+- An unresolved user action already required by the current decision or permission authority; missing a reply to an informational update is not a stop signal
 
 **During pause**:
 
-- No new tasks
-- Short status (“Progress: X/Y done”)
-- Wait for user to drive next step
+- Suppress further presentation pushes; retain a compact status and the existing pending question
+- Wait only for the user action already required by the current authority
+- Authorized independent work continues under its existing dependency and execution gates; Pause does not change their state
 
 ### 4. Cost-aware dealing
 
@@ -265,6 +264,8 @@ Escalation for pause and conflicts:
 
 ### 1. Happy path
 
+Conditional example, not a mandatory card sequence: omit settled questions, internal-only choices, and cards without current evidence. A capability or owner count does not create a user decision.
+
 ```
 Clarify(low) → Shrink(low) → Options(mid) → Execute(high) → Verify(mid)
 → Fix(mid) → [evolution scan] → done
@@ -275,7 +276,7 @@ Clarify(low) → Shrink(low) → Options(mid) → Execute(high) → Verify(mid)
 ```
 Execute(high) → Verify(high) → Fix-1(high)
 → [3× high] → forced Pause → "Revision round 2: 1/3 checks passed"
-→ user continues → Fix-2(mid)
+→ compact status; existing execution gate decides continuation → Fix-2(mid)
 ```
 
 ### 3. Emergency preempt

@@ -728,12 +728,18 @@ export function buildGovernedHostHandoff({ state, projectRoot, adapterPath, skil
   const verified = state?.conversationLinkState === "verified" && text(conversationId);
   const command = `node ${JSON.stringify(adapterPath)} --project-root ${JSON.stringify(projectRoot)} --run-id ${JSON.stringify(state.runId)}${verified ? ` --conversation-id ${JSON.stringify(conversationId)}` : " --conversation-id <verified-conversation-required>"} --stage <current-stage> --input <project-local-JSON-file-or->`;
   const workspace = state?.liveWorkspace?.schemaVersion === "meta-kim-live-workspace-state-v1" ? state.liveWorkspace : null;
-  const workspaceHandoff = workspace ? JSON.stringify(typeof workspace.profile === "string" && workspace.profile.length > 0 ? { nextAction: workspace.nextAction,
-    hostEntry: workspace.hostEntry, profile: workspace.profile, arguments: ["--project-root", projectRoot, "--profile", workspace.profile, "--run-id", state.runId,
-      "--conversation-id", verified ? conversationId : "verified-conversation-required", "--inspect"],
-    rule: "Use the installed current-host pull CLI with this exact profile, inspect fresh CAS, claim the exact request once, perform actual work and report file evidence. Never replay an in-doubt claim or treat a local review as provider execution." }
-    : { status: "unavailable", reason: "workspace_profile_unbound", nextAction: workspace.nextAction,
-      rule: "The workspace has no exact persisted profile. Re-register it through the verified current profile before using its host pull port; never probe or fall back to another profile." }) : null;
+  const workspaceArguments = workspace && text(workspace.profile) && verified
+    ? ["--project-root", projectRoot, "--profile", workspace.profile, "--run-id", state.runId, "--conversation-id", conversationId] : null;
+  const workspaceHandoff = workspace ? JSON.stringify(!text(workspace.profile)
+    ? { status: "unavailable", reason: "workspace_profile_unbound", nextAction: workspace.nextAction,
+      rule: "The workspace has no exact persisted profile. Re-register it through the verified current profile before using its host pull port; never probe or fall back to another profile." }
+    : !verified
+      ? { status: "unavailable", reason: "workspace_conversation_unverified", nextAction: workspace.nextAction,
+        rule: "Gather current conversation binding evidence before using this run's host pull port. Never substitute another chat or dispatch from a placeholder conversation." }
+      : { status: "read_only_handoff", nextAction: workspace.nextAction, snapshotOnly: true,
+        hostEntry: workspace.hostEntry, profile: workspace.profile, arguments: [...workspaceArguments, "--inspect"],
+        nextWorkArguments: [...workspaceArguments, "--next-work"],
+        rule: "Read --next-work fresh before choosing work and after reporting a result. Continue only when status=ready and continuation.mayContinue=true, the same run/profile/conversation and existing authorization still apply, and the user has not paused or aborted. Pass returned claimArguments as an argv array with fresh CAS, claim the exact request once, perform actual work and report file evidence. Waiting, in-doubt or idle states do not schedule a retry loop. A snapshot, claim or local review is not provider execution." }) : null;
   if (language !== "zh-CN") return [
     "Meta_Kim host execution handoff: backstage instructions, not a user-facing rewritten prompt or a completion receipt.",
     `Continue existing runId=${state.runId}; project=${projectRoot}; current stage=${state.currentStage}; conversation=${verified ? conversationId : "unverified; gather binding evidence before writing"}. Do not mint a parallel run or substitute a historical task.`,
@@ -743,6 +749,7 @@ export function buildGovernedHostHandoff({ state, projectRoot, adapterPath, skil
     "New Thinking packets use task-progress-v1: bind current criterion IDs and hash-verified project evidence. Before dispatch, register running through --observe-task with fresh CAS; report that same attempt/result through execution checkpoint. A task_replan_required needs scoped --correct-task after Thinking, not a global reset. --template-progress and --template-correction show the shapes. Legacy packets are explicitly not_observed.",
     "For a software architecture/PRD design, publish the existing structured softwareDesign with the installed scripts/live-workspace-host.mjs --publish-design port during Thinking. Present the outline in Live first; then follow the persisted module nextAction. Do not replace human review with an owner completion report.",
     ...(workspaceHandoff ? [`Current private Live workspace handoff: ${workspaceHandoff}`] : []),
+    "Use the current host's actual delegation, return and resume schemas. A child without delegation tools returns its bounded work order to its native parent; the parent dispatches within the same host. Keep the parent active until native child returns are collected and checked. Native ancestor returns never use cross-chat messaging. Follow references/native-host-interaction.md; this handoff neither wakes a stopped client nor grants authority.",
     `Invocation: ${command}`,
     "Record the actual goal, acceptance and unresolved decisions, then actual evidence and capability discovery, then the Thinking route and workerTaskPackets. Execute, review and verify those same work orders. Checkpoint after each stage, not a fabricated retrospective pass.",
     "Records remain owner_reported. Native worker returns require actual host evidence; JSON, booleans, a planned-only runner or tool exits cannot certify the eight stages, user acceptance or public-ready.",
@@ -756,6 +763,7 @@ export function buildGovernedHostHandoff({ state, projectRoot, adapterPath, skil
     "新Thinking工单绑定task-progress-v1、当前criterion ID和项目内真实证据hash。派工前用--observe-task及新鲜CAS登记running；执行checkpoint回写同一attempt与真实结果。单任务需改路时，主控完成Thinking后用--correct-task，不全局重置；--template-progress/--template-correction提供输入。旧工单明确为not_observed。",
     "软件架构/PRD设计在Thinking阶段通过已安装包的scripts/live-workspace-host.mjs --publish-design登记既有softwareDesign；先把系统模块大纲交Live人审，再按持久化nextAction逐模块细化。不能用主控的complete报告代替人审。",
     ...(workspaceHandoff ? [`当前私有Live工作区接续：${workspaceHandoff}`] : []),
+    "按当前宿主实际暴露的派工、回传和恢复接口交接。子Agent没有派工工具时，把有界工单交回原生父级，由父级在同一宿主派工；父级保持活动直至收到并检查原生子任务结果。原生祖先回执不能走跨聊天消息。遵循references/native-host-interaction.md；此接续信息不唤醒已停止客户端，也不新增权限。",
     `调用：${command}`,
     "先记录真实目标、标准和未决项，再记录实际检索及能力发现，再提交Thinking方案与workerTaskPackets，随后按同一工单执行、审查、验证并记录结果。每阶段完成后立刻checkpoint，不能最后补写一套假通过。",
     "这些是owner_reported阶段/结果；原生调用返回仍须真实宿主证据，不能用JSON、布尔值、planned-only runner或工具退出推断八阶段通过、用户验收或public-ready。",

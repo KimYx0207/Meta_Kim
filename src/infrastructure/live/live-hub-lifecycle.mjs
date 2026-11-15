@@ -72,6 +72,7 @@ export const LIVE_HUB_RUNTIME_IDENTITY_PATHS = Object.freeze([
   "canonical/runtime-assets/shared/hooks/governed-task-reference.mjs",
   "canonical/runtime-assets/shared/hooks/conversation-binding.mjs",
   "canonical/runtime-assets/shared/hooks/live-record-origin.mjs",
+  "canonical/runtime-assets/shared/hooks/live-workspace-gate.mjs",
   "canonical/runtime-assets/shared/hooks/spine-state.mjs",
   "canonical/runtime-assets/shared/hooks/spine-state-gates.mjs",
   "canonical/runtime-assets/shared/hooks/spine-state-utils.mjs",

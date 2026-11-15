@@ -411,6 +411,8 @@ Hardcode capability families and conflict rules in prompts; discover concrete pr
 
 ## Native ability preservation
 
+For delegation, parent returns, worker recovery and fresh Live work consumption, load [native-host-interaction.md](references/native-host-interaction.md). Use the installed host's actual tools and limits; a child that cannot delegate returns bounded work to its native parent. A second client is not a prerequisite, and a stopped or user-paused host is not automatically restarted.
+
 Governance may add trigger, evidence, trust review, approval, sandbox, fallback, verification, and risk boundaries. It must not delete, downgrade, or replace runtime-native abilities for Claude Code, Codex, Cursor, or OpenClaw. Unknown or partial native abilities stay `unknown` or `partial` until verified; they are not removed.
 
 Provider-registry truth has four separate layers. `providers[*].support` is the only durable runtime-claim authority, while `runtimeAdapters` is a mechanically checked projection of it. Provider selection is run-scoped and must never be persisted as a registry fact. Availability comes only from the target runtime's support state and install-layer evidence; a projection file does not prove availability. Native support belongs only to a provider's declared target runtime, and live execution requires a fresh verification artifact. Runtime-specific providers must be `blocked` with `unsupported` layers and no activation event on every non-target runtime; never copy a Claude, Codex, Cursor, or OpenClaw trigger or `verified` label across runtimes.
@@ -500,6 +502,7 @@ Load only references needed for the run:
 - `intent-amplification.md`: real intent, first action, pass/kill, userGoalDone.
 - `evolution-writeback.md`: writeback, scars, reuse keys.
 - `rhythm-orchestration.md`: choice/card timing.
+- `native-host-interaction.md`: current-host work consumption, native parent/child returns and supported resumption.
 - `planning-files.md`: `task_plan.md`, `findings.md`, `progress.md`.
 - `create-agent.md`: new/changed owner design.
 - `spine-state.md`: stage state and packet transitions.

@@ -17,6 +17,8 @@ Degraded path: when no Agent dispatch exists and no owner matches, record `capab
 
 Do not use temporary fallback owners. Do not persist concrete child skills into long-term agent identity; keep concrete skill/provider selection run-scoped.
 
+Use [native host interaction](native-host-interaction.md) for the current client's dispatch, child-to-parent work orders, result collection and recovery. A child lacking delegation tools returns the bounded work order to its native parent; this does not by itself make the selected owner or the whole host unavailable. A second client is not a required dependency.
+
 ## Existing agent discovery evidence
 
 Before `upgrade_existing_owner`, `create_owner_first`, `upgrade_execution_agent`, or `create_execution_agent`, Thinking must receive an `ownerDiscoveryPacket` from Fetch. It must name the checked repo canonical owners, runtime mirror owners, project runtime agents such as `.codex/agents/*.toml`, local global inventory agents, and reusable capability providers such as skills, commands, hooks, rules/prompts, MCP tools, runtime tools, and plugins. Empty or unavailable sources are still evidence and must be recorded with a blocker or no-impact reason.

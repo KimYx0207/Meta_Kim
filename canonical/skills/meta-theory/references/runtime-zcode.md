@@ -1,5 +1,7 @@
 # ZCode runtime binding
 
+Use [native host interaction](native-host-interaction.md) for current-host continuation, native result delivery and returning additional child work to the parent without requiring another client.
+
 ## Use when
 
 This reference is for Z.ai / Zhipu's ZCode ADE (https://github.com/zai-org/ZCode), not Zed or a GLM model endpoint used through another host. Canonical responsibility and workflow sources remain the single source of truth.

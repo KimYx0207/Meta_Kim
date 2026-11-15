@@ -1,5 +1,7 @@
 # Claude Code Runtime Adapter
 
+For dispatch, nested-worker limits, native returns and continuing a resumable worker, use [native host interaction](native-host-interaction.md). Discover the installed release's actual tools before choosing a recovery call.
+
 Use this reference when Meta_Kim runs inside Claude Code and the route depends on native questions, subagents, skills, slash commands, prompts, hooks, or MCP tools.
 
 Project-retained Claude Code agents live in `.claude/agents/<agent>.md`. When the user asks to create, iterate, upgrade, or keep an agent in the project, Claude Code must treat that file-level agent definition or a Warden-approved candidate writeback as the deliverable. A Claude subagent invocation may help design or review the agent, but it is not itself the durable project agent.

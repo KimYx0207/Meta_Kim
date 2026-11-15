@@ -5,7 +5,7 @@ Graphify producer version and the digest of the npm dependency lock. It describe
 the selected compatibility baseline. It does not prove that a user has installed
 a dependency, granted permission or completed a native task.
 
-Meta_Kim v3.15.1 selects Kim_Service V1.19 source commit
+Meta_Kim v3.16.0 retains Kim_Service V1.19 source commit
 `ff4bf000160a21d1d142ba71cc124cadbcdd57ac`, which preserves all existing professional methods and adds
 the installed-memory-root, explicit multi-engine trigger and command-output fixes.
 Their actual local contracts, component hashes and default professional references

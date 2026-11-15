@@ -5,11 +5,12 @@ import { normalizeSoftwareDesign } from "../../domain/design/software-design.mjs
 import { buildLocalReviewClaim, claimHostAnswer, invalidateDecision } from "../../domain/decision/decision.mjs";
 import { STAGE_ORDER, STAGE_PUBLIC_LABELS } from "../../../canonical/runtime-assets/shared/hooks/spine-state-gates.mjs";
 import { taskProgressGoal } from "../../../canonical/runtime-assets/shared/hooks/task-progress.mjs";
+import { inspectLiveWorkspaceGate } from "../../../canonical/runtime-assets/shared/hooks/live-workspace-gate.mjs";
 import { loadLiveWorkspacePolicy } from "./live-workspace-policy.mjs";
 import { liveRecordOrigin } from "./live-record-origin.mjs";
 import { LIVE_WORKSPACE_SCHEMA, LIVE_WORKSPACE_STATE_SCHEMA, workspaceDigest, workspaceBytesDigest,
   workspaceRequire, workspaceFailure, workspaceText, workspaceVersion, createWorkspaceReview,
-  workspaceReviewState, deriveWorkspaceProgress, boundedWorkspaceRequest } from "../../domain/live/live-workspace.mjs";
+  workspaceReviewState, deriveWorkspaceProgress, workspaceModuleRequirements, boundedWorkspaceRequest } from "../../domain/live/live-workspace.mjs";
 
 const object = value => value && typeof value === "object" && !Array.isArray(value);
 const identifier = value => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$/u.test(value);
@@ -149,18 +150,29 @@ export function createLiveWorkspaceService(options) {
     workspace.designStatus = progress.designStatus;
     workspace.nextAction = progress.nextAction;
     workspace.updatedAt = at;
-    const action = progress.nextAction;
-    if (enqueue && ["design_module", "revise_module", "revise_outline", "continue_governed_run"].includes(action.kind)) {
+    const actions = progress.readyActions;
+    for (const request of workspace.requests) if (request.generatedFromDesign && request.status === "waiting_host" &&
+      !actions.some(action => action.kind === request.kind && (action.moduleId || "architecture") === request.targetId)) {
+      request.status = "superseded"; request.updatedAt = at;
+    }
+    if (enqueue) for (const action of actions) {
       const target = action.moduleId ? workspace.modules.find(module => module.id === action.moduleId) : workspace.architecture;
       const material = workspace.materials[target.artifactId];
+      const requiredModules = action.scope?.requiredModuleIds || (action.kind === "continue_governed_run" ? workspace.modules.map(module => module.id) : []);
       const basis = workspaceDigest([workspace.architecture.basisDigest, action.kind, action.moduleId, material.sha256,
-        target.decisionId, workspace.reviews.find(review => review.decisionId === target.decisionId)?.decision.revision]);
+        target.decisionId, workspace.reviews.find(review => review.decisionId === target.decisionId)?.decision.revision,
+        ...(requiredModules.length ? [action.scope || null, requiredModules.map(id => {
+          const module = workspace.modules.find(item => item.id === id);
+          return [id, module.decisionId, workspace.reviews.find(review => review.decisionId === module.decisionId)?.decision.revision,
+            workspace.materials[module.artifactId].sha256];
+        })] : [])]);
       const nonce = `next-${basis}`;
       const request = workspace.requests.find(item => item.nonce === nonce) || newRequest(workspace, {
         nonce, kind: action.kind, targetId: action.moduleId || "architecture", inputDigest: basis,
         summary: action.summary, material, at, generatedFromDesign: true, basisReviewId: target.decisionId,
+        ...(action.scope ? { scope: action.scope } : {}),
       });
-      workspace.nextAction = { ...action, commandId: request.commandId };
+      if (action === progress.nextAction) workspace.nextAction = { ...action, commandId: request.commandId };
     }
     return progress;
   }
@@ -279,7 +291,7 @@ export function createLiveWorkspaceService(options) {
       return review;
     };
     const outlineReview = reviewFor("architecture", null, outlineMaterial, outlineBasis, previous?.architecture?.decisionId);
-    workspace.architecture = { id: software.architecture.id, title: workspaceText(software.architecture.title || software.architecture.id, 160),
+    workspace.architecture = { id: software.architecture.id, revision: software.architecture.revision, title: workspaceText(software.architecture.title || software.architecture.id, 160),
       summary: workspaceText(software.architecture.summary, 1000), artifactId: outlineMaterial.artifactId,
       decisionId: outlineReview.decisionId, basisDigest: outlineBasis };
     for (const id of software.architecture.moduleIds) {
@@ -317,7 +329,8 @@ export function createLiveWorkspaceService(options) {
           [...dependencies].every(dependencyId => sameRegisteredMaterial(previous.modules.find(item => item.id === dependencyId),
             workspace.modules.find(item => item.id === dependencyId)))) basisDigest = legacyBasis;
       const review = detailed ? reviewFor(id, id, moduleMaterial, basisDigest, prior?.decisionId) : null;
-      workspace.modules.push({ id, title: workspaceText(module.title || module.name || id, 160), purpose: workspaceText(module.purpose, 1000),
+      workspace.modules.push({ id, revision: Number.isSafeInteger(module.revision) && module.revision > 0 ? module.revision : 1,
+        basisDigest, title: workspaceText(module.title || module.name || id, 160), purpose: workspaceText(module.purpose, 1000),
         detailed, artifactId: moduleMaterial.artifactId, decisionId: review?.decisionId || null,
         dependsOn: module.dependsOn || [], taskIds: module.taskIds || [] });
     }
@@ -335,7 +348,7 @@ export function createLiveWorkspaceService(options) {
     refreshProgress(workspace, at);
     const next = structuredClone(state);
     next.liveWorkspace = workspace;
-    next.blockedOn = workspace.designStatus === "accepted" ? null : "live_design_review_pending";
+    next.blockedOn = deriveWorkspaceProgress(workspace, Date.parse(at)).readyActions.length ? null : "live_design_review_pending";
     await repository.writeState(state, next);
     return { status: "design_registered", runId, revision: next.hostCheckpointRevision, designVersion: workspace.designVersion,
       nextAction: workspace.nextAction, ...nativeBoundary };
@@ -415,10 +428,18 @@ export function createLiveWorkspaceService(options) {
     const output = { ...base, design: { status: invalidMaterials.size ? "material_changed" : progress.designStatus,
       version: workspace.designVersion, architecture: descriptor({ ...workspace.architecture, status: progress.outlineStatus }),
       modules: selectedModules.map(descriptor), totalModules: workspace.modules.length,
+      materialInvalidation: { architecture: affectedMaterials.has(workspace.architecture.artifactId),
+        moduleIds: workspace.modules.filter(module => affectedMaterials.has(module.artifactId)).map(module => module.id) },
       nextCursor: nextOffset < workspace.modules.length ? Buffer.from(JSON.stringify({ version: workspace.designVersion, offset: nextOffset })).toString("base64url") : null },
       reviews, requests: requestPage(state, workspace).requests, requestsTotal: workspace.requests.length,
+      readyActions: progress.readyActions.filter(action => !action.moduleId || selectedModules.some(module => module.id === action.moduleId))
+        .filter(action => !affectedMaterials.has(workspace.architecture.artifactId) && (action.moduleId
+          ? (action.scope?.requiredModuleIds || [action.moduleId]).every(id => !affectedMaterials.has(workspace.modules.find(module => module.id === id)?.artifactId))
+          : invalidMaterials.size === 0)),
+      blockedActions: progress.blockedActions.filter(action => !action.moduleId || selectedModules.some(module => module.id === action.moduleId)),
       requestsNextCursor: requestPage(state, workspace).nextCursor, nextAction: invalidMaterials.size
-        ? { kind: "refresh_design_material", stage: "thinking", summary: "材料已变化；请当前宿主重新登记准确版本" } : workspace.nextAction,
+        ? { kind: "refresh_design_material", stage: "thinking", summary: "材料已变化；请当前宿主重新登记准确版本" }
+        : progress.nextAction?.kind === "refresh_design_review" ? progress.nextAction : workspace.nextAction,
       capabilities: { ...base.capabilities, review: { available: writable, reason: writable ? null : "current_run_not_writable" },
         feedback: { available: writable, reason: writable ? null : "current_run_not_writable" } },
       source: { kind: state.archivedProjection ? "archived_spine_projection" : "spine_live_workspace", version: workspace.designVersion, truth: "owner_reported_with_local_human_review", recordOrigin: liveRecordOrigin(state) } };
@@ -462,7 +483,7 @@ export function createLiveWorkspaceService(options) {
       material, at, status: "recorded", decisionId: current.decisionId });
     refreshProgress(workspace, at);
     const next = structuredClone(state); next.liveWorkspace = workspace;
-    next.blockedOn = workspace.designStatus === "accepted" ? null : "live_design_review_pending";
+    next.blockedOn = deriveWorkspaceProgress(workspace, Date.parse(at)).readyActions.length ? null : "live_design_review_pending";
     return persistRequest(state, next, request, input, digest);
   }
 
@@ -522,35 +543,109 @@ export function createLiveWorkspaceService(options) {
       ...nativeBoundary };
   }
 
-  async function claimRequest({ runId, conversationId, expectedRevision, commandId }) {
-    const state = await stateFor(runId, { mutate: true, expectedRevision });
-    assertHost(state, conversationId, expectedRevision);
-    const workspace = structuredClone(workspaceFor(state));
-    const request = workspace.requests.find(item => item.commandId === commandId);
+  function requestsOverlap(workspace, left, right) {
+    if (left.targetId === right.targetId) return true;
+    if ([left, right].some(request => request.targetId === "architecture")) return true;
+    const tasks = request => request.scope?.taskIds || [];
+    return tasks(left).some(id => tasks(right).includes(id));
+  }
+
+  async function checkClaimable(state, workspace, request) {
     workspaceRequire(request && request.status === "waiting_host", "workspace_request_not_claimable", 409);
-    workspaceRequire(!workspace.requests.some(item => item.commandId !== commandId && item.targetId === request.targetId &&
+    workspaceRequire(!workspace.requests.some(item => item.commandId !== request.commandId && requestsOverlap(workspace, request, item) &&
       ["host_claimed", "in_doubt"].includes(item.status)), "workspace_target_has_unresolved_claim", 409);
     workspaceRequire(request.outlineBasis === workspace.architecture.basisDigest, "workspace_request_scope_changed", 409);
+    const progress = deriveWorkspaceProgress(workspace, Date.parse(now()));
+    const target = workspace.modules.find(module => module.id === request.targetId);
     if (["design_module", "revise_module"].includes(request.kind)) {
-      const progress = deriveWorkspaceProgress(workspace);
       workspaceRequire(progress.outlineStatus === "accepted", "workspace_outline_review_required", 409);
-      const target = workspace.modules.find(module => module.id === request.targetId);
       workspaceRequire(target && target.dependsOn.every(id => progress.modules.find(module => module.id === id)?.status === "accepted"),
         "workspace_dependency_review_required", 409);
+      workspaceRequire(progress.readyActions.some(action => action.kind === request.kind && action.moduleId === request.targetId),
+        "workspace_request_scope_changed", 409);
+    }
+    if (request.kind === "continue_module") {
+      const required = workspaceModuleRequirements(workspace, [request.targetId]);
+      workspaceRequire(request.scope?.kind === "module" && workspaceDigest(request.scope) === workspaceDigest({ kind: "module",
+        moduleIds: [request.targetId], requiredModuleIds: required.moduleIds, taskIds: required.taskIds }), "workspace_request_scope_changed", 409);
+      const gate = await inspectLiveWorkspaceGate(state, repository.projectRoot, { moduleIds: [request.targetId] });
+      workspaceRequire(gate.ready, gate.reason, 409);
     }
     if (request.kind === "continue_governed_run") {
       workspaceRequire(workspace.taskContractVersion === 1 || !workspace.modules.some(module => module.taskIds?.length),
         "workspace_task_review_required", 409);
-      workspaceRequire(deriveWorkspaceProgress(workspace, Date.parse(now())).designStatus === "accepted", "workspace_design_review_pending", 409);
-      // Continuing the spine consumes the entire accepted design, not only
-      // the outline material carried by the generated work order.
+      workspaceRequire(progress.designStatus === "accepted", "workspace_design_review_pending", 409);
       for (const module of workspace.modules) await repository.verifyMaterial(workspace.materials[module.artifactId]);
     }
     const material = currentMaterial(workspace, request.artifactId, request.version);
     await repository.verifyMaterial(workspace.materials[workspace.architecture.artifactId]);
     await repository.verifyMaterial(material);
-    if (["design_module", "revise_module"].includes(request.kind)) await verifyDependencyMaterials(workspace,
-      workspace.modules.find(module => module.id === request.targetId) || {});
+    if (["design_module", "revise_module"].includes(request.kind)) await verifyDependencyMaterials(workspace, target);
+    return material;
+  }
+
+  /** Fresh discovery is read-only. It never claims a lease or creates authority
+   * to resume a user-paused host. The caller still performs the existing CAS. */
+  async function hostNextWork({ runId, conversationId }) {
+    const state = await stateFor(runId, { mutate: true });
+    assertHost(state, conversationId, state.hostCheckpointRevision || 0);
+    const workspace = state.liveWorkspace ? workspaceFor(state) : null;
+    const currentAction = workspace ? deriveWorkspaceProgress(workspace, Date.parse(now())).nextAction : null;
+    const base = { runId, profile: repository.profile, revision: state.hostCheckpointRevision || 0,
+      hostEntry: workspace?.hostEntry || null,
+      nextAction: currentAction?.kind === "refresh_design_review" ? currentAction : workspace?.nextAction || null,
+      blockers: [], ...nativeBoundary };
+    const result = (status, reason, extra = {}) => ({ ...base, status,
+      continuation: { mayContinue: status === "ready", reason, requiresExistingAuthorization: true, hostMustCheckInterruption: true }, ...extra });
+    if (!workspace) return result("idle", "workspace_not_registered");
+    const pending = workspace.requests.filter(request => request.status === "waiting_host")
+      .sort((a, b) => Number(b.kind === "feedback") - Number(a.kind === "feedback"));
+    for (const request of pending) {
+      try {
+        await checkClaimable(state, workspace, request);
+        return result("ready", "current_bound_request_ready", { request: publicRequest(request),
+          ...(request.scope ? { scope: request.scope } : {}),
+          claimArguments: ["--project-root", repository.projectRoot, "--profile", repository.profile, "--run-id", runId,
+            "--conversation-id", conversationId, "--claim-request", "--command-id", request.commandId,
+            "--expected-revision", String(state.hostCheckpointRevision || 0)] });
+      } catch (error) {
+        // A missing, redirected or oversized material blocks this candidate.
+        // Keep looking for independent work without weakening its own checks.
+        const unavailableMaterial = ["workspace_material_path_untrusted", "workspace_material_too_large", "ENOENT"].includes(error.code);
+        if (!error.code || error.status !== 409 && !unavailableMaterial) throw error;
+        if (base.blockers.length < policy.requestPageSize) base.blockers.push({ commandId: request.commandId, reason: error.code });
+      }
+    }
+    const uncertain = workspace.requests.some(request => publicRequest(request).status === "in_doubt");
+    if (uncertain) return result("in_doubt", "existing_claim_requires_reconciliation");
+    if (workspace.requests.some(request => request.status === "host_claimed")) return result("waiting_host", "claimed_work_has_not_reported");
+    if (pending.length) return result("waiting_host", "pending_request_not_currently_claimable");
+    if (currentAction?.kind === "refresh_design_review") return result("waiting_host", "current_design_review_refresh_required");
+    const progress = deriveWorkspaceProgress(workspace, Date.parse(now()));
+    if (progress.blockedActions.some(action => action.kind === "awaiting_review")) return result("waiting_human", "current_design_review_pending");
+    if (progress.readyActions.length) return result("waiting_host", "ready_design_action_needs_current_request", { nextAction: progress.readyActions[0] });
+    return result("idle", "no_unclaimed_ready_request");
+  }
+
+  async function nextWorkAfterReport(runId, conversationId) {
+    try { return await hostNextWork({ runId, conversationId }); }
+    catch (error) {
+      // A committed receipt must not look like a failed write if another host
+      // closes or revises the run before this optional follow-up read.
+      return { runId, profile: repository.profile, status: "waiting_host", claimArguments: null,
+        continuation: { mayContinue: false, reason: error.code || "workspace_followup_read_failed" }, ...nativeBoundary };
+    }
+  }
+
+  async function claimRequest({ runId, conversationId, expectedRevision, commandId }) {
+    const state = await stateFor(runId, { mutate: true, expectedRevision });
+    assertHost(state, conversationId, expectedRevision);
+    const workspace = structuredClone(workspaceFor(state));
+    const request = workspace.requests.find(item => item.commandId === commandId);
+    const material = await checkClaimable(state, workspace, request);
+    const executionScope = request.scope || (request.kind === "continue_governed_run" && workspace.taskContractVersion === 1 &&
+      workspace.modules.some(module => module.taskIds?.length) ? { kind: "aggregate", moduleIds: workspace.modules.map(module => module.id),
+        requiredModuleIds: workspace.modules.map(module => module.id), taskIds: [...new Set(workspace.modules.flatMap(module => module.taskIds || []))].sort() } : null);
     const claimToken = randomBytes(32).toString("base64url");
     const at = now();
     request.status = "host_claimed"; request.updatedAt = at;
@@ -559,7 +654,19 @@ export function createLiveWorkspaceService(options) {
     const next = structuredClone(state); next.liveWorkspace = workspace;
     await repository.writeState(state, next);
     return { status: "host_claimed", commandId, claimToken, revision: next.hostCheckpointRevision,
-      workOrder: { runId, kind: request.kind, targetId: request.targetId, sourceVersion: request.version,
+      workOrder: { runId, commandId, projectRoot: repository.projectRoot, profile: repository.profile, conversationId,
+        kind: request.kind, targetId: request.targetId, sourceVersion: request.version,
+        ...(executionScope ? { scope: executionScope, moduleScopePlan: {
+          schemaVersion: 1, architecture: { id: workspace.architecture.id, revision: workspace.architecture.revision || 1,
+            basisDigest: workspaceDigest([workspace.architecture.basisDigest, workspace.materials[workspace.architecture.artifactId].sha256]) },
+          modules: workspace.modules.map(module => ({ id: module.id, revision: module.revision || 1,
+            basisDigest: workspace.reviews.find(review => review.decisionId === module.decisionId)?.basisDigest || module.basisDigest ||
+              workspaceDigest([workspace.architecture.basisDigest, workspace.materials[module.artifactId].sha256]),
+            taskIds: module.taskIds || [], dependsOn: module.dependsOn || [] })),
+        }, designReviewBindings: [workspace.architecture, ...workspace.modules.filter(module => executionScope.requiredModuleIds.includes(module.id))]
+          .map(target => ({ targetId: target.id, decisionId: target.decisionId,
+            materialSha256: workspace.materials[target.artifactId].sha256,
+            decisionRevision: workspace.reviews.find(review => review.decisionId === target.decisionId)?.decision.revision })) } : {}),
         material: { ref: material.ref, sha256: material.sha256, bytes: material.bytes },
         boundedMaterialRead: { entrypoint: workspace.hostEntry, arguments: ["--project-root", repository.projectRoot,
           "--profile", repository.profile, "--run-id", runId, "--conversation-id", conversationId,
@@ -583,7 +690,7 @@ export function createLiveWorkspaceService(options) {
     const digest = workspaceDigest(input);
     if (request.status === "host_reported") {
       workspaceRequire(request.receiptDigest === digest, "workspace_host_receipt_replay_conflict", 409);
-      return { status: "host_reported", commandId, replay: true, ...nativeBoundary };
+      return { status: "host_reported", commandId, replay: true, nextWork: await nextWorkAfterReport(runId, conversationId), ...nativeBoundary };
     }
     assertHost(state, conversationId, expectedRevision);
     workspaceRequire(["host_claimed", "in_doubt"].includes(request.status), "workspace_host_receipt_state_conflict", 409);
@@ -598,10 +705,11 @@ export function createLiveWorkspaceService(options) {
       evidenceRefs: input.evidenceRefs.map(({ ref, sha256 }) => ({ ref, sha256 })), ...nativeBoundary };
     const next = structuredClone(state); next.liveWorkspace = workspace;
     await repository.writeState(state, next);
-    return { status: "host_reported", commandId, revision: next.hostCheckpointRevision, replay: false, ...nativeBoundary };
+    return { status: "host_reported", commandId, revision: next.hostCheckpointRevision, replay: false,
+      nextWork: await nextWorkAfterReport(runId, conversationId), ...nativeBoundary };
   }
 
-  return { policy, repository, getOverview, review, feedback, getRequests, publishDesign, hostInspect, claimRequest, completeRequest,
+  return { policy, repository, getOverview, review, feedback, getRequests, publishDesign, hostInspect, hostNextWork, claimRequest, completeRequest,
     async getMaterial({ runId, artifactId, version, cursor }) {
       let state;
       try { state = await stateFor(runId); } catch (error) { if (error.code !== "workspace_current_run_unavailable") throw error; }

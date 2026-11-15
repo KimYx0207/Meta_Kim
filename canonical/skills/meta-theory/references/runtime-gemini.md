@@ -1,5 +1,7 @@
 # Gemini CLI runtime binding
 
+Use [native host interaction](native-host-interaction.md) for current-host continuation and returning extra child work to the native parent; Gemini's local children cannot recursively delegate.
+
 ## Use when
 
 Use this reference only when the active host is Google's Gemini CLI. Installation is a projection of canonical Meta_Kim responsibility and workflow sources; it does not establish model quality or live acceptance.

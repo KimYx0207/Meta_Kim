@@ -4,6 +4,18 @@
 
 User-facing changes for each release. Detailed test results live in the linked verification records.
 
+## [3.16.0] - 2026-11-15
+
+### Current decisions, independent modules and host continuation
+
+- Select question and option cards from unresolved material decisions whose prerequisites are ready. Preserve answered decisions, skip unnecessary prompts, and separate presentation pauses from execution authorization.
+- Advance independently ready modules through the existing execution and verification flow, using the reviewed module and its dependencies. Source changes invalidate the affected dependency chain while unrelated modules retain their progress.
+- Add current-host `next-work` continuation with run-bound work orders, file scope, claims and receipts. Inactive runs cannot accept claims or reports; continuation does not start a background model.
+- Show ready and blocked module actions in Live. Propagate source invalidation to previously loaded pages, recover those pages through explicit refresh without losing feedback drafts, and provide a fresh-review action for expired reviews.
+- Bind professional methods to the current task and the host's actual tools. Clarify interaction entrypoints for Claude Code, Codex, Gemini CLI, ZCode and DSH, including recoverable records when a required capability is unavailable.
+
+The existing eight stages, nine roles, both PRD levels and research capabilities remain. This update adds no new Claude Code and Codex dual-client native certification evidence. Recorded checks and remaining limits are listed in the [interaction and continuation verification record](docs/verification/yuan-interaction-20261115.md).
+
 ## [3.15.1] - 2026-11-15
 
 ### Installation choices and compatibility fixes

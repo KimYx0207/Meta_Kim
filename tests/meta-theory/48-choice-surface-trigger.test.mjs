@@ -208,7 +208,7 @@ test("primary native choice panels preserve structure and runtime maximum option
   );
 });
 
-test("generated card plans mark choice cards as adapter-required, not native-triggered", async (t) => {
+test("clear card plans suppress choice events and retain the adapter-only catalog boundary", async (t) => {
   const fixture = createGovernanceRuntimeFixtureScope(t, { graph: true });
   refreshFixtureSourcePins(fixture);
   const { runMetaTheoryGovernedExecution } = await fixture.import("scripts/run-meta-theory-governed-execution.mjs");
@@ -226,9 +226,14 @@ test("generated card plans mark choice cards as adapter-required, not native-tri
       ["clarify", "options"].includes(card.cardKey),
     );
 
-    assert.ok(choiceCards.length >= 2);
+    assert.deepEqual(choiceCards, [], "A capability inventory does not create a user decision");
+    const choiceCatalog = artifact.cardPlanPacket.cardTypeDecisions.filter((card) =>
+      ["clarify", "options"].includes(card.cardKey),
+    );
+    assert.equal(choiceCatalog.length, 2, "Both reusable choice types remain available");
     assert.equal(artifact.status, "partial", "A generated plan cannot certify native execution or acceptance");
-    for (const card of choiceCards) {
+    for (const card of choiceCatalog) {
+      assert.equal(card.cardDecision, "suppress");
       assert.equal(card.choiceSurfaceDelivery, "adapter_required_not_triggered_by_artifact");
       assert.match(card.choiceSurfaceTriggerProof, /not a native popup/i);
       assert.match(card.choiceSurfaceTriggerProof, /native tool call/i);

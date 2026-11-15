@@ -1,5 +1,7 @@
 # DeepSeek Harness runtime
 
+Use [native host interaction](native-host-interaction.md) for current-host continuation, asynchronous results and the different recovery capabilities of local and external subagent providers.
+
 ## Use when
 
 Use this contract when installing, discovering, updating, removing or executing Meta_Kim and Kim_Service methods inside the official DeepSeek Harness host. Apply it before claiming that a DSH session loaded a Skill, delegated work, connected an MCP server or enforced a human gate.

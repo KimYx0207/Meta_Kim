@@ -24,6 +24,7 @@ export function createLiveWorkspaceController(options) {
   let workspaceInFlight = false;
   let refreshAgain = false;
   let queuedCursor = null;
+  let queuedReloadCount = 0;
   let lastRefresh = 0;
   let disposed = false;
   const pendingControllers = new Set();
@@ -159,11 +160,17 @@ export function createLiveWorkspaceController(options) {
       if (requestGeneration === generation) { state.history.loading = false; renderer.renderMain(); }
     }
   }
-  async function refresh({ force = false, cursor = null } = {}) {
+  async function refresh({ force = false, cursor = null, reloadCount = 0 } = {}) {
     if (disposed || !state.selection.runId || state.origin === "demo") return;
-    if (workspaceInFlight) { refreshAgain = refreshAgain || force; if (cursor) queuedCursor = cursor; return; }
+    if (workspaceInFlight) {
+      refreshAgain = refreshAgain || force;
+      if (cursor) queuedCursor = cursor;
+      queuedReloadCount = Math.max(queuedReloadCount, reloadCount);
+      return;
+    }
     if (!force && Date.now() - lastRefresh < policy.refreshCoalesceMs) return;
     const requestGeneration = generation;
+    let nextReload = null;
     workspaceInFlight = true; state.loading = true;
     if (!state.workspace) renderer.render();
     try {
@@ -171,6 +178,14 @@ export function createLiveWorkspaceController(options) {
       if (requestGeneration !== generation || disposed) return;
       if (payload?.schemaVersion !== "meta-kim-live-workspace-v1" || payload.runId !== state.selection.runId || (state.selection.projectId && payload.projectId !== state.selection.projectId)) throw new Error("Workspace identity mismatch");
       if (![payload.stages, payload.reviews, payload.requests, payload.design?.modules].every(Array.isArray)) throw new Error("Workspace collection contract mismatch");
+      if (["readyActions", "blockedActions"].some((key) => payload[key] !== undefined && !Array.isArray(payload[key]))) throw new Error("Workspace action collection contract mismatch");
+      const invalidation = payload.design.materialInvalidation;
+      if (invalidation !== undefined && (!invalidation || typeof invalidation.architecture !== "boolean"
+        || !Array.isArray(invalidation.moduleIds) || invalidation.moduleIds.length > payload.design.totalModules
+        || invalidation.moduleIds.some((id) => typeof id !== "string" || !id))) throw new Error("Workspace material invalidation contract mismatch");
+      if (reloadCount > payload.design.modules.length && payload.design.nextCursor) {
+        nextReload = { cursor: payload.design.nextCursor, reloadCount: reloadCount - payload.design.modules.length };
+      }
       const previousWorkspace = state.workspace;
       if (cursor && previousWorkspace) {
         if (payload.revision !== previousWorkspace.revision || payload.design?.version !== previousWorkspace.design?.version) {
@@ -178,12 +193,38 @@ export function createLiveWorkspaceController(options) {
         }
       }
       if (previousWorkspace && payload.revision === previousWorkspace.revision && payload.design?.version === previousWorkspace.design?.version) {
+        const pageModuleIds = new Set(payload.design.modules.map((item) => item.id));
+        for (const key of ["readyActions", "blockedActions"]) {
+          if (Array.isArray(payload[key])) payload[key] = [
+            ...(previousWorkspace[key] || []).filter((action) => action.moduleId && !pageModuleIds.has(action.moduleId)),
+            ...payload[key],
+          ];
+        }
         const modules = new Map((previousWorkspace.design?.modules || []).map((item) => [item.id, item]));
         for (const module of payload.design?.modules || []) modules.set(module.id, module);
         const reviews = new Map((previousWorkspace.reviews || []).map((item) => [item.decisionId, item]));
         for (const review of payload.reviews || []) reviews.set(review.decisionId, review);
         payload.design = { ...payload.design, modules: [...modules.values()], nextCursor: cursor ? payload.design.nextCursor : previousWorkspace.design.nextCursor };
         payload.reviews = [...reviews.values()];
+      }
+      // The server checks all source material on every page. Apply its bounded
+      // invalidation projection to cached pages without inventing readiness.
+      if (invalidation) {
+        const affectedModules = new Set(invalidation.moduleIds);
+        const affectedArtifacts = new Set();
+        if (invalidation.architecture && payload.design.architecture) {
+          payload.design.architecture = { ...payload.design.architecture, status: "material_changed" };
+          affectedArtifacts.add(payload.design.architecture.artifactId);
+        }
+        payload.design.modules = payload.design.modules.map((item) => {
+          if (!invalidation.architecture && !affectedModules.has(item.id)) return item;
+          affectedArtifacts.add(item.artifactId);
+          return { ...item, status: "material_changed" };
+        });
+        if (Array.isArray(payload.readyActions)) payload.readyActions = payload.readyActions.filter((action) =>
+          !invalidation.architecture && !(action.scope?.requiredModuleIds || [action.moduleId]).some((id) => affectedModules.has(id)));
+        payload.reviews = payload.reviews.map((item) => affectedArtifacts.has(item.artifactId)
+          ? { ...item, state: "material_changed", available: false, reason: "material_changed" } : item);
       }
       state.workspace = payload; state.error = null; state.loading = false; lastRefresh = Date.now();
       if (state.history.loaded && payload.revision !== state.history.revision) state.history.stale = true;
@@ -209,7 +250,12 @@ export function createLiveWorkspaceController(options) {
         workspaceInFlight = false; state.loading = false; renderer.render();
         const selectedModuleMissing = state.view === "prd" && state.prdMode === "module" && state.selectedModuleId
           && !(state.workspace?.design?.modules || []).some((item) => item.id === state.selectedModuleId);
-        if (queuedCursor) { const cursor = queuedCursor; queuedCursor = null; refreshAgain = false; void refresh({ force: true, cursor }); }
+        if (queuedReloadCount) {
+          const reloadCount = queuedReloadCount; queuedReloadCount = 0; refreshAgain = false;
+          void refresh({ force: true, reloadCount });
+        }
+        else if (nextReload && !state.error) void refresh({ force: true, ...nextReload });
+        else if (queuedCursor) { const cursor = queuedCursor; queuedCursor = null; refreshAgain = false; void refresh({ force: true, cursor }); }
         else if (selectedModuleMissing && state.workspace?.design?.nextCursor && !state.error) void refresh({ force: true, cursor: state.workspace.design.nextCursor });
         else if (refreshAgain) { refreshAgain = false; void refresh({ force: true }); }
       }
@@ -297,7 +343,12 @@ export function createLiveWorkspaceController(options) {
   app.querySelector("[data-uw-project-switch]")?.addEventListener("click", options.openProjects);
   app.querySelector("[data-uw-nav-open]")?.addEventListener("click", () => { app.querySelector("[data-uw-navigation]")?.setAttribute("data-open", "true"); app.querySelector("[data-uw-nav-open]")?.setAttribute("aria-expanded", "true"); app.querySelector("[data-uw-nav-close]")?.focus(); });
   app.querySelector("[data-uw-nav-close]")?.addEventListener("click", () => { closeNavigation(); app.querySelector("[data-uw-nav-open]")?.focus(); });
-  root.querySelector("[data-uw-refresh]")?.addEventListener("click", () => { state.notice = ""; void refresh({ force: true }); });
+  root.querySelector("[data-uw-refresh]")?.addEventListener("click", () => {
+    state.notice = "";
+    // Explicit refresh re-reads the pages already opened by this user. Polling
+    // stays bounded to one page; no decision or readiness cache is added.
+    void refresh({ force: true, reloadCount: state.workspace?.design?.modules?.length || 0 });
+  });
   renderer.detailCloseButton?.addEventListener("click", closeDetail);
   const onKey = (event) => {
     if (event.key !== "Escape") return;
@@ -322,7 +373,7 @@ export function createLiveWorkspaceController(options) {
         generation += 1; materialGeneration += 1;
         for (const controller of pendingControllers) controller.abort();
         state.workspace = null; state.material = null; state.detail = null; state.error = null; state.notice = ""; state.loading = false; state.history = emptyHistory(); state.recordPage = 0;
-        workspaceInFlight = false; refreshAgain = false; queuedCursor = null; lastRefresh = 0;
+        workspaceInFlight = false; refreshAgain = false; queuedCursor = null; queuedReloadCount = 0; lastRefresh = 0;
         state.selectionKey = key; state.selection = selection; state.command = null;
         try { const saved = JSON.parse(win.sessionStorage?.getItem(commandStorageKey()) || "null"); if (saved?.nonce && saved?.targetIdentity) state.command = { ...saved, busy: false }; } catch {}
       }

@@ -2209,13 +2209,15 @@ export async function openSqliteDurableRunRepository(dbPath = ":memory:", { enab
       });
     },
 
-    markUnresolvedEffectsInDoubt({ runId, nowMs = Date.now() }) {
+    markUnresolvedEffectsInDoubt({ runId, attemptId = null, nowMs = Date.now() }) {
+      if (attemptId !== null) requiredString(attemptId, "attemptId");
       return withSqliteTransaction(db, () => {
         assertMutationIntegrity(db, runId);
         assertActiveRun(db, runId);
         const effectIds = db.prepare(
-          "SELECT effect_id FROM governed_effects WHERE run_id = ? ORDER BY effect_id",
+          "SELECT effect_id, attempt_id FROM governed_effects WHERE run_id = ? ORDER BY effect_id",
         ).all(runId)
+          .filter((row) => attemptId === null || row.attempt_id === attemptId)
           .map((row) => row.effect_id)
           .filter((effectId) => latestEffectState(db, effectId) === "dispatch_started");
         const createdAt = timestamp(nowMs);

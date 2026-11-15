@@ -2,6 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { setImmediate } from "node:timers/promises";
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { createLiveWorkspaceService } from "../../src/application/live/live-workspace-service.mjs";
+import { activateSpineState, createInitialState } from "../../canonical/runtime-assets/shared/hooks/spine-state.mjs";
 import { createLiveWorkspaceController, LIVE_WORKSPACE_UI_POLICY } from "../../src/presentation/live/live-workspace-client.mjs";
 import { LIVE_WORKSPACE_MESSAGES, workspaceStatusKey, workspaceArtifactItems, workspaceMaterialIdentity, workspaceMaterialMatches, workspaceMaterialReady, workspaceReviewForArtifact, workspaceCommandMessage } from "../../src/presentation/live/live-workspace-model.mjs";
 import { renderLiveControlRoomPage } from "../../src/presentation/live/live-control-room-page.mjs";
@@ -15,6 +20,11 @@ const workspace = (overrides = {}) => ({ schemaVersion: "meta-kim-live-workspace
 const reply = (payload, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => payload });
 const readMaterial = (item) => ({ identity: workspaceMaterialIdentity(item), verified: true, sha256: item.sha256, text: "已读取的一页", sourceState: "current" });
 async function settled() { for (let index = 0; index < 8; index += 1) await setImmediate(); }
+async function until(check) {
+  const deadline = Date.now() + 10000;
+  while (!check() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.ok(check(), "The actual service/controller request should settle");
+}
 
 function harness(fetcher) {
   const calls = [];
@@ -23,16 +33,21 @@ function harness(fetcher) {
   let state;
   let actions;
   let nonce = 0;
+  let inFlight = 0;
+  const refreshButton = { addEventListener: (_name, action) => { refreshButton.click = action; } };
   const win = {
     location: { origin: "http://127.0.0.1:4331", href: "http://127.0.0.1:4331/" },
     history: { replaceState(_a, _b, url) { win.location.href = url; } },
     crypto: { randomUUID: () => "nonce-" + ++nonce },
     sessionStorage: { getItem: (key) => storage.get(key), setItem: (key, value) => storage.set(key, value), removeItem: (key) => storage.delete(key) },
     setInterval: () => 1, clearInterval() {}, setTimeout, clearTimeout,
-    fetch: async (url, options) => { const call = { url: new URL(url), ...options }; calls.push(call); return fetcher(call); },
+    fetch: async (url, options) => {
+      const call = { url: new URL(url), ...options }; calls.push(call); inFlight += 1;
+      try { return await fetcher(call); } finally { inFlight -= 1; }
+    },
   };
   const doc = { defaultView: win, visibilityState: "visible", addEventListener: (key, value) => listeners.set(key, value), removeEventListener: (key) => listeners.delete(key) };
-  const root = { ownerDocument: doc, querySelector: () => null, querySelectorAll: () => [] };
+  const root = { ownerDocument: doc, querySelector: (selector) => selector === "[data-uw-refresh]" ? refreshButton : null, querySelectorAll: () => [] };
   const app = { querySelector: (selector) => selector === "[data-uw-workspace]" ? root : null, querySelectorAll: () => [] };
   const context = vm.createContext({ URL, AbortController, TextEncoder, Date, LIVE_WORKSPACE_MESSAGES, workspaceArtifactItems, workspaceMaterialIdentity, workspaceMaterialMatches, workspaceMaterialReady, workspaceCommandMessage,
     createLiveWorkspaceRenderer: (input) => { state = input.state; actions = input.actions; return { render() {}, renderMain() {}, detailCloseButton: null, content: { scrollTop: 0, focus() {} } }; },
@@ -40,7 +55,8 @@ function harness(fetcher) {
   });
   const controller = vm.runInContext("(" + createLiveWorkspaceController.toString() + ")(options)", context);
   const update = (runId = "run") => controller.update({ snapshot: { run: { id: runId, title: "真实任务", status: "running" } }, project: { displayName: "项目" }, selection: { projectId: "project", runId }, tasks: [], fallbackStages: [], origin: "governed_run" });
-  return { controller, calls, update, get state() { return state; }, get actions() { return actions; } };
+  return { controller, calls, update, refresh: () => refreshButton.click(), idle: () => inFlight === 0 && !state.loading,
+    get state() { return state; }, get actions() { return actions; } };
 }
 
 test("the workspace client is valid in the actual page and uses its independent private token", () => {
@@ -91,22 +107,160 @@ test("private overview, material, and request GETs all carry the workspace token
 
 test("module pagination retains prior reviews and selected modules after a background refresh", async (t) => {
   const first = module("alpha"); const second = module("beta");
+  let firstReady = true;
   const h = harness(({ url }) => {
     if (url.pathname.endsWith("/material")) return reply({ artifactId: second.artifactId, version: 1, sha256: second.sha256, text: "beta", nextCursor: null });
     const isSecond = url.searchParams.get("cursor") === "page-two";
-    return reply(workspace({ design: { version: 1, architecture, modules: [isSecond ? second : first], totalModules: 2, nextCursor: isSecond ? null : "page-two" }, reviews: [review(isSecond ? second : first)] }));
+    return reply(workspace({ design: { version: 1, architecture, modules: [isSecond ? second : first], totalModules: 2, nextCursor: isSecond ? null : "page-two" }, reviews: [review(isSecond ? second : first)],
+      readyActions: !isSecond && firstReady ? [{ kind: "continue_module", moduleId: "alpha" }] : [],
+      blockedActions: isSecond ? [{ kind: "awaiting_dependency", moduleId: "beta", dependsOn: ["alpha"] }] : [] }));
   });
   t.after(() => h.controller.dispose());
   h.update(); await settled();
   await h.actions.loadModules(); await settled();
   assert.deepEqual(Array.from(h.state.workspace.design.modules, (item) => item.id), ["alpha", "beta"]);
   assert.deepEqual(Array.from(h.state.workspace.reviews, (item) => item.decisionId), ["review:alpha", "review:beta"]);
+  assert.deepEqual(Array.from(h.state.workspace.readyActions, (item) => item.moduleId), ["alpha"]);
+  assert.deepEqual(Array.from(h.state.workspace.blockedActions, (item) => item.moduleId), ["beta"]);
   h.actions.selectModule("beta"); await settled();
   h.update(); await settled();
   assert.equal(h.state.selectedModuleId, "beta");
   assert.equal(h.state.workspace.design.nextCursor, null);
   assert.deepEqual(Array.from(h.state.workspace.design.modules, (item) => item.id), ["alpha", "beta"]);
   assert.equal(workspaceReviewForArtifact(h.state.workspace, second).decisionId, "review:beta");
+  assert.deepEqual(Array.from(h.state.workspace.readyActions, (item) => item.moduleId), ["alpha"]);
+  assert.deepEqual(Array.from(h.state.workspace.blockedActions, (item) => item.moduleId), ["beta"]);
+  firstReady = false; h.update(); await settled();
+  assert.equal(h.state.workspace.readyActions.length, 0, "An empty current page removes its previous ready action");
+  assert.deepEqual(Array.from(h.state.workspace.blockedActions, (item) => item.moduleId), ["beta"], "Other loaded pages remain visible");
+});
+
+test("real source drift on module 33 invalidates its cached page and explicit refresh recovers it without losing input", async (t) => {
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), "meta-workspace-page-drift-"));
+  t.after(() => rm(projectRoot, { recursive: true, force: true }));
+  await mkdir(path.join(projectRoot, ".git"));
+  await mkdir(path.join(projectRoot, ".meta-kim/work"), { recursive: true });
+  await mkdir(path.join(projectRoot, "outputs"));
+  const conversationId = "01900000-0000-7000-8000-000000000092";
+  const spine = createInitialState({ activationMode: "hook_observed", driverMode: "hook_observed", hookGateMode: "advisory",
+    sourceConversation: { runtime: "codex", conversationId, matchBasis: "transcript_file_verified" } });
+  spine.recordOrigin = "acceptance_fixture"; spine.currentStage = "thinking";
+  spine.stages.critical.status = "completed"; spine.stages.fetch.status = "completed"; spine.stages.thinking.status = "in_progress";
+  spine.criticalRecord = { realIntent: "Keep paginated material state current", successCriteria: ["Preserve independent modules and local input"] };
+  await activateSpineState(projectRoot, spine);
+  const service = createLiveWorkspaceService({ projectRoot, projectId: "project" });
+  const ids = Array.from({ length: 33 }, (_,index) => "module-" + String(index).padStart(2, "0"));
+  const last = ids.at(-1);
+  const source = "Registered last source\n保留原始材料😀\n";
+  const sourceFile = path.join(projectRoot, "outputs/last.md");
+  await writeFile(sourceFile, source);
+  await service.publishDesign({ runId: spine.runId, conversationId, expectedRevision: (await service.getOverview({ runId: spine.runId })).revision,
+    input: { schemaVersion: 1, materialRefs: { modules: { [last]: "outputs/last.md" } },
+      design: { mode: "exploration", userJourneys: [], interfaces: [], sharedState: [], taskSlices: [], settledDecisionRefs: [],
+        softwareDesign: { schemaVersion: 1,
+          architecture: { id: "pagination-system", revision: 1, summary: "Actual paginated material fixture", decisionRefs: [], technologyChoices: [], constraints: [], moduleIds: ids },
+          modules: ids.map((id) => ({ id, purpose: "Produce " + id })) } } } });
+  const published = await service.getOverview({ runId: spine.runId });
+  const outline = published.reviews.find((item) => item.kind === "outline");
+  await service.review({ runId: spine.runId, decisionId: outline.decisionId, expectedRevision: outline.revision,
+    expectedWorkspaceRevision: published.revision, artifactId: outline.artifactId, version: outline.version, choice: "accept", nonce: "accept-pagination-outline" });
+  const h = harness(async ({ url, method }) => {
+    assert.equal(method, "GET", "Refreshing and opening material must not submit work");
+    return reply(await (url.pathname.endsWith("/material") ? service.getMaterial({ runId: spine.runId,
+      artifactId: url.searchParams.get("artifactId"), version: url.searchParams.get("version"), cursor: url.searchParams.get("cursor") })
+      : service.getOverview({ runId: spine.runId, cursor: url.searchParams.get("cursor") })));
+  });
+  t.after(() => h.controller.dispose());
+  h.update(spine.runId); await until(() => h.idle() && h.state.workspace);
+  await h.actions.loadModules(); await until(() => h.idle() && h.state.workspace.design.modules.length === 33);
+  const revision = h.state.workspace.revision;
+  const version = h.state.workspace.design.version;
+  assert.equal(h.state.workspace.readyActions.length, 33);
+  h.actions.selectModule(last); await until(() => h.idle() && h.state.material?.verified && !h.state.material.loading);
+  const selected = () => workspaceArtifactItems(h.state.workspace).find((item) => item.moduleId === last);
+  const draftKey = h.state.selectionKey + ":" + workspaceMaterialIdentity(selected());
+  const draft = "  我的意见还没提交😀\n不要丢失原文。  ";
+  h.state.drafts.set(draftKey, draft);
+  const material = h.state.material;
+
+  await rm(sourceFile);
+  const beforePoll = h.calls.length;
+  h.update(spine.runId); await until(() => h.idle() && h.state.workspace.design.status === "material_changed");
+  assert.equal(h.state.workspace.revision, revision);
+  assert.equal(h.state.workspace.design.version, version);
+  assert.deepEqual(Array.from(h.state.workspace.design.materialInvalidation.moduleIds), [last]);
+  assert.equal(selected().status, "material_changed");
+  assert.equal(h.state.workspace.readyActions.some((action) => action.moduleId === last), false);
+  assert.deepEqual(new Set(Array.from(h.state.workspace.readyActions, (action) => action.moduleId)), new Set(ids.slice(0, -1)));
+  assert.equal(h.calls.slice(beforePoll).filter((call) => call.url.pathname === "/api/workspace").length, 1, "Polling does not reload every opened page");
+  assert.equal(workspaceMaterialReady(selected(), material), false, "A previously verified body cannot keep invalid material actionable");
+  h.actions.feedback(selected(), draft); await settled();
+  assert.equal(h.calls.some((call) => call.method === "POST"), false);
+  assert.equal(h.state.selectedModuleId, last);
+  assert.equal(h.state.material, material);
+  assert.equal(h.state.drafts.get(draftKey), draft);
+
+  await writeFile(sourceFile, source);
+  h.update(spine.runId); await until(() => h.idle() && h.state.workspace.design.materialInvalidation.moduleIds.length === 0);
+  assert.equal(selected().status, "material_changed", "A cleared global invalidation does not invent an unread page's readiness");
+  const beforeRefresh = h.calls.length;
+  h.refresh(); await until(() => h.idle() && selected().status === "needs_detail");
+  const reread = h.calls.slice(beforeRefresh).filter((call) => call.url.pathname === "/api/workspace");
+  assert.equal(reread.length, 2, "Explicit refresh re-reads both loaded pages using the server cursor");
+  assert.equal(reread[0].url.searchParams.has("cursor"), false);
+  assert.ok(reread[1].url.searchParams.get("cursor"));
+  assert.equal(h.state.workspace.readyActions.length, 33);
+  assert.equal(h.state.workspace.design.nextCursor, null);
+  assert.equal(workspaceMaterialReady(selected(), material), true);
+  assert.equal(h.state.selectedModuleId, last);
+  assert.equal(h.state.drafts.get(draftKey), draft);
+  assert.equal(h.state.material, material);
+});
+
+test("global material invalidation updates cached reviews and architecture invalidation clears every loaded ready action", async (t) => {
+  const first = module("alpha"); const second = module("beta");
+  let invalidation = { architecture: false, moduleIds: [] };
+  const h = harness(({ url }) => {
+    const isSecond = url.searchParams.get("cursor") === "second-page";
+    const item = isSecond ? second : first;
+    return reply(workspace({ design: { version: 1, architecture, modules: [item], totalModules: 2, nextCursor: isSecond ? null : "second-page", materialInvalidation: invalidation },
+      reviews: [review(architecture), review(item)], readyActions: [{ kind: "design_module", moduleId: item.id }], blockedActions: [] }));
+  });
+  t.after(() => h.controller.dispose());
+  h.update(); await settled(); await h.actions.loadModules(); await settled();
+  invalidation = { architecture: false, moduleIds: ["beta"] };
+  h.update(); await settled();
+  assert.deepEqual(Array.from(h.state.workspace.readyActions, (action) => action.moduleId), ["alpha"]);
+  const cachedReview = h.state.workspace.reviews.find((item) => item.artifactId === second.artifactId);
+  assert.equal(cachedReview.state, "material_changed");
+  assert.equal(cachedReview.available, false);
+  assert.equal(h.state.workspace.design.architecture.status, undefined);
+  invalidation = { architecture: true, moduleIds: ["alpha", "beta"] };
+  h.update(); await settled();
+  assert.equal(h.state.workspace.readyActions.length, 0);
+  assert.equal(h.state.workspace.design.architecture.status, "material_changed");
+  assert.ok(h.state.workspace.design.modules.every((item) => item.status === "material_changed"));
+  assert.ok(h.state.workspace.reviews.every((item) => item.state === "material_changed" && item.available === false));
+});
+
+test("explicit page refresh queued behind a poll still rereads every loaded page", async (t) => {
+  let pause = false;
+  let resolvePoll;
+  const h = harness(({ url }) => {
+    const isSecond = url.searchParams.get("cursor") === "second-page";
+    const payload = workspace({ design: { version: 1, architecture, modules: [module(isSecond ? "beta" : "alpha")], totalModules: 2, nextCursor: isSecond ? null : "second-page" } });
+    if (pause) { pause = false; return new Promise((resolve) => { resolvePoll = () => resolve(reply(payload)); }); }
+    return reply(payload);
+  });
+  t.after(() => h.controller.dispose());
+  h.update(); await settled(); await h.actions.loadModules(); await settled();
+  pause = true; h.update(); await settled();
+  assert.ok(resolvePoll);
+  const before = h.calls.length;
+  h.refresh();
+  resolvePoll(); await until(() => h.idle() && h.calls.length >= before + 2);
+  assert.deepEqual(h.calls.slice(before).map((call) => call.url.searchParams.get("cursor")), [null, "second-page"]);
+  assert.deepEqual(Array.from(h.state.workspace.design.modules, (item) => item.id), ["alpha", "beta"]);
 });
 
 test("ambiguous POST verifies the original nonce and never sends a duplicate request", async (t) => {
@@ -189,19 +343,29 @@ test("the next-action entry opens the bound PRD without inventing execution task
   assert.equal(h.state.view, "prd");
   assert.equal(h.state.prdMode, "overview");
   assert.equal(h.state.material.identity, workspaceMaterialIdentity(architecture));
-  h.actions.openNextAction({ kind: "design_module", moduleId: "beta" }); await settled();
-  assert.equal(h.state.selectedModuleId, "beta");
-  assert.equal(h.state.material.identity, workspaceMaterialIdentity(beta));
+  for (const kind of ["design_module", "continue_module", "awaiting_dependency", "refresh_design_review"]) {
+    h.actions.openNextAction({ kind, moduleId: "beta" }); await settled();
+    assert.equal(h.state.selectedModuleId, "beta");
+    assert.equal(h.state.material.identity, workspaceMaterialIdentity(beta));
+  }
   assert.equal(h.state.tasks.length, 0);
+  assert.ok(h.calls.every((call) => call.method !== "POST"), "Opening a module must not dispatch or submit work");
+  h.actions.openNextAction({ kind: "refresh_design_review", moduleId: null }); await settled();
+  assert.equal(h.state.prdMode, "overview");
+  assert.ok(h.calls.every((call) => call.method !== "POST"));
 });
 
 test("a malformed refresh keeps the last valid workspace visible", async (t) => {
-  let malformed = false;
-  const h = harness(() => reply(malformed ? workspace({ reviews: "bad-shape" }) : workspace()));
+  let malformed = null;
+  const h = harness(() => reply(malformed || workspace()));
   t.after(() => h.controller.dispose());
   h.update(); await settled();
   const valid = h.state.workspace;
-  malformed = true; h.update(); await settled();
+  malformed = workspace({ reviews: "bad-shape" }); h.update(); await settled();
+  assert.equal(h.state.workspace, valid);
+  assert.ok(h.state.error);
+  malformed = workspace(); malformed.design.materialInvalidation = { architecture: false, moduleIds: "bad-shape" };
+  h.update(); await settled();
   assert.equal(h.state.workspace, valid);
   assert.ok(h.state.error);
 });
@@ -328,11 +492,12 @@ test("capacity refusal is explicit, preserves the draft, and is not treated as u
 // or a second implementation of its presentation decisions.
 function presentationHarness({ language = "zh", mode = "overview" } = {}) {
   class Element {
-    constructor(tag = "div") { this.tagName = tag; this.children = []; this.dataset = {}; this.attributes = new Map(); this.hidden = false; this.scrollTop = 0; this.textContent = ""; }
+    constructor(tag = "div") { this.tagName = tag; this.children = []; this.dataset = {}; this.attributes = new Map(); this.listeners = new Map(); this.hidden = false; this.scrollTop = 0; this.textContent = ""; }
     append(...nodes) { this.children.push(...nodes); }
     replaceChildren(...nodes) { this.children = nodes; }
     setAttribute(name, value) { this.attributes.set(name, String(value)); }
-    addEventListener() {}
+    addEventListener(name, action) { this.listeners.set(name, action); }
+    click() { this.listeners.get("click")?.(); }
     querySelectorAll() { return []; }
   }
   const nodes = new Map();
@@ -347,9 +512,36 @@ function presentationHarness({ language = "zh", mode = "overview" } = {}) {
     view: "prd", prdMode: mode, selectedModuleId: "alpha", drafts: new Map(), selectionKey: "project:run", language, tasks: [], canWrite: false };
   const selected = mode === "overview" ? outline : detail;
   state.material = { ...readMaterial(selected), text: "完整正文", totalBytes: 12, loadedBytes: 12 };
-  const renderer = createLiveWorkspaceRenderer({ app: { querySelector: () => null }, root, state, copy: (key) => LIVE_WORKSPACE_MESSAGES[language][key] || key, actions: {} });
-  return { state, renderer, fullVersion, node: (name) => root.querySelector("[data-uw-" + name + "]"), article: () => root.querySelector("[data-uw-content]").children[0] };
+  const openedActions = [];
+  const feedbackSubmissions = [];
+  const renderer = createLiveWorkspaceRenderer({ app: { querySelector: () => null }, root, state, copy: (key) => LIVE_WORKSPACE_MESSAGES[language][key] || key,
+    actions: { openNextAction: (action) => openedActions.push(action), feedback: (item, original) => feedbackSubmissions.push({ item, original }) } });
+  return { state, renderer, fullVersion, openedActions, feedbackSubmissions, node: (name) => root.querySelector("[data-uw-" + name + "]"), article: () => root.querySelector("[data-uw-content]").children[0] };
 }
+
+test("a retained feedback form keeps its input while using the latest material descriptor after source recovery", () => {
+  const h = presentationHarness({ mode: "module" });
+  h.state.canWrite = true;
+  h.renderer.render();
+  const form = h.article().children.find((node) => node.children.some((child) => child.tagName === "textarea"));
+  const input = form.children[2];
+  const submit = form.children[3].children[0];
+  input.value = "  保留尚未提交的意见😀\n第二行  "; input.listeners.get("input")();
+  assert.equal(submit.disabled, false);
+  h.state.workspace.design.modules[0] = { ...h.state.workspace.design.modules[0], status: "material_changed" };
+  h.renderer.render();
+  assert.ok(h.article().children.includes(form), "The actual form node is retained");
+  assert.equal(submit.disabled, true);
+  const recovered = { ...h.state.workspace.design.modules[0], status: "needs_detail", title: "Recovered module" };
+  h.state.workspace.design.modules[0] = recovered;
+  h.renderer.render();
+  assert.equal(submit.disabled, false);
+  submit.click();
+  assert.equal(h.feedbackSubmissions[0].item.status, "needs_detail");
+  assert.equal(h.feedbackSubmissions[0].item.title, "Recovered module");
+  assert.equal(h.feedbackSubmissions[0].original, input.value);
+  assert.equal([...h.state.drafts.values()][0], input.value);
+});
 
 test("rendered version labels are compact while full material bindings and accessible titles remain exact", () => {
   const h = presentationHarness();
@@ -387,6 +579,49 @@ test("rendered module summaries use module-specific headings in all four languag
     h.state.prdMode = "overview";
     h.renderer.render();
     assert.equal(h.article().children[1].children[0].textContent, LIVE_WORKSPACE_MESSAGES[language].overview, language);
+  }
+});
+
+test("module actions show ready work before dependency waits in four languages without repeating the global fallback", () => {
+  for (const language of ["zh", "en", "ja", "ko"]) {
+    const h = presentationHarness({ language });
+    h.state.view = "work"; h.state.query = ""; h.state.taskFilter = "all";
+    h.state.snapshot.run.task = "";
+    const ready = { kind: "continue_module", moduleId: "alpha", summary: "中文系统摘要" };
+    const blocked = { kind: "awaiting_dependency", moduleId: "beta", dependsOn: ["alpha"], summary: "中文等待摘要" };
+    h.state.workspace.design.modules.push({ ...module("beta"), title: "支付 $& {module}" });
+    Object.assign(h.state.workspace, { readyActions: [ready], blockedActions: [blocked],
+      nextAction: { kind: "awaiting_review", moduleId: null } });
+    const before = JSON.stringify(h.state.workspace);
+    h.renderer.render();
+    const cards = h.node("content").children.filter((node) => node.className === "uw-next-action");
+    assert.equal(cards.length, 2, language);
+    assert.equal(cards[0].dataset.liveWorkspaceActionState, "ready");
+    assert.equal(cards[1].dataset.liveWorkspaceActionState, "blocked");
+    assert.equal(cards[0].children[0].textContent, LIVE_WORKSPACE_MESSAGES[language].readyActions);
+    assert.equal(cards[0].children[1].textContent, LIVE_WORKSPACE_MESSAGES[language].nextContinueModule.replace("{module}", "alpha"));
+    assert.equal(cards[1].children[1].textContent, LIVE_WORKSPACE_MESSAGES[language].nextAwaitDependency.replace("{module}", () => "支付 $& {module}"));
+    assert.equal(cards[1].children[2].textContent, LIVE_WORKSPACE_MESSAGES[language].dependsOn + ": alpha");
+    assert.equal(h.node("next").textContent, cards[0].children[1].textContent);
+    cards[0].children.at(-1).click(); cards[1].children.at(-1).click();
+    assert.deepEqual(h.openedActions, [ready, blocked]);
+    assert.equal(JSON.stringify(h.state.workspace), before, "Rendering does not alter source readiness");
+
+    h.state.workspace.readyActions = []; h.state.workspace.blockedActions = [];
+    h.renderer.render();
+    assert.equal(h.node("content").children.filter((node) => node.className === "uw-next-action").length, 0,
+      "Empty current frontiers do not revive a compatibility nextAction");
+    h.state.workspace.nextAction = { kind: "refresh_design_material" };
+    h.renderer.render();
+    assert.equal(h.article().children[1].textContent, LIVE_WORKSPACE_MESSAGES[language].nextRefreshMaterial,
+      "A material-change warning remains visible alongside module frontiers");
+    const refreshReview = { kind: "refresh_design_review", moduleId: null };
+    h.state.workspace.nextAction = refreshReview;
+    h.renderer.render();
+    assert.equal(h.article().children[1].textContent, LIVE_WORKSPACE_MESSAGES[language].nextRefreshReview,
+      "Expired reviews have an actionable host refresh instruction in every language");
+    h.article().children.at(-1).click();
+    assert.equal(h.openedActions.at(-1), refreshReview);
   }
 });
 

@@ -39,8 +39,11 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
       case "design_module": key = "nextDesignModule"; break;
       case "revise_outline": key = "nextReviseOutline"; break;
       case "revise_module": key = "nextReviseModule"; break;
+      case "continue_module": key = "nextContinueModule"; break;
+      case "awaiting_dependency": key = "nextAwaitDependency"; break;
       case "continue_governed_run": key = "nextContinueRun"; break;
       case "register_design_review": key = "nextRegisterReview"; break;
+      case "refresh_design_review": key = "nextRefreshReview"; break;
       case "refresh_design_material": key = "nextRefreshMaterial"; break;
       case "apply_feedback": key = "feedbackRecorded"; break;
       default: return action.summary || copy("waiting");
@@ -48,6 +51,21 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
     // Module names and original summaries stay authoritative business data;
     // only known system instructions use the selected interface language.
     return copy(key).replace("{module}", () => module?.title || action.moduleId || copy("moduleDetail"));
+  };
+  const workspaceActions = () => {
+    const workspace = state.workspace;
+    if (!workspace) return [];
+    if (!Array.isArray(workspace.readyActions) && !Array.isArray(workspace.blockedActions)) {
+      return workspace.nextAction ? [{ action: workspace.nextAction, state: null }] : [];
+    }
+    const items = [...(workspace.readyActions || []).map((action) => ({ action, state: "ready" })),
+      ...(workspace.blockedActions || []).map((action) => ({ action, state: "blocked" }))];
+    const next = workspace.nextAction;
+    if (["refresh_design_material", "refresh_design_review", "apply_feedback", "register_design_review"].includes(next?.kind) &&
+      !items.some(({ action }) => action.kind === next.kind && action.moduleId === next.moduleId)) {
+      items.push({ action: next, state: null });
+    }
+    return items;
   };
   const button = (title, action, attributes = {}, secondary = false) => {
     const node = e("button", "uw-button" + (secondary ? " secondary" : ""), title);
@@ -94,7 +112,7 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
     const snapshot = state.snapshot;
     root.dataset.workspaceRevision = state.workspace?.revision == null ? "" : String(state.workspace.revision);
     const title = snapshot?.run?.title || state.project?.displayName || copy("projectEmpty");
-    const subtitle = snapshot?.run?.task || nextActionSummary(state.workspace?.nextAction) || (state.workspace ? copy("noReviews") : copy("chooseRun"));
+    const subtitle = snapshot?.run?.task || nextActionSummary(workspaceActions()[0]?.action) || (state.workspace ? copy("noReviews") : copy("chooseRun"));
     text("title", title);
     text("project-label", state.project?.displayName || copy("workspace"));
     text("next", subtitle);
@@ -200,12 +218,17 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
     }
   }
   function renderTasks() {
-    const nextAction = state.workspace?.nextAction;
-    if (nextAction) {
+    for (const { action: nextAction, state: actionState } of workspaceActions()) {
       const card = e("section", "uw-next-action");
       card.dataset.liveWorkspaceNextAction = nextAction.kind;
-      card.append(e("span", "uw-eyebrow", copy("nextAction")), e("h3", "", nextActionSummary(nextAction)));
-      const request = (state.workspace.requests || []).find((item) => item.commandId === nextAction.commandId);
+      if (actionState) card.dataset.liveWorkspaceActionState = actionState;
+      if (nextAction.moduleId) card.dataset.liveWorkspaceActionModule = nextAction.moduleId;
+      card.append(e("span", "uw-eyebrow", copy(actionState === "ready" ? "readyActions" : actionState === "blocked" ? "blockedActions" : "nextAction")), e("h3", "", nextActionSummary(nextAction)));
+      if (nextAction.dependsOn?.length) {
+        const modules = state.workspace.design?.modules || [];
+        card.append(e("p", "uw-source-ref", copy("dependsOn") + ": " + nextAction.dependsOn.map((id) => modules.find((item) => item.id === id)?.title || id).join(" · ")));
+      }
+      const request = nextAction.commandId && (state.workspace.requests || []).find((item) => item.commandId === nextAction.commandId);
       if (request) card.append(e("p", "", label(request.status)));
       card.append(button(copy(nextAction.kind === "awaiting_review" ? "openMaterial" : nextAction.moduleId ? "openModule" : nextAction.kind === "continue_governed_run" ? "openContinuation" : "overview"), () => actions.openNextAction(nextAction), { "data-live-workspace-next-action-open": "" }));
       content.append(card);
@@ -311,13 +334,14 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
       const input = e("textarea", "uw-textarea"); input.dataset.liveWorkspaceFeedback = "";
       input.value = state.drafts.get(key) || "";
       input.addEventListener("input", () => state.drafts.set(key, input.value));
-      const submit = button(copy("sendFeedback"), () => actions.feedback(item, input.value), { "data-live-workspace-submit-feedback": "" });
+      const submit = button(copy("sendFeedback"), () => actions.feedback(form.item, input.value), { "data-live-workspace-submit-feedback": "" });
       const availability = e("p", "uw-source-ref");
       box.append(heading, hint, input, e("div", "uw-actions"), availability);
       box.children[3].append(submit);
       form = { box, heading, hint, input, submit, availability };
       forms.set(key, form);
     }
+    form.item = item;
     form.heading.textContent = copy("feedback"); form.hint.textContent = copy("feedbackHint");
     form.input.setAttribute("aria-label", copy("feedback")); form.input.placeholder = copy("feedbackPlaceholder");
     form.submit.textContent = copy(state.command?.busy ? "sending" : "sendFeedback");
@@ -429,7 +453,7 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
         detailBody.append(section(copy("source"), list));
       } else if (!(stage?.evidenceTotal > 0)) detailBody.append(section(copy("source"), copy("stageEvidenceMissing")));
       if (Number.isSafeInteger(stage?.evidenceOmitted) && stage.evidenceOmitted > 0) detailBody.append(section(copy("source"), copy("evidenceMore").replace("{count}", String(stage.evidenceOmitted))));
-      if (state.workspace?.nextAction) detailBody.append(section(copy("nextAction"), nextActionSummary(state.workspace.nextAction)));
+      for (const { action } of workspaceActions()) detailBody.append(section(copy("nextAction"), nextActionSummary(action)));
     } else {
       const task = state.tasks.find((item) => item.id === state.detail.id);
       text("detail-kind", copy("tasks")); text("detail-title", task?.title || state.detail.id);

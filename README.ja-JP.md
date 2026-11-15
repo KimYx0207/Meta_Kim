@@ -90,7 +90,7 @@ AI クライアントでプロジェクトを開き、依頼、既存資料、�
 
 選択肢には、対象顧客、価値、集客、収益、初期と継続の負担、制約、小さく試す方法を示します。モール運営、コンテンツ販売、独立ブランドは異なる EC の方向です。ソフトウェア、実物商品、翻訳コンテンツの海外展開にも異なる条件があります。推奨には根拠と条件を付け、重要な選択を未決のまま設計の前に確認できます。
 
-v3.15.1 は「比較済み、未選択」の調査結果を保持し、必要に応じて情報の確認時点を再点検できます。日常の操作は現在の AI 対話で行い、同じ PRD と意思決定の記録を使います。
+v3.16.0 は前提条件がそろった現在の重要な未決事項を問い、独立したモジュールを進め、同じ AI ホストへ作業を引き継ぎます。調査に基づく比較、必要に応じた情報の確認時点の再点検、共通の PRD と意思決定の記録は引き続き使えます。
 
 ## 一回目の PRD：アイデアからシステム構成とモジュールの概要へ
 
@@ -336,7 +336,7 @@ Meta_Kim は、計画、発見、進捗、決定、成果物、検査結果を�
 
 ## 自分のプロジェクトで始める
 
-**Node.js 22.13.0+**、Git、モデルへの接続を設定した AI クライアントが必要です。ソースバージョン： **[v3.15.1](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.15.1)** です。変更と移行は [CHANGELOG.ja-JP.md](CHANGELOG.ja-JP.md)、完了した検査とその範囲は[対象を絞った検証と出典記録](docs/verification/minimal-compatibility-20261115.md)を参照してください。
+**Node.js 22.13.0+**、Git、モデルへの接続を設定した AI クライアントが必要です。ソースバージョン： **[v3.16.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.16.0)** です。変更と移行は [CHANGELOG.ja-JP.md](CHANGELOG.ja-JP.md)、完了した検査とその範囲は[対象を絞った検証と出典記録](docs/verification/yuan-interaction-20261115.md)を参照してください。
 
 ### 1. Meta_Kim をインストールする
 
@@ -439,7 +439,7 @@ node bin/meta-kim.mjs live --project-root "/path/to/your-project"
 
 **利用条件：** 方法を取り込む経路で、実際の実行にはクライアントのモデル、ツール、権限を使います。Meta CLI と Live の機能には別途 Meta ランタイムが必要です。エクスポートとローカル整合性検証は実装済みで、取り込み、実行、継続は以下の手順で自分のタスクを使って確認します。
 
-Meta_Kim **v3.15.1** のソースと **Node.js 22.13.0+** を用意します。この版のダウンロード先は [v3.15.1 Release](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.15.1) です。ソースのルートでターミナルを開き、OS に合うコマンドで両クライアントのインポート用パッケージを生成・確認します。出力先は新しいディレクトリにしてください。
+Meta_Kim **v3.16.0** のソースと **Node.js 22.13.0+** を用意します。この版のダウンロード先は [v3.16.0 Release](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.16.0) です。ソースのルートでターミナルを開き、OS に合うコマンドで両クライアントのインポート用パッケージを生成・確認します。出力先は新しいディレクトリにしてください。
 
 **Windows · PowerShell**
 
@@ -482,7 +482,7 @@ done
 インポート成功、実際の実行、成果の検証を区別してください。
 ```
 
-専門手法を加える場合、Meta_Kim v3.15.1 と **[Kim_Service V1.19](https://github.com/KimYx0207/Kim_Service/releases/tag/V1.19)**を組み合わせます。Service ソースのルートでラッパーを使い、Agent または Skill を一つずつエクスポートします。絶対パスを実際の場所に置き換えてください。
+専門手法を加える場合、Meta_Kim v3.16.0 と **[Kim_Service V1.19](https://github.com/KimYx0207/Kim_Service/releases/tag/V1.19)**を組み合わせます。Service ソースのルートでラッパーを使い、Agent または Skill を一つずつエクスポートします。絶対パスを実際の場所に置き換えてください。
 
 ```bash
 node scripts/build-desktop-skill-package.mjs --meta-root "/absolute/Meta_Kim" --host workbuddy --component reliability-engineer --output "/absolute/new-reliability-method"

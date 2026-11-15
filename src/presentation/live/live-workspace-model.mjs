@@ -28,7 +28,7 @@ export function workspaceMaterialMatches(item, page) {
 }
 
 export function workspaceMaterialReady(item, material) {
-  return Boolean(item?.artifactId && material?.verified === true && material.identity === workspaceMaterialIdentity(item)
+  return Boolean(item?.artifactId && item.status !== "material_changed" && material?.verified === true && material.identity === workspaceMaterialIdentity(item)
     && typeof material.sha256 === "string" && (!item.sha256 || material.sha256 === item.sha256)
     && material.conflict !== true && material.sourceState !== "changed");
 }

@@ -22,6 +22,50 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "tests/fixtures/live-workspace-browser-fixture.mjs"
 
 
+def check_module_frontier(browser, location, evidence):
+    """Real DOM/navigation with controlled readiness; no dispatch or backend claim."""
+    for language, locale, ready_text, waiting_text in (
+        ("zh", "zh-CN", "可推进", "等待依赖模块设计采纳"),
+        ("en", "en-US", "Ready to continue", "Waiting for dependency designs to be adopted"),
+        ("ja", "ja-JP", "続行できる作業", "依存モジュールの設計採用待ち"),
+        ("ko", "ko-KR", "진행 가능한 작업", "의존 모듈 설계의 채택 대기"),
+    ):
+        context = browser.new_context(viewport={"width": 1024, "height": 900}, locale=locale)
+        page = context.new_page()
+        writes, errors = [], []
+        page.on("request", lambda request: writes.append(request.url) if request.method != "GET" else None)
+        page.on("pageerror", lambda error: errors.append(str(error)))
+
+        def readiness(route):
+            response = route.fetch()
+            payload = response.json()
+            payload["readyActions"] = [{"kind": "continue_module", "moduleId": "alpha"}]
+            payload["blockedActions"] = [{"kind": "awaiting_dependency", "moduleId": "beta", "dependsOn": ["alpha"]}]
+            payload["nextAction"] = {"kind": "awaiting_review", "moduleId": None}
+            route.fulfill(response=response, json=payload)
+
+        page.route("**/api/workspace?*", readiness)
+        page.goto(location, wait_until="networkidle")
+        if page.locator("[data-live-language-select]").input_value() != language:
+            with page.expect_navigation(wait_until="networkidle"):
+                page.locator("[data-live-language-select]").select_option(language)
+        cards = page.locator("[data-live-workspace-next-action]")
+        expect(cards).to_have_count(2)
+        expect(cards.first).to_have_attribute("data-live-workspace-action-state", "ready")
+        expect(cards.first).to_contain_text(ready_text)
+        expect(cards.last).to_contain_text(waiting_text)
+        cards.first.locator("button").focus()
+        page.keyboard.press("Enter")
+        expect(page.locator('[data-live-workspace-module="alpha"]')).to_have_attribute("data-selected", "true")
+        page.locator('[data-live-workspace-nav="work"]').click()
+        cards.last.locator("button").click()
+        expect(page.locator('[data-live-workspace-module="beta"]')).to_have_attribute("data-selected", "true")
+        assert not writes, f"Opening module actions caused writes: {writes}"
+        assert not errors, errors
+        context.close()
+    evidence["checks"].append("Real browser DOM: four-language ready/blocked module cards, keyboard/click navigation, no write requests; readiness responses controlled, not backend execution proof")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=ROOT / "browser-artifacts/workspace")
@@ -123,6 +167,10 @@ def main() -> None:
                     approval = approval_response.value.json()
                     assert approval["completionVerified"] is False
                     assert action("inspect")["nextAction"]["moduleId"] == "alpha"
+                    page.locator('[data-live-workspace-nav="work"]').click()
+                    expect(page.locator('[data-live-workspace-next-action="design_module"][data-live-workspace-action-module="alpha"]')).to_be_visible()
+                    expect(page.locator('[data-live-workspace-next-action="awaiting_dependency"]')).to_have_count(3)
+                    evidence["checks"].append("Actual fixture service frontier: the ready module and three dependent modules remain visible together")
                     action("advance")
                     page.locator("[data-uw-refresh]").click()
                     page.locator('[data-live-workspace-module="alpha"]').click()
@@ -228,6 +276,7 @@ def main() -> None:
                                     localized_server.kill()
                                     localized_server.wait(timeout=5)
                     evidence["checks"].append("English, Japanese and Korean UI and sample materials: real outline approval, host CLI file report and localized module screenshots")
+                    check_module_frontier(browser, location, evidence)
                     if errors:
                         raise RuntimeError("Browser error: " + errors[0])
                     evidence["checks"].append("No browser page errors")

@@ -10,7 +10,6 @@ import { createGovernanceRuntimeFixtureScope } from "../helpers/governance-runti
 import { runDiagnosticReadPlan } from "../../scripts/diagnostic-host-protocol.mjs";
 import { FIXTURE_DIAGNOSTIC_PROVIDERS, fixtureCritical, fixtureReadWorkOrder, runFixtureHostCli } from "../helpers/host-reasoning-fixture.mjs";
 import { localProtocolFixtureTaskFacts } from "../helpers/task-design-facts.mjs";
-import { assertOptionalPlaybookContract } from "../helpers/optional-playbook-contract.mjs";
 import { getReportLabels } from "../../scripts/meta-kim-i18n.mjs";
 import { buildAgentProjectionTargets } from "../../scripts/runtime-tool-profiles.mjs";
 import { readJson, readFile as readRepoFile } from "./_helpers.mjs";
@@ -377,7 +376,9 @@ describe("34 — Meta-theory run deliverables", () => {
         runArtifact.cardPlanPacket.visibleSummary.cardTypeCount,
         new Set(runArtifact.cardPlanPacket.cardEvents.map((item) => item.cardKey)).size
       );
-      assert.ok(runArtifact.cardPlanPacket.eventOrder.includes("pause"));
+      assert.ok(!runArtifact.cardPlanPacket.eventOrder.some((card) =>
+        ["clarify", "options", "nudge", "pause"].includes(card)),
+      "A clear read-only plan must not invent user questions, follow-ups, or pauses");
       assert.ok(
         runArtifact.cardPlanPacket.cardEvents.every(
           (event) => Number.isInteger(event.repeatOrdinal) && event.repeatOrdinal >= 1

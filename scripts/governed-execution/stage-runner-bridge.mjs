@@ -20,6 +20,11 @@ import { projectWorkerProgressEvent } from "./worker-result-projection.mjs";
 import { calculationHandoffForWorker } from "./dependency-calculation-handoff.mjs";
 import { taskOutcomeDigest } from "../../src/domain/governance/task-outcome.mjs";
 import { readTaskResearchEvidence } from "./research-records.mjs";
+import { resolveModuleStageExecutor, invokeModuleStageExecutor, moduleStageAncestorResults, moduleStageSatisfied,
+  projectModuleStages, moduleStageDigest, assertStoredModuleStageRecord, moduleDownstreamNodeIds,
+  validateCurrentModuleFacts, moduleNodeInRequestedScope } from "./module-stage-execution.mjs";
+import { createModuleStageFactExecutors } from "./module-stage-fact-bindings.mjs";
+import { revalidateModuleTaskArtifact } from "./module-artifact-reuse.mjs";
 import { verifyTaskDesignContext } from "./product-design.mjs";
 import { verifyTaskDesignReadiness } from "./task-design-dispatch.mjs";
 import {
@@ -53,6 +58,7 @@ import {
   selectMaximalSafeReadySet,
   stageLaneNodeId,
   validateStageDagPacket,
+  isModuleScopedDag,
 } from "./stage-dag.mjs";
 
 const SUPPORTED_RUNTIMES = new Set(["codex", "claude"]);
@@ -733,6 +739,7 @@ export async function readObservedMachineResult(result) {
 }
 
 function executionPrefixCompletedNodeIds(stageDagPacket) {
+  if (isModuleScopedDag(stageDagPacket)) return [];
   const executionIndex = stageDagPacket.stageOrder.indexOf("Execution");
   if (executionIndex < 0) throw new TypeError("stageDagPacket is missing the Execution stage");
   const priorStages = new Set(stageDagPacket.stageOrder.slice(0, executionIndex));
@@ -748,6 +755,7 @@ function bridgeNodeRecord(node, details) {
     laneKind: node.laneKind,
     ownerBindingRef: node.ownerBindingRef,
     capabilityBindingRef: node.capabilityBindingRef,
+    ...(node.scope ? { scope: node.scope } : {}),
     ...details,
   };
 }
@@ -929,7 +937,12 @@ function durableTraversedEdgesForNode(context, node) {
 function commitDurableTerminalResult(context, node, claim, result, redactionContext) {
   if (!context) return result;
   try {
-    if (result.status === "completed") {
+    if (result.status === "completed" && node.laneKind === "module_stage" && result.stageVerdict === "blocked") {
+      context.kernel.appendEvent({ runId: claim.runId, eventId: `${claim.attemptId}:stage-wait`, eventType: "ModuleStageWaitObserved",
+        nodeId: node.nodeId, attemptId: claim.attemptId, payload: { receipt: result.stageReceipt } });
+      context.kernel.failNode({ runId: claim.runId, nodeId: node.nodeId, attemptId: claim.attemptId, fenceToken: claim.fenceToken,
+        ownerId: context.ownerId, failure: { failureClass: "module_stage_wait", failureMessage: result.stageReceipt.summary } });
+    } else if (result.status === "completed") {
       context.kernel.completeNode({
         runId: claim.runId,
         nodeId: node.nodeId,
@@ -1301,6 +1314,10 @@ export async function runStageRunnerBridge({
   dependencyCalculationHandoff = null,
   routeHandoffEvidence = null,
   onExecutionProgress = null,
+  stageExecutors = null,
+  design = null,
+  host = null,
+  artifactRoot = null,
 }) {
   const normalizedRuntime = normalizeStageRunnerRuntime(runtime);
   const routeHandoffSnapshot = routeHandoffEvidence == null ? null : structuredClone(routeHandoffEvidence);
@@ -1324,8 +1341,11 @@ export async function runStageRunnerBridge({
     throw new TypeError("stageDagPacket must retain the core-loop contract as its authority");
   }
   validateStageDagPacket(stageDagPacket, { requireDigest: true });
+  const moduleScoped = isModuleScopedDag(stageDagPacket);
+  if (moduleScoped && executeReadySet !== executeNativeReadySet) throw new TypeError("Module-scoped bridge requires the current first-party dependency dispatcher");
   const durableContext = await prepareDurableBridgeContext({ durable, runId, stageDagPacket });
   try {
+  if (moduleScoped && !durableContext) throw new TypeError("Module-scoped execution requires the existing durable kernel");
   // The durable kernel remains the only event authority. A resume starts at its
   // current cursor: historical completed work is restored below, never replayed
   // as new activity. Reserve each sequence before awaiting a transport callback
@@ -1350,9 +1370,23 @@ export async function runStageRunnerBridge({
     }
   };
   const resolvedWorkspace = path.resolve(workspaceRoot);
+  const moduleDispatchScope = host?.workOrder?.scope ?? host?.moduleScope ?? null;
+  let stageBindingDiagnostics = [];
+  if (moduleScoped && host) {
+    const boundHost = { ...host, moduleRunContext: { runId, workspaceRunId: host.workOrder?.runId ?? null,
+      designDigest: design?.designDigest ?? null, previousRunId: design?.revisionContext?.previousRunId ?? null } };
+    const ownedRoot = path.resolve(artifactRoot ?? path.join(resolvedWorkspace, ".meta-kim/work/module-stage-results"));
+    const { createHostModuleStageExecutors } = await import("./module-stage-host-bindings.mjs");
+    const discovered = await createHostModuleStageExecutors({ host: boundHost, runtime: normalizedRuntime,
+      projectRoot: resolvedWorkspace, artifactRoot: ownedRoot, env: workerEnv });
+    const facts = await createModuleStageFactExecutors({ host: boundHost, runtime: normalizedRuntime,
+      projectRoot: resolvedWorkspace, artifactRoot: ownedRoot });
+    stageExecutors = { ...discovered, ...stageExecutors, ...facts };
+    stageBindingDiagnostics = [...discovered.diagnostics, ...facts.diagnostics];
+  }
   const redactionContext = buildRedactionContext(resolvedWorkspace, redactionEnv);
   const completedNodeIds = new Set(executionPrefixCompletedNodeIds(stageDagPacket));
-  const executionNodes = stageDagPacket.nodes.filter((node) => node.stage === "Execution");
+  const executionNodes = stageDagPacket.nodes.filter((node) => moduleScoped || node.stage === "Execution");
   const nodeRecordsById = new Map();
   const workerResultsByNodeId = new Map();
   const durableClaimsByNodeId = new Map();
@@ -1366,6 +1400,7 @@ export async function runStageRunnerBridge({
     if (!record || record.nodeId !== completed.nodeId || record.status !== "completed") {
       throw new Error(`Durable completed node output is not a valid bridge record: ${completed.nodeId}`);
     }
+    if (moduleScoped) assertStoredModuleStageRecord({ record, node: stageDagPacket.nodes.find((node) => node.nodeId === completed.nodeId), stageDagPacket, runId });
     if (record.deliveryEnvelope) {
       const packet = workerTaskForNode(workerTaskPackets, completed.nodeId);
       if (!packet || !methodDeliveryMatches({ envelope: record.deliveryEnvelope, runId, packet, outputText: record.outputText })) {
@@ -1382,7 +1417,7 @@ export async function runStageRunnerBridge({
       nativeCustomAgent: "not_verified",
       nativeCustomAgentInvocationVerified: false,
     } };
-    completedNodeIds.add(completed.nodeId);
+    if (!moduleScoped || moduleStageSatisfied(record)) completedNodeIds.add(completed.nodeId);
     nodeRecordsById.set(completed.nodeId, record);
     if (record.laneKind === "execution_worker") workerResultsByNodeId.set(completed.nodeId, record);
   }
@@ -1392,12 +1427,65 @@ export async function runStageRunnerBridge({
   const readySetAdapterBatches = [];
   let readySetBatchIndex = 0;
   const dispatchGaps = new Map();
+  const scopedInFlight = new Map();
+  const scopedFailed = new Map();
+  const scopedWaitReasons = new Map();
+  let moduleInvalidNodeIds = new Set();
+  const scopedCapacity = Math.max(1, Number.parseInt(String(capacity ?? stageDagPacket.runtimeCapacity ?? 1), 10) || 1);
+  if (moduleScoped) for (const event of durableContext.kernel.getEvents(runId)) {
+    if (["NodeAttemptFailed", "NodeAttemptInDoubt"].includes(event.eventType) && event.payload?.failure?.failureClass !== "module_stage_wait" && !nodeRecordsById.has(event.nodeId)) {
+      scopedFailed.set(event.nodeId, { nodeId: event.nodeId, failureClass: "prior_attempt_requires_explicit_recovery" });
+    }
+  }
 
-  while (!failure && executionNodes.some((node) => !completedNodeIds.has(node.nodeId))) {
+  while (!failure) {
     const eligibleNodeIds = [];
     dispatchGaps.clear();
+    if (moduleScoped) {
+      const invalidFacts = new Map();
+      for (const node of executionNodes) {
+        if (node.laneKind !== "module_stage") continue;
+        const fact = stageExecutors?.[node.nodeId], record = nodeRecordsById.get(node.nodeId);
+        let reason = fact?.ready === false ? fact.reason ?? "current_module_fact_required" : null;
+        if (!reason && record && typeof fact?.validateCurrent === "function") {
+          try { const current = await fact.validateCurrent({ node, runId }); if (current?.ready !== true) reason = current?.reason ?? "current_module_fact_required"; }
+          catch (error) { reason = error.message; }
+        }
+        if (reason) invalidFacts.set(node.nodeId, reason);
+      }
+      moduleInvalidNodeIds = moduleDownstreamNodeIds(stageDagPacket, [...invalidFacts.keys(), ...scopedWaitReasons.keys()]);
+      // Historical receipts remain in the kernel. Current dependencies cannot
+      // use them while their design or actual source has ceased to be valid.
+      for (const [id, record] of nodeRecordsById) {
+        if (moduleStageSatisfied(record) && !moduleInvalidNodeIds.has(id)) completedNodeIds.add(id);
+        else completedNodeIds.delete(id);
+      }
+      for (const id of moduleInvalidNodeIds) dispatchGaps.set(id, { nodeId: id,
+        gaps: [invalidFacts.get(id) ?? scopedWaitReasons.get(id) ?? "current_ancestor_fact_required"] });
+    }
+    if (executionNodes.every(node => completedNodeIds.has(node.nodeId))) break;
     for (const node of executionNodes) {
+      if (moduleInvalidNodeIds.has(node.nodeId)) continue;
       if (completedNodeIds.has(node.nodeId)) continue;
+      if (scopedInFlight.has(node.nodeId)) continue;
+      if (moduleScoped && !moduleNodeInRequestedScope(node, moduleDispatchScope, workerTaskPackets)) {
+        dispatchGaps.set(node.nodeId, { nodeId: node.nodeId, gaps: ["outside_current_module_work_order"] });
+        continue;
+      }
+      if (scopedFailed.has(node.nodeId)) {
+        dispatchGaps.set(node.nodeId, { nodeId: node.nodeId, gaps: ["prior_attempt_requires_explicit_recovery"] });
+        continue;
+      }
+      if (node.laneKind === "module_stage") {
+        const record = nodeRecordsById.get(node.nodeId);
+        if (record || !resolveModuleStageExecutor(stageExecutors, node)) {
+          dispatchGaps.set(node.nodeId, { nodeId: node.nodeId, scope: node.scope,
+            gaps: [record ? `stage_${record.stageVerdict}_requires_current_revision`
+              : node.stageContract?.taskDecompositionRequired ? "module_task_decomposition_required"
+              : stageExecutors?.[node.nodeId]?.reason ?? "current_host_stage_executor_required"] });
+          continue;
+        }
+      }
       if (node.laneKind !== "execution_worker") { eligibleNodeIds.push(node.nodeId); continue; }
       const packet = workerTaskForNode(workerTaskPackets, node.nodeId);
       try {
@@ -1420,13 +1508,16 @@ export async function runStageRunnerBridge({
           gaps: ["current_task_input_or_design_binding_required"], reason: redactSensitiveText(error.message, redactionContext) });
       }
     }
-    const ready = selectMaximalSafeReadySet(stageDagPacket, {
+    const available = moduleScoped ? scopedCapacity - scopedInFlight.size : capacity;
+    const ready = !eligibleNodeIds.length || moduleScoped && available <= 0 ? { readyNodes: [] } : selectMaximalSafeReadySet(stageDagPacket, {
       completedNodeIds: [...completedNodeIds],
-      capacity,
-      stage: "Execution",
+      capacity: available,
+      stage: moduleScoped ? null : "Execution",
       eligibleNodeIds,
+      runningNodeIds: [...scopedInFlight.keys()],
     });
     if (ready.readyNodes.length === 0) {
+      if (scopedInFlight.size) { await Promise.race([...scopedInFlight.values()]); continue; }
       if (dispatchGaps.size > 0) break;
       failure = {
         failureClass: "stage_dag_deadlock",
@@ -1435,6 +1526,10 @@ export async function runStageRunnerBridge({
       break;
     }
     const executeNode = async (node, signal = null) => {
+      if (moduleScoped) {
+        try { await validateCurrentModuleFacts({ stageDagPacket, node, executors: stageExecutors, runId }); }
+        catch (error) { return bridgeNodeRecord(node, { status: "waiting", failureClass: "module_stage_wait", failureMessage: error.message }); }
+      }
       const nodeStartedAt = new Date();
       const nodeStartedHr = process.hrtime.bigint();
       const dependencyResults = node.dependsOn
@@ -1445,7 +1540,24 @@ export async function runStageRunnerBridge({
       const heartbeat = startDurableHeartbeat(durableContext, node, claim);
       await publishCommittedProgress();
       let normalizedResult;
-      if (node.laneKind === "stage_merge") {
+      const reused = moduleScoped && node.laneKind === "execution_worker"
+        ? await revalidateModuleTaskArtifact({ design, packet: workerTaskForNode(workerTaskPackets, node.nodeId), node, stageDagPacket,
+            runId, kernel: durableContext.kernel, claim, stageExecutors, projectRoot: resolvedWorkspace, runtime: normalizedRuntime,
+            upstreamResults: dependencyResults, signal }) : { status: "not_requested" };
+      if (reused.status === "reused") {
+        normalizedResult = bridgeNodeRecord(node, reused.result);
+      } else if (node.laneKind === "module_stage") {
+        try {
+          normalizedResult = bridgeNodeRecord(node, await invokeModuleStageExecutor({
+            executor: resolveModuleStageExecutor(stageExecutors, node), runId, stageDagPacket, node, claim,
+            upstreamResults: dependencyResults, relatedResults: moduleStageAncestorResults(stageDagPacket, node, nodeRecordsById),
+            projectRoot: resolvedWorkspace, runtime: normalizedRuntime, signal, workerTaskPackets,
+          }));
+        } catch (error) {
+          normalizedResult = bridgeNodeRecord(node, { status: "failed", runtime: normalizedRuntime,
+            evidenceKind: "host_bound_stage_execution_failed", failureClass: "module_stage_receipt_rejected", failureMessage: error.message });
+        }
+      } else if (node.laneKind === "stage_merge") {
         const mergeDurationMs = Math.max(
           1,
           Number(process.hrtime.bigint() - nodeStartedHr) / 1_000_000,
@@ -1502,6 +1614,8 @@ export async function runStageRunnerBridge({
             runtime: normalizedRuntime,
             evidenceKind: resolvedEvidenceKind,
             taskPacketId: packet.taskPacketId,
+            ownerAgent: packet.ownerAgent ?? packet.owner,
+            ...(packet.designBinding ? { designBinding: packet.designBinding } : {}),
             failureClass: packet.hostOperation ? "current_host_operation_requires_actual_host_binding" : "read_only_bridge_rejected_side_effect_task",
             startedAt: nodeStartedAt.toISOString(),
             endedAt: new Date().toISOString(),
@@ -1555,6 +1669,7 @@ export async function runStageRunnerBridge({
                 runtimeProcessInvoked: false,
               } : null;
             }
+            if (moduleScoped) await validateCurrentModuleFacts({ stageDagPacket, node, executors: stageExecutors, runId });
             workerInvocationAttempted = true;
             result = await invokeWorker({
               ...(localToolInvokerSelected ? { runId, requestTask } : {}),
@@ -1604,7 +1719,9 @@ export async function runStageRunnerBridge({
               : modelSelectionRecord(configuredModel, { application: workerInvocationAttempted ? "injected_worker_request" : "not_invoked",
                 applied: workerInvocationAttempted && configuredModel != null }),
             taskPacketId: packet.taskPacketId,
+            ownerAgent: packet.ownerAgent ?? packet.owner,
             ...(methodBinding ? { ownerMethodBinding: methodBinding } : {}),
+            ...(packet.designBinding ? { designBinding: packet.designBinding } : {}),
             actualBinding: {
               runtime: normalizedRuntime,
               ownerBindingRef: node.ownerBindingRef,
@@ -1644,10 +1761,20 @@ export async function runStageRunnerBridge({
           });
         }
       }
+      if (moduleScoped && normalizedResult.status === "completed") {
+        try { await validateCurrentModuleFacts({ stageDagPacket, node, executors: stageExecutors, runId }); }
+        catch (error) {
+          durableContext.kernel.appendEvent({ runId, eventId: `${claim.attemptId}:current-fact-wait`, eventType: "ModuleStageWaitObserved",
+            nodeId: node.nodeId, attemptId: claim.attemptId, payload: { reason: error.message,
+              outputSha256: normalizedResult.outputSha256, receipt: normalizedResult.stageReceipt ?? null } });
+          normalizedResult = { ...normalizedResult, status: "waiting", failureClass: "module_stage_wait", failureMessage: error.message };
+        }
+      }
       normalizedResult = sanitizeBridgeNodeRecord(
         attachHeartbeatFailure(normalizedResult, heartbeat.stop()),
         redactionContext,
       );
+      if (normalizedResult.stageReceipt) normalizedResult.outputSha256 = moduleStageDigest(normalizedResult.stageReceipt);
       normalizedResult = commitDurableTerminalResult(
         durableContext,
         node,
@@ -1658,7 +1785,7 @@ export async function runStageRunnerBridge({
       normalizedResult = sanitizeBridgeNodeRecord(normalizedResult, redactionContext);
       await publishCommittedProgress();
       nodeRecordsById.set(node.nodeId, normalizedResult);
-      if (normalizedResult.status === "completed") {
+      if (normalizedResult.status === "completed" && (!moduleScoped || moduleStageSatisfied(normalizedResult))) {
         completedNodeIds.add(node.nodeId);
         if (normalizedResult.laneKind === "execution_worker") {
           workerResultsByNodeId.set(node.nodeId, normalizedResult);
@@ -1666,6 +1793,22 @@ export async function runStageRunnerBridge({
       }
       return normalizedResult;
     };
+    if (moduleScoped) {
+      // Completion of one node immediately releases its actual dependents.
+      // The same kernel and selector remain authoritative; no superstep waits
+      // for an unrelated slow module before its peers can review their work.
+      for (const node of ready.readyNodes) {
+        const running = executeNode(node).then((record) => {
+          if (record.failureClass === "module_stage_wait") scopedWaitReasons.set(node.nodeId, record.failureMessage);
+          else if (record.status !== "completed") scopedFailed.set(node.nodeId, record);
+        }).catch((error) => {
+          scopedFailed.set(node.nodeId, { nodeId: node.nodeId, failureClass: "module_node_execution_failed", failureMessage: error.message });
+        }).finally(() => scopedInFlight.delete(node.nodeId));
+        scopedInFlight.set(node.nodeId, running);
+      }
+      await Promise.race([...scopedInFlight.values()]);
+      continue;
+    }
     const canonicalReadyNodes = new Map(ready.readyNodes.map((node) => [node.nodeId, node]));
     const adapterReadyNodes = Object.freeze(
       ready.readyNodes.map((node) => Object.freeze({ nodeId: node.nodeId })),
@@ -1880,6 +2023,12 @@ export async function runStageRunnerBridge({
     }
   }
 
+  if (scopedInFlight.size) await Promise.allSettled([...scopedInFlight.values()]);
+  if (!failure && scopedFailed.size) {
+    const failed = scopedFailed.values().next().value;
+    failure = { failureClass: failed.failureClass ?? "module_node_failed", reason: failed.failureMessage ?? "A module requires explicit recovery", nodeId: failed.nodeId };
+  }
+
   const endedAt = new Date();
   const totalDurationMs = Math.max(
     1,
@@ -1910,6 +2059,8 @@ export async function runStageRunnerBridge({
     schemaVersion: "stage-dag-execution-projection-v0.1",
     authorityPacketRef: "coreLoop.stageDagPacket",
     graphDigest: stageDagPacket.graphDigest ?? null,
+    ...(moduleScoped ? { moduleProgress: { ...projectModuleStages(stageDagPacket, nodeRecordsById, { invalidNodeIds: moduleInvalidNodeIds }),
+      bindingDiagnostics: stageBindingDiagnostics } } : {}),
     status: failure ? "execution_failed" : executionComplete ? "executed" : "awaiting_task_inputs",
     nodeStatuses: executionNodes.map((node) => ({
       nodeId: node.nodeId,

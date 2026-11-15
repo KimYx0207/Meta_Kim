@@ -24,6 +24,7 @@ import { canonicalMethodKnowledgeSelection } from "../src/infrastructure/capabil
 import { prepareHostMethodHandoff } from "./governed-execution/host-method-handoff.mjs";
 import { normalizeOsTarget } from "./runtime-operating-system.mjs";
 import { renderPreparationNotice } from "./governed-execution/preparation-notice.mjs";
+import { projectContextualCardPlan } from "./governed-execution/contextual-card-plan.mjs";
 import { inspectTrustedPath, withSafeManagedFileLock } from "./safe-managed-file-operations.mjs";
 import { scopeComparisonKey, scopeKeysAreProvablyDisjoint } from "./task-scope-comparison.mjs";
 import { projectWorkflowWorkerResults } from "./governed-execution/worker-result-projection.mjs";
@@ -76,7 +77,9 @@ import {
 import {
   buildStageDagPacket,
   stageLaneNodeId,
+  isModuleScopedDag,
 } from "./governed-execution/stage-dag.mjs";
+import { moduleNodeInRequestedScope } from "./governed-execution/module-stage-execution.mjs";
 import {
   applyStageRunnerBridgeResult,
   normalizeStageRunnerRuntime,
@@ -433,7 +436,7 @@ const CARD_TYPE_CATALOG = Object.freeze([
     cardIntent: "clarify",
     priority: 10,
     cost: "low",
-    trigger: "Intent, success standard, non-goal, permission, or acceptance boundary may change the route.",
+    trigger: "An unresolved dependency-ready material question needs user input without a multi-option choice.",
     action: "Lock the real outcome before Fetch, Thinking, or execution.",
     deliveryShell: "chat_status",
     mapsToSpine: ["Critical"],
@@ -459,7 +462,7 @@ const CARD_TYPE_CATALOG = Object.freeze([
     cardIntent: "plan",
     priority: 8,
     cost: "mid",
-    trigger: "More than one viable path, owner, or capability class exists.",
+    trigger: "An unresolved dependency-ready material user decision has multiple concrete options.",
     action: "Compare paths and choose the route with explicit trade-offs.",
     deliveryShell: "decision_card",
     mapsToSpine: ["Thinking"],
@@ -551,7 +554,7 @@ const CARD_TYPE_CATALOG = Object.freeze([
     priority: 2,
     cost: "zero",
     trigger: "Digest window, user decision, or three consecutive high-cost cards.",
-    action: "Stop pushing new tasks and show only a compact status.",
+    action: "Keep the existing pending question or show a compact status; execution authority remains with the existing gates.",
     deliveryShell: "intentional_silence",
     mapsToSpine: ["Critical", "Review"],
   },
@@ -607,33 +610,33 @@ function cardDecisionState({ decision, accuracyScore }) {
 
 function buildCardDealEvaluation({ card, decision, context }) {
   const expectedActiveByCard = {
-    clarify: true,
+    clarify: context.clarificationNeeded,
     "shrink-scope": context.workerCount > 1,
-    options: context.capabilityCount > 1,
+    options: context.optionsNeeded,
     execute: context.workerCount > 0,
     verify: context.runtimeRecordCount > 0,
-    fix: context.reviewStatus !== "pass",
+    fix: context.needsFix,
     rollback: context.hasBlockedGap,
     risk: context.runtimeRisk,
     nudge: context.userNextStepNeeded,
-    pause: context.digestWindowNeeded || context.highCostActiveBeforePause >= 3,
+    pause: context.pauseNeeded,
   };
   const evidenceRefsByCard = {
-    clarify: ["criticalSummary.successCriteria", "taskClassification"],
+    clarify: ["preDecisionOptionFrame.unresolvedQuestions", "preDecisionOptionFrame.readyDecisionFrontier"],
     "shrink-scope": ["workerTaskPackets.length", "orchestrationTaskBoardPacket.tasks"],
-    options: ["fetchEvidence.capabilityInventory", "thinkingRoute"],
+    options: ["preDecisionOptionFrame.unresolvedQuestions", "preDecisionOptionFrame.readyDecisionFrontier"],
     execute: ["workerTaskPackets", "dispatchBoard"],
     verify: ["runtimeProjectionEvidence.results", "verificationResult"],
     fix: ["reviewResult.status", "reviewResult.findings"],
     rollback: ["capabilityGaps.blocked", "rollbackPlanPacket"],
     risk: ["runtimeProjectionEvidence.results.strictReleasePass", "controlDecisions"],
-    nudge: ["summaryPacket.nextAction", "businessPhasePlanPacket.closure"],
-    pause: ["silenceDecision", "businessPhasePlanPacket.closure.userAcceptanceRequired"],
+    nudge: ["preDecisionOptionFrame.planChallengeState.pendingUserChoice"],
+    pause: ["preDecisionOptionFrame.readyDecisionFrontier", "cardPlanPacket.eventOrder"],
   };
   const falsificationChecksByCard = {
     clarify: ["If intent and acceptance are already locked and no route can change, Clarify should suppress."],
     "shrink-scope": ["If workerCount <= 1, Shrink scope must suppress rather than pretend scope pressure exists."],
-    options: ["If only one viable capability route exists, Options must suppress or record no-branching choice."],
+    options: ["If no unresolved dependency-ready material question has multiple options, Options must suppress; capability counts do not create user decisions."],
     execute: ["If workerTaskPackets are empty, Execute must suppress or block."],
     verify: ["If no execution/projection claim exists, Verify must suppress rather than invent proof work."],
     fix: ["If Review passes with zero findings, Fix must suppress."],
@@ -2298,54 +2301,17 @@ export async function buildWardenWritebackFlow({
   };
 }
 
-function buildCardPlanPacket({ runId, orchestrationReport, runtimeEvidence }) {
-  const workerCount = orchestrationReport.workerTaskPackets.length;
-  const capabilityCount = orchestrationReport.fetchEvidence.capabilityInventory.length;
-  const runtimeRecordCount = runtimeEvidence.results.length;
-  const hasBlockedGap = orchestrationReport.capabilityGaps.some((gap) => gap.blocked);
-  const runtimeRisk = runtimeEvidence.results.some((item) => item.strictReleasePass === false);
-  const reviewStatus = orchestrationReport.reviewResult.status;
-  const primaryActiveOrder = [
-    "clarify",
-    ...(workerCount > 1 ? ["shrink-scope"] : []),
-    "options",
-    ...(runtimeRisk ? ["risk"] : []),
-    "execute",
-    "verify",
-    ...(hasBlockedGap ? ["rollback"] : []),
-    ...(reviewStatus !== "pass" ? ["fix"] : []),
-  ];
-  const highCostActiveBeforePause = primaryActiveOrder
-    .map((id) => CARD_TYPE_CATALOG.find((card) => card.id === id)?.cost)
-    .filter((cost) => cost === "high").length;
-  const pauseReasons = [
-    ...(primaryActiveOrder.includes("options") ? ["user_decision_window"] : []),
-    ...(highCostActiveBeforePause >= 3 ? ["high_cost_control_window"] : []),
-    "digest_window_after_visible_status",
-  ];
-  const activeOrder = [
-    ...primaryActiveOrder,
-    ...pauseReasons.slice(0, -1).map(() => "pause"),
-    "nudge",
-    pauseReasons.at(-1) ? "pause" : null,
-  ].filter(Boolean);
+function buildCardPlanPacket({ runId, orchestrationReport, runtimeEvidence, preDecisionOptionFrame }) {
+  const projection = projectContextualCardPlan({ orchestrationReport, runtimeEvidence,
+    preDecisionOptionFrame, cardTypeCatalog: CARD_TYPE_CATALOG });
+  const { activeOrder, pauseReasons, context } = projection;
+  const { runtimeRisk } = context;
   const firstEventIndexByKey = new Map();
   activeOrder.forEach((id, index) => {
     if (!firstEventIndexByKey.has(id)) {
       firstEventIndexByKey.set(id, index);
     }
   });
-  const context = {
-    workerCount,
-    capabilityCount,
-    runtimeRecordCount,
-    hasBlockedGap,
-    runtimeRisk,
-    reviewStatus,
-    userNextStepNeeded: true,
-    digestWindowNeeded: true,
-    highCostActiveBeforePause,
-  };
   const cardTypeDecisions = CARD_TYPE_CATALOG.map((card) => {
     const active = firstEventIndexByKey.has(card.id);
     const choiceSurfaceCard = card.id === "options" || card.id === "clarify";
@@ -2383,7 +2349,10 @@ function buildCardPlanPacket({ runId, orchestrationReport, runtimeEvidence }) {
       cardSource: "meta-conductor",
       cardSourceRef: "canonical/skills/meta-theory/references/rhythm-orchestration.md",
       cardSuppressed: cardDecision === "suppress",
-      suppressionReason: cardDecision === "suppress" ? "no_clear_intervention_gain" : null,
+      suppressionReason: cardDecision === "suppress"
+        ? choiceSurfaceCard ? projection.choiceSuppressionReason : "no_clear_intervention_gain" : null,
+      ...(choiceSurfaceCard && active ? { decisionQuestionId: projection.selectedQuestionId,
+        decisionQuestionRef: projection.questionEvidenceRef } : {}),
       deliveryShellId: card.deliveryShell,
       choiceSurface:
         choiceSurfaceCard
@@ -2430,6 +2399,8 @@ function buildCardPlanPacket({ runId, orchestrationReport, runtimeEvidence }) {
       repeatReason,
       choiceSurfaceDelivery: decision.choiceSurfaceDelivery,
       choiceSurfaceTriggerProof: decision.choiceSurfaceTriggerProof,
+      ...(decision.decisionQuestionId ? { decisionQuestionId: decision.decisionQuestionId,
+        decisionQuestionRef: decision.decisionQuestionRef } : {}),
     };
   });
   const activeCardTypeDecisions = cardTypeDecisions
@@ -2486,9 +2457,13 @@ function buildCardPlanPacket({ runId, orchestrationReport, runtimeEvidence }) {
       silenceDecision: activeOrder.includes("pause") ? "intentional_silence" : "none",
       noInterventionPreferred: activeOrder.includes("pause"),
       interruptionJustified: false,
-      deferUntil: "after_status_summary_or_user_reply",
+      deferUntil: context.pauseNeeded ? projection.rejoinCondition : null,
       reasonForSilence:
-        "Pause remains visible as a card so intentional silence is not mistaken for missing orchestration.",
+        context.userDecisionNeeded
+          ? "The existing decision frontier has an unresolved user action; the card does not create another approval."
+          : context.pauseNeeded
+            ? "Three consecutive high-cost cards receive a compact presentation break; execution gates remain unchanged."
+            : "No unresolved user action or attention threshold requires a pause.",
     },
     controlDecisions: [
       {
@@ -2500,8 +2475,8 @@ function buildCardPlanPacket({ runId, orchestrationReport, runtimeEvidence }) {
         insertedGovernanceOwner: "meta-conductor",
         emergencyGovernanceTriggered: false,
         returnsToStage: "Review",
-        rejoinCondition: "after_status_summary_or_user_reply",
-        rule: "After three consecutive high-cost cards, insert Pause before dealing new work.",
+        rejoinCondition: projection.rejoinCondition,
+        rule: "Pause only for an existing user decision or three consecutive high-cost cards; presentation does not grant or deny execution.",
       },
       {
         decisionId: `${runId}-risk-preempt-rule`,
@@ -2548,16 +2523,6 @@ function joinVisibleList(items, fallback, language = "zh-CN") {
   return cleaned.length > 0
     ? cleaned.join(language === "zh-CN" || language === "ja-JP" ? "、" : ", ")
     : fallback;
-}
-
-function joinNoticeSentence(parts, language = "zh-CN") {
-  const cleaned = parts
-    .map((part) => String(part ?? "").trim().replace(/[。.!]+$/u, ""))
-    .filter(Boolean);
-  if (cleaned.length === 0) return "";
-  if (language === "zh-CN") return `${cleaned.join("；")}。`;
-  if (language === "ja-JP") return `${cleaned.join("。")}。`;
-  return `${cleaned.join("; ")}.`;
 }
 
 function localizedBusinessPhaseReason(phase, language) {
@@ -3207,11 +3172,6 @@ function buildGovernanceStartReasonPacket({
 
 function renderReportLabel(label, ...args) {
   return typeof label === "function" ? label(...args) : label;
-}
-
-function renderReportList(label, ...args) {
-  const value = renderReportLabel(label, ...args);
-  return Array.isArray(value) ? value : [String(value)];
 }
 
 function progressEvent({ runId, stage, status, reason, owner = null, details = {} }) {
@@ -4339,7 +4299,16 @@ function buildConductorConsumptionEvidence({
   };
 }
 
-export function buildRunnerStageDagPacket(workerTaskPackets, agentTeamsPlaybookPacket, governanceRequirementPlan = null) {
+export function buildRunnerStageDagPacket(workerTaskPackets, agentTeamsPlaybookPacket, governanceRequirementPlan = null, moduleScopePlan = null) {
+  const scopePlan = moduleScopePlan == null ? null : { ...moduleScopePlan, modules: moduleScopePlan.modules.map((module) => {
+    const taskBindings = module.taskIds.map((id) => {
+      const matches = workerTaskPackets.filter((packet) => packet.taskPacketId === id || packet.designBinding?.sliceId === id || packet.roleInstanceId === id);
+      if (matches.length !== 1) throw new TypeError(`Module ${module.id} task ${id} requires one unambiguous current worker packet`);
+      const packet = matches[0];
+      return { designTaskId: packet.designBinding?.sliceId ?? packet.roleInstanceId ?? id, taskPacketId: packet.taskPacketId };
+    });
+    return { ...module, taskIds: taskBindings.map((binding) => binding.taskPacketId), taskBindings };
+  }) };
   const contractStages = CORE_LOOP_CONTRACT.stages ?? [];
   const stageOrder = CORE_LOOP_CONTRACT.defaultEntry?.spine ?? contractStages.map((item) => item.stage);
   const stageAuthorities = Object.fromEntries(
@@ -4412,6 +4381,7 @@ export function buildRunnerStageDagPacket(workerTaskPackets, agentTeamsPlaybookP
     stageOrder,
     stageLanes,
     stageAuthorities,
+    moduleScopePlan: scopePlan,
     runtimeCapacity:
       agentTeamsPlaybookPacket?.parallelBudget?.maxConcurrentAgents ??
       agentTeamsPlaybookPacket?.runtimeCapacity ??
@@ -9027,6 +8997,7 @@ function buildCoreLoopArtifact({
   preDecisionOptionFrame = null,
   hostProvenance = null,
   governanceRequirementPlan = null,
+  moduleScopePlan = null,
 }) {
   const routeRuntime = normalizeRouteRuntime(runtime);
   const routeOs = normalizeOsTarget(osTarget);
@@ -9349,6 +9320,7 @@ function buildCoreLoopArtifact({
     workerTaskPackets,
     agentTeamsPlaybookPacket,
     governanceRequirementPlan,
+    moduleScopePlan,
   );
   const runtimeSubagentInvocationPacket = buildRuntimeSubagentInvocationPacket({
     agentTeamsPlaybookPacket,
@@ -10283,8 +10255,8 @@ export function buildWorkflowContractPackets({
     claimEvidenceCards: [
       {
         claim: "Artifact-only choice cards are not native popup evidence.",
-        sourceRefs: ["cardPlanPacket.cardEvents[0]", "preDecisionOptionFrame.nativeChoiceSurface"],
-        evidenceAnchor: "cardPlanPacket records adapter-required card events while preDecisionOptionFrame records the finalized choice state.",
+        sourceRefs: ["cardPlanPacket.cardTypeDecisions", "preDecisionOptionFrame.nativeChoiceSurface"],
+        evidenceAnchor: "Card catalog decisions preserve the adapter-required boundary; preDecisionOptionFrame owns the actual choice state.",
         confidence: "high",
         counterevidence: ["No native popup answer is claimed by this structural runner."],
         decisionImpact: "Branch-changing execution must use the native runtime choice surface before mutation.",
@@ -13356,6 +13328,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     runId: effectiveRunId,
     orchestrationReport,
     runtimeEvidence,
+    preDecisionOptionFrame: planChallengePreview,
   });
   const cardSummary = buildUserFacingCardSummary(cardPlanPacket, labels);
   await publishProgress(
@@ -13520,6 +13493,7 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
       preDecisionOptionFrame: planChallengePreview,
       hostProvenance,
       governanceRequirementPlan: governanceRequirementPlanPacket,
+      moduleScopePlan: stageRunner?.moduleScopePlan ?? stageRunner?.workOrder?.moduleScopePlan ?? null,
     });
   } finally {
     rmSync(projectCapabilityCandidateRoot, { recursive: true, force: true });
@@ -13567,11 +13541,19 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
   try {
   if (machineHostBound) {
     const packets = coreLoop.thinkingPacket.workerTaskPackets;
+    const scopedRun = isModuleScopedDag(coreLoop.stageDagPacket);
+    const scopedHandoff = scopedRun && ["continue_module", "continue_governed_run"].includes(stageRunner.workOrder?.kind) &&
+      stageRunner.workOrder?.moduleScopePlan?.schemaVersion === 1;
+    const requestedScope = stageRunner.workOrder?.scope ?? stageRunner.moduleScope ?? null;
+    const requestedNodeIds = scopedRun ? new Set(coreLoop.stageDagPacket.nodes.filter((node) => node.laneKind === "execution_worker" &&
+      moduleNodeInRequestedScope(node, requestedScope, packets)).map((node) => node.nodeId)) : null;
+    const requestedPackets = scopedRun ? packets.filter((packet) => requestedNodeIds.has(stageLaneNodeId("Execution", packet.taskPacketId))) : packets;
     const preparationGate = independentPreparationExecutionGate(orchestrationReport, packets);
     const gate = preparationGate ?? orchestrationReport.selectedExecutionRoute?.routeExecutionGate;
-    const currentHostOperationRequired = packets.some(packet => packet.hostOperation);
-    const ready = !currentHostOperationRequired && !planChallengePreview.planChallengeState.stopRequested && planChallengePreview.planChallengeState.phase !== "stopped_by_user" && planChallengeHandoffReady && packets.length > 0 && packets.every((packet) => packet.workOrderReadiness === "ready") &&
-      (preparationGate || orchestrationReport.thinkingRoute.criterionCoverage.status !== "incomplete") && gate?.canHandoffToHost === true && gate.routeCompatible === true;
+    const currentHostOperationRequired = requestedPackets.some(packet => packet.hostOperation);
+    const ready = !currentHostOperationRequired && !planChallengePreview.planChallengeState.stopRequested && planChallengePreview.planChallengeState.phase !== "stopped_by_user" && planChallengeHandoffReady && requestedPackets.length > 0 && requestedPackets.every((packet) => packet.workOrderReadiness === "ready") &&
+      (scopedHandoff || preparationGate || orchestrationReport.thinkingRoute.criterionCoverage.status !== "incomplete") &&
+      (scopedHandoff ? gate?.routeCompatible === true : gate?.canHandoffToHost === true && gate.routeCompatible === true);
     if (!ready) machineExecution = { ...machineExecution, reason: currentHostOperationRequired ? "current_host_operation_requires_actual_host_binding" : "current_governed_route_not_ready" };
     else {
       const kernel = await openDurableRunRepository(stageRunner.durableDbPath ?? path.join(outputDir, "machine-runs.sqlite"));
@@ -13613,6 +13595,12 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
     const routeExecutionGate = preparationGate ?? orchestrationReport.selectedExecutionRoute?.routeExecutionGate ?? {};
     const localToolGate = orchestrationReport.selectedExecutionRoute?.localToolExecutionGate;
     const localToolPackets = coreLoop.thinkingPacket.workerTaskPackets;
+    const scopedHandoff = isModuleScopedDag(coreLoop.stageDagPacket) && ["continue_module", "continue_governed_run"].includes(stageRunner.workOrder?.kind) &&
+      stageRunner.workOrder?.moduleScopePlan?.schemaVersion === 1;
+    const requestedBridgePackets = scopedHandoff ? localToolPackets.filter(packet => {
+      const node = coreLoop.stageDagPacket.nodes.find(item => item.nodeId === stageLaneNodeId("Execution", packet.taskPacketId));
+      return node && moduleNodeInRequestedScope(node, stageRunner.workOrder.scope, localToolPackets);
+    }) : localToolPackets;
     const localToolBridgeEligible = localToolRequest.status === "ready" && localToolGate?.status === "ready" &&
       localToolPackets.length === 1 && localToolPackets.every((packet) =>
         packet.executionMode === "local_tool_execution" && packet.effectClass === "read_only_support" &&
@@ -13621,14 +13609,14 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
         JSON.stringify(packet.localToolBinding.input) === JSON.stringify(localToolRequest.input) &&
         path.resolve(packet.localToolBinding.input.workspaceRoot) === path.resolve(projectRoot) &&
         packet.scopeFiles?.length === 1 && packet.scopeFiles[0] === localToolRequest.input.target);
-    const workOrderGateReady = !coreLoop.thinkingPacket.workerTaskPackets.some(packet => packet.hostOperation) &&
-      coreLoop.thinkingPacket.workerTaskPackets.some((packet) => packet.workOrderReadiness === "ready") &&
-      coreLoop.thinkingPacket.workerTaskPackets.every((packet) => packet.workOrderReadiness === "ready" || packet.taskDesignAssessment?.blockedOnlyByDesign === true) &&
-      (preparationGate || orchestrationReport.thinkingRoute.criterionCoverage.status !== "incomplete");
+    const workOrderGateReady = !requestedBridgePackets.some(packet => packet.hostOperation) &&
+      requestedBridgePackets.some((packet) => packet.workOrderReadiness === "ready") &&
+      requestedBridgePackets.every((packet) => packet.workOrderReadiness === "ready" || packet.taskDesignAssessment?.blockedOnlyByDesign === true) &&
+      (scopedHandoff || preparationGate || orchestrationReport.thinkingRoute.criterionCoverage.status !== "incomplete");
     const routeHandoffReady = localToolBridgeEligible || (routeExecutionGate.routeCompatible === true &&
-      routeExecutionGate.canHandoffToHost === true &&
-      routeExecutionGate.handoffStatus === "ready_for_host_handoff" &&
-      routeExecutionGate.hostAction === "host_action_required" && localToolRequest.applies !== true);
+      (scopedHandoff || routeExecutionGate.canHandoffToHost === true &&
+        routeExecutionGate.handoffStatus === "ready_for_host_handoff" &&
+        routeExecutionGate.hostAction === "host_action_required") && localToolRequest.applies !== true);
     const routeGateAllowsBridge = workOrderGateReady && routeHandoffReady;
     if (calculationRequest && planChallengeHandoffReady && routeGateAllowsBridge && calculationRequest.summary.status === "prepared") {
       if (normalizeStageRunnerRuntime(stageRunner.runtime ?? routeRuntime) !== normalizeStageRunnerRuntime(routeRuntime)) {
@@ -13760,6 +13748,10 @@ export async function runMetaTheoryGovernedExecution(options = {}) {
         dependencyCalculationHandoff,
         routeHandoffEvidence: localToolBridgeEligible ? null : routeHandoffEvidence,
         workerEnv: calculationEnvironment,
+        stageExecutors: stageRunner.stageExecutors ?? null,
+        design: productDesign,
+        host: stageRunner,
+        artifactRoot: stageRunner.machineArtifactRoot ?? path.join(outputDir, "machine-results"),
         capacity: stageRunner.capacity ?? null,
         timeoutMs: stageRunner.timeoutMs ?? 300_000,
         invokeWorker: localToolBridgeEligible ? invokeLocalDependencyToolWorker : stageRunner.invokeWorker,
@@ -14453,10 +14445,6 @@ function argValue(name, fallback = null) {
 
 async function createTemporaryOutputRoot() {
   return fs.mkdtemp(path.join(os.tmpdir(), "meta-kim-governed-execution-"));
-}
-
-function truthyEnvFlag(value) {
-  return ["1", "true", "yes", "on"].includes(String(value ?? "").trim().toLowerCase());
 }
 
 function positionalTask(fallback = null) {

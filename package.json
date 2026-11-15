@@ -1,6 +1,6 @@
 {
   "name": "meta-kim",
-  "version": "3.15.1",
+  "version": "3.16.0",
   "description": "General agent governance for evidence-backed decisions, capability discovery, orchestration and outcome verification across domains, with primary Claude Code/Codex projections and opt-in compatibility adapters.",
   "private": true,
   "type": "module",
@@ -405,7 +405,8 @@
     "docs/verification/meta-flow-probe.mjs",
     "docs/verification/project-specialization-20261115.md",
     "docs/verification/current-research-comparison-20261115.md",
-    "docs/verification/minimal-compatibility-20261115.md"
+    "docs/verification/minimal-compatibility-20261115.md",
+    "docs/verification/yuan-interaction-20261115.md"
   ],
   "author": "KimYx0207",
   "license": "Apache-2.0",

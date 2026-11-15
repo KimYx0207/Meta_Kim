@@ -96,7 +96,7 @@
 
 你看到的方案应说明目标用户、提供什么价值、怎样触达与收费、初期和持续投入、主要限制，以及先用什么小样判断。比如平台经营、内容带货和独立品牌是不同的电商路线；软件出海、商品出海和内容译制也需要不同的条件。推荐会附上依据和适用条件，需要你判断的方向保留为待选，再进入设计。
 
-v3.15.1 支持保存“已比较、尚未选择”的研究结果，并按任务要求复核资料的观察时间。日常操作仍在当前 AI 对话里完成，研究结论沿用同一份 PRD 和决策记录。
+v3.16.0 按当前未解决且前置条件齐备的重要决定提问，让独立模块各自推进，并由同一 AI 宿主接续。既有的方案比较、按需复核资料观察时间、同一份 PRD 和决策记录继续沿用。
 
 ## 第一轮 PRD：从一句需求，形成系统框架和模块大纲
 
@@ -342,7 +342,7 @@ Meta_Kim 把计划、发现、进度、决定、产物和检查记录保存在�
 
 ## 在自己的项目里开始
 
-先准备 **Node.js 22.13.0+**、Git，以及已经配置好模型连接的 AI 客户端。源码版本： **[v3.15.1](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.15.1)**。版本变化和迁移说明见 [CHANGELOG.zh-CN.md](CHANGELOG.zh-CN.md)，已完成的检查及其范围见[定向验证与来源记录](docs/verification/minimal-compatibility-20261115.md)。
+先准备 **Node.js 22.13.0+**、Git，以及已经配置好模型连接的 AI 客户端。源码版本： **[v3.16.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.16.0)**。版本变化和迁移说明见 [CHANGELOG.zh-CN.md](CHANGELOG.zh-CN.md)，已完成的检查及其范围见[定向验证与来源记录](docs/verification/yuan-interaction-20261115.md)。
 
 ### 1. 安装 Meta_Kim
 
@@ -445,7 +445,7 @@ node bin/meta-kim.mjs live --project-root "/path/to/your-project"
 
 **使用条件：** 这是方法导入路线，实际执行使用客户端已有的模型、工具和权限；Meta CLI 和 Live 功能需要另行安装 Meta 运行时。包导出和本地完整性核验已实现，客户端导入、执行和续做按下面步骤在自己的任务中核对。
 
-准备 Meta_Kim **v3.15.1** 源码和 **Node.js 22.13.0+**。本版下载位置为 [v3.15.1 Release](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.15.1)。在源码根目录打开终端，按操作系统复制下面一组命令，即可生成并核验两个客户端的导入包；每个输出目录都必须是新目录。
+准备 Meta_Kim **v3.16.0** 源码和 **Node.js 22.13.0+**。本版下载位置为 [v3.16.0 Release](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.16.0)。在源码根目录打开终端，按操作系统复制下面一组命令，即可生成并核验两个客户端的导入包；每个输出目录都必须是新目录。
 
 **Windows · PowerShell**
 
@@ -487,7 +487,7 @@ done
 缺少资源、权限或 Meta CLI 时明确列出，不把导入成功、实际执行和结果验证混为一谈。
 ```
 
-需要专业方法时，Meta_Kim v3.15.1 配对 **[Kim_Service V1.19](https://github.com/KimYx0207/Kim_Service/releases/tag/V1.19)**。在 Service 源码根目录使用入口，每次导出一个 Agent 或 Skill；把下面的绝对路径替换为实际目录：
+需要专业方法时，Meta_Kim v3.16.0 配对 **[Kim_Service V1.19](https://github.com/KimYx0207/Kim_Service/releases/tag/V1.19)**。在 Service 源码根目录使用入口，每次导出一个 Agent 或 Skill；把下面的绝对路径替换为实际目录：
 
 ```bash
 node scripts/build-desktop-skill-package.mjs --meta-root "/absolute/Meta_Kim" --host workbuddy --component reliability-engineer --output "/absolute/new-reliability-method"
