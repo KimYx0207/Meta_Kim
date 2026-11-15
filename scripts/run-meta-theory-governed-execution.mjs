@@ -11351,7 +11351,9 @@ export function buildRouteDrivenWorkerTasks({ runId, routeResult, task }) {
   const lanes = route?.subjectiveUiCapabilityAmplification?.lanes ?? [];
   const parallelLanes = route?.parallelExecutionLanes ?? [];
   const drafts = routeResult.workerTaskPacketDrafts ?? [];
-  const durableRequests = durableCapabilityRequestsFromTask(task, runId);
+  const durableRequests = route?.selectionPolicy === "host_selected_current_bindings"
+    ? []
+    : durableCapabilityRequestsFromTask(task, runId);
   const sourceTasks = lanes.length > 0
     ? lanes.map((lane) => ({
         lane,

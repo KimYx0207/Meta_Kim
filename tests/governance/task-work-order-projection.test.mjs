@@ -36,6 +36,42 @@ function route(lanes, drafts = []) {
 function lane(laneId, path, overrides = {}) {
   return { laneId, roleDisplayName: "backend", purpose: `Inspect ${path}`, scopeFiles: [path], shardScope: [path], dependsOn: [], parallelGroup: "design", acceptanceCriterionIds: [laneId], safetyEvidence: { status: "proven", shardScope: [path], mutationPolicy: "read_only", workspaceIsolation: "shared_workspace_read_only", externalWritePolicy: "forbidden", collisionPolicy: "no_overlap" }, ...overrides };
 }
+const durableTask = "同一套 PRD review standard 需要 skill。\n长期 test coverage owner 需要 agent。";
+
+test("verified host work orders preserve their real owner and scope despite multiple durable requests", () => {
+  const sourceRef = "agents/source-evidence-analyst/AGENT.md";
+  const ownerContract = { dependencyId: "kim-service", sourceRef, runtimeStatus: "needs_probe", invocationStatus: "not_invoked" };
+  const owner = { id: "kim-service:source-evidence-analyst", source: "dependency_agent_contract", sourceRef, ownerContract };
+  const scope = "config/contracts/capability-asset-sedimentation-contract.json";
+  const draft = { roleInstanceId: "source-read", roleDisplayName: "analysis", ownerAgent: owner.id,
+    ownerSource: owner.source, sourceRef, ownerContract, purpose: durableTask,
+    scopeFiles: [scope], shardScope: [scope], safetyEvidence: { status: "proven" },
+    codexSpawnBinding: { ownerAgent: owner.id, ownerSource: owner.source, sourceRef, ownerBindingMode: "run_scoped_owner_contract" } };
+  const selected = { recommendedRoute: { id: "host-thinking:source-read", owner: owner.id,
+    selectionPolicy: "host_selected_current_bindings", selectionStatus: "bindings_verified_not_invoked",
+    selectedCapabilityProviders: { agent: owner }, verificationOwner: "kim-service:delivery-verifier" },
+  workerTaskPacketDrafts: [draft] };
+  const packets = buildRouteDrivenWorkerTasks({ runId: "bound", routeResult: selected, task: durableTask });
+  assert.equal(packets.length, 1);
+  assert.equal(packets[0].ownerAgent, owner.id);
+  assert.equal(packets[0].ownerSource, owner.source);
+  assert.equal(packets[0].ownerSourceRef, sourceRef);
+  assert.deepEqual(packets[0].ownerContract, ownerContract);
+  assert.deepEqual(packets[0].scopeFiles, [scope]);
+  assert.deepEqual(packets[0].shardScope, [scope]);
+  assert.deepEqual(packets[0].runtimeInvocationPlan, draft.codexSpawnBinding);
+  assert.equal(packets[0].ownerContract.invocationStatus, "not_invoked");
+});
+
+test("routes without verified host bindings retain existing durable candidate lane projection", () => {
+  const packets = buildRouteDrivenWorkerTasks({ runId: "unbound", routeResult: route([], []), task: durableTask });
+  assert.equal(packets.length, 2);
+  assert.deepEqual(packets.map(packet => packet.roleDisplayName), ["docs", "analysis"]);
+  assert.deepEqual(packets.map(packet => packet.ownerAgent), ["docs", "analysis"]);
+  assert.ok(packets.every(packet => packet.parallelGroup === "durable-capability-candidates"));
+  assert.ok(packets.every(packet => packet.workOrderReadiness === "incomplete"));
+});
+
 test("route work orders preserve exact paths, policies and dependency references", () => {
   const selected = route([
     lane("contract", "api/API Contract.json"),

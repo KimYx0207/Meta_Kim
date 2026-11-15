@@ -15,6 +15,7 @@ professional methods or add a new automation framework.
 | Ownership and evidence | Warden requests dispatch through Conductor; exit-code-only receipts follow their declared format; persistent project work retains its project owner requirement. |
 | Release verification | Dual-host native model certification is opt-in. Package installation, update, uninstall, portability, permissions, ownership and rollback checks remain required in their existing lanes. |
 | Diagnostic source reads | The configured Service analyst receives its existing required method inputs from the actual task and inspected scope. Custom provider selection and production input guards remain unchanged. |
+| Work-order ownership | Routes already verified from current Thinking bindings retain their selected owner, source contract and scope when the overall task contains multiple durable capability requests. Candidate generation remains separate. |
 | Other hosts | Gemini/ZCode source-checkout self-install keeps the same execution root as source sync; external projects retain the immutable root and user edits remain protected. Source context files are not merged back into themselves. Shared Skill summaries name the selected clients. Correct three obsolete OpenClaw documentation paths. |
 
 ## Observed checks
@@ -95,6 +96,18 @@ are not a claim that every host completed a real model task.
   the actual selected method handoff still returned `needs_input`,
   `canExecute: false` and `not_invoked`. These are targeted diagnostic results,
   not a replacement for the complete standard release verification.
+- The subsequent asset and research validators exposed another existing
+  mismatch: the durable-request heuristic replaced an already verified
+  Thinking owner with role labels while retaining its dependency source.
+  Both the current diagnostic inputs and their prior shape reproduced this.
+  The runner now skips that heuristic only for `host_selected_current_bindings`;
+  other routes, candidate generation and source-validation guards are unchanged.
+  All 24 projection and method-handoff tests passed. Both original asset and
+  research validators passed in the unchanged isolated environment. The asset
+  run retained its two skill/agent candidates as `candidate_only`, with zero
+  canonical writes and no actual worker execution. An unknown owner still
+  failed source validation, and removing any of the three required inputs
+  still returned `needs_input`, `canExecute: false` and `not_invoked`.
 
 Repository CI and the release workflow bind their final results and package
 hashes to the exact published commit. The release attachments are the authority
