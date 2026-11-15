@@ -7,6 +7,7 @@ import { buildGlobalMetaTheorySyncArgs } from "../../scripts/node-spawn-config.m
 import {
   GLOBAL_PROJECTION_OWNER_SYNC_RUNTIMES,
   globalProjectionIsOwnedBy,
+  resolveSetupTargetSelection,
   resolveRuntimeProfilesFromManifest,
 } from "../../scripts/meta-kim-sync-config.mjs";
 
@@ -107,7 +108,7 @@ describe("setup update default flow", () => {
     );
   });
 
-  test("install/update direct-enter defaults stay on Claude Code and Codex", () => {
+  test("installer defaults use detected or saved runtimes while explicit maintenance commands keep their targets", () => {
     assert.deepEqual(syncManifest.defaultTargets, ["claude", "codex"]);
     assert.match(
       packageJson.scripts["meta:deps:install"],
@@ -127,12 +128,60 @@ describe("setup update default flow", () => {
     );
     assert.match(
       source,
-      /askMultiSelectTargets\(\s*t\.selectRuntimeTargets,\s*RUNTIME_CHOICES,\s*defaultTargets,\s*\)/,
+      /resolveSetupTargetSelection\(\{\s*cliTargets,\s*savedTargets: localOverrides\.activeTargets,\s*detectedTargets: detectedTargetIds\(runtimes\),\s*\}\)/,
     );
     assert.match(
       source,
-      /const reselectTargets = await askYesNo\(t\.askReselectRuntimes, true\)/,
+      /askMultiSelectTargets\(\s*t\.selectRuntimeTargets,\s*RUNTIME_CHOICES,\s*selection\.targets,\s*\)/,
     );
+    assert.match(source, /await askYesNo\(t\.askReselectRuntimes, false\)/);
+    assert.match(source, /selectActiveTargets\(runtimes, \{\s*preserveSaved: !reselectTargets,\s*\}\)/);
+    assert.match(source, /preserveSaved && selection\.source === "saved"\s*\? selection\.targets/);
+  });
+
+  test("first installation selects only detected clients, including every optional native target", () => {
+    for (const target of syncManifest.supportedTargets) {
+      assert.deepEqual(resolveSetupTargetSelection({ detectedTargets: [target] }), {
+        source: "detected", targets: [target],
+      }, target);
+    }
+    assert.deepEqual(resolveSetupTargetSelection({ detectedTargets: ["gemini", "zcode"] }), {
+      source: "detected", targets: ["gemini", "zcode"],
+    });
+    assert.ok(!syncManifest.supportedTargets.includes("dsh"), "DSH keeps its separate opt-in lifecycle");
+  });
+
+  test("updates preserve each saved selection even when other clients are detected or its CLI is absent", () => {
+    for (const target of syncManifest.supportedTargets) {
+      for (const detectedTargets of [[], syncManifest.supportedTargets]) {
+        assert.deepEqual(resolveSetupTargetSelection({ savedTargets: [target], detectedTargets }), {
+          source: "saved", targets: [target],
+        }, target);
+      }
+    }
+  });
+
+  test("explicit targets override saved and detected clients without merging in another host", () => {
+    for (const target of syncManifest.supportedTargets) {
+      assert.deepEqual(resolveSetupTargetSelection({
+        cliTargets: [target],
+        savedTargets: syncManifest.supportedTargets,
+        detectedTargets: syncManifest.supportedTargets,
+      }), { source: "cli", targets: [target] }, target);
+    }
+  });
+
+  test("no detected or selected client cancels instead of restoring dual-client defaults", () => {
+    assert.deepEqual(resolveSetupTargetSelection(), { source: "detected", targets: [] });
+    const selectionSource = source.slice(
+      source.indexOf("async function selectActiveTargets("),
+      source.indexOf("function rememberProjectProjectionMode("),
+    );
+    assert.doesNotMatch(selectionSource, /defaultTargets/);
+    assert.match(selectionSource, /if \(chosenTargets\.length === 0\) \{[\s\S]*?t\.setupCancelled[\s\S]*?process\.exit\(0\);/);
+    assert.ok(selectionSource.indexOf("if (chosenTargets.length === 0)") <
+      selectionSource.indexOf("activeTargets: chosenTargets"));
+    assert.match(source, /cliTargets\.length === 0 && !localOverrides\.activeTargets\?\.length/);
   });
 
   test("install scope direct-enter default is global reusable capabilities", () => {

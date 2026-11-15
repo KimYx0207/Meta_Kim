@@ -90,7 +90,7 @@ AI 클라이언트에서 프로젝트를 열고 요청, 기존 자료와 제약�
 
 비교안에는 고객, 제공 가치, 유입 경로, 수익 모델, 초기 및 지속 비용, 제약과 작은 실험을 담습니다. 마켓플레이스 운영, 콘텐츠 커머스, 독립 브랜드는 서로 다른 사업 방향입니다. 소프트웨어, 실물 상품, 현지화 콘텐츠의 해외 진출 조건도 다릅니다. 추천에는 근거와 적용 조건을 붙이고, 중요한 선택은 설계 전에 사용자가 판단할 수 있도록 남겨 둡니다.
 
-v3.15.0은 “비교 완료, 선택 대기” 상태의 조사 결과를 저장하고, 작업에 필요한 경우 정보의 확인 시점을 다시 점검합니다. 일상적인 작업은 현재 AI 대화에서 진행하며 같은 PRD와 의사결정 기록을 사용합니다.
+v3.15.1은 “비교 완료, 선택 대기” 상태의 조사 결과를 저장하고, 작업에 필요한 경우 정보의 확인 시점을 다시 점검합니다. 일상적인 작업은 현재 AI 대화에서 진행하며 같은 PRD와 의사결정 기록을 사용합니다.
 
 ## 첫 번째 PRD: 아이디어를 시스템 구조와 모듈 개요로 만들기
 
@@ -336,7 +336,7 @@ Meta_Kim은 계획, 발견, 진행 상황, 결정, 결과물과 검사 기록을
 
 ## 내 프로젝트에서 시작하기
 
-**Node.js 22.13.0+**, Git, 모델 연결을 설정한 AI 클라이언트가 필요합니다. 소스 버전: **[v3.15.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.15.0)** 입니다. 변경과 이전 안내는 [CHANGELOG.ko-KR.md](CHANGELOG.ko-KR.md), 완료한 검사와 그 범위는 [범위를 정한 검증과 출처 기록](docs/verification/current-research-comparison-20261115.md)을 참고하세요.
+**Node.js 22.13.0+**, Git, 모델 연결을 설정한 AI 클라이언트가 필요합니다. 소스 버전: **[v3.15.1](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.15.1)** 입니다. 변경과 이전 안내는 [CHANGELOG.ko-KR.md](CHANGELOG.ko-KR.md), 완료한 검사와 그 범위는 [범위를 정한 검증과 출처 기록](docs/verification/minimal-compatibility-20261115.md)을 참고하세요.
 
 ### 1. Meta_Kim 설치하기
 
@@ -347,7 +347,7 @@ npm install
 node setup.mjs
 ```
 
-사용할 클라이언트와 설치 범위를 선택하세요. 기본 설치는 공통 기반 기능을 전역에 설치해 재사용하며, **프로젝트 설치**는 선택한 디렉터리를 대상으로 합니다. 지속적으로 운영하는 각 프로젝트는 자체 전문 Agent, Skill, 규칙을 프로젝트 안에서 만들거나 갱신합니다. 업데이트에 사용할 수 있도록 Meta_Kim 체크아웃을 보관하세요. 실제 작업 프로젝트는 다른 디렉터리에 있어도 됩니다.
+사용할 클라이언트와 설치 범위를 선택하세요. 처음에는 감지된 클라이언트를 미리 선택하고, 업데이트는 저장한 선택을 유지하며 명시한 `--targets`를 우선합니다. 기본 설치는 공통 기반 기능을 전역에 설치해 재사용하며, **프로젝트 설치**는 선택한 디렉터리를 대상으로 합니다. 지속적으로 운영하는 각 프로젝트는 자체 전문 Agent, Skill, 규칙을 프로젝트 안에서 만들거나 갱신합니다. 업데이트에 사용할 수 있도록 Meta_Kim 체크아웃을 보관하세요. 실제 작업 프로젝트는 다른 디렉터리에 있어도 됩니다.
 
 예를 들어 한 프로젝트에 Codex 지원을 바로 설치하려면 다음을 실행합니다.
 
@@ -439,7 +439,7 @@ node bin/meta-kim.mjs live --project-root "/path/to/your-project"
 
 **사용 조건:** 방법을 가져오는 경로이며 실제 실행은 클라이언트의 모델, 도구와 권한을 사용합니다. Meta CLI와 Live 기능에는 별도로 설치한 Meta 런타임이 필요합니다. 패키지 내보내기와 로컬 무결성 확인은 구현되어 있으며 가져오기, 실행과 작업 재개는 아래 절차로 자신의 작업에서 확인합니다.
 
-Meta_Kim **v3.15.0** 소스와 **Node.js 22.13.0+**를 준비하세요. 이 버전의 다운로드 위치는 [v3.15.0 Release](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.15.0)입니다. 소스 루트에서 터미널을 열고 운영체제에 맞는 코드로 두 클라이언트의 가져오기 패키지를 만들고 확인합니다. 출력 디렉터리는 새 경로여야 합니다.
+Meta_Kim **v3.15.1** 소스와 **Node.js 22.13.0+**를 준비하세요. 이 버전의 다운로드 위치는 [v3.15.1 Release](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.15.1)입니다. 소스 루트에서 터미널을 열고 운영체제에 맞는 코드로 두 클라이언트의 가져오기 패키지를 만들고 확인합니다. 출력 디렉터리는 새 경로여야 합니다.
 
 **Windows · PowerShell**
 
@@ -482,7 +482,7 @@ done
 가져오기 성공, 실제 실행과 결과 검증을 구분하세요.
 ```
 
-전문 방법을 추가할 때 Meta_Kim v3.15.0과 **[Kim_Service V1.18](https://github.com/KimYx0207/Kim_Service/releases/tag/V1.18)**을 함께 사용합니다. Service 소스 루트에서 래퍼를 사용해 Agent 또는 Skill을 하나씩 내보냅니다. 절대 경로를 실제 경로로 바꾸세요.
+전문 방법을 추가할 때 Meta_Kim v3.15.1과 **[Kim_Service V1.19](https://github.com/KimYx0207/Kim_Service/releases/tag/V1.19)**을 함께 사용합니다. Service 소스 루트에서 래퍼를 사용해 Agent 또는 Skill을 하나씩 내보냅니다. 절대 경로를 실제 경로로 바꾸세요.
 
 ```bash
 node scripts/build-desktop-skill-package.mjs --meta-root "/absolute/Meta_Kim" --host workbuddy --component reliability-engineer --output "/absolute/new-reliability-method"

@@ -96,7 +96,7 @@ Requests such as “start an ecommerce business,” “expand internationally,�
 
 Comparable options describe the customer, value, channel, revenue model, initial and ongoing effort, constraints and a small first experiment. Marketplace operations, creator-led commerce and an independent brand imply different businesses; software, physical goods and localized content need different market-entry conditions. Recommendations carry evidence and conditions, while material choices stay open for your judgment before design.
 
-v3.15.0 can retain a researched comparison without claiming a selected direction and recheck source observation age when the task requires it. Work continues in the current AI conversation, using the same PRD and decision history.
+v3.15.1 can retain a researched comparison without claiming a selected direction and recheck source observation age when the task requires it. Work continues in the current AI conversation, using the same PRD and decision history.
 
 ## First PRD pass: turn an idea into a system and module outline
 
@@ -342,7 +342,7 @@ Use optional `workContext` in the ordinary API or CLI `--work-context-input`; ap
 
 ## Start with your own project
 
-You need **Node.js 22.13.0+**, Git and an AI client with its model connection configured. Source version: **[v3.15.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.15.0)**. See [CHANGELOG.md](CHANGELOG.md) for changes and migration, and the [focused checks and source records](docs/verification/current-research-comparison-20261115.md) for the completed checks and their scope.
+You need **Node.js 22.13.0+**, Git and an AI client with its model connection configured. Source version: **[v3.15.1](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.15.1)**. See [CHANGELOG.md](CHANGELOG.md) for changes and migration, and the [focused checks and source records](docs/verification/minimal-compatibility-20261115.md) for the completed checks and their scope.
 
 ### 1. Install Meta_Kim
 
@@ -353,7 +353,7 @@ npm install
 node setup.mjs
 ```
 
-Choose your client, then choose the installation scope. The default install reuses capabilities globally as shared foundations; **project** installation targets a directory you select. Each persistent project still creates or updates its own professional Agents, Skills and rules. Keep the Meta_Kim checkout for updates. Your working project can be a different directory.
+Choose your client, then choose the installation scope. First installation preselects detected clients; updates retain your saved selection. Explicit `--targets` takes precedence. The default install reuses capabilities globally as shared foundations; **project** installation targets a directory you select. Each persistent project still creates or updates its own professional Agents, Skills and rules. Keep the Meta_Kim checkout for updates. Your working project can be a different directory.
 
 For example, to install Codex support for one project directly:
 
@@ -445,7 +445,7 @@ Older runs without the new client, operating-system and model binding remain his
 
 **Usage conditions:** this is a method import route; actual execution uses the client's available model, tools and permissions. Meta CLI and Live features need a separately installed Meta runtime. Package export and local integrity checks are implemented; client import, execution and continuation are checked in your own task using the steps below.
 
-Use Meta_Kim **v3.15.0** source with **Node.js 22.13.0+**. The [v3.15.0 Release page](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.15.0) is the download location for this version. Open a terminal in the source root. Run the block for your operating system to export and check both clients; each output directory must be new.
+Use Meta_Kim **v3.15.1** source with **Node.js 22.13.0+**. The [v3.15.1 Release page](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.15.1) is the download location for this version. Open a terminal in the source root. Run the block for your operating system to export and check both clients; each output directory must be new.
 
 **Windows · PowerShell**
 
@@ -489,7 +489,7 @@ If resources, permissions or the Meta CLI are missing, list the gap explicitly.
 Keep import success, actual execution and verified results separate.
 ```
 
-For specialist methods, pair Meta_Kim v3.15.0 with **[Kim_Service V1.18](https://github.com/KimYx0207/Kim_Service/releases/tag/V1.18)**. From the Service source root, export one Agent or Skill at a time through its wrapper (replace the absolute paths):
+For specialist methods, pair Meta_Kim v3.15.1 with **[Kim_Service V1.19](https://github.com/KimYx0207/Kim_Service/releases/tag/V1.19)**. From the Service source root, export one Agent or Skill at a time through its wrapper (replace the absolute paths):
 
 ```bash
 node scripts/build-desktop-skill-package.mjs --meta-root "/absolute/Meta_Kim" --host workbuddy --component reliability-engineer --output "/absolute/new-reliability-method"

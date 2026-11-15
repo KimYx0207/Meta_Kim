@@ -167,6 +167,64 @@ test("switching native projections to global_only retires exact fragments and ke
   } finally { rmSync(fixture, { recursive: true, force: true }); }
 });
 
+test("native source-checkout sync and bootstrap share one execution root and preserve edited MCP fragments", (t) => {
+  const runtime = createGovernanceRuntimeFixture(t);
+  const targets = "gemini,zcode";
+  const sourceRules = readFileSync(path.join(runtime.repoRoot, "AGENTS.md"), "utf8");
+  const configPaths = ["gemini", "zcode"].map((name) =>
+    path.join(runtime.repoRoot, `.${name}`, name === "gemini" ? "settings.json" : "config.json"));
+  for (const configPath of configPaths) {
+    mkdirSync(path.dirname(configPath), { recursive: true });
+    writeFileSync(configPath, JSON.stringify({ userSetting: "preserved" }));
+  }
+  const sync = () => runtime.run(["scripts/sync-runtimes.mjs", "--targets", targets]);
+  const bootstrap = (mode = "--apply") => runtime.run([
+    "setup.mjs", "--project-bootstrap", mode, "--targets", targets,
+    "--project-dir", runtime.repoRoot, "--json",
+  ]);
+  const assertRoots = () => {
+    for (const configPath of configPaths) {
+      const config = JSON.parse(readFileSync(configPath, "utf8"));
+      const mcp = (config.mcpServers ?? config.mcp.servers)["meta-kim-runtime"];
+      assert.equal(mcp.env.META_KIM_PACKAGE_ROOT, runtime.repoRoot);
+      assert.deepEqual(mcp.args, [path.join(runtime.repoRoot, "scripts/mcp/meta-runtime-server.mjs")]);
+      assert.equal(config.userSetting, "preserved");
+    }
+  };
+  for (const phase of ["install", "update"]) {
+    if (phase === "update") {
+      const agentPath = path.join(runtime.repoRoot, "canonical/agents/meta-scout.md");
+      writeFileSync(agentPath, `${readFileSync(agentPath, "utf8")}\nSource-update regression fixture.\n`);
+    }
+    let result = sync();
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const configBefore = configPaths.map((configPath) => readFileSync(configPath, "utf8"));
+    result = bootstrap();
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.deepEqual(configPaths.map((configPath) => readFileSync(configPath, "utf8")), configBefore);
+    assert.equal(readFileSync(path.join(runtime.repoRoot, "AGENTS.md"), "utf8"), sourceRules);
+    assertRoots();
+    result = bootstrap("--dry-run");
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const dryRun = JSON.parse(result.stdout).results[0];
+    assert.equal(dryRun.state.counts.pending, 0, JSON.stringify(dryRun.files.filter((file) => file.effectiveAction !== "unchanged" && file.action !== "skip")));
+  }
+  for (const configPath of configPaths) {
+    const before = readFileSync(configPath, "utf8");
+    const edited = JSON.parse(before);
+    (edited.mcpServers ?? edited.mcp.servers)["meta-kim-runtime"].args = ["user-owned-server.mjs"];
+    const editedBytes = JSON.stringify(edited);
+    writeFileSync(configPath, editedBytes);
+    for (const run of [sync, bootstrap]) {
+      const result = run();
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr + result.stdout, /Managed JSON fragment changed|Refusing to overwrite unowned native config/u);
+      assert.equal(readFileSync(configPath, "utf8"), editedBytes);
+    }
+    writeFileSync(configPath, before);
+  }
+});
+
 test("native global package survives source removal and checks, updates, and uninstalls exact settings", (t) => {
   const runtime = createGovernanceRuntimeFixture(t);
   cpSync(path.join(root, "bin"), path.join(runtime.repoRoot, "bin"), { recursive: true });

@@ -5,13 +5,13 @@ Graphify producer version and the digest of the npm dependency lock. It describe
 the selected compatibility baseline. It does not prove that a user has installed
 a dependency, granted permission or completed a native task.
 
-Meta_Kim v3.15.0 selects Kim_Service V1.18 source commit
-`397ed46054e6d14a3258d2991a4bb76983416256`, which includes ecommerce,
-global-expansion and short-drama strategy methods with the clarified decision-to-delivery flow.
+Meta_Kim v3.15.1 selects Kim_Service V1.19 source commit
+`ff4bf000160a21d1d142ba71cc124cadbcdd57ac`, which preserves all existing professional methods and adds
+the installed-memory-root, explicit multi-engine trigger and command-output fixes.
 Their actual local contracts, component hashes and default professional references
 were discovered and loaded by Meta_Kim. This source integration check is separate
 from native-host and business-outcome acceptance; see the
-[focused verification record](verification/current-research-comparison-20261115.md).
+[focused verification record](verification/minimal-compatibility-20261115.md).
 
 ## Installation and updates
 
@@ -76,18 +76,18 @@ also needs the lock's root package metadata and reviewed digest refreshed.
 
 ## Packed verification prerequisites
 
-Packed acceptance uses a disposable installation and user home. Official Claude
-Code and Codex executables must be available on the test process's PATH; the
-free `--version` probes establish executable availability only. They do not run
-a model or grant execution authority.
+Packed acceptance uses a disposable installation and user home. Ordinary
+install/update verification uses version-only CLI fixtures that reject model
+invocations. These fixtures establish deterministic installation prerequisites,
+not native-host loading, execution authority or model-task success.
 
-Observation portability separately requires the existing exact set of ten fresh
-original Claude Code/Codex `interactive_host` observations. Missing observations
-are reported as `environment_unavailable`, with the missing identities retained
-in the report. Test fixtures, CLI versions and imported advisory snapshots do
-not satisfy this requirement. Completed install/update proofs remain visible,
-but the standard release gate stays incomplete until its required observations
-and remaining stages pass.
+Explicit native certification additionally requires official Claude Code and
+Codex executables and the existing exact set of ten fresh original
+`interactive_host` observations. Missing observations are reported as
+`environment_unavailable`, with their identities retained. Fixtures, CLI versions
+and imported advisory snapshots do not satisfy that certification. Ordinary
+verification records native observations as `not_requested`; all package,
+update, uninstall, ownership, transport and remaining standard checks still run.
 
 Execution-demand route smoke additionally needs an actual execution owner that
 fits the task and runtime. The nine Meta governance roles are not execution

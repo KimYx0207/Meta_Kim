@@ -4799,6 +4799,10 @@ Examples:
   };
 
   const teamSize = agents.length;
+  const sharedProjectSkillTargets = scope === "project"
+    ? ["codex", "gemini"].filter((id) => selectedTargets.includes(id))
+    : [];
+  const separateSharedSkills = sharedProjectSkillTargets.includes("gemini");
   const groups = [
     {
       name: t.runtimeGroupClaude,
@@ -4846,7 +4850,7 @@ Examples:
         },
         {
           label: dirs.displayPaths.codexSkillsRoot,
-          count: layerCounts.codexSkill,
+          count: separateSharedSkills ? 0 : layerCounts.codexSkill,
           summaryKind: "files",
         },
         {
@@ -4865,6 +4869,16 @@ Examples:
           summaryKind: "files",
         },
       ],
+    },
+    {
+      // Project .agents/skills is one directory shared by the selected hosts.
+      // Keep Codex-only agent/config entries out of this shared Skill group.
+      name: sharedProjectSkillTargets.map((id) => runtimeProfilesForSync[id].label).join(" / "),
+      entries: [{
+        label: dirs.displayPaths.codexSkillsRoot,
+        count: separateSharedSkills ? layerCounts.codexSkill : 0,
+        summaryKind: "files",
+      }],
     },
     {
       name: t.runtimeGroupOpenclaw,

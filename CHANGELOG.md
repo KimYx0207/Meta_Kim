@@ -4,6 +4,17 @@
 
 User-facing changes for each release. Detailed test results live in the linked verification records.
 
+## [3.15.1] - 2026-11-15
+
+### Installation choices and compatibility fixes
+
+- Fresh installation preselects detected clients; updates preserve saved choices, and explicit `--targets` takes precedence. This covers Claude Code, Codex, OpenClaw, Cursor, Gemini CLI and ZCode. An empty selection cancels instead of restoring a dual-client default. DSH keeps its separate entrypoint.
+- Preserve explicitly disabled Codex settings and existing concurrency values, reading both current and legacy capacity keys. Claude MCP installation and discovery share the correct `.claude.json` location, including `CLAUDE_CONFIG_DIR`.
+- Fix duplicate configuration when Gemini/ZCode install into the source checkout itself, while preserving stable execution packages for external projects and protection of user edits. Shared Skill summaries identify the clients actually selected.
+- Bind delegation guidance to the active host's actual tools and argument schema. Resolve contradictions in dispatch responsibility, success receipts and project capability ownership, and correct outdated OpenClaw paths.
+- Ordinary release checks no longer require native model tasks in both Claude Code and Codex. Real package installation, update, uninstall, permissions, ownership and rollback checks remain; explicitly requested native certification keeps its strict evidence checks.
+- Pair with the Kim_Service V1.19 fixes. Preserve all nine roles, eight stages, both PRD levels, professional methods and core safeguards. See the separate [change and verification record](docs/verification/minimal-compatibility-20261115.md) for tested scope and remaining limits.
+
 ## [3.15.0] - 2026-11-15
 
 ### Current research and business alternatives

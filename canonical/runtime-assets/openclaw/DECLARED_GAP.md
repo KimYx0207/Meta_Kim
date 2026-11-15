@@ -8,7 +8,7 @@ This gap is intentional. Treating it as a missing feature — or trying to "fix"
 
 ## Why openclaw has no agents/ projection
 
-OpenClaw's own model is **workspace-and-template**, not **agent-files**: each role lives in `openclaw/workspaces/<id>/` with `HEARTBEAT.md`, `SOUL.md`, and a manifest. Meta_Kim already projects that surface via `canonical/runtime-assets/openclaw/HEARTBEAT.template.md` and `canonical/runtime-assets/openclaw/openclaw.template.json` (rendered to `openclaw/openclaw.json` by `npm run meta:sync`). The agent list is the `agents.list` array inside that template.
+OpenClaw's own model is **workspace-and-template**, not **agent-files**: each role lives in `openclaw/workspaces/<id>/` with `HEARTBEAT.md`, `SOUL.md`, and a manifest. Meta_Kim already projects that surface via `canonical/runtime-assets/openclaw/HEARTBEAT.template.md` and `canonical/runtime-assets/openclaw/openclaw.template.json` (rendered to `openclaw/openclaw.template.json` by `npm run meta:sync`). The agent list is the `agents.list` array inside that template.
 
 Three reasons Meta_Kim does not project a Claude-shaped `openclaw/agents/*.md` tree:
 
@@ -37,7 +37,7 @@ If a future typed plugin enforcement adapter is built, this section is where the
 | `hooks/` projection (gate) | `enforce-agent-dispatch.mjs` deny payload | same script projected | **none** (declarative `executionBlock`) | typed hook surface (`failClosed: true`) |
 | `hooks/` projection (bridge) | stop / post-format / etc. | mirrors of selected hooks | `mcp-memory-service` only | mirrors of selected hooks |
 | `commands/` projection | `.claude/commands/*.md` | Codex native commands | **none** (typed plugin commands only) | Cursor commands + rules |
-| `skills/` projection | `.claude/skills/meta-theory/` | `.codex/skills/` | `openclaw/skills/` (extraDirs) | `.cursor/skills/meta-theory/` |
+| `skills/` projection | `.claude/skills/meta-theory/` | `.agents/skills/` | `openclaw/skills/` (extraDirs) | `.cursor/skills/meta-theory/` |
 | Capability gate | `META_KIM_CAPABILITY_GATE` PreToolUse | same script, runtime-version dependent | declarative prose + `executionBlock` | `preToolUse` with `failClosed: true` |
 | Per-tool deny schema | `{hookSpecificOutput.permissionDecision}` | stdout JSON | typed-plugin raise / abort | exit 2 + JSON `{permission:"deny"}` |
 
@@ -47,7 +47,7 @@ If a future typed plugin enforcement adapter is built, this section is where the
 
 A user should expect OpenClaw to provide:
 
-- the nine `meta-*` governance workspaces, hydrated from `canonical/runtime-agents/openclaw/HEARTBEAT.template.md` and `openclaw.template.json`
+- the nine `meta-*` governance workspaces, hydrated from `canonical/runtime-assets/openclaw/HEARTBEAT.template.md` and `openclaw.template.json`
 - the `meta-kim-runtime` MCP server and its `dispatch_meta_agent` / `list_meta_agents` tools
 - the `mcp-memory-service` lifecycle bridge so MCP Memory Service sees OpenClaw checkpoints
 - declarative capability-gate enforcement via workspace `HEARTBEAT.md` / `SOUL.md`

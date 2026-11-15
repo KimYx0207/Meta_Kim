@@ -132,6 +132,7 @@ import {
   localOverridesPath,
   normalizeTargets,
   parseSkillsArg,
+  resolveSetupTargetSelection,
   resolveTargetContext,
   resolveRuntimeProfilesFromManifest,
   resolveRuntimeHomeDir,
@@ -2052,6 +2053,10 @@ function plannedProtectedProjectDeployJson(srcPath, destPath, relPath, targetDir
 
 function plannedProtectedProjectDeployText(srcPath, destPath, relPath, targetDir) {
   const rel = normalizeDeployRelPath(relPath);
+  if (existsSync(destPath) &&
+      relative(realpathSync.native(srcPath), realpathSync.native(destPath)) === "") {
+    return readFileSync(srcPath, "utf8");
+  }
   const generated = rewriteProjectDirRefs(readFileSync(srcPath, "utf8"), targetDir);
   const base = existsSync(destPath) ? readFileSync(destPath, "utf8") : "";
   return mergeManagedTextBlockPreserveBase(base, generated, rel);
@@ -2361,8 +2366,19 @@ function projectGeneratedFilePlan(relPath, content, targetDir, source, protected
 
 let nativeProjectExecutionPackageRoot = PROJECT_DIR;
 
-async function ensureNativeProjectProjectionAuthority(activeTargets) {
+function isNativeSourceProjectTarget(targetDir) {
+  return isSourceCheckout() && existsSync(targetDir) &&
+    relative(realpathSync.native(PROJECT_DIR), realpathSync.native(targetDir)) === "";
+}
+
+async function ensureNativeProjectProjectionAuthority(activeTargets, targetDir) {
   if (!activeTargets.includes("all") && !activeTargets.some((id) => NATIVE_PROJECTION_RUNTIME_IDS.includes(id))) return;
+  // Source sync already owns this checkout's exact config fragments. Keep its
+  // execution root; only global or external-project references need the store.
+  if (isNativeSourceProjectTarget(targetDir)) {
+    nativeProjectExecutionPackageRoot = PROJECT_DIR;
+    return;
+  }
   if (executingStableProjectionPackage) {
     nativeProjectExecutionPackageRoot = executingStableProjectionPackage.packageRoot;
     return;
@@ -2374,7 +2390,7 @@ async function ensureNativeProjectProjectionAuthority(activeTargets) {
 
 async function prepareNativeProjectReadAuthority(activeTargets, targetDir) {
   nativeProjectExecutionPackageRoot = executingStableProjectionPackage?.packageRoot ?? PROJECT_DIR;
-  if (executingStableProjectionPackage ||
+  if (isNativeSourceProjectTarget(targetDir) || executingStableProjectionPackage ||
       !activeTargets.some((id) => id === "all" || NATIVE_PROJECTION_RUNTIME_IDS.includes(id))) return;
   const previousRoot = readProjectBootstrapManifest(targetDir)?.sourceChain?.packageRoot;
   const verified = await projectionPackageBoundary.resolveMatchingReadAuthority(previousRoot);
@@ -3982,7 +3998,7 @@ async function migrateProjectMetaKimHooksForBootstrap(activeTargets, targetDir) 
 
 const PROJECT_MUTATION_SESSION_LOCK_KEY = "project-mutation-session";
 async function applyProjectBootstrapToDir(activeTargets, targetDir) {
-  await ensureNativeProjectProjectionAuthority(activeTargets);
+  await ensureNativeProjectProjectionAuthority(activeTargets, targetDir);
   if (!existsSync(targetDir)) {
     if (!missingProjectTargetHasNoLinkedAncestor(targetDir)) {
       throw new Error("Project bootstrap blocked: target path has an unsafe linked ancestor");
@@ -5487,8 +5503,8 @@ async function detectRuntimes() {
       })}${C.reset}`,
     );
     console.log("");
-    const { cliTargets } = await resolveTargetContext(args);
-    if (cliTargets.length === 0) {
+    const { cliTargets, localOverrides } = await resolveTargetContext(args);
+    if (cliTargets.length === 0 && !localOverrides.activeTargets?.length) {
       const proceed = await askYesNo(t.continueAnyway, false);
       if (!proceed) {
         console.log("");
@@ -5508,9 +5524,13 @@ function detectedTargetIds(runtimes) {
   );
 }
 
-async function selectActiveTargets(runtimes) {
-  const { cliTargets, defaultTargets } = await resolveTargetContext(args);
-  const localOverrides = await loadLocalOverrides();
+async function selectActiveTargets(runtimes, { preserveSaved = false } = {}) {
+  const { cliTargets, localOverrides } = await resolveTargetContext(args);
+  const selection = resolveSetupTargetSelection({
+    cliTargets,
+    savedTargets: localOverrides.activeTargets,
+    detectedTargets: detectedTargetIds(runtimes),
+  });
 
   if (cliTargets.length > 0) {
     await writeLocalOverrides({ ...localOverrides, activeTargets: cliTargets });
@@ -5518,11 +5538,19 @@ async function selectActiveTargets(runtimes) {
     return cliTargets;
   }
 
-  const chosenTargets = await askMultiSelectTargets(
-    t.selectRuntimeTargets,
-    RUNTIME_CHOICES,
-    defaultTargets,
+  const chosenTargets = normalizeTargets(
+    preserveSaved && selection.source === "saved"
+      ? selection.targets
+      : await askMultiSelectTargets(
+        t.selectRuntimeTargets,
+        RUNTIME_CHOICES,
+        selection.targets,
+      ),
   );
+  if (chosenTargets.length === 0) {
+    console.log(`\n${C.dim}${t.setupCancelled}${C.reset}\n`);
+    process.exit(0);
+  }
 
   await writeLocalOverrides({
     ...localOverrides,
@@ -8714,9 +8742,10 @@ async function runProjectBootstrapCli() {
   const applyMode = projectBootstrapApply && !projectBootstrapDryRun;
   if (applyMode) {
     await assertProjectPersistentWriteBoundary(targetDirs, "project bootstrap");
-    if (activeTargets.some((id) => NATIVE_PROJECTION_RUNTIME_IDS.includes(id)) && !executingStableProjectionPackage) {
-      // Native project settings persist MCP and Hook commands. Use the same
-      // immutable package authority as global installation before writing them.
+    if (activeTargets.some((id) => NATIVE_PROJECTION_RUNTIME_IDS.includes(id)) &&
+        !executingStableProjectionPackage && !targetDirs.some(isNativeSourceProjectTarget)) {
+      // External native project settings persist MCP and Hook commands. Keep
+      // source-checkout targets in this process so their sync authority agrees.
       const stable = await projectionPackageBoundary.materializeStablePackage();
       return (await projectionPackageBoundary.launchStableSetup(stable, {
         args: ["--project-bootstrap", "--apply", "--targets", activeTargets.join(","),
@@ -9249,10 +9278,13 @@ async function runUpdate() {
   const stepResults = [];
   heading(t.updateHeading);
   const runtimes = await detectRuntimes();
-  const reselectTargets = await askYesNo(t.askReselectRuntimes, true);
-  const activeTargets = reselectTargets
-    ? await selectActiveTargets(runtimes)
-    : (await resolveTargetContext(args)).activeTargets;
+  const { cliTargets, localOverrides } = await resolveTargetContext(args);
+  const reselectTargets = cliTargets.length === 0 &&
+    localOverrides.activeTargets?.length > 0 &&
+    await askYesNo(t.askReselectRuntimes, false);
+  const activeTargets = await selectActiveTargets(runtimes, {
+    preserveSaved: !reselectTargets,
+  });
   const { profiles: runtimeProfiles } = await resolveTargetContext(args);
 
   // ── 0. Ask for update scope (like install mode) ─────────────────────

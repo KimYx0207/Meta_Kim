@@ -562,6 +562,22 @@ export async function resolveTargetContext(argv = process.argv.slice(2)) {
   };
 }
 
+export function resolveSetupTargetSelection({
+  cliTargets = [],
+  savedTargets = [],
+  detectedTargets = [],
+} = {}) {
+  for (const [source, targets] of [
+    ["cli", cliTargets],
+    ["saved", savedTargets],
+    ["detected", detectedTargets],
+  ]) {
+    const normalized = normalizeTargets(targets);
+    if (normalized.length > 0) return { source, targets: normalized };
+  }
+  return { source: "detected", targets: [] };
+}
+
 // ── Path resolution ─────────────────────────────────────────
 
 const runtimeHomeSpecs = {
