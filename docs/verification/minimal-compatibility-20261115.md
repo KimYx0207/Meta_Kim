@@ -52,6 +52,10 @@ are not a claim that every host completed a real model task.
 - Final local preparation passed all 7 Meta integrity checks and 56 release
   documentation, publisher and installer-default checks. The npm dependency
   tree is unchanged; only root version metadata and its reviewed digest changed.
+- The first CI attempt identified a stale migration catalog after the two role
+  corrections. The existing generator added their six exact projection
+  fingerprints without removing historical entries; its check and all three
+  catalog regression tests passed before the new CI attempt.
 - Gemini/ZCode projection and lifecycle, DSH profile lifecycle and ZCode
   candidate checks passed 31 tests without model calls. They include isolated
   project/global updates, uninstall, preserved user configuration, portable
