@@ -1,4 +1,135 @@
 /** Localized explanations; runtime selection rules remain in config/contracts. */
+export const panoramaCopy = {
+  'zh-CN': {
+    title: '一句需求，怎样变成可验收的结果',
+    sub: '先研究与比较，再决定怎么做；过程和结果都能回看',
+    live: ['Live · 全程查看与判断', '看方案依据 · 看工作进度 · 看真实结果'],
+    sections: ['弄清目标，研究当前事实', '比较可行方案，处理关键选择', '把决定展开成设计与专业任务', '按依赖安排串行与并行', '核验成果，再交付与改进'],
+    intent: ['你想得到什么结果？', '目标用户、现有材料、限制和验收标准'],
+    research: [
+      ['本次联网查资料', '读一手来源；核对日期、适用范围与当前条件'],
+      ['研究外部 GitHub 项目', '看相关实现与测试；区分稳定版和开发提交'],
+    ],
+    compare: ['比较实质不同的可行方案', '说明用户价值、投入、局限和适用条件；给出有依据的条件推荐'],
+    choices: [
+      ['已有决定仍适用', '沿用选择与拍板理由'],
+      ['还有关键取舍', '请你判断，选定后继续；未定方向保留为待选'],
+    ],
+    prd: [
+      ['系统 PRD', '范围、架构、技术选择与模块边界'],
+      ['模块 PRD', '流程、状态、数据接口与验收条件'],
+    ],
+    samePrd: '选择明确后，展开同一份 PRD：先总体，再模块',
+    capabilities: ['按任务发现并加载专业能力', '复用全局基础，形成项目自己的 Agent、Skill 与规则；明确工具、负责人和核验方法'],
+    ready: [
+      ['就绪任务 A', '负责人 · 输入 · 交付物'],
+      ['就绪任务 B', '独立任务可以同时推进'],
+    ],
+    dependency: ['等待的依赖就绪，再接着做', '保存接续点；独立工作继续；汇合真实产物'],
+    verification: ['对照目标，实际核验成果', '审查内容，运行或操作检查；记录通过项与问题'],
+    revision: '发现问题 → 返回受影响任务；事实或设计变化回到相应环节',
+    passed: '通过',
+    delivery: ['交付结果，保留接续与经验', '产物、验证证据、决定和下一步一起保存；可复用经验经审阅后沉淀'],
+    footer: 'Live 组织查看与审阅；当前 AI 宿主执行任务，并回传实际结果。',
+  },
+  en: {
+    title: 'From a request to a checked result',
+    sub: 'Research and compare before choosing a route; keep decisions and results visible',
+    live: ['Live · review throughout the work', 'See the evidence · follow progress · inspect results'],
+    sections: ['Understand the goal and current facts', 'Compare routes and resolve key choices', 'Turn the choice into design and specialist work', 'Schedule by readiness and dependencies', 'Check results, deliver and improve'],
+    intent: ['What outcome do you need?', 'Intended users, existing materials, constraints and acceptance criteria'],
+    research: [
+      ['Research online now', 'Read primary sources; check dates, applicability and current conditions'],
+      ['Study external GitHub projects', 'Read relevant code and tests; separate releases from development revisions'],
+    ],
+    compare: ['Compare materially different viable routes', 'Explain customer value, effort, limits and fit; recommend a route with its conditions'],
+    choices: [
+      ['A valid choice already exists', 'Reuse the decision and its rationale'],
+      ['A material tradeoff remains', 'Continue after your choice; keep undecided routes open'],
+    ],
+    prd: [
+      ['System PRD', 'Scope, architecture, technology choices and module boundaries'],
+      ['Module PRD', 'Flows, states, data interfaces and acceptance criteria'],
+    ],
+    samePrd: 'After the choice: one PRD, from system to module detail',
+    capabilities: ['Discover and load the capabilities each task needs', 'Reuse shared foundations; keep project-owned Agents, Skills and rules; name the tools, owner and checks'],
+    ready: [
+      ['Ready task A', 'Owner · inputs · deliverable'],
+      ['Ready task B', 'Independent work can run in parallel'],
+    ],
+    dependency: ['Continue when the required dependency is ready', 'Save a continuation point; keep independent work moving; join actual outputs'],
+    verification: ['Check the actual result against the goal', 'Review the content, run or use it, and record passes and findings'],
+    revision: 'Return findings to affected tasks; changed facts or designs reopen the relevant step',
+    passed: 'Passed',
+    delivery: ['Deliver results and preserve what comes next', 'Save artifacts, checks, decisions and next actions; review reusable learning before retaining it'],
+    footer: 'Live supports inspection and review. The current AI host executes tasks and returns actual results.',
+  },
+  'ja-JP': {
+    title: '一言の依頼から、確認できる成果へ',
+    sub: '調査と比較で方針を選び、判断・進捗・成果を追えるようにする',
+    live: ['Live · 全体を通して確認と判断', '根拠を読む · 進捗を見る · 実際の成果を確かめる'],
+    sections: ['目的と現在の事実を調べる', '実現可能な案を比べ、重要な選択をする', '決定を設計と専門タスクへ展開する', '依存関係に沿って直列・並列に進める', '成果を検証し、引き渡して改善する'],
+    intent: ['どのような成果が必要ですか？', '利用者、手元の資料、制約、受け入れ条件'],
+    research: [
+      ['今回のオンライン調査', '一次資料を読み、日付・適用範囲・現在の条件を確認'],
+      ['外部 GitHub を調査', '関連する実装とテストを読み、安定版と開発版を区別'],
+    ],
+    compare: ['実質的に異なる実現可能な案を比較', '顧客価値、投入、制限、適用条件を示し、根拠付きで条件付きの推奨を提示'],
+    choices: [
+      ['既存の決定が今も有効', '選択と決定理由を引き継ぐ'],
+      ['重要な選択が残る', '利用者が選んだ後に進む。未決の案は候補として保持'],
+    ],
+    prd: [
+      ['システム PRD', '範囲、構成、技術選択、モジュールの境界'],
+      ['モジュール PRD', '流れ、状態、データ連携、受け入れ条件'],
+    ],
+    samePrd: '選択が決まってから、一つの PRD を全体から詳細へ',
+    capabilities: ['タスクに必要な専門能力を探して読み込む', '共通の基礎を再利用し、プロジェクト固有の Agent・Skill・ルールを整備。道具・担当・検証方法を明確にする'],
+    ready: [
+      ['準備が整ったタスク A', '担当 · 入力 · 成果物'],
+      ['準備が整ったタスク B', '独立した作業は並列に進める'],
+    ],
+    dependency: ['必要な依存先が整ったら再開する', '再開点を保存し、独立作業は継続。実際の成果物を統合'],
+    verification: ['実際の成果を目的に照らして検証', '内容を審査し、実行・操作して確認。合格項目と問題を記録'],
+    revision: '問題は該当タスクへ戻す。事実や設計が変われば、関係する段階を見直す',
+    passed: '検証に合格',
+    delivery: ['成果を渡し、再開点と経験を残す', '成果物・検証根拠・決定・次の作業を保存。再利用する経験は審査して蓄積'],
+    footer: 'Live は表示と審査を担い、現在の AI ホストがタスクを実行して実際の結果を返します。',
+  },
+  'ko-KR': {
+    title: '한 문장 요청에서 검증한 결과까지',
+    sub: '조사하고 비교한 뒤 방향을 선택하며 판단·진행·결과를 확인합니다',
+    live: ['Live · 전 과정에서 확인하고 판단', '근거 읽기 · 진행 확인 · 실제 결과 검토'],
+    sections: ['목표와 현재 사실을 조사하기', '가능한 대안을 비교하고 핵심 선택하기', '결정을 설계와 전문 작업으로 구체화하기', '의존 관계에 따라 순차·병렬 진행하기', '결과를 검증하고 전달하며 개선하기'],
+    intent: ['어떤 결과가 필요한가요?', '사용자, 보유 자료, 제약과 검수 기준'],
+    research: [
+      ['지금 온라인으로 조사', '일차 자료를 읽고 날짜, 적용 범위와 현재 조건 확인'],
+      ['외부 GitHub 프로젝트 조사', '관련 구현과 테스트를 읽고 안정 버전과 개발 커밋 구분'],
+    ],
+    compare: ['실질적으로 다른 실행 가능한 대안 비교', '사용자 가치, 투입, 한계와 적합 조건을 설명하고 근거 있는 조건부 추천 제시'],
+    choices: [
+      ['기존 결정이 여전히 유효', '선택과 결정 이유를 이어서 사용'],
+      ['중요한 선택이 남음', '사용자가 선택한 뒤 진행하며 미결 방향은 후보로 유지'],
+    ],
+    prd: [
+      ['시스템 PRD', '범위, 구조, 기술 선택과 모듈 경계'],
+      ['모듈 PRD', '흐름, 상태, 데이터 연동과 검수 조건'],
+    ],
+    samePrd: '선택이 정해지면 하나의 PRD에서 전체와 모듈 구체화',
+    capabilities: ['작업에 필요한 전문 역량을 찾아 로드', '공통 기반을 재사용하고 프로젝트 고유 Agent·Skill·규칙을 마련합니다. 도구, 담당자와 검증 방법을 명시합니다'],
+    ready: [
+      ['준비된 작업 A', '담당자 · 입력 · 결과물'],
+      ['준비된 작업 B', '독립 작업은 병렬로 진행'],
+    ],
+    dependency: ['필요한 선행 결과가 준비되면 계속 진행', '재개 지점을 저장하고 독립 작업은 계속하며 실제 결과물을 통합'],
+    verification: ['실제 결과를 목표와 대조해 검증', '내용을 검토하고 실행·조작으로 확인하며 통과 항목과 문제 기록'],
+    revision: '문제는 영향받은 작업으로 반환하고, 사실이나 설계가 바뀌면 관련 단계 재검토',
+    passed: '검증 통과',
+    delivery: ['결과를 전달하고 다음 작업과 경험 보존', '결과물, 검증 근거, 결정과 다음 행동을 저장하고 재사용할 경험은 검토 후 축적'],
+    footer: 'Live에서 확인하고 검토하며, 현재 AI 호스트가 작업을 실행하고 실제 결과를 반환합니다.',
+  },
+};
+
 export const architectureCopy = {
   'zh-CN': {
     title: '应用、数据和展示，各自负责',

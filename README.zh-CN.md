@@ -14,15 +14,15 @@
 
 你可以用它研究业务问题、制作报告或内容、改进已有产品，也可以开发软件。Agent 从你的真实资料和约束出发，选择合适的方法与工具，制作成果，再根据反馈继续改进。Meta_Kim 组织工作，可用的专业能力完成具体任务，Kim Service 提供可选的专业方法。
 
-用日常说法就是：**拆解需求 → 搜索资料 → 研究问题 → 思考方案 → 制作交付**。它们对应 Critical、Fetch（搜索与研究）、Thinking、Execution，随后接上 Review、Meta-Review、Verification、Evolution。下面用预约工具走完这条工作链，说明一句需求怎样变成设计、任务、实际文件和验收结果。
+用日常说法就是：**弄清目标 → 联网研究 → 比较方案 → 确定设计 → 执行与验收**。先给你有依据的选择，再把决定展开成能执行、能检查的工作。下面先看这条主线，再用预约工具说明具体的设计、任务和交付。
 
 <p align="center">
-  <a href="docs/images/system-panorama.zh-CN.svg"><img src="docs/images/system-panorama.zh-CN.svg" alt="Meta_Kim 系统运行图：八阶段主线、依赖调度、人的决定、问题回退和过程记录" width="1000"></a>
+  <a href="docs/images/system-panorama.zh-CN.svg"><img src="docs/images/system-panorama.zh-CN.svg" alt="从当前联网与外部 GitHub 研究，到方案选择、两轮 PRD、项目专业能力、动态执行和成果核验；Live 贯穿全程" width="960"></a>
   <br>
   <a href="docs/images/system-panorama.zh-CN.svg">打开原图</a>
 </p>
 
-从上往下沿 01–08 阅读：深绿区确定目标、收集证据，并在同一份 PRD 中完成系统与模块设计；执行区把就绪任务交给当前宿主提供的能力，质量关口核验实际成果。橙线表示按需调用人的判断，已有有效决定直接沿用；紫线将执行问题退回相关任务，目标、事实和设计问题退回对应阶段。虚线指向记录，Work 的采用与效果由宿主回传。经验经审阅后写回、留作候选，或记明无需写回，再完成交付。
+沿主线从上往下看：先用本次联网和外部 GitHub 阅读核实依据，再比较实质不同的可行方案。已有有效选择直接沿用；新的关键取舍留给你判断。决定进入同一份 PRD，先系统后模块，再带着项目自己的专业能力和规则执行。独立任务并行推进，依赖未就绪时保留接续点；验收问题回到受影响的任务。**Live 贯穿全程，让你查看判断依据、实际进度和真实结果。**
 
 [查看可缩放原图](docs/images/system-panorama.zh-CN.svg)
 
@@ -96,7 +96,7 @@
 
 你看到的方案应说明目标用户、提供什么价值、怎样触达与收费、初期和持续投入、主要限制，以及先用什么小样判断。比如平台经营、内容带货和独立品牌是不同的电商路线；软件出海、商品出海和内容译制也需要不同的条件。推荐会附上依据和适用条件，需要你判断的方向保留为待选，再进入设计。
 
-当前 main 支持保存“已比较、尚未选择”的研究结果，并按任务要求复核资料的观察时间。日常操作仍在当前 AI 对话里完成，研究结论沿用同一份 PRD 和决策记录。
+v3.15.0 支持保存“已比较、尚未选择”的研究结果，并按任务要求复核资料的观察时间。日常操作仍在当前 AI 对话里完成，研究结论沿用同一份 PRD 和决策记录。
 
 ## 第一轮 PRD：从一句需求，形成系统框架和模块大纲
 
@@ -342,7 +342,7 @@ Meta_Kim 把计划、发现、进度、决定、产物和检查记录保存在�
 
 ## 在自己的项目里开始
 
-先准备 **Node.js 22.13.0+**、Git，以及已经配置好模型连接的 AI 客户端。源码版本： **[v3.14.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.14.0)**。版本变化和迁移说明见 [CHANGELOG.zh-CN.md](CHANGELOG.zh-CN.md)，已完成的检查及其范围见[验证记录](docs/verification/project-specialization-20261115.md)。
+先准备 **Node.js 22.13.0+**、Git，以及已经配置好模型连接的 AI 客户端。源码版本： **[v3.15.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.15.0)**。版本变化和迁移说明见 [CHANGELOG.zh-CN.md](CHANGELOG.zh-CN.md)，已完成的检查及其范围见[定向验证与来源记录](docs/verification/current-research-comparison-20261115.md)。
 
 ### 1. 安装 Meta_Kim
 
@@ -445,7 +445,7 @@ node bin/meta-kim.mjs live --project-root "/path/to/your-project"
 
 **使用条件：** 这是方法导入路线，实际执行使用客户端已有的模型、工具和权限；Meta CLI 和 Live 功能需要另行安装 Meta 运行时。包导出和本地完整性核验已实现，客户端导入、执行和续做按下面步骤在自己的任务中核对。
 
-准备 Meta_Kim **v3.14.0** 源码和 **Node.js 22.13.0+**。本版下载位置为 [v3.14.0 Release](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.14.0)。在源码根目录打开终端，按操作系统复制下面一组命令，即可生成并核验两个客户端的导入包；每个输出目录都必须是新目录。
+准备 Meta_Kim **v3.15.0** 源码和 **Node.js 22.13.0+**。本版下载位置为 [v3.15.0 Release](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.15.0)。在源码根目录打开终端，按操作系统复制下面一组命令，即可生成并核验两个客户端的导入包；每个输出目录都必须是新目录。
 
 **Windows · PowerShell**
 
@@ -487,7 +487,7 @@ done
 缺少资源、权限或 Meta CLI 时明确列出，不把导入成功、实际执行和结果验证混为一谈。
 ```
 
-需要专业方法时，Meta_Kim v3.14.0 配对 **[Kim_Service V1.17](https://github.com/KimYx0207/Kim_Service/releases/tag/V1.17)**。在 Service 源码根目录使用入口，每次导出一个 Agent 或 Skill；把下面的绝对路径替换为实际目录：
+需要专业方法时，Meta_Kim v3.15.0 配对 **[Kim_Service V1.18](https://github.com/KimYx0207/Kim_Service/releases/tag/V1.18)**。在 Service 源码根目录使用入口，每次导出一个 Agent 或 Skill；把下面的绝对路径替换为实际目录：
 
 ```bash
 node scripts/build-desktop-skill-package.mjs --meta-root "/absolute/Meta_Kim" --host workbuddy --component reliability-engineer --output "/absolute/new-reliability-method"

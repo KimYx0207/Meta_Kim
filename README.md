@@ -14,15 +14,15 @@
 
 Use it to investigate a business problem, create a report or content, improve an existing product, or build software. The agent works from your actual materials and constraints, selects suitable methods and tools, produces the deliverable, and continues from feedback. Meta_Kim organizes the work; available specialist capabilities, including optional Kim Service methods, carry out the tasks.
 
-In everyday terms: **break down the request → search → research → think → make**. These map to Critical, Fetch (search and research), Thinking and Execution, followed by Review, Meta-Review, Verification and Evolution. The booking example below follows this complete journey from a request to designs, tasks, working files and acceptance checks.
+In everyday terms: **understand the goal → research online → compare routes → settle the design → execute and check**. Present evidence-backed choices, then turn the decision into work that can be performed and reviewed. The overview below shows that flow; the booking example then explains the designs, tasks and deliverables.
 
 <p align="center">
-  <a href="docs/images/system-panorama.en.svg"><img src="docs/images/system-panorama.en.svg" alt="Meta_Kim system flow with eight stages, dependency routing, human decisions, revision paths, and saved records" width="1000"></a>
+  <a href="docs/images/system-panorama.en.svg"><img src="docs/images/system-panorama.en.svg" alt="Current online and external GitHub research leads to route choices, system and module PRDs, project capabilities, dependency-based execution and checked results, with Live throughout" width="960"></a>
   <br>
   <a href="docs/images/system-panorama.en.svg">Open full-size image</a>
 </p>
 
-Read stages 01–08 from top to bottom. The dark section establishes the goal and evidence, then develops the system and its modules in one PRD. The execution section uses capabilities supplied by the current host; quality gates check actual results. Orange paths request a human decision when needed and reuse existing valid decisions. Purple paths return execution issues to affected tasks; scope, evidence, or design issues return to the responsible stage. Dashed paths write records. The host supplies Work adoption and effect feedback. Reusable learning is reviewed before updating methods or retaining a candidate; when no update is needed, the reason is recorded before delivery.
+Follow the main path from top to bottom: current online research and external GitHub reading establish the evidence, then materially different viable routes are compared. Reuse an existing valid choice; ask for your judgment when a new material tradeoff remains. Develop the system and modules within one PRD, then execute using project-owned capabilities and rules. Independent tasks can run in parallel; dependent work keeps a continuation point. Verification findings return to the affected work. **Live keeps decision evidence, actual progress and real results available throughout.**
 
 [Open the scalable diagram](docs/images/system-panorama.en.svg)
 
@@ -96,7 +96,7 @@ Requests such as “start an ecommerce business,” “expand internationally,�
 
 Comparable options describe the customer, value, channel, revenue model, initial and ongoing effort, constraints and a small first experiment. Marketplace operations, creator-led commerce and an independent brand imply different businesses; software, physical goods and localized content need different market-entry conditions. Recommendations carry evidence and conditions, while material choices stay open for your judgment before design.
 
-Current main can retain a researched comparison without claiming a selected direction and recheck source observation age when the task requires it. Work continues in the current AI conversation, using the same PRD and decision history.
+v3.15.0 can retain a researched comparison without claiming a selected direction and recheck source observation age when the task requires it. Work continues in the current AI conversation, using the same PRD and decision history.
 
 ## First PRD pass: turn an idea into a system and module outline
 
@@ -342,7 +342,7 @@ Use optional `workContext` in the ordinary API or CLI `--work-context-input`; ap
 
 ## Start with your own project
 
-You need **Node.js 22.13.0+**, Git and an AI client with its model connection configured. Source version: **[v3.14.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.14.0)**. See [CHANGELOG.md](CHANGELOG.md) for changes and migration, and the [verification record](docs/verification/project-specialization-20261115.md) for the completed checks and their scope.
+You need **Node.js 22.13.0+**, Git and an AI client with its model connection configured. Source version: **[v3.15.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.15.0)**. See [CHANGELOG.md](CHANGELOG.md) for changes and migration, and the [focused checks and source records](docs/verification/current-research-comparison-20261115.md) for the completed checks and their scope.
 
 ### 1. Install Meta_Kim
 
@@ -445,7 +445,7 @@ Older runs without the new client, operating-system and model binding remain his
 
 **Usage conditions:** this is a method import route; actual execution uses the client's available model, tools and permissions. Meta CLI and Live features need a separately installed Meta runtime. Package export and local integrity checks are implemented; client import, execution and continuation are checked in your own task using the steps below.
 
-Use Meta_Kim **v3.14.0** source with **Node.js 22.13.0+**. The [v3.14.0 Release page](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.14.0) is the download location for this version. Open a terminal in the source root. Run the block for your operating system to export and check both clients; each output directory must be new.
+Use Meta_Kim **v3.15.0** source with **Node.js 22.13.0+**. The [v3.15.0 Release page](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.15.0) is the download location for this version. Open a terminal in the source root. Run the block for your operating system to export and check both clients; each output directory must be new.
 
 **Windows · PowerShell**
 
@@ -489,7 +489,7 @@ If resources, permissions or the Meta CLI are missing, list the gap explicitly.
 Keep import success, actual execution and verified results separate.
 ```
 
-For specialist methods, pair Meta_Kim v3.14.0 with **[Kim_Service V1.17](https://github.com/KimYx0207/Kim_Service/releases/tag/V1.17)**. From the Service source root, export one Agent or Skill at a time through its wrapper (replace the absolute paths):
+For specialist methods, pair Meta_Kim v3.15.0 with **[Kim_Service V1.18](https://github.com/KimYx0207/Kim_Service/releases/tag/V1.18)**. From the Service source root, export one Agent or Skill at a time through its wrapper (replace the absolute paths):
 
 ```bash
 node scripts/build-desktop-skill-package.mjs --meta-root "/absolute/Meta_Kim" --host workbuddy --component reliability-engineer --output "/absolute/new-reliability-method"

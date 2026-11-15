@@ -14,15 +14,15 @@
 
 業務課題の調査、報告書やコンテンツの制作、既存製品の改善、ソフトウェア開発に使えます。Agent は実際の資料と制約から適切な方法とツールを選び、成果を作り、フィードバックを受けて改善します。Meta_Kim が仕事を編成し、利用可能な専門能力が作業を担います。Kim Service の専門手法も必要に応じて使えます。
 
-日常の言葉では、**依頼を分解する → 探す → 調べる → 考える → 作る**です。Critical、Fetch（検索と調査）、Thinking、Execution に対応し、その後に Review、Meta-Review、Verification、Evolution が続きます。以下では予約アプリを例に、依頼から設計、タスク、実ファイル、受け入れ確認までを説明します。
+日常の言葉では、**目的を理解する → オンラインで調べる → 案を比較する → 設計を定める → 実行して検証する**です。まず根拠のある選択肢を提示し、決定を実行・確認できる作業へ展開します。全体の流れを見た後、予約ツールの例で設計、タスク、成果物を説明します。
 
 <p align="center">
-  <a href="docs/images/system-panorama.ja-JP.svg"><img src="docs/images/system-panorama.ja-JP.svg" alt="Meta_Kim のシステム図：8 段階、依存関係による実行、人の判断、差し戻し、記録先" width="1000"></a>
+  <a href="docs/images/system-panorama.ja-JP.svg"><img src="docs/images/system-panorama.ja-JP.svg" alt="最新のオンライン調査と外部 GitHub の読解から、案の選択、二段階の PRD、専門能力、依存関係による実行、成果検証へ。Live で全体を確認" width="960"></a>
   <br>
   <a href="docs/images/system-panorama.ja-JP.svg">原寸の画像を開く</a>
 </p>
 
-01–08 を上から順に読みます。濃い緑の領域で目的と根拠を確認し、一つの PRD でシステム全体とモジュールを設計します。実行領域は現在のクライアントが提供する能力を使い、品質確認で実際の成果を検証します。橙色は必要に応じた人の判断で、有効な既存の決定は再利用します。紫色は実行上の問題を該当タスクへ戻す経路です。目的・事実・設計の問題は、それぞれの段階に戻ります。破線は記録への書き込みで、Work の採用と効果は宿主が報告します。経験は審査して反映または候補として保存し、反映不要なら理由を残して引き渡します。
+上から順に、今回のオンライン調査と外部 GitHub の読解で根拠を確かめ、実質的に異なる実現可能な案を比べます。有効な既存の決定は引き継ぎ、新しい重要な選択は利用者の判断を求めます。一つの PRD でシステム全体からモジュール詳細へ展開し、プロジェクト固有の専門能力とルールで実行します。独立した作業は並列に進め、依存先を待つ作業には再開点を残します。検証で見つかった問題は該当作業へ戻します。**Live では判断の根拠、実際の進捗と成果を通して確認できます。**
 
 [拡大できる原図を開く](docs/images/system-panorama.ja-JP.svg)
 
@@ -90,7 +90,7 @@ AI クライアントでプロジェクトを開き、依頼、既存資料、�
 
 選択肢には、対象顧客、価値、集客、収益、初期と継続の負担、制約、小さく試す方法を示します。モール運営、コンテンツ販売、独立ブランドは異なる EC の方向です。ソフトウェア、実物商品、翻訳コンテンツの海外展開にも異なる条件があります。推奨には根拠と条件を付け、重要な選択を未決のまま設計の前に確認できます。
 
-現在の main は「比較済み、未選択」の調査結果を保持し、必要に応じて情報の確認時点を再点検できます。日常の操作は現在の AI 対話で行い、同じ PRD と意思決定の記録を使います。
+v3.15.0 は「比較済み、未選択」の調査結果を保持し、必要に応じて情報の確認時点を再点検できます。日常の操作は現在の AI 対話で行い、同じ PRD と意思決定の記録を使います。
 
 ## 一回目の PRD：アイデアからシステム構成とモジュールの概要へ
 
@@ -336,7 +336,7 @@ Meta_Kim は、計画、発見、進捗、決定、成果物、検査結果を�
 
 ## 自分のプロジェクトで始める
 
-**Node.js 22.13.0+**、Git、モデルへの接続を設定した AI クライアントが必要です。ソースバージョン： **[v3.14.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.14.0)** です。変更と移行は [CHANGELOG.ja-JP.md](CHANGELOG.ja-JP.md)、完了した検査とその範囲は[検証記録](docs/verification/project-specialization-20261115.md)を参照してください。
+**Node.js 22.13.0+**、Git、モデルへの接続を設定した AI クライアントが必要です。ソースバージョン： **[v3.15.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.15.0)** です。変更と移行は [CHANGELOG.ja-JP.md](CHANGELOG.ja-JP.md)、完了した検査とその範囲は[対象を絞った検証と出典記録](docs/verification/current-research-comparison-20261115.md)を参照してください。
 
 ### 1. Meta_Kim をインストールする
 
@@ -439,7 +439,7 @@ node bin/meta-kim.mjs live --project-root "/path/to/your-project"
 
 **利用条件：** 方法を取り込む経路で、実際の実行にはクライアントのモデル、ツール、権限を使います。Meta CLI と Live の機能には別途 Meta ランタイムが必要です。エクスポートとローカル整合性検証は実装済みで、取り込み、実行、継続は以下の手順で自分のタスクを使って確認します。
 
-Meta_Kim **v3.14.0** のソースと **Node.js 22.13.0+** を用意します。この版のダウンロード先は [v3.14.0 Release](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.14.0) です。ソースのルートでターミナルを開き、OS に合うコマンドで両クライアントのインポート用パッケージを生成・確認します。出力先は新しいディレクトリにしてください。
+Meta_Kim **v3.15.0** のソースと **Node.js 22.13.0+** を用意します。この版のダウンロード先は [v3.15.0 Release](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.15.0) です。ソースのルートでターミナルを開き、OS に合うコマンドで両クライアントのインポート用パッケージを生成・確認します。出力先は新しいディレクトリにしてください。
 
 **Windows · PowerShell**
 
@@ -482,7 +482,7 @@ done
 インポート成功、実際の実行、成果の検証を区別してください。
 ```
 
-専門手法を加える場合、Meta_Kim v3.14.0 と **[Kim_Service V1.17](https://github.com/KimYx0207/Kim_Service/releases/tag/V1.17)**を組み合わせます。Service ソースのルートでラッパーを使い、Agent または Skill を一つずつエクスポートします。絶対パスを実際の場所に置き換えてください。
+専門手法を加える場合、Meta_Kim v3.15.0 と **[Kim_Service V1.18](https://github.com/KimYx0207/Kim_Service/releases/tag/V1.18)**を組み合わせます。Service ソースのルートでラッパーを使い、Agent または Skill を一つずつエクスポートします。絶対パスを実際の場所に置き換えてください。
 
 ```bash
 node scripts/build-desktop-skill-package.mjs --meta-root "/absolute/Meta_Kim" --host workbuddy --component reliability-engineer --output "/absolute/new-reliability-method"

@@ -14,15 +14,15 @@
 
 업무 문제 조사, 보고서나 콘텐츠 제작, 기존 제품 개선과 소프트웨어 개발에 사용할 수 있습니다. Agent는 실제 자료와 제약을 바탕으로 적합한 방법과 도구를 선택하고 결과를 제작한 뒤 피드백에 따라 개선합니다. Meta_Kim이 작업을 조직하고 사용 가능한 전문 역량이 실제 작업을 맡습니다. 필요하면 Kim Service의 전문 방법을 연결할 수 있습니다.
 
-일상적인 표현으로는 **요구 분해 → 검색 → 연구 → 방법 검토 → 제작**입니다. Critical, Fetch(검색과 연구), Thinking, Execution에 대응하며 Review, Meta-Review, Verification, Evolution이 이어집니다. 아래에서는 예약 앱을 사례로 요청이 설계, 작업, 실제 파일과 검수 결과가 되는 과정을 설명합니다.
+일상적인 표현으로는 **목표 파악 → 온라인 조사 → 대안 비교 → 설계 확정 → 실행과 검증**입니다. 먼저 근거 있는 선택지를 제시하고 결정을 실행·검토 가능한 작업으로 구체화합니다. 전체 흐름을 본 다음 예약 도구 사례로 설계, 작업과 결과물을 설명합니다.
 
 <p align="center">
-  <a href="docs/images/system-panorama.ko-KR.svg"><img src="docs/images/system-panorama.ko-KR.svg" alt="Meta_Kim 시스템 흐름: 8단계, 의존성에 따른 실행, 사람의 판단, 수정 경로와 기록 위치" width="1000"></a>
+  <a href="docs/images/system-panorama.ko-KR.svg"><img src="docs/images/system-panorama.ko-KR.svg" alt="현재 온라인 자료와 외부 GitHub 조사에서 대안 선택, 두 단계 PRD, 프로젝트 역량, 의존 관계에 따른 실행과 결과 검증까지 Live에서 전 과정 확인" width="960"></a>
   <br>
   <a href="docs/images/system-panorama.ko-KR.svg">원본 이미지 열기</a>
 </p>
 
-01–08을 위에서 아래로 읽습니다. 짙은 초록 영역에서 목표와 근거를 정리하고 하나의 PRD에서 시스템과 모듈을 설계합니다. 실행 영역은 현재 호스트가 제공하는 역량을 사용하며, 품질 확인 단계에서 실제 결과를 검증합니다. 주황색은 필요할 때 사람의 판단을 요청하는 경로이며 유효한 기존 결정은 재사용합니다. 보라색은 실행 문제를 해당 작업으로 되돌립니다. 목표·사실·설계 문제는 각각의 담당 단계로 돌아갑니다. 점선은 기록 저장을 뜻하며 Work의 채택과 효과는 호스트가 전달합니다. 경험은 검토 후 방법에 반영하거나 후보로 보관하고, 반영할 필요가 없으면 이유를 남긴 뒤 전달을 마칩니다.
+위에서 아래로 현재 온라인 자료와 외부 GitHub를 조사해 근거를 확인한 뒤 실질적으로 다른 실행 가능한 대안을 비교합니다. 유효한 기존 결정은 이어서 사용하며 새로 생긴 중요한 선택은 사용자에게 판단을 요청합니다. 하나의 PRD에서 시스템 전체와 모듈 상세를 정리한 뒤 프로젝트 고유 역량과 규칙으로 실행합니다. 독립 작업은 병렬로 진행하고 선행 결과를 기다리는 작업에는 재개 지점을 남깁니다. 검증에서 발견한 문제는 해당 작업으로 돌려보냅니다. **Live에서 판단 근거, 실제 진행과 결과를 전 과정에 걸쳐 확인할 수 있습니다.**
 
 [확대 가능한 원본 그림 열기](docs/images/system-panorama.ko-KR.svg)
 
@@ -90,7 +90,7 @@ AI 클라이언트에서 프로젝트를 열고 요청, 기존 자료와 제약�
 
 비교안에는 고객, 제공 가치, 유입 경로, 수익 모델, 초기 및 지속 비용, 제약과 작은 실험을 담습니다. 마켓플레이스 운영, 콘텐츠 커머스, 독립 브랜드는 서로 다른 사업 방향입니다. 소프트웨어, 실물 상품, 현지화 콘텐츠의 해외 진출 조건도 다릅니다. 추천에는 근거와 적용 조건을 붙이고, 중요한 선택은 설계 전에 사용자가 판단할 수 있도록 남겨 둡니다.
 
-현재 main은 “비교 완료, 선택 대기” 상태의 조사 결과를 저장하고, 작업에 필요한 경우 정보의 확인 시점을 다시 점검합니다. 일상적인 작업은 현재 AI 대화에서 진행하며 같은 PRD와 의사결정 기록을 사용합니다.
+v3.15.0은 “비교 완료, 선택 대기” 상태의 조사 결과를 저장하고, 작업에 필요한 경우 정보의 확인 시점을 다시 점검합니다. 일상적인 작업은 현재 AI 대화에서 진행하며 같은 PRD와 의사결정 기록을 사용합니다.
 
 ## 첫 번째 PRD: 아이디어를 시스템 구조와 모듈 개요로 만들기
 
@@ -336,7 +336,7 @@ Meta_Kim은 계획, 발견, 진행 상황, 결정, 결과물과 검사 기록을
 
 ## 내 프로젝트에서 시작하기
 
-**Node.js 22.13.0+**, Git, 모델 연결을 설정한 AI 클라이언트가 필요합니다. 소스 버전: **[v3.14.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.14.0)** 입니다. 변경과 이전 안내는 [CHANGELOG.ko-KR.md](CHANGELOG.ko-KR.md), 완료한 검사와 그 범위는 [검증 기록](docs/verification/project-specialization-20261115.md)을 참고하세요.
+**Node.js 22.13.0+**, Git, 모델 연결을 설정한 AI 클라이언트가 필요합니다. 소스 버전: **[v3.15.0](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.15.0)** 입니다. 변경과 이전 안내는 [CHANGELOG.ko-KR.md](CHANGELOG.ko-KR.md), 완료한 검사와 그 범위는 [범위를 정한 검증과 출처 기록](docs/verification/current-research-comparison-20261115.md)을 참고하세요.
 
 ### 1. Meta_Kim 설치하기
 
@@ -439,7 +439,7 @@ node bin/meta-kim.mjs live --project-root "/path/to/your-project"
 
 **사용 조건:** 방법을 가져오는 경로이며 실제 실행은 클라이언트의 모델, 도구와 권한을 사용합니다. Meta CLI와 Live 기능에는 별도로 설치한 Meta 런타임이 필요합니다. 패키지 내보내기와 로컬 무결성 확인은 구현되어 있으며 가져오기, 실행과 작업 재개는 아래 절차로 자신의 작업에서 확인합니다.
 
-Meta_Kim **v3.14.0** 소스와 **Node.js 22.13.0+**를 준비하세요. 이 버전의 다운로드 위치는 [v3.14.0 Release](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.14.0)입니다. 소스 루트에서 터미널을 열고 운영체제에 맞는 코드로 두 클라이언트의 가져오기 패키지를 만들고 확인합니다. 출력 디렉터리는 새 경로여야 합니다.
+Meta_Kim **v3.15.0** 소스와 **Node.js 22.13.0+**를 준비하세요. 이 버전의 다운로드 위치는 [v3.15.0 Release](https://github.com/KimYx0207/Meta_Kim/releases/tag/v3.15.0)입니다. 소스 루트에서 터미널을 열고 운영체제에 맞는 코드로 두 클라이언트의 가져오기 패키지를 만들고 확인합니다. 출력 디렉터리는 새 경로여야 합니다.
 
 **Windows · PowerShell**
 
@@ -482,7 +482,7 @@ done
 가져오기 성공, 실제 실행과 결과 검증을 구분하세요.
 ```
 
-전문 방법을 추가할 때 Meta_Kim v3.14.0과 **[Kim_Service V1.17](https://github.com/KimYx0207/Kim_Service/releases/tag/V1.17)**을 함께 사용합니다. Service 소스 루트에서 래퍼를 사용해 Agent 또는 Skill을 하나씩 내보냅니다. 절대 경로를 실제 경로로 바꾸세요.
+전문 방법을 추가할 때 Meta_Kim v3.15.0과 **[Kim_Service V1.18](https://github.com/KimYx0207/Kim_Service/releases/tag/V1.18)**을 함께 사용합니다. Service 소스 루트에서 래퍼를 사용해 Agent 또는 Skill을 하나씩 내보냅니다. 절대 경로를 실제 경로로 바꾸세요.
 
 ```bash
 node scripts/build-desktop-skill-package.mjs --meta-root "/absolute/Meta_Kim" --host workbuddy --component reliability-engineer --output "/absolute/new-reliability-method"

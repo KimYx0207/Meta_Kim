@@ -4,7 +4,7 @@
 
 User-facing changes for each release. Detailed test results live in the linked verification records.
 
-## [Unreleased]
+## [3.15.0] - 2026-11-15
 
 ### Current research and business alternatives
 
@@ -13,6 +13,8 @@ User-facing changes for each release. Detailed test results live in the linked v
 - Support task-specific source observation-age limits and check them again when evidence is read for dispatch. Existing research without this optional constraint retains its previous contract.
 - Explain industry, customer, value, channel, economics and a small first experiment before product design in all four READMEs. See [the focused verification record](docs/verification/current-research-comparison-20261115.md) for scope and remaining limits.
 - Pin the reviewed Kim_Service main source containing ecommerce, global-expansion and short-drama methods; verify their actual local discovery and structured method loading without claiming native execution.
+
+- Redraw the system overview in four languages to connect current research, route choices, both PRD levels, project capabilities, dependency scheduling, verification and revision. Live remains the place to inspect decisions, progress and results. The existing shared diagram builder owns the source.
 
 ## [3.14.0] - 2026-11-15
 

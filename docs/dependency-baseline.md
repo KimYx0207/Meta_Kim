@@ -5,9 +5,9 @@ Graphify producer version and the digest of the npm dependency lock. It describe
 the selected compatibility baseline. It does not prove that a user has installed
 a dependency, granted permission or completed a native task.
 
-Current main selects Kim_Service commit
-`0e3abbc0026e4e233c45ce7fb74d1233c4365485`, which adds ecommerce,
-global-expansion and short-drama strategy methods after published V1.17.
+Meta_Kim v3.15.0 selects Kim_Service V1.18 source commit
+`397ed46054e6d14a3258d2991a4bb76983416256`, which includes ecommerce,
+global-expansion and short-drama strategy methods with the clarified decision-to-delivery flow.
 Their actual local contracts, component hashes and default professional references
 were discovered and loaded by Meta_Kim. This source integration check is separate
 from native-host and business-outcome acceptance; see the

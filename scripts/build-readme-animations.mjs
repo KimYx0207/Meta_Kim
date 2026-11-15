@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { copy, diagramLabels, workContextCopy } from './readme-animation-copy.mjs';
-import { architectureCopy, runtimeSelectionCopy } from './readme-architecture-copy.mjs';
+import { architectureCopy, runtimeSelectionCopy, panoramaCopy } from './readme-architecture-copy.mjs';
 import { projectCopy } from './readme-project-copy.mjs';
 const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const OUT=path.join(ROOT,'docs/images');
@@ -219,8 +219,82 @@ function diagrams(locale){
  }
  return out;
 }
+// The panorama shares this renderer and localization source with the detailed
+// diagrams. Its existing public filename stays stable for README and release links.
+function systemPanorama(locale){
+ const t=panoramaCopy[locale],d=new Diagram(locale,'system-panorama',t,36);
+ const x=56,w=848,pairW=400,px=[56,504];
+ function box(row,xx,y,ww,{color=C.blue,fill='#fff',start=.01,end=.1,h:fixedH}={}){
+  const titleRows=wrap(row[0],ww-48,32),bodyRows=wrap(row[1],ww-48,29);
+  const h=fixedH??(26+titleRows.length*41+12+bodyRows.length*38+24);
+  const focus=d.focus(start,end);
+  d.parts.push(`<g class="node" data-label="${esc(row[0])}" data-box="${xx},${y},${ww},${h}"><rect x="${xx}" y="${y}" width="${ww}" height="${h}" rx="20" fill="${fill}" stroke="${C.line}" stroke-width="1.5"/><rect class="focus ${focus}" x="${xx}" y="${y}" width="${ww}" height="${h}" rx="20" fill="${color}" fill-opacity=".045" stroke="${color}" stroke-width="3"/>${text(row[0],xx+24,y+54,ww-48,{size:32,line:41,weight:700,fill:color})}${text(row[1],xx+24,y+54+titleRows.length*41+10,ww-48,{size:29,line:38,fill:C.muted})}</g>`);
+  return {x:xx,y,w:ww,h,cx:xx+ww/2,b:y+h};
+ }
+ const height=(row,ww)=>26+wrap(row[0],ww-48,32).length*41+12+wrap(row[1],ww-48,29).length*38+24;
+ function section(i,y){
+  d.parts.push(`<circle cx="28" cy="${y-10}" r="7" fill="${C.blue}"/>`);
+  return y+d.label(`${String(i+1).padStart(2,'0')}  ${t.sections[i]}`,x,y,w,{size:29,line:38,weight:700,fill:C.blue})+22;
+ }
+ function pair(rows,y,start,end,colors=[C.blue,C.teal]){
+  const h=Math.max(...rows.map(row=>height(row,pairW)));
+  return rows.map((row,i)=>box(row,px[i],y,pairW,{h,color:colors[i],start,end}));
+ }
+ function fork(source,nodes,start,end){
+  const junction=nodes[0].y-27;
+  nodes.forEach((node,i)=>d.wire(`M${source.cx} ${source.b}V${junction}H${node.cx}V${node.y}`,start,end,{color:i?C.teal:C.blue}));
+ }
+ function join(nodes,target,start,end){
+  const junction=target.y-28;
+  nodes.forEach((node,i)=>d.wire(`M${node.cx} ${node.b}V${junction}H${target.cx}${i?'':`V${target.y}`}`,start,end,{color:i?C.teal:C.blue,arrow:!i}));
+ }
+ const live=box(t.live,x,d.top,w,{fill:'#eaf1ff',start:.01,end:.99});
+ const railTop=live.b+42;
+ let y=section(0,live.b+78);
+ const intent=box(t.intent,x,y,w,{start:.02,end:.1});
+ const research=pair(t.research,intent.b+66,.11,.23);
+ fork(intent,research,.08,.14);
+ y=section(1,research[0].b+94);
+ const compare=box(t.compare,x,y,w,{start:.24,end:.36});
+ join(research,{cx:480,y:research[0].b+58},.19,.27);
+ const choices=pair(t.choices,compare.b+66,.37,.46,[C.teal,C.amber]);
+ fork(compare,choices,.34,.4);
+ y=section(2,choices[0].b+94);
+ y+=d.label(t.samePrd,480,y,w,{size:28,line:37,weight:650,fill:C.muted,align:'middle'})+18;
+ const prdY=y,prdH=Math.max(...t.prd.map(row=>height(row,pairW)));
+ const system=box(t.prd[0],px[0],prdY,pairW,{h:prdH,start:.49,end:.56,fill:'#eef4ff'});
+ const module=box(t.prd[1],px[1],prdY,pairW,{h:prdH,start:.57,end:.64,fill:'#eef4ff'});
+ // Both decision paths return to one baseline. Connectors stop before section
+ // headings so the arrows never run through the translated labels.
+ join(choices,{cx:480,y:choices[0].b+58},.44,.5);
+ d.wire(`M${system.x+system.w} ${system.y+system.h/2}H${module.x}`, .54,.6);
+ const capabilities=box(t.capabilities,x,system.b+66,w,{start:.65,end:.74,color:C.purple});
+ d.wire(`M${module.cx} ${module.b}V${capabilities.y-28}H480V${capabilities.y}`,.62,.67,{color:C.purple});
+ y=section(3,capabilities.b+94);
+ const ready=pair(t.ready,y,.75,.83);
+ d.down(capabilities,{cx:480,y:capabilities.b+58},.71,.76,{color:C.purple});
+ const dependency=box(t.dependency,x,ready[0].b+66,w,{start:.82,end:.87,color:C.teal});
+ join(ready,dependency,.79,.84);
+ y=section(4,dependency.b+94);
+ const verification=box(t.verification,x,y,w,{start:.87,end:.93,color:C.teal});
+ d.down(dependency,{cx:480,y:dependency.b+58},.85,.89,{color:C.teal});
+ const revisionY=verification.b+52;
+ const revisionH=d.label(t.revision,480,revisionY,800,{size:28,line:37,fill:C.purple,weight:650,align:'middle'});
+ // Revision goes back to the affected task. Facts and design changes use the
+ // same scoped-return rule stated in the adjacent, always-visible caption.
+ d.wire(`M${verification.x+verification.w} ${verification.y+verification.h/2}H932V${ready[1].y+ready[1].h/2}H${ready[1].x+ready[1].w}`,.9,.95,{color:C.purple,back:true,transient:true});
+ const delivery=box(t.delivery,x,revisionY+revisionH+48,w,{start:.94,end:.99,fill:'#edf8f6',color:C.teal});
+ // Keep the delivery connector outside the revision caption's text column.
+ d.wire(`M${verification.cx} ${verification.b}V${verification.b+22}H44V${delivery.y-24}H480V${delivery.y}`,.93,.98,{color:C.teal});
+ d.label(t.passed,250,delivery.y-34,360,{size:28,line:37,fill:C.teal,weight:700,align:'middle'});
+ d.parts.unshift(`<path d="M28 ${railTop}V${delivery.b}" fill="none" stroke="#c9d8f0" stroke-width="3" stroke-dasharray="5 10"/>`);
+ return d.finish(delivery.b);
+}
 // Prepare every locale before writing: a layout error cannot leave partial output.
-const outputs=Object.keys(copy).flatMap(locale=>Object.entries(diagrams(locale)).map(([id,svg])=>({name:`animated-${id}.${locale}.svg`,svg})));
+const outputs=Object.keys(copy).flatMap(locale=>[
+ ...Object.entries(diagrams(locale)).map(([id,svg])=>({name:`animated-${id}.${locale}.svg`,svg})),
+ {name:`system-panorama.${locale}.svg`,svg:systemPanorama(locale)},
+]);
 if(!check)fs.mkdirSync(OUT,{recursive:true});
 for(const{name,svg}of outputs){const file=path.join(OUT,name);if(check){if(!fs.existsSync(file)||fs.readFileSync(file,'utf8')!==svg)throw new Error(`Rebuild README animation: ${name}`);}else fs.writeFileSync(file,svg);}
 console.log(`${check?'Checked':'Built'} ${outputs.length} localized README diagrams.`);
