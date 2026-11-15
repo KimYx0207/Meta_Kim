@@ -111,6 +111,13 @@ export async function runDiagnosticReadPlan(run, options, scopes) {
   const packets = scopes.map((scope, index) => {
     const id = `diagnostic-read-${index + 1}`;
     const todayTask = `Inspect ${scope} and return source-bound findings without editing files.`;
+    const method = agent.source === "dependency_agent_contract" && agent.id === "kim-service:source-evidence-analyst"
+      ? { methodCapabilityId: "source-evidence-analyst-deliver", methodInputs: {
+        question: todayTask,
+        sources: [scope],
+        deliverablePurpose: `Evidence report for ${scope}; read-only diagnostic protocol check, with no invocation or professional acceptance claim.`,
+      } }
+      : {};
     return { roleInstanceId: id, roleDisplayName: "analysis", todayTask, output: `Evidence report for ${scope}`,
       capabilityNeed: ["bounded source inspection"], evidenceRefs: [scope], scopeFiles: [scope], shardScope: [scope],
       nonGoals: criticalInput.nonGoals, toolRequirements: [], dependsOn: [],
@@ -119,6 +126,7 @@ export async function runDiagnosticReadPlan(run, options, scopes) {
       selectionReason: "The diagnostic host selects current discovered read-capable sources for an independent read-only lane.",
       handoffTarget: verificationAgent.id, qualityBar: "Source-bound findings with no invocation or acceptance overclaim.",
       referenceDirection: `Read only ${scope}; the diagnostic exercises protocol and does not certify a professional result.`,
+      ...method,
       projectCapabilityIntent: { mode: "preparation", purpose: "diagnostic",
         rationale: "This bounded source inspection checks protocol and evidence; it does not deliver a persistent project professional capability.", evidenceRefs: [scope] },
       selectedCapabilityProviders: { agent, verificationAgent, skill }, effectClass: "read_only_worker", taskFacts: diagnosticFacts(todayTask) };

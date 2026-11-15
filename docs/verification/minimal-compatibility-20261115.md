@@ -14,6 +14,7 @@ professional methods or add a new automation framework.
 | Delegation | Instructions use the current host's real tools, namespace and supported arguments. Work is scheduled within available capacity. |
 | Ownership and evidence | Warden requests dispatch through Conductor; exit-code-only receipts follow their declared format; persistent project work retains its project owner requirement. |
 | Release verification | Dual-host native model certification is opt-in. Package installation, update, uninstall, portability, permissions, ownership and rollback checks remain required in their existing lanes. |
+| Diagnostic source reads | The configured Service analyst receives its existing required method inputs from the actual task and inspected scope. Custom provider selection and production input guards remain unchanged. |
 | Other hosts | Gemini/ZCode source-checkout self-install keeps the same execution root as source sync; external projects retain the immutable root and user edits remain protected. Source context files are not merged back into themselves. Shared Skill summaries name the selected clients. Correct three obsolete OpenClaw documentation paths. |
 
 ## Observed checks
@@ -78,6 +79,22 @@ are not a claim that every host completed a real model task.
   `sha256:e00474df9627e1612f30a57caaa718df0cb358666cde3514bbf46ff1d7421220`.
   Rollback remains a separately reviewed upgrade to the exact prior source,
   preserving unknown state and granting no deletion authority.
+- A subsequent standard verification attempt exposed an existing diagnostic
+  contract mismatch: the configured Service analyst was discovered correctly,
+  but its required `question`, `sources` and `deliverablePurpose` inputs were
+  absent. The diagnostic/guard sources and relevant Service contracts match the
+  prior baselines (`98cb66a2` and `397ed460` respectively). The diagnostic driver
+  now supplies those inputs only for the exact discovered dependency analyst,
+  using its actual task and already-read scope. Production method-input,
+  ownership, permission, readiness and fanout guards were not changed.
+  The diagnostic protocol, host method handoff and method delivery suites
+  passed all 21 focused tests. In the unchanged isolated environment, the
+  original default validator passed with honest `validated_partial` status:
+  four structurally ready lanes, fanout safety passed and actual worker
+  execution remained false. Removing each of the three required fields from
+  the actual selected method handoff still returned `needs_input`,
+  `canExecute: false` and `not_invoked`. These are targeted diagnostic results,
+  not a replacement for the complete standard release verification.
 
 Repository CI and the release workflow bind their final results and package
 hashes to the exact published commit. The release attachments are the authority

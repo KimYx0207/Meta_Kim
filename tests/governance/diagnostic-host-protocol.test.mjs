@@ -42,7 +42,10 @@ test("diagnostic host binds explicitly selected current Fetch records through tw
   assert.equal(calls[0].stageRunner, null);
   assert.equal(calls[0].invokeCapabilityProbes, false);
   assert.equal(calls[1].previousPlanChallengeRunId, preparation.runId);
-  const selected = calls[1].thinkingInput.thinkingPacket.workerTaskPackets[0].selectedCapabilityProviders;
+  const worker = calls[1].thinkingInput.thinkingPacket.workerTaskPackets[0];
+  assert.equal(Object.hasOwn(worker, "methodInputs"), false);
+  assert.equal(Object.hasOwn(worker, "methodCapabilityId"), false);
+  const selected = worker.selectedCapabilityProviders;
   assert.deepEqual(selected.agent, preparation.fetchPacket.capabilityDiscovery.agents[0]);
   assert.deepEqual(selected.verificationAgent, preparation.fetchPacket.capabilityDiscovery.agents[1]);
   assert.equal(selected.agent.inventoryRef, preparation.fetchPacket.capabilityDiscovery.agents[0].inventoryRef);
@@ -83,10 +86,34 @@ test("diagnostic Service owner contracts retain needs_probe and not_invoked with
   const input = await scenario(t, { agents: [dependency("source-evidence-analyst"), dependency("delivery-verifier")],
     providers: [record("meta-theory", ".agents/skills/meta-theory/SKILL.md", { type: "skills" })] });
   delete input.options.diagnosticProviders;
-  await runDiagnosticReadPlan(input.run, input.options, ["package.json"]);
-  const selected = input.calls[1].thinkingInput.thinkingPacket.workerTaskPackets[0].selectedCapabilityProviders;
+  await writeFile(path.join(input.options.projectRoot, "README.md"), "Bounded diagnostic source.\n");
+  const scopes = ["package.json", "README.md"];
+  await runDiagnosticReadPlan(input.run, input.options, scopes);
+  const workers = input.calls[1].thinkingInput.thinkingPacket.workerTaskPackets;
+  for (const [index, worker] of workers.entries()) {
+    assert.equal(worker.methodCapabilityId, "source-evidence-analyst-deliver");
+    assert.deepEqual(worker.methodInputs, {
+      question: worker.todayTask,
+      sources: [scopes[index]],
+      deliverablePurpose: `Evidence report for ${scopes[index]}; read-only diagnostic protocol check, with no invocation or professional acceptance claim.`,
+    });
+    assert.deepEqual(worker.methodInputs.sources, worker.scopeFiles);
+  }
+  const selected = workers[0].selectedCapabilityProviders;
   assert.equal(selected.agent.ownerContract.runtimeStatus, "needs_probe");
   assert.equal(selected.agent.ownerContract.invocationStatus, "not_invoked");
   assert.equal(selected.agent.validCustomAgentDefinition, false);
   assert.equal(selected.verificationAgent.id, "kim-service:delivery-verifier");
+});
+
+test("diagnostic Service method inputs require the discovered dependency source, not only its name", async t => {
+  const input = await scenario(t, {
+    agents: [record("kim-service:source-evidence-analyst", ".codex/agents/analyst.toml"), record("kim-service:delivery-verifier", ".codex/agents/verifier.toml")],
+    providers: [record("meta-theory", ".agents/skills/meta-theory/SKILL.md", { type: "skills" })],
+  });
+  delete input.options.diagnosticProviders;
+  await runDiagnosticReadPlan(input.run, input.options, ["package.json"]);
+  const worker = input.calls[1].thinkingInput.thinkingPacket.workerTaskPackets[0];
+  assert.equal(Object.hasOwn(worker, "methodInputs"), false);
+  assert.equal(Object.hasOwn(worker, "methodCapabilityId"), false);
 });
