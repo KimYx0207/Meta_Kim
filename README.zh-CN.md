@@ -17,14 +17,16 @@
 用日常说法就是：**弄清目标 → 联网研究 → 比较方案 → 确定设计 → 执行与验收**。先给你有依据的选择，再把决定展开成能执行、能检查的工作。下面先看这条主线，再用预约工具说明具体的设计、任务和交付。
 
 <p align="center">
-  <a href="docs/images/system-panorama.zh-CN.svg"><img src="docs/images/system-panorama.zh-CN.svg" alt="从当前联网与外部 GitHub 研究，到方案选择、两轮 PRD、项目专业能力、动态执行和成果核验；Live 贯穿全程" width="960"></a>
+  <a href="docs/images/system-panorama.zh-CN.svg"><img src="docs/images/system-panorama.zh-CN.svg" alt="Meta_Kim 系统运行全景：八阶段主线、依赖调度、人的决定、问题回退和过程记录" width="1000"></a>
   <br>
   <a href="docs/images/system-panorama.zh-CN.svg">打开原图</a>
 </p>
 
-沿主线从上往下看：先用本次联网和外部 GitHub 阅读核实依据，再比较实质不同的可行方案。已有有效选择直接沿用；新的关键取舍留给你判断。决定进入同一份 PRD，先系统后模块，再带着项目自己的专业能力和规则执行。独立任务并行推进，依赖未就绪时保留接续点；验收问题回到受影响的任务。**Live 贯穿全程，让你查看判断依据、实际进度和真实结果。**
+从上往下沿 01–08 阅读：深绿区确定目标、收集证据，并在同一份 PRD 中完成系统与模块设计；执行区把就绪任务交给当前宿主提供的能力，质量关口核验实际成果。橙线表示按需调用人的判断，已有有效决定直接沿用；紫线将执行问题退回相关任务，目标、事实和设计问题退回对应阶段。虚线指向记录，Work 的采用与效果由宿主回传。经验经审阅后写回、留作候选，或记明无需写回，再完成交付。
 
 [查看可缩放原图](docs/images/system-panorama.zh-CN.svg)
+
+联网研究、方案比较、两轮 PRD 和独立任务接续的展开过程，另见[分步流程图](docs/images/research-to-delivery.zh-CN.svg)。
 
 ## 一句话提出需求，接下来发生什么？
 

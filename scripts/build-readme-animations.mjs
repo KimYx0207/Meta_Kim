@@ -219,8 +219,8 @@ function diagrams(locale){
  }
  return out;
 }
-// The panorama shares this renderer and localization source with the detailed
-// diagrams. Its existing public filename stays stable for README and release links.
+// Generate the expanded walkthrough under its own filename. The original wide
+// system panorama is an independent, preserved source diagram.
 function systemPanorama(locale){
  const t=panoramaCopy[locale],d=new Diagram(locale,'system-panorama',t,36);
  const x=56,w=848,pairW=400,px=[56,504];
@@ -293,7 +293,7 @@ function systemPanorama(locale){
 // Prepare every locale before writing: a layout error cannot leave partial output.
 const outputs=Object.keys(copy).flatMap(locale=>[
  ...Object.entries(diagrams(locale)).map(([id,svg])=>({name:`animated-${id}.${locale}.svg`,svg})),
- {name:`system-panorama.${locale}.svg`,svg:systemPanorama(locale)},
+ {name:`research-to-delivery.${locale}.svg`,svg:systemPanorama(locale)},
 ]);
 if(!check)fs.mkdirSync(OUT,{recursive:true});
 for(const{name,svg}of outputs){const file=path.join(OUT,name);if(check){if(!fs.existsSync(file)||fs.readFileSync(file,'utf8')!==svg)throw new Error(`Rebuild README animation: ${name}`);}else fs.writeFileSync(file,svg);}

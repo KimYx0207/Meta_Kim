@@ -17,14 +17,16 @@ Use it to investigate a business problem, create a report or content, improve an
 In everyday terms: **understand the goal → research online → compare routes → settle the design → execute and check**. Present evidence-backed choices, then turn the decision into work that can be performed and reviewed. The overview below shows that flow; the booking example then explains the designs, tasks and deliverables.
 
 <p align="center">
-  <a href="docs/images/system-panorama.en.svg"><img src="docs/images/system-panorama.en.svg" alt="Current online and external GitHub research leads to route choices, system and module PRDs, project capabilities, dependency-based execution and checked results, with Live throughout" width="960"></a>
+  <a href="docs/images/system-panorama.en.svg"><img src="docs/images/system-panorama.en.svg" alt="Meta_Kim system panorama: eight stages, dependency routing, human decisions, revision paths, and saved records" width="1000"></a>
   <br>
   <a href="docs/images/system-panorama.en.svg">Open full-size image</a>
 </p>
 
-Follow the main path from top to bottom: current online research and external GitHub reading establish the evidence, then materially different viable routes are compared. Reuse an existing valid choice; ask for your judgment when a new material tradeoff remains. Develop the system and modules within one PRD, then execute using project-owned capabilities and rules. Independent tasks can run in parallel; dependent work keeps a continuation point. Verification findings return to the affected work. **Live keeps decision evidence, actual progress and real results available throughout.**
+Read stages 01–08 from top to bottom. The dark section establishes the goal and evidence, then develops the system and its modules in one PRD. The execution section uses capabilities supplied by the current host; quality gates check actual results. Orange paths request a human decision when needed and reuse existing valid decisions. Purple paths return execution issues to affected tasks; scope, evidence, or design issues return to the responsible stage. Dashed paths write records. The host supplies Work adoption and effect feedback. Reusable learning is reviewed before updating methods or retaining a candidate; when no update is needed, the reason is recorded before delivery.
 
 [Open the scalable diagram](docs/images/system-panorama.en.svg)
+
+The newer research, route comparison, two-pass PRD and independent-task continuation are explained in a separate [step-by-step diagram](docs/images/research-to-delivery.en.svg).
 
 ## You describe a goal. What happens next?
 
