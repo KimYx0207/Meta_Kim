@@ -4,6 +4,14 @@
 
 User-facing changes for each release. Detailed test results live in the linked verification records.
 
+## [3.16.2] - 2026-11-16
+
+### Recover a stale Claude Code MCP registration without taking over user configuration
+
+- Add an explicit `meta-kim update --scope global --targets claude --repair-claude-mcp` path for a recognizable prior Meta_Kim MCP launch entry whose installation fingerprint is missing or stale. The normal update remains fail-closed.
+- The repair matches only the exact legacy script or versioned durable launcher shape, backs up the Claude config before a change, and preserves other MCP servers, authentication and user fields. Unknown, modified or unrelated entries remain protected.
+- This is a targeted installer repair, not proof that an already running Claude session has reloaded. ZCode marketplace packages are versioned independently by Kim_Service.
+
 ## [3.16.1] - 2026-11-15
 
 ### Complete the Yuan verification record and preserve opaque claim values

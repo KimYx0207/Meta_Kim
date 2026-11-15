@@ -15,6 +15,7 @@ describe("setup CLI policy", () => {
     assert.equal(validateSetupCliArgs(["--lang", "zh-CN", "--targets=claude,codex"]), true);
     assert.equal(validateSetupCliArgs(["--silent", "--scope=project"]), true);
     assert.equal(validateSetupCliArgs(["--project-dir", "D:/work", "--dry-run"]), true);
+    assert.equal(validateSetupCliArgs(["--update", "--repair-claude-mcp", "--scope", "global"]), true);
     assert.ok(SETUP_BOOLEAN_ARGS.includes("--project-bootstrap"));
     assert.ok(SETUP_VALUE_ARGS.includes("--deploy-dir"));
   });

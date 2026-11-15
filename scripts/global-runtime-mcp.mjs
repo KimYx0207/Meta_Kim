@@ -210,6 +210,32 @@ function isStrictLegacyMetaKimMcpDefinition(definition, legacyScriptSuffix) {
   return isAbsolute && normalizedArg.endsWith(`/${normalizedSuffix}`);
 }
 
+/**
+ * An explicit repair request may adopt a recognizable old Meta_Kim launch
+ * entry even when its historical manifest fingerprint is missing. This is
+ * deliberately narrower than matching a server name or a path substring:
+ * unknown commands, flags, environments and custom MCP servers still block.
+ * Normal install/update never invokes this exception.
+ */
+export function isExplicitClaudeMcpRepairCandidate(definition, {
+  legacyScriptSuffix,
+  packageName,
+  binRelativePath,
+} = {}) {
+  if (isStrictLegacyMetaKimMcpDefinition(definition, legacyScriptSuffix)) return true;
+  const normalized = normalizeExactDurableMetaKimMcpDefinition(definition, "claude");
+  if (!normalized || typeof packageName !== "string" || typeof binRelativePath !== "string") return false;
+  const parts = normalized.args[0].replaceAll("\\", "/").split("/").filter(Boolean);
+  const packageParts = packageName.split("/").filter(Boolean);
+  const binParts = binRelativePath.replaceAll("\\", "/").split("/").filter(Boolean);
+  if (!packageParts.length || !binParts.length || [...packageParts, ...binParts].some((part) => part === "." || part === "..")) return false;
+  const suffixSize = 4 + packageParts.length * 2 + binParts.length;
+  const suffix = parts.slice(-suffixSize);
+  const expected = [".meta-kim", "runtime", ...packageParts, null, "node_modules", ...packageParts, ...binParts];
+  return suffix.length === expected.length && isStrictSemVer(suffix[2 + packageParts.length]) &&
+    suffix.every((part, index) => expected[index] === null || part.toLowerCase() === expected[index].toLowerCase());
+}
+
 function unwrapExactWindowsCmdWrapper(definition) {
   if (!isPlainObject(definition) || !isPlainObject(definition.env) || !Array.isArray(definition.args)) {
     return null;

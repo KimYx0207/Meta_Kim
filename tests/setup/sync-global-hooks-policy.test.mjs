@@ -185,6 +185,46 @@ async function runScriptCapturingExit(args, env) {
 }
 
 describe("sync-global-meta-theory hook policy", () => {
+  test("Claude MCP repair requires opt-in and backs up only a recognized stale Meta_Kim entry", async () => {
+    await withTempRuntimeHomes(async ({ env, root }) => {
+      const configPath = path.join(root, ".claude.json");
+      const legacy = {
+        type: "stdio",
+        command: process.execPath,
+        args: [path.join(root, "old-project", "scripts", "mcp", "meta-runtime-server.mjs")],
+      };
+      const original = {
+        userSettings: { preserveMe: true },
+        mcpServers: {
+          "meta-kim-runtime": legacy,
+          "user-owned-server": { command: "custom-mcp", args: ["serve"] },
+        },
+      };
+      const originalText = `${JSON.stringify(original, null, 2)}\n`;
+      await writeFile(configPath, originalText, "utf8");
+      const runDurable = (args) => execFileAsync(process.execPath, [SCRIPT, "--targets", "claude", ...args], {
+        cwd: REPO_ROOT,
+        env,
+        maxBuffer: 8 * 1024 * 1024,
+      });
+
+      await assert.rejects(runDurable([]), /unowned global runtime assets|unowned Claude MCP entries|collision/i);
+      assert.equal(await readFile(configPath, "utf8"), originalText);
+
+      await runDurable(["--repair-claude-mcp"]);
+      const repaired = JSON.parse(await readFile(configPath, "utf8"));
+      assert.deepEqual(repaired.userSettings, original.userSettings);
+      assert.deepEqual(repaired.mcpServers["user-owned-server"], original.mcpServers["user-owned-server"]);
+      assert.equal(repaired.mcpServers["meta-kim-runtime"].args.slice(-2).join(" "), "mcp serve");
+      assert.notDeepEqual(repaired.mcpServers["meta-kim-runtime"], legacy);
+
+      const backupRoot = path.join(root, "claude", ".meta-kim", "backups", "mcp");
+      const stamps = await readdir(backupRoot);
+      assert.ok(stamps.length > 0, "repair must preserve the original Claude config in a backup");
+      assert.equal(await readFile(path.join(backupRoot, stamps[0], ".claude.json"), "utf8"), originalText);
+    });
+  });
+
   test("help exits successfully without resolving or writing runtime homes", async () => {
     await withTempRuntimeHomes(async ({ env, root }) => {
       for (const flag of ["--help", "-h"]) {

@@ -292,6 +292,9 @@ const saveProjectDirsMode = args.includes("--save-project-dirs");
 const setupWithGlobalHooks =
   args.includes("--with-global-hooks") ||
   process.env.META_KIM_WITH_GLOBAL_HOOKS === "1";
+// Explicit, one-time repair for a known old Claude MCP entry. Regular updates
+// continue to reject unknown or user-edited configurations.
+const setupRepairClaudeMcp = args.includes("--repair-claude-mcp");
 const skipOptionalTools = process.env.META_KIM_SKIP_OPTIONAL_TOOLS === "1";
 const preferLocalDependencies =
   process.env.META_KIM_PREFER_LOCAL_DEPENDENCIES === "1";
@@ -5772,7 +5775,7 @@ async function runRebindRuntimeLaunchCli() {
 }
 
 function metaTheoryGlobalSyncArgs(targets, withGlobalHooks = false) {
-  return buildGlobalMetaTheorySyncArgs({ targets, withGlobalHooks });
+  return buildGlobalMetaTheorySyncArgs({ targets, withGlobalHooks, repairClaudeMcp: setupRepairClaudeMcp });
 }
 
 function checkGlobalRuntimeSync(targets) {

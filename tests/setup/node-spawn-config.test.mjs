@@ -147,6 +147,17 @@ describe("setup child CLI contracts", () => {
     }
   });
 
+  test("Claude repair opt-in propagates only to the exact global sync child", () => {
+    assert.deepEqual(
+      buildGlobalMetaTheorySyncArgs({ targets: ["claude"], repairClaudeMcp: true }),
+      ["--targets", "claude", "--repair-claude-mcp"],
+    );
+    assert.deepEqual(
+      buildGlobalMetaTheorySyncArgs({ targets: ["claude"] }),
+      ["--targets", "claude"],
+    );
+  });
+
   test("only declared localized children receive language", () => {
     for (const childId of [
       SETUP_NODE_CHILD.RUNTIME_SYNC,

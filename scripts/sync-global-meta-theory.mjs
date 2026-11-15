@@ -60,6 +60,7 @@ import {
 } from "./sync-runtimes.mjs";
 import {
   buildDurableMetaKimMcpServer,
+  isExplicitClaudeMcpRepairCandidate,
   mcpDefinitionFingerprint,
   isStrictSemVer,
   mergeClaudeUserMcpConfig,
@@ -143,6 +144,8 @@ Options:
   --with-global-hooks     Include global Hook files and runtime registration
   --skip-global-hooks     Explicitly skip global Hook synchronization
   --skip-durable-mcp      Explicitly skip Claude durable MCP runtime and MCP config
+  --repair-claude-mcp     Explicitly repair a recognizable old Claude Meta_Kim MCP entry;
+                          preserve unrelated config and back up before changing it
   --help, -h              Show this help without resolving homes or writing`);
 }
 
@@ -153,6 +156,7 @@ function parseCliArgs(args) {
     "--with-global-hooks",
     "--skip-global-hooks",
     "--skip-durable-mcp",
+    "--repair-claude-mcp",
     "--help",
     "-h",
   ]);
@@ -179,6 +183,9 @@ function parseCliArgs(args) {
 
   const help = args.includes("--help") || args.includes("-h");
   const skipGlobalHooks = args.includes("--skip-global-hooks");
+  if (args.includes("--repair-claude-mcp") && args.includes("--skip-durable-mcp")) {
+    throw new Error("--repair-claude-mcp cannot be combined with --skip-durable-mcp");
+  }
   return {
     help,
     checkOnly: args.includes("--check"),
@@ -186,6 +193,7 @@ function parseCliArgs(args) {
     skipGlobalHooks,
     withGlobalHooks: args.includes("--with-global-hooks") && !skipGlobalHooks,
     skipDurableMcp: args.includes("--skip-durable-mcp"),
+    repairClaudeMcp: args.includes("--repair-claude-mcp"),
   };
 }
 
@@ -201,6 +209,7 @@ const checkOnly = cliOptions?.checkOnly ?? false;
 const printTargetsOnly = cliOptions?.printTargetsOnly ?? false;
 const withGlobalHooks = cliOptions?.withGlobalHooks ?? false;
 const skipDurableMcp = cliOptions?.skipDurableMcp ?? false;
+const repairClaudeMcp = cliOptions?.repairClaudeMcp ?? false;
 
 const repoHooksDir = path.join(canonicalRuntimeAssetsDir, "claude", "hooks");
 const sharedHooksDir = path.join(canonicalRuntimeAssetsDir, "shared", "hooks");
@@ -1074,6 +1083,18 @@ async function buildClaudeUserMcpPlan() {
   for (const fingerprint of await verifiedHistoricalClaudeMcpFingerprints(base, canonical)) {
     managedFingerprints.add(fingerprint);
   }
+  if (repairClaudeMcp) {
+    for (const alias of [canonical.name, canonical.name.replaceAll("-", "_")]) {
+      const existing = base?.mcpServers?.[alias];
+      if (isExplicitClaudeMcpRepairCandidate(existing, {
+        legacyScriptSuffix: canonical.legacyScriptSuffix,
+        packageName: canonical.identity.packageName,
+        binRelativePath: canonical.packageManifest.bin?.[canonical.identity.cliName],
+      })) {
+        managedFingerprints.add(mcpDefinitionFingerprint(existing));
+      }
+    }
+  }
   if (executingProjectionPackage) {
     const authorityLayout = projectionPackageMcpLayout(executingProjectionPackage);
     const existing = base?.mcpServers?.[canonical.name];
@@ -1536,6 +1557,9 @@ async function resolveTargets() {
   );
 
   selectedTargetIds = [...targetContext.activeTargets];
+  if (repairClaudeMcp && !selectedTargetIds.includes("claude")) {
+    throw new Error("--repair-claude-mcp requires Claude in the selected --targets");
+  }
   globalAgentTargets = resolveGlobalAgentProjectionTargets(
     runtimeProfiles,
     selectedTargetIds,

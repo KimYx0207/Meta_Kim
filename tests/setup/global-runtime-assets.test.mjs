@@ -9,6 +9,7 @@ import test from "node:test";
 import {
   buildDurableMetaKimMcpServer,
   buildPortableMetaKimMcpServer,
+  isExplicitClaudeMcpRepairCandidate,
   isStrictSemVer,
   mcpDefinitionFingerprint,
   mergeClaudeUserMcpConfig,
@@ -17,6 +18,40 @@ import {
   resolveDurableMetaKimRuntimeLayout,
   resolvePortableMetaKimPackageIdentity,
 } from "../../scripts/global-runtime-mcp.mjs";
+
+test("explicit Claude MCP repair recognizes only exact prior Meta_Kim launch entries", () => {
+  const options = {
+    legacyScriptSuffix: "scripts/mcp/meta-runtime-server.mjs",
+    packageName: "meta-kim",
+    binRelativePath: "bin/meta-kim.mjs",
+  };
+  const legacy = {
+    type: "stdio",
+    command: "node",
+    args: ["C:/work/Meta_Kim/scripts/mcp/meta-runtime-server.mjs"],
+  };
+  const prior = buildDurableMetaKimMcpServer(
+    "C:/Program Files/nodejs/node.exe",
+    "C:/Users/Kim/.meta-kim/runtime/meta-kim/3.10.0/node_modules/meta-kim/bin/meta-kim.mjs",
+    "claude",
+  );
+  assert.equal(isExplicitClaudeMcpRepairCandidate(legacy, options), true);
+  assert.equal(isExplicitClaudeMcpRepairCandidate(prior, options), true);
+  assert.equal(isExplicitClaudeMcpRepairCandidate({ ...legacy, env: { TOKEN: "user" } }, options), false);
+  assert.equal(isExplicitClaudeMcpRepairCandidate({ ...legacy, args: [...legacy.args, "--custom"] }, options), false);
+  assert.equal(isExplicitClaudeMcpRepairCandidate({ ...prior, args: ["C:/tmp/my-mcp.mjs", "mcp", "serve"] }, options), false);
+  assert.equal(isExplicitClaudeMcpRepairCandidate({ ...prior, args: ["C:/Users/Kim/.meta-kim/runtime/meta-kim/3.10.0/node_modules/other/bin/meta-kim.mjs", "mcp", "serve"] }, options), false);
+  assert.equal(isExplicitClaudeMcpRepairCandidate({ command: "user-tool", args: ["serve"] }, options), false);
+  const next = buildDurableMetaKimMcpServer("C:/Program Files/nodejs/node.exe", "C:/managed/current/bin/meta-kim.mjs", "claude");
+  const base = { auth: { ownedByUser: true }, mcpServers: { custom: { command: "my-server" }, "meta-kim-runtime": legacy } };
+  const mergeOptions = { canonicalName: "meta-kim-runtime", portableDefinition: next, legacyScriptSuffix: options.legacyScriptSuffix };
+  assert.deepEqual(mergeClaudeUserMcpConfig(base, mergeOptions).collisions, ["meta-kim-runtime"]);
+  const repaired = mergeClaudeUserMcpConfig(base, { ...mergeOptions, managedFingerprints: new Set([mcpDefinitionFingerprint(legacy)]) });
+  assert.deepEqual(repaired.collisions, []);
+  assert.deepEqual(repaired.config.mcpServers["meta-kim-runtime"], next);
+  assert.deepEqual(repaired.config.mcpServers.custom, base.mcpServers.custom);
+  assert.deepEqual(repaired.config.auth, base.auth);
+});
 
 test("durable MCP definition normalizer accepts only the exact Node launch shape", () => {
   const direct = buildDurableMetaKimMcpServer(

@@ -3,7 +3,7 @@ export const SETUP_BOOLEAN_ARGS = Object.freeze([
   "--without-global-hooks", "--all-projects", "--update-projects",
   "--save-project-dirs", "--prompt-proxy", "--project-bootstrap",
   "--cleanup-projects", "--project-cleanup", "--dry-run", "--apply", "--json",
-  "--rebind-runtime-launch",
+  "--rebind-runtime-launch", "--repair-claude-mcp",
 ]);
 
 export const SETUP_VALUE_ARGS = Object.freeze([

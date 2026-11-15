@@ -60,6 +60,7 @@ export function buildGlobalSkillsInstallerArgs({
 export function buildGlobalMetaTheorySyncArgs({
   targets,
   withGlobalHooks = false,
+  repairClaudeMcp = false,
 } = {}) {
   const targetList = normalizeTargetList(targets);
   const args = ["--targets", targetList];
@@ -72,6 +73,7 @@ export function buildGlobalMetaTheorySyncArgs({
   ) {
     args.push("--with-global-hooks");
   }
+  if (repairClaudeMcp) args.push("--repair-claude-mcp");
   return args;
 }
 
