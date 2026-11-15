@@ -189,6 +189,26 @@
       "rollbackPlanDigest": "sha256:d063ff3022567bb06393c45bdcebd35927fbec1fe2addc84b2d8dedcd631c855",
       "targetRef": "canonical/skills/meta-theory/SKILL.md",
       "toStatus": "active"
+    },
+    "yuan-interaction-20261115:reviewed-host-skill": {
+      "appliedAt": "2026-11-15T16:33:43.763Z",
+      "approvalDigest": "sha256:a66b08dee3cc85fc91a9a699b0404f8958f7e4b90115c9c77668bc7b754395e2",
+      "candidateDigest": "sha256:2a9f60a1c653bf490a3d8818298a02ddf9e598326904a808cbf4b80110dca244",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "rollbackPlanDigest": "sha256:cc53e7baa0d72f971904972700415176ae3c37c88af69adfd4f9ccb62c8e3b78",
+      "targetRef": "canonical/skills/meta-theory/SKILL.md",
+      "toStatus": "active"
+    },
+    "yuan-interaction-20261115:reviewed-module-core-loop": {
+      "appliedAt": "2026-11-15T16:33:43.763Z",
+      "approvalDigest": "sha256:df3100ec004a27a7eebce281128cd9fe7ad1334e9c6a6805be977ea6918d096e",
+      "candidateDigest": "sha256:c206279936545cb5780d4cef6720dd8765ec2121b3b2169e565fa3078c9cd2ec",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "rollbackPlanDigest": "sha256:2ef405e73e546d60e7ff81ce6937bf86f25a90f5df764e4d77b79032d75d4081",
+      "targetRef": "config/contracts/core-loop-contract.json",
+      "toStatus": "active"
     }
   },
   "entries": {
@@ -197,9 +217,9 @@
       "foundational": true,
       "kind": "knowledge",
       "lifecycle": {
-        "changedAt": "2026-11-15T12:45:13.650Z",
-        "lastTransitionId": "minimal-compatibility-20261115:reviewed-host-delegation-source",
-        "reason": "Fresh current-session exact-delta review by /root/all_runtime_countercheck compared the registered source bytes at 98cb66a27bb74987531cf3c90a496a9db8b1ffae with d461be6bfc02256d112aea063f8472f46d24fc55. The complete delta is four instruction-line replacements: replace Claude-specific Agent calls with the active host native delegation tool in the dispatcher and Type A/Type C routes, require the observed schema, and remove the top-level-only assumption for Codex spawn_agent. Fetch/Thinking readiness, callable-tool and permission checks, native custom-agent schema/owner validation, bounded fallback ownership, role labels, verification and project-owned delivery rules are unchanged. All other source bytes match the registered baseline. This is a local source review under the user-authorized compatibility correction; it is not external signature, human-performed approval or native model-task certification."
+        "changedAt": "2026-11-15T16:33:43.763Z",
+        "lastTransitionId": "yuan-interaction-20261115:reviewed-host-skill",
+        "reason": "Independent local Agent /root/yuan_live_counterreview read the complete current meta-warden source contract and reviewed the exact source-byte delta from 61d7554e77245dc8e4eb383f8ab8181c901d62b7 through e70c76049335e6bb2574dcd72dc8d1f63ceff84c plus the authorized current scope-barrier wording correction. The complete SKILL delta qualifies stage barriers within each scope while preserving the legacy global graph, names actual module dependency/permission/final integration constraints, and adds only the native-host interaction paragraph and reference index entry. The matching evolution-writeback and dev-governance paragraphs were inspected for consistency. All other SKILL bytes, including nine roles, two-PRD guidance, permissions, foundational capabilities and user acceptance boundaries, are unchanged. This approves only a source-binding knowledge upgrade under the existing user-authorized work; it is not a human/external signature, native model certification, execution grant or public-ready approval."
       },
       "provenance": {
         "evidenceRefs": [
@@ -211,7 +231,7 @@
         ]
       },
       "replacementRefs": [],
-      "sourceDigest": "sha256:7793b14b946d2398754ce03bc7774e1efedc1cd1ec00497680cfa6d61330db85",
+      "sourceDigest": "sha256:39b2d69157f0aaf7692654333952ae2c2516b74b34297dd2a5e5e08ed882f2be",
       "status": "active",
       "targetRef": "canonical/skills/meta-theory/SKILL.md"
     },
@@ -220,9 +240,9 @@
       "foundational": true,
       "kind": "rule",
       "lifecycle": {
-        "changedAt": "2026-11-15T00:50:03.331Z",
-        "lastTransitionId": "current-research-comparison-20261115:reviewed-core-loop-source",
-        "reason": "Bind the reviewed current-information/source-age and unselected-comparison rules: actual current retrieval when explicitly requested, optional evidenced age bounds without universal quotas, comparison on the existing user decision frontier, and no unresolved comparison consumed as a selected delivery route. Preserve stage order, decision ownership, permissions and unrelated source bindings."
+        "changedAt": "2026-11-15T16:33:43.763Z",
+        "lastTransitionId": "yuan-interaction-20261115:reviewed-module-core-loop",
+        "reason": "Independent local Agent /root/yuan_live_counterreview read the complete current meta-warden source contract and reviewed both exact Git source bytes and the full parsed JSON delta from 61d7554e77245dc8e4eb383f8ab8181c901d62b7 to e70c76049335e6bb2574dcd72dc8d1f63ceff84c. Only parallelExecutionPolicy adds scopedMode/modeSelection and changes stageBarrierRule/mergeRule/invocationTruthRule: explicit module dependencies and shared-task identity, same-scope stage barriers, independent owner and integration receipts, and exact observed bindings distinct from native certification and user final acceptance. Every other contract block and the existing permission, side-effect, resource, capacity and degradation rules are equal. The three directly related prompt/reference barrier paragraphs were inspected after their minimal scope qualification. This approves only a source-binding knowledge upgrade under the existing user-authorized work; it is not a human/external signature, native model certification, execution grant or public-ready approval."
       },
       "provenance": {
         "evidenceRefs": [
@@ -234,7 +254,7 @@
         ]
       },
       "replacementRefs": [],
-      "sourceDigest": "sha256:1749195738018f80177ac2a7f33557bb94cb02662d488203ebee6343b7f11e69",
+      "sourceDigest": "sha256:ba665dc6ebb95c8b090e0395ac215bd729e91d3209c220a589f7376554f4a3b3",
       "status": "active",
       "targetRef": "config/contracts/core-loop-contract.json"
     },
@@ -889,6 +909,72 @@
       "targetRef": "canonical/skills/meta-theory/SKILL.md",
       "toStatus": "active",
       "transitionId": "minimal-compatibility-20261115:reviewed-host-delegation-source"
+    },
+    {
+      "appliedAt": "2026-11-15T16:33:43.763Z",
+      "approvalDigest": "sha256:a66b08dee3cc85fc91a9a699b0404f8958f7e4b90115c9c77668bc7b754395e2",
+      "candidateDigest": "sha256:2a9f60a1c653bf490a3d8818298a02ddf9e598326904a808cbf4b80110dca244",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "previousEntry": {
+        "executionClass": "execution_eligible",
+        "foundational": true,
+        "kind": "knowledge",
+        "lifecycle": {
+          "changedAt": "2026-11-15T12:45:13.650Z",
+          "lastTransitionId": "minimal-compatibility-20261115:reviewed-host-delegation-source",
+          "reason": "Fresh current-session exact-delta review by /root/all_runtime_countercheck compared the registered source bytes at 98cb66a27bb74987531cf3c90a496a9db8b1ffae with d461be6bfc02256d112aea063f8472f46d24fc55. The complete delta is four instruction-line replacements: replace Claude-specific Agent calls with the active host native delegation tool in the dispatcher and Type A/Type C routes, require the observed schema, and remove the top-level-only assumption for Codex spawn_agent. Fetch/Thinking readiness, callable-tool and permission checks, native custom-agent schema/owner validation, bounded fallback ownership, role labels, verification and project-owned delivery rules are unchanged. All other source bytes match the registered baseline. This is a local source review under the user-authorized compatibility correction; it is not external signature, human-performed approval or native model-task certification."
+        },
+        "provenance": {
+          "evidenceRefs": [
+            "AGENTS.md#Meta-Theory-Activation"
+          ],
+          "recordedAt": "2026-08-12T00:00:00.000Z",
+          "sourceRefs": [
+            "canonical/skills/meta-theory/SKILL.md"
+          ]
+        },
+        "replacementRefs": [],
+        "sourceDigest": "sha256:7793b14b946d2398754ce03bc7774e1efedc1cd1ec00497680cfa6d61330db85",
+        "status": "active",
+        "targetRef": "canonical/skills/meta-theory/SKILL.md"
+      },
+      "targetRef": "canonical/skills/meta-theory/SKILL.md",
+      "toStatus": "active",
+      "transitionId": "yuan-interaction-20261115:reviewed-host-skill"
+    },
+    {
+      "appliedAt": "2026-11-15T16:33:43.763Z",
+      "approvalDigest": "sha256:df3100ec004a27a7eebce281128cd9fe7ad1334e9c6a6805be977ea6918d096e",
+      "candidateDigest": "sha256:c206279936545cb5780d4cef6720dd8765ec2121b3b2169e565fa3078c9cd2ec",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "previousEntry": {
+        "executionClass": "execution_eligible",
+        "foundational": true,
+        "kind": "rule",
+        "lifecycle": {
+          "changedAt": "2026-11-15T00:50:03.331Z",
+          "lastTransitionId": "current-research-comparison-20261115:reviewed-core-loop-source",
+          "reason": "Bind the reviewed current-information/source-age and unselected-comparison rules: actual current retrieval when explicitly requested, optional evidenced age bounds without universal quotas, comparison on the existing user decision frontier, and no unresolved comparison consumed as a selected delivery route. Preserve stage order, decision ownership, permissions and unrelated source bindings."
+        },
+        "provenance": {
+          "evidenceRefs": [
+            "AGENTS.md#Eight-Stage-Spine"
+          ],
+          "recordedAt": "2026-08-12T00:00:00.000Z",
+          "sourceRefs": [
+            "config/contracts/core-loop-contract.json"
+          ]
+        },
+        "replacementRefs": [],
+        "sourceDigest": "sha256:1749195738018f80177ac2a7f33557bb94cb02662d488203ebee6343b7f11e69",
+        "status": "active",
+        "targetRef": "config/contracts/core-loop-contract.json"
+      },
+      "targetRef": "config/contracts/core-loop-contract.json",
+      "toStatus": "active",
+      "transitionId": "yuan-interaction-20261115:reviewed-module-core-loop"
     }
   ],
   "policy": {
@@ -898,7 +984,7 @@
     "referenceOnlyPromotion": false,
     "retiredRecordsRemainTombstones": true
   },
-  "revision": 19,
+  "revision": 21,
   "schemaVersion": "knowledge-lifecycle-registry-v1",
-  "updatedAt": "2026-11-15T12:45:13.650Z"
+  "updatedAt": "2026-11-15T16:33:43.763Z"
 }

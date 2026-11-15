@@ -121,7 +121,7 @@ Parallelism rule: the same owner may run multiple instances only with shardKey, 
 
 `config/contracts/core-loop-contract.json#parallelExecutionPolicy` is the single machine authority for stage order, barriers, stage-internal parallelism, resource safety, merge authority, degradation, and invocation truth. This reference explains that contract; it does not add a pre-stage discovery gate, fixed wave model, or competing fan-out trigger.
 
-The canonical spine remains `Critical -> Fetch -> Thinking -> Execution -> Review -> Meta-Review -> Verification -> Evolution`. A stage starts only after the previous stage's merge node closes. Critical and Fetch never overlap, Review and Meta-Review never overlap, and no support lane may release the next-stage barrier by itself.
+The canonical spine remains `Critical -> Fetch -> Thinking -> Execution -> Review -> Meta-Review -> Verification -> Evolution`. Within each scope, a stage starts only after that scope's previous stage merge node closes. Critical and Fetch never overlap within the same scope, Review and Meta-Review never overlap within the same scope, and no support lane may release the next-stage barrier by itself. Without an explicit `moduleScopePlan`, retain the existing global stage graph and barriers. Explicit independent module scopes may overlap stages, subject to shared architecture, declared task/interface dependencies, current decisions, resource conflicts and permissions. Each stage keeps its named authority within its scope; final completion still requires every required module and an observed integration Verification receipt.
 
 Inside the active stage, schedule the maximal safe ready set from that stage's `parallelPolicy`:
 
