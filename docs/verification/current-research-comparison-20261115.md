@@ -28,6 +28,8 @@ The final run of the command above passed **15 tests, 0 failed, 0 skipped** afte
 
 The actual updated Kim_Service source was also discovered as `verified_local` with 61 Agents. The three new ecommerce, global-expansion and short-drama methods loaded as `structured_method_loaded`, including default professional references and verified full component hashes. This confirms local source integration, not native-model invocation.
 
+GitHub CI at `0291c9ee1f7b4adbc35333dcecba5bf9596597e2` subsequently found that the production knowledge registry still bound the previous core-loop contract bytes. The two new policy fields were reviewed again against the historical source and upgraded through the existing candidate, exact approval binding and repository CAS path. Registry revision 18 retains the old entry and transition history; identical replay is idempotent. No source rule, assertion or gate was relaxed. The focused command `node --test tests/meta-theory/79-knowledge-lifecycle-hygiene.test.mjs` then passed **16 tests, 0 failed, 0 skipped**. This corrects the observed registry drift; the earlier failed CI run is not reported as successful.
+
 ## Repository maintenance observations
 
 - `discover:global` completed. Its local inventory reported missing configurations for several optional clients; discovery is not a claim that those clients are installed or accepted.
