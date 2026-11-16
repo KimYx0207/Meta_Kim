@@ -65,6 +65,13 @@ export const LIVE_WORKSPACE_CSS = String.raw`
 .uw-agent-entry-submit .uw-icon { width: 16px; height: 16px; }
 .uw-agent-entry-submit:hover:not(:disabled) { background: #ffffff; }
 .uw-agent-entry-submit:disabled { border-color: #4b4c50; background: #27282a; color: #9599a1; cursor: not-allowed; }
+.uw-agent-host-status { padding: 0 var(--sp-cozy); color: var(--uw-muted); font-size: var(--fs-micro); line-height: var(--lh-normal); }
+.uw-agent-host-status[hidden] { display: none; }
+.uw-agent-host-status summary { width: fit-content; cursor: pointer; padding: var(--sp-cozy) 0; text-decoration: underline; text-underline-offset: 3px; }
+.uw-agent-host-status summary:focus-visible { outline: 2px solid #e1e4e9; outline-offset: 2px; }
+.uw-agent-host-status ul { margin: 0; padding: 0 0 var(--sp-cozy); list-style: none; display: grid; gap: var(--sp-cozy); }
+.uw-agent-host-status li { padding: var(--sp-cozy) var(--sp-default); background: #1b1c1e; border-left: 2px solid #666a72; border-radius: 4px; overflow-wrap: anywhere; }
+.uw-agent-host-status li[data-state="ready"] { border-color: #c9a35e; color: #e1e3e7; }
 .uw-agent-entry-status { padding: var(--sp-cozy) var(--sp-default); border: 1px solid #46494e; border-radius: 7px; color: #d0d4dc; background: #202125; font-size: var(--fs-label); line-height: var(--lh-normal); overflow-wrap: anywhere; }
 .uw-agent-entry-status[data-state="blocked"], .uw-agent-entry-status[data-state="unconfirmed"] { border-color: #795d4f; color: #efc4ac; background: #27211e; }
 .uw-agent-entry-result { padding: var(--sp-cozy) var(--sp-default); border: 1px solid #4d555b; border-radius: 7px; background: #121519; color: #e6e8eb; }

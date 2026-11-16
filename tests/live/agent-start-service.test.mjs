@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createAgentStartService } from "../../src/application/agent/agent-start-service.mjs";
+import { diagnoseAgentHost, meetsAgentHostMinimumVersion } from "../../src/domain/runtime/agent-host-diagnostics.mjs";
 import { componentHash, sha256, stableJson } from "../../scripts/dependency-agent-discovery.mjs";
 
 const projectRoot = fileURLToPath(new URL("../../", import.meta.url));
@@ -34,14 +35,68 @@ test("starts disabled by default, with honest detected versus supported host sta
   assert.deepEqual(hosts.hosts.map((host) => host.id),
     ["claude", "gemini", "codex", "zcode", "dsh", "opencode", "openclaw"]);
   assert.equal(hosts.hosts.find((host) => host.id === "claude").launchSupported, true);
+  assert.equal(hosts.hosts.find((host) => host.id === "claude").statusLabel, "可用于只读研究");
+  assert.match(hosts.hosts.find((host) => host.id === "claude").nextAction, /实际修改、执行和交付/u);
   for (const host of hosts.hosts.filter((entry) => entry.id !== "claude")) {
     assert.equal(host.available, true);
     assert.equal(host.launchSupported, false);
+    assert.ok(host.statusLabel && host.nextAction);
   }
   assert.equal((await service.start({ goal: "Build an app", hostId: "claude", idempotencyKey: key() })).reason,
     "agent_execution_disabled");
   assert.equal(launched, false);
   service.close();
+});
+
+test("host diagnostics tell beginners what to do without expanding launch authority", async () => {
+  const secrets = { CODEX_TOKEN: "codex-do-not-expose", OPENAI_API_KEY: "openai-do-not-expose" };
+  const detectedByHost = {
+    claude: { status: "not_found", version: null },
+    gemini: { status: "detected", version: "0.67.9" },
+    codex: { status: "detected", version: "9.9.9" },
+    zcode: { status: "detected", version: "9.9.9" },
+    dsh: { status: "unprobed", version: null },
+    opencode: { status: "not_found", version: null },
+    openclaw: { status: "detected", version: "9.9.9" },
+  };
+  const service = createAgentStartService({ projectRoot, enabled: true,
+    environment: { PATH: process.env.PATH, ...secrets },
+    probe: (command) => detectedByHost[command],
+    launch: () => { throw new Error("Unsupported host should not launch"); },
+  });
+  const snapshot = await service.getHosts();
+  const host = (id) => snapshot.hosts.find((entry) => entry.id === id);
+  assert.equal(snapshot.executionAllowed, false);
+  assert.equal(host("claude").reason, "client_not_installed");
+  assert.match(host("claude").nextAction, /安装 Claude Code.*重新检测/u);
+  assert.equal(host("gemini").reason, "client_version_unreviewed");
+  assert.match(host("gemini").nextAction, /0\.68\.0/u);
+  assert.equal(host("codex").reason, "personal_codex_token_not_authorized");
+  assert.match(host("codex").nextAction, /不会读取或使用个人 Codex Token/u);
+  assert.equal(host("zcode").reason, "needs_native_launch_review");
+  assert.match(host("zcode").nextAction, /尚未完成安全启动协议/u);
+  assert.equal(host("dsh").reason, "client_detection_not_verified");
+  assert.match(host("dsh").nextAction, /PATH/u);
+  assert.match(host("dsh").nextAction, /仍未开放自动启动/u);
+  assert.equal(host("opencode").reason, "client_not_installed");
+  assert.match(host("opencode").nextAction, /当前版本仍未开放自动启动/u);
+  assert.ok(snapshot.hosts.every((entry) => entry.launchSupported === false));
+  assert.ok(!JSON.stringify(snapshot).includes(secrets.CODEX_TOKEN));
+  assert.ok(!JSON.stringify(snapshot).includes(secrets.OPENAI_API_KEY));
+  service.close();
+});
+
+test("runtime CLI minimum versions compare semver components, not lexically", () => {
+  assert.equal(meetsAgentHostMinimumVersion("Claude Code v2.1.259", "2.1.259"), true);
+  assert.equal(meetsAgentHostMinimumVersion("v2.10.0", "2.1.259"), true);
+  assert.equal(meetsAgentHostMinimumVersion("2.1.258", "2.1.259"), false);
+  assert.equal(meetsAgentHostMinimumVersion("version unverified", "2.1.259"), false);
+  const hypotheticalCodexProfile = diagnoseAgentHost(
+    { id: "codex", label: "Codex", profile: { minimumVersion: "0.1.0" } },
+    { status: "detected", version: "9.9.9" },
+  );
+  assert.equal(hypotheticalCodexProfile.launchSupported, false);
+  assert.equal(hypotheticalCodexProfile.reason, "personal_codex_token_not_authorized");
 });
 
 test("only reviewed Claude plan mode launches, using stdin and fixed local CWD", async () => {

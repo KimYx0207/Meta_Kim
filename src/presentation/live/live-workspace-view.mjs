@@ -40,12 +40,13 @@ export function renderLiveWorkspaceSurface() {
       <form data-uw-agent-start autocomplete="off">
         <div class="uw-agent-entry-heading"><div><span class="uw-agent-entry-kicker">新任务</span><h2 id="uw-agent-entry-title">说出你想做的事</h2></div><span class="uw-agent-entry-project" title="由本地服务验证执行目录；切换页面中的项目不会改变执行位置">本地执行</span></div>
         <label class="uw-agent-entry-goal-label" for="uw-agent-goal">任务描述</label>
-        <textarea class="uw-agent-entry-goal" data-uw-agent-goal id="uw-agent-goal" rows="2" maxlength="6000" placeholder="比如：帮我研究三个方案，比较优缺点，再做出可以验收的结果。" aria-describedby="uw-agent-entry-help"></textarea>
+        <textarea class="uw-agent-entry-goal" data-uw-agent-goal id="uw-agent-goal" rows="2" maxlength="6000" placeholder="比如：帮我研究三个方案，比较优缺点，并说明推荐理由。" aria-describedby="uw-agent-entry-help"></textarea>
         <div class="uw-agent-entry-actions">
           <span class="uw-agent-entry-help" id="uw-agent-entry-help">关键决策由你确认；进度以客户端回执为准。</span>
-          <label class="uw-agent-entry-host-label" for="uw-agent-host">执行客户端<select class="uw-agent-entry-host" data-uw-agent-host id="uw-agent-host" disabled><option value="">正在检测…</option></select></label>
-          <button class="uw-agent-entry-submit" data-uw-agent-submit type="submit" disabled>开始处理${liveWorkspaceIcon("arrow")}</button>
+          <label class="uw-agent-entry-host-label" for="uw-agent-host">研究客户端<select class="uw-agent-entry-host" data-uw-agent-host id="uw-agent-host" disabled><option value="">正在检测…</option></select></label>
+          <button class="uw-agent-entry-submit" data-uw-agent-submit type="submit" disabled>生成方案${liveWorkspaceIcon("arrow")}</button>
         </div>
+        <details class="uw-agent-host-status" data-uw-agent-host-status hidden><summary>查看客户端连接情况</summary><ul data-uw-agent-host-list></ul></details>
         <div class="uw-agent-entry-status" data-uw-agent-status role="status" aria-live="polite" aria-atomic="true" hidden></div>
         <details class="uw-agent-entry-result" data-uw-agent-result hidden><summary>研究建议 · 等待你确认</summary><pre data-uw-agent-output></pre><p>这只是客户端的只读研究结果，后续执行和交付仍以 Meta 的真实记录为准。</p></details>
         <div class="uw-agent-entry-recovery" data-uw-agent-recovery hidden><button type="button" data-uw-agent-verify>检查提交结果</button><button type="button" data-uw-agent-redetect>重新检测客户端</button><button type="button" data-uw-agent-new hidden>发起下一项</button></div>

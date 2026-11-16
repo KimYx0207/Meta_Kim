@@ -21,6 +21,10 @@ import {
   readDependencyProjectOverrides,
 } from "../../../scripts/dependency-agent-discovery.mjs";
 import { prepareHostMethodHandoff } from "../../../scripts/governed-execution/host-method-handoff.mjs";
+import {
+  diagnoseAgentHost,
+  meetsAgentHostMinimumVersion,
+} from "../../domain/runtime/agent-host-diagnostics.mjs";
 
 const MANIFEST_PATH = fileURLToPath(new URL("../../../config/agent-hosts.json", import.meta.url));
 const DEPENDENCY_REGISTRY_PATH = fileURLToPath(new URL(
@@ -114,22 +118,6 @@ function readTrustedHosts() {
   });
 }
 
-function parseVersion(version) {
-  const match = String(version ?? "").match(/(?:^|[^\d])v?(\d+)\.(\d+)\.(\d+)(?!\d)/u);
-  return match ? match.slice(1).map(Number) : null;
-}
-
-function atLeastVersion(version, minimum) {
-  const actual = parseVersion(version);
-  const expected = parseVersion(minimum);
-  if (!actual || !expected) return false;
-  for (let index = 0; index < 3; index += 1) {
-    if (actual[index] > expected[index]) return true;
-    if (actual[index] < expected[index]) return false;
-  }
-  return true;
-}
-
 function validateRequest({ goal, hostId, idempotencyKey } = {}) {
   if (typeof hostId !== "string" || !HOST_PATTERN.test(hostId)) return null;
   if (typeof idempotencyKey !== "string" || !KEY_PATTERN.test(idempotencyKey)) return null;
@@ -143,15 +131,6 @@ function validateRequest({ goal, hostId, idempotencyKey } = {}) {
 
 function fingerprint(goal, hostId) {
   return createHash("sha256").update(hostId).update("\u0000").update(goal).digest("hex");
-}
-
-function hostReason(host, probeResult) {
-  if (host.id === "codex") return "personal_codex_token_not_authorized";
-  if (probeResult.status !== "detected") return probeResult.status === "not_found"
-    ? "client_not_installed" : "client_detection_not_verified";
-  if (!host.profile) return host.unavailableReason;
-  if (!atLeastVersion(probeResult.version, host.profile.minimumVersion)) return "client_version_unreviewed";
-  return "read_only_plan_verified";
 }
 
 function requestResult(record) {
@@ -431,11 +410,7 @@ export function createAgentStartService({
   async function getHosts() {
     const [entries, professionalCatalog] = await Promise.all([Promise.all(hosts.map(async (host) => {
       const detection = await detect(host);
-      const available = detection.status === "detected";
-      const launchSupported = available && !!host.profile
-        && atLeastVersion(detection.version, host.profile.minimumVersion);
-      return { id: host.id, label: host.label, available, launchSupported,
-        reason: hostReason(host, detection) };
+      return { id: host.id, label: host.label, ...diagnoseAgentHost(host, detection) };
     })), loadProfessionalCatalog()]);
     return {
       schemaVersion: HOSTS_SCHEMA,
@@ -506,7 +481,7 @@ export function createAgentStartService({
         if (activeRequest === record) activeRequest = null;
         return { status: "unavailable", reason: record.reason, requestId: record.requestId, runId: null };
       }
-      if (!atLeastVersion(detection.version, host.profile.minimumVersion)) {
+      if (!meetsAgentHostMinimumVersion(detection.version, host.profile.minimumVersion)) {
         record.status = "blocked";
         record.reason = "client_version_unreviewed";
         if (activeRequest === record) activeRequest = null;

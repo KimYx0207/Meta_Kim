@@ -37,6 +37,8 @@ export function createLiveWorkspaceController(options) {
   if (root.dataset) root.dataset.agentEntryEnabled = String(agentEntryEnabled);
   const agentGoal = root.querySelector("[data-uw-agent-goal]");
   const agentHost = root.querySelector("[data-uw-agent-host]");
+  const agentHostStatus = root.querySelector("[data-uw-agent-host-status]");
+  const agentHostList = root.querySelector("[data-uw-agent-host-list]");
   const agentSubmit = root.querySelector("[data-uw-agent-submit]");
   const agentStatus = root.querySelector("[data-uw-agent-status]");
   const agentRecovery = root.querySelector("[data-uw-agent-recovery]");
@@ -114,6 +116,24 @@ export function createLiveWorkspaceController(options) {
       const usable = launchableHosts();
       agentHost.value = usable.some((item) => item.id === previousHost) ? previousHost : usable[0]?.id || "";
     }
+    if (agentHostStatus && agentHostList) {
+      agentHostList.textContent = "";
+      for (const host of entries) {
+        const item = doc.createElement("li");
+        const active = host.available === true && host.launchSupported === true;
+        item.dataset.state = active ? "ready" : "unavailable";
+        const status = typeof host.statusLabel === "string" && host.statusLabel.trim()
+          ? host.statusLabel : active ? "可生成只读方案" : "暂不可启动";
+        const action = typeof host.nextAction === "string" && host.nextAction.trim()
+          ? ` · 下一步：${host.nextAction}` : "";
+        item.textContent = `${host.label} · ${status}${action}`;
+        agentHostList.appendChild(item);
+      }
+      agentHostStatus.hidden = entries.length === 0;
+      // When no host can run, the reason is immediately visible without
+      // relying on hover-only option titles (unavailable on touch screens).
+      if (!launchableHosts().length) agentHostStatus.open = true;
+    }
     updateAgentControls();
   }
   async function loadAgentHosts() {
@@ -158,9 +178,9 @@ export function createLiveWorkspaceController(options) {
     if (agentOutput) agentOutput.textContent = preview;
     if (payload?.runId && typeof payload.runId === "string") agent.pending.runId = payload.runId;
     if (receiptStatus === "accepted") {
-      agentMessage("accepted", (agent.pending.runId ? "执行请求已接收，运行记录已建立。" : "已接单，等待客户端建立会话。") + methodNote, { verify: true, next: true });
+      agentMessage("accepted", (agent.pending.runId ? "执行请求已接收，运行记录已建立。" : "已接单，等待客户端建立会话。") + methodNote, { verify: true });
     } else if (receiptStatus === "running") {
-      agentMessage("running", (agent.pending.runId ? "客户端已确认开始运行，可在运行记录中查看进展。" : "客户端已确认开始运行，等待关联运行记录。") + methodNote, { verify: true, next: true });
+      agentMessage("running", (agent.pending.runId ? "客户端已确认开始运行，可在运行记录中查看进展。" : "客户端已确认开始运行，等待关联运行记录。") + methodNote, { verify: true });
     } else if (receiptStatus === "completed") {
       agentMessage("completed", preview
         ? "只读研究已返回建议，请核对后决定是否继续执行。" + methodNote
@@ -549,7 +569,9 @@ export function createLiveWorkspaceController(options) {
     else void loadAgentHosts();
   });
   agentNew?.addEventListener("click", () => {
-    if (agent.busy || !agent.pending || !["accepted", "running", "completed"].includes(agent.status)) return;
+    // An accepted or running native request still owns the only active
+    // receipt. Dropping its key stops polling and strands the user mid-task.
+    if (agent.busy || !agent.pending || agent.status !== "completed") return;
     if (agentGoal?.value?.trim() === agent.pending.goal) agentGoal.value = "";
     agent.pending = null;
     if (agentResult) agentResult.hidden = true;

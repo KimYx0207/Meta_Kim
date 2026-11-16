@@ -10,8 +10,11 @@ import { LIVE_WORKSPACE_CSS } from "../../src/presentation/live/live-workspace-s
 const token = "private-agent-token-123456789";
 const hosts = ({ allowed = true, available = true } = {}) => ({
   schemaVersion: "meta-kim-agent-hosts-v1", executionAllowed: allowed,
-  hosts: [{ id: "claude", label: "Claude Code", available, launchSupported: true },
-    { id: "disabled", label: "尚未连接", available: false, launchSupported: false, reason: "客户端未安装" }],
+  hosts: [{ id: "claude", label: "Claude Code", available, launchSupported: true,
+    statusLabel: available ? "可生成只读方案" : "未检测到客户端",
+    nextAction: available ? "输入目标后生成方案" : "安装或启动 Claude Code 后重新检测" },
+    { id: "disabled", label: "尚未连接", available: false, launchSupported: false,
+      reason: "客户端未安装", statusLabel: "未检测到客户端", nextAction: "安装后重新检测" }],
 });
 const reply = (data, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => data });
 async function settled() { for (let i = 0; i < 10; i += 1) await setImmediate(); }
@@ -28,8 +31,11 @@ function uiNode(initialValue = "") {
 }
 
 function harness(fetcher, enabled = true, entryEnabled = true) {
-  const selectors = ["entry", "start", "goal", "host", "submit", "status", "recovery", "verify", "redetect", "new", "result", "output"];
+  const selectors = ["entry", "start", "goal", "host", "host-status", "host-list", "submit", "status", "recovery", "verify", "redetect", "new", "result", "output"];
   const ui = Object.fromEntries(selectors.map((name) => [name, uiNode(name === "goal" ? "帮我研究三个方案" : "")]));
+  ui["host-list"].items = [];
+  Object.defineProperty(ui["host-list"], "textContent", { get() { return ""; }, set(value) { if (value === "") this.items.length = 0; } });
+  ui["host-list"].appendChild = (item) => ui["host-list"].items.push(item);
   const calls = [];
   const storage = new Map();
   const intervals = new Map();
@@ -68,9 +74,14 @@ test("the new agent input is the original Live work surface and stays responsive
   const markup = renderLiveWorkspaceSurface();
   assert.match(markup, /data-uw-agent-start/);
   assert.match(markup, /说出你想做的事/);
+  assert.match(markup, /生成方案/);
+  assert.match(markup, /并说明推荐理由/);
+  assert.doesNotMatch(markup, /开始处理|做出可以验收的结果/);
   assert.match(markup, /切换页面中的项目不会改变执行位置/);
   assert.match(markup, /data-uw-agent-goal/);
   assert.match(markup, /data-uw-agent-host/);
+  assert.match(markup, /data-uw-agent-host-status/);
+  assert.match(markup, /查看客户端连接情况/);
   assert.match(markup, /data-uw-agent-result/);
   assert.match(markup, /data-uw-agent-output/);
   assert.match(markup, /aria-live="polite"/);
@@ -98,6 +109,8 @@ test("launch uses one private same-origin request and accepts without claiming e
   await settled();
   assert.equal(h.ui.host.value, "claude");
   assert.equal(h.ui.host.options[1].disabled, true);
+  assert.equal(h.ui["host-status"].hidden, false);
+  assert.match(h.ui["host-list"].items[1].textContent, /未检测到客户端.*安装后重新检测/);
   assert.equal(h.ui.submit.disabled, false);
   h.ui.start.dispatch("submit"); await settled();
   const launches = h.calls.filter(({ url }) => url.pathname.endsWith("/start"));
@@ -111,9 +124,20 @@ test("launch uses one private same-origin request and accepts without claiming e
   assert.doesNotMatch(h.ui.status.textContent, /开始运行|执行中|已完成/);
   h.ui.start.dispatch("submit"); await settled();
   assert.equal(h.calls.filter(({ url }) => url.pathname.endsWith("/start")).length, 1, "Repeated click cannot re-launch accepted work");
+  assert.equal(h.ui.new.hidden, true, "An accepted task must keep its recovery key and poller");
   h.ui.new.dispatch("click");
-  assert.equal(h.ui.goal.value, "");
-  assert.equal(h.ui.goal.focused, true);
+  assert.equal(h.ui.goal.value, "帮我研究三个方案");
+  assert.equal(h.ui.goal.focused, undefined);
+});
+
+test("no available client expands visible setup guidance instead of hiding reasons in a disabled option", async (t) => {
+  const h = harness(({ url }) => reply(url.pathname.endsWith("/hosts") ? hosts({ available: false }) : {}));
+  t.after(() => h.controller.dispose());
+  await settled();
+  assert.equal(h.ui["host-status"].open, true);
+  assert.equal(h.ui.submit.disabled, true);
+  assert.match(h.ui["host-list"].items[0].textContent, /未检测到客户端.*安装或启动 Claude Code 后重新检测/);
+  assert.match(h.ui["host-list"].items[1].textContent, /安装后重新检测/);
 });
 
 test("the accepted receipt explains when an actual Kim_Service professional method was hash-bound", async (t) => {
@@ -140,6 +164,10 @@ test("confirmed running is reported only after a valid native receipt", async (t
   assert.match(h.ui.status.textContent, /等待客户端建立会话/);
   h.ui.verify.dispatch("click"); await settled();
   assert.match(h.ui.status.textContent, /已确认开始运行/);
+  assert.equal(h.ui.new.hidden, true, "A running task cannot be discarded before its receipt arrives");
+  h.ui.new.dispatch("click");
+  h.ui.verify.dispatch("click"); await settled();
+  assert.match(h.ui.status.textContent, /已确认开始运行/, "A user click cannot orphan the running request");
   const verify = h.calls.find(({ url }) => url.pathname.endsWith("/requests"));
   assert.equal(verify.url.searchParams.get("idempotencyKey"), "client-request-1");
   assert.equal(verify.headers["x-meta-kim-workspace-token"], token);
@@ -162,6 +190,10 @@ test("completed native read-only advice is shown as text, not promoted to verifi
   assert.equal(h.ui.output.textContent, untrustedPreview);
   assert.match(h.ui.status.textContent, /只读研究已返回建议/);
   assert.doesNotMatch(h.ui.status.textContent, /交付已完成|项目验收通过/);
+  assert.equal(h.ui.new.hidden, false, "A completed request can release its receipt key for the next task");
+  h.ui.new.dispatch("click");
+  assert.equal(h.ui.goal.value, "");
+  assert.equal(h.ui.goal.focused, true);
 });
 
 test("receipts refresh automatically while running and stop after the native reply", async (t) => {
