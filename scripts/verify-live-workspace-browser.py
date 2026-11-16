@@ -258,6 +258,13 @@ def main() -> None:
                                 page.locator('[data-live-workspace-nav="prd"]').click()
                                 expect(page.locator("[data-live-workspace-material]")).to_contain_text(localized_fixture["outlineHeading"])
                                 capture("live-workspace-prd." + language + ".png", "Localized system outline / " + language)
+                                # Approval is enabled only after every paginated material page is loaded.
+                                while page.locator("[data-live-workspace-material-more]").count():
+                                    more = page.locator("[data-live-workspace-material-more]")
+                                    with page.expect_response(lambda response: "/api/workspace/material?" in response.url):
+                                        more.click()
+                                    page.wait_for_function("() => !document.querySelector('[data-live-workspace-material-more]') || !document.querySelector('[data-live-workspace-material-more]').disabled")
+                                expect(page.locator('[data-live-workspace-review-choice="accept"]')).to_be_enabled()
                                 with page.expect_response(lambda response: "/api/workspace/reviews?" in response.url and response.request.method == "POST") as localized_approval:
                                     page.locator('[data-live-workspace-review-choice="accept"]').click()
                                 assert localized_approval.value.status == 200

@@ -37,3 +37,51 @@ This is a reusable method *selection guide*, not an education-only Agent, a new 
 - **单一事实和状态源:** Meta_Kim retains the single source of truth for goal, evidence, choices, two-level PRD, stage DAG, approval/权限, run status and final verification. The shared thinking method is an optional reference/procedure, not an added control plane.
 - Kim_Service owns versioned general methods, while current project Agents own professional execution. If a specialized Agent already covers the method, reuse it rather than add a duplicate call or force a cross-repo dependency.
 - A method choice is not an execution authorization. User-selected substantive decisions and explicit external-write approval remain binding; `agent-thinking-patterns` never overrides them.
+
+## Use when
+
+A professional Agent has an evidenced uncertainty, decision, or feedback need that a transferable method can resolve. A straightforward authorized delivery does not require an extra exercise.
+
+## Required inputs
+
+The user's outcome, applicable project and specialist contracts, available capability evidence, current decisions, and the expected deliverable with acceptance criteria.
+
+## Do
+
+Choose the smallest useful pattern during Thinking, after Fetch identifies a suitable real provider. Keep the specialist Agent as owner and its original output contract as the deliverable.
+
+## Do not
+
+Do not impose all ten patterns, invent a second workflow, substitute a teaching Agent for a delivery worker, or claim a method was invoked without host evidence.
+
+## Required packet
+
+Use existing `capabilityBindings`, `workerTaskPackets`, research sources, and decision references. Record the chosen method ID, provider and reason inside those established packets; introduce no parallel control state.
+
+## Pass
+
+The selected professional output meets its own observable criteria, with traceable evidence of whichever pattern materially improved the route or result.
+
+## Fail
+
+The output fails a required criterion, relies on a false assumption, or cannot show that the claimed pattern was actually available and used.
+
+## Block
+
+Block only the affected action if prerequisite evidence, specialist authority, or explicit permission is absent. Leave independent authorized work runnable.
+
+## Return to stage
+
+Return a missing-source or provider problem to Fetch, an open route choice to Thinking, and a product defect to the affected execution task or Review.
+
+## Verification
+
+The verification owner checks the actual professional artifact and its criteria, separates method selection from host execution, and marks unobserved outcomes `not_evaluated` or `not_run`.
+
+## Writeback
+
+Write a bounded method choice and its observed value to the existing task records; propose reusable changes only through the ordinary reviewed knowledge lifecycle.
+
+## Preserve
+
+Preserve the user's decisions, specialist ownership, current project rules, original acceptance tests, and all unrelated valid task state.

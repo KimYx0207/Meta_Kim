@@ -231,7 +231,7 @@
         ]
       },
       "replacementRefs": [],
-      "sourceDigest": "sha256:39b2d69157f0aaf7692654333952ae2c2516b74b34297dd2a5e5e08ed882f2be",
+      "sourceDigest": "sha256:3ae4f215527881aa39e62f9b56b32fc7c30986373d3a807339609757256a3d82",
       "status": "active",
       "targetRef": "canonical/skills/meta-theory/SKILL.md"
     },
