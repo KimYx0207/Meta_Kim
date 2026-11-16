@@ -11,6 +11,11 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { buildIsolatedUserHomeEnv } from "../../scripts/isolated-user-home-env.mjs";
+import {
+  analyzeRegisteredClaudeProjectHooks,
+  resolveProjectClaudeHookFiles,
+} from "../../scripts/project-claude-hook-registration.mjs";
+import { IGNORED_DEPLOY_CACHE_DIRS } from "../../scripts/project-bootstrap-source-filter.mjs";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const TEST_USER_HOME = mkdtempSync(path.join(os.tmpdir(), "meta-kim-hook-complete-home-"));
@@ -39,36 +44,36 @@ function bootstrapClaudeProject() {
   return projectDir;
 }
 
-const HOOK_SCRIPT_PATTERN = /\.claude[\\/]+hooks[\\/]+([\w.-]+\.(?:mjs|cjs|js|py|sh|ps1))/g;
-
-function registeredHookCommands(settings) {
-  const commands = [];
-  for (const groups of Object.values(settings.hooks ?? {})) {
-    for (const group of Array.isArray(groups) ? groups : []) {
-      for (const hook of Array.isArray(group?.hooks) ? group.hooks : []) {
-        if (typeof hook?.command === "string") commands.push(hook.command);
-      }
-    }
-  }
-  return commands;
-}
-
-function registeredHookFiles(settings) {
-  const names = new Set();
-  for (const command of registeredHookCommands(settings)) {
-    for (const match of command.matchAll(HOOK_SCRIPT_PATTERN)) names.add(match[1]);
-  }
-  return [...names].sort();
-}
-
 test("every canonical hook command that points into .claude/hooks names a parseable script", () => {
   const settings = JSON.parse(
     readFileSync(path.join(REPO_ROOT, "canonical", "runtime-assets", "claude", "settings.json"), "utf8"),
   );
-  const unparsed = registeredHookCommands(settings).filter(
-    (command) => /\.claude[\\/]+hooks/.test(command) && [...command.matchAll(HOOK_SCRIPT_PATTERN)].length === 0,
+  const { unparsedCommands } = analyzeRegisteredClaudeProjectHooks(settings);
+  assert.deepEqual(unparsedCommands, [], "hook commands the copy-list scanner cannot resolve");
+});
+
+test("canonical hook parser de-duplicates compatible paths and flags unsupported commands", () => {
+  const result = analyzeRegisteredClaudeProjectHooks({
+    hooks: {
+      SessionStart: [{ hooks: [
+        { command: "node .claude/hooks/alpha.mjs" },
+        { command: "node .claude\\hooks\\alpha.mjs" },
+        { command: "powershell -File .claude\\hooks\\beta.ps1" },
+        { command: "node .claude/hooks/unknown.xyz" },
+      ] }],
+    },
+  });
+  assert.deepEqual(result.files, ["alpha.mjs", "beta.ps1"]);
+  assert.deepEqual(result.unparsedCommands, ["node .claude/hooks/unknown.xyz"]);
+});
+
+test("project hook resolution fails closed on missing or unreadable canonical settings", () => {
+  const projectRoot = mkdtempSync(path.join(os.tmpdir(), "meta-kim-hook-missing-settings-"));
+  PROJECTS.push(projectRoot);
+  assert.throws(
+    () => resolveProjectClaudeHookFiles({ projectRoot, existingHookFiles: [] }),
+    /cannot read the canonical Claude hook registration/,
   );
-  assert.deepEqual(unparsed, [], "hook commands the copy-list scanner cannot resolve");
 });
 
 test("setup.mjs hand-kept hook list stays a subset of runtime-hook-mapping", async () => {
@@ -93,7 +98,7 @@ test("project bootstrap copies every hook that .claude/settings.json registers",
   const settings = JSON.parse(
     readFileSync(path.join(projectDir, ".claude", "settings.json"), "utf8"),
   );
-  const registered = registeredHookFiles(settings);
+  const registered = analyzeRegisteredClaudeProjectHooks(settings).files;
   // Guard against a vacuous pass: the file that was dropped before the fix.
   for (const required of ["planning-continuity.mjs"]) {
     assert.ok(registered.includes(required), `${required} must be registered`);
@@ -104,9 +109,7 @@ test("project bootstrap copies every hook that .claude/settings.json registers",
   assert.deepEqual(missing, [], "registered hooks without a copied file (zombies)");
 });
 
-const IGNORED_CACHE_DIRS = new Set([
-  ".ruff_cache", ".meta-kim", ".git", ".pytest_cache", ".mypy_cache", "__pycache__", "node_modules",
-]);
+const IGNORED_CACHE_DIRS = new Set(IGNORED_DEPLOY_CACHE_DIRS);
 
 function findIgnoredCacheDirs(root, rel = "") {
   if (!existsSync(root)) return [];
