@@ -128,7 +128,7 @@ export const SHARED_RUNTIME_HOOK_FILES = Object.freeze([
   "planning-continuity.mjs",
 ]);
 
-const CLAUDE_COMPATIBLE_HOOK_FILES = Object.freeze([
+export const CLAUDE_COMPATIBLE_HOOK_FILES = Object.freeze([
   "bash-readonly-whitelist.mjs",
   "block-dangerous-bash.mjs",
   "ecc-permission-cache-wrapper.mjs",

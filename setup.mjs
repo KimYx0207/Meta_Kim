@@ -1163,6 +1163,52 @@ const GLOBAL_HOOK_PACKAGE_FILES_LIST = [
   "subagent-context.mjs",
 ];
 
+// Project-scope Claude hooks must cover every script that the projected
+// .claude/settings.json registers. canonical/runtime-assets/claude/settings.json
+// is the single registration source (merged into the project by bootstrap);
+// GLOBAL_HOOK_PACKAGE_FILES_LIST is a hand-kept subset that had drifted, so
+// planning-continuity.mjs was registered but never copied (doctor hooks:
+// zombie). Deriving the list from the registration keeps them in step.
+const REGISTERED_HOOK_SCRIPT_PATTERN =
+  /\.claude[\\/]+hooks[\\/]+([\w.-]+\.(?:mjs|cjs|js|py|sh|ps1))/g;
+
+function registeredClaudeHookFilesFromSettings(settings) {
+  const names = new Set();
+  for (const groups of Object.values(settings?.hooks ?? {})) {
+    for (const group of Array.isArray(groups) ? groups : []) {
+      for (const hook of Array.isArray(group?.hooks) ? group.hooks : []) {
+        const command = typeof hook?.command === "string" ? hook.command : "";
+        for (const match of command.matchAll(REGISTERED_HOOK_SCRIPT_PATTERN)) {
+          names.add(match[1]);
+        }
+      }
+    }
+  }
+  return [...names].sort();
+}
+
+function readRegisteredProjectClaudeHookFiles() {
+  const settingsPath = join(
+    PROJECT_DIR, "canonical", "runtime-assets", "claude", "settings.json",
+  );
+  let settings;
+  try {
+    settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+  } catch (error) {
+    throw new Error(
+      `Meta_Kim cannot read the canonical Claude hook registration at ${settingsPath}: ${error.message}`,
+    );
+  }
+  return registeredClaudeHookFilesFromSettings(settings);
+}
+
+const PROJECT_CLAUDE_HOOK_FILES_LIST = Object.freeze([
+  ...new Set([
+    ...GLOBAL_HOOK_PACKAGE_FILES_LIST,
+    ...readRegisteredProjectClaudeHookFiles(),
+  ]),
+]);
+
 const PROJECT_LOCAL_CAPABILITY_PREFIXES = [
   ".claude/agents/",
   ".claude/skills/",
@@ -1227,7 +1273,7 @@ const PROJECT_HOOK_REL_DIRS_BY_PLATFORM = {
 };
 
 const PROJECT_HOOK_SOURCE_CANDIDATES = {
-  claude: [...GLOBAL_HOOK_PACKAGE_FILES_LIST],
+  claude: [...PROJECT_CLAUDE_HOOK_FILES_LIST],
   codex: [
     "project-root.mjs",
     "utils.mjs",
@@ -1745,8 +1791,16 @@ function isMetaKimManagedHookRelPath(rel) {
   }
   if (!basename) return false;
   const fileName = basename.split("/").pop();
-  if (!fileName || !fileName.endsWith(".mjs")) return false;
-  return GLOBAL_HOOK_PACKAGE_FILES_LIST.includes(fileName);
+  if (!fileName) return false;
+  // Claude project hooks may be any script type the registration scanner
+  // accepts; the whitelist itself is the ownership test. Other runtimes keep
+  // the original .mjs-only rule.
+  const isClaudeHook = normalized.startsWith(".claude/hooks/");
+  if (!isClaudeHook && !fileName.endsWith(".mjs")) return false;
+  const whitelist = isClaudeHook
+    ? PROJECT_CLAUDE_HOOK_FILES_LIST
+    : GLOBAL_HOOK_PACKAGE_FILES_LIST;
+  return whitelist.includes(fileName);
 }
 
 function isPlainObject(value) {
@@ -2177,6 +2231,23 @@ function projectDeploySourceContent(srcPath, relPath) {
   return rel.endsWith("/SKILL.md") ? buildPortableSkillContent(raw) : raw;
 }
 
+// Tool caches and runtime state that can sit inside a projection source but
+// are never projection content. Explicit list, so a legitimate dot directory
+// (for example a skill's `.claude-plugin`) is still projected.
+const DEPLOY_SOURCE_IGNORED_DIRS = new Set([
+  ".ruff_cache",
+  ".meta-kim",
+  ".git",
+  ".pytest_cache",
+  ".mypy_cache",
+  "__pycache__",
+  "node_modules",
+]);
+
+function isHiddenDeploySourceDir(entry) {
+  return entry.isDirectory() && DEPLOY_SOURCE_IGNORED_DIRS.has(entry.name);
+}
+
 function collectDeployFilePlansFromRoot(srcRoot, destRoot, context = {}) {
   if (!existsSync(srcRoot)) return [];
   const sourceRoot = context.sourceRoot || srcRoot;
@@ -2191,6 +2262,9 @@ function collectDeployFilePlansFromRoot(srcRoot, destRoot, context = {}) {
     return plans;
   }
   for (const entry of readdirSync(srcRoot, { withFileTypes: true })) {
+    // Hidden directories under a projection source are tool caches
+    // (e.g. canonical/agents/.ruff_cache), never projection content.
+    if (isHiddenDeploySourceDir(entry)) continue;
     const srcPath = join(srcRoot, entry.name);
     const sourceRel = normalizeDeployRelPath(relative(sourceRoot, srcPath));
     const relPath = normalizeDeployRelPath(
