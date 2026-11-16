@@ -41,6 +41,25 @@ test("rendered PRD graph is a real navigable SVG with correctly translated revie
   const keyboard = shapes.find(node => node.dataset.livePrdGraphNode === "c");
   keyboard.listeners.get("keydown")({ key: "Enter", preventDefault() {} });
   assert.deepEqual(selected, ["module:b", "module:c"]);
+  const index = findAll(view, node => node.dataset.livePrdGraphIndexNode);
+  assert.equal(index.length, 3, "Every visible module also appears in the real-data navigation index");
+  assert.equal(index.find(node => node.dataset.livePrdGraphIndexNode === "b").dataset.state, "revised");
+  const downstream = findAll(index.find(node => node.dataset.livePrdGraphIndexNode === "c"), node => node.className === "uw-knowledge-index-links");
+  assert.equal(downstream.length, 1, "The responsive module list keeps factual dependency context even without the diagram");
+  assert.match(downstream[0].textContent, /结算/u);
+  index.find(node => node.dataset.livePrdGraphIndexNode === "a").click();
+  assert.deepEqual(selected, ["module:b", "module:c", "module:a"], "Index rows open the same current module as SVG nodes");
+});
+
+test("a sparse module relationship uses content-based graph height instead of a 300px blank viewport", () => {
+  const graph = buildLivePrdGraph(fixture, { focusId: "b", depth: 1 });
+  const view = createPrdKnowledgeGraph({ doc, graph, focusId: "b", depth: 1,
+    copy: key => LIVE_WORKSPACE_MESSAGES.zh[key] || key, onSelect() {}, onDepthChange() {} });
+  const svg = findAll(view, node => node.tagName === "svg" && node.attributes.has("viewBox"))[0];
+  const height = Number(svg.attributes.get("height"));
+  assert.ok(height < 190, `Sparse dependencies should be a compact context strip, got ${height}px`);
+  assert.equal(findAll(view, node => node.dataset.livePrdGraphIndexNode).length, 3);
+  assert.equal(findAll(view, node => node.dataset.livePrdGraphIndexNode === "b")[0].dataset.selected, "true");
 });
 
 test("module graph exposes selected node, depth, explicit truncation and expansion", () => {
@@ -70,4 +89,32 @@ test("unloaded dependencies are visibly disclosed and never drawn as if confirme
   assert.equal(findAll(view, node => node.tagName === "path" && node.attributes.get("class")?.includes("required")).length, 0);
   assert.ok(findAll(view, node => node.textContent.includes("2 个模块尚未加载")).length);
   assert.ok(findAll(view, node => node.textContent.includes("1 条依赖尚无法确认")).length);
+});
+
+test("small PRD maps no longer reserve 620px while large maps keep readable scroll width", () => {
+  const small = createPrdKnowledgeGraph({ doc, graph: buildLivePrdGraph(fixture),
+    copy: key => LIVE_WORKSPACE_MESSAGES.zh[key] || key, onSelect() {}, onDepthChange() {} });
+  const smallSvg = findAll(small, node => node.tagName === "svg" && node.attributes.has("viewBox"))[0];
+  assert.equal(smallSvg.attributes.get("width"), "520");
+  assert.match(smallSvg.attributes.get("style"), /--uw-graph-content-width:520px;--uw-graph-readable-width:360px/u);
+
+  const moduleIds = Array.from({ length: 16 }, (_, index) => `module-${index}`);
+  const largeDesign = { architecture: { id: "system", moduleIds },
+    modules: moduleIds.map(id => ({ id, title: "模块" })) };
+  const large = createPrdKnowledgeGraph({ doc, graph: buildLivePrdGraph(largeDesign),
+    copy: key => LIVE_WORKSPACE_MESSAGES.zh[key] || key, onSelect() {}, onDepthChange() {} });
+  const largeSvg = findAll(large, node => node.tagName === "svg" && node.attributes.has("viewBox"))[0];
+  assert.match(largeSvg.attributes.get("style"), /--uw-graph-readable-width:760px/u);
+});
+
+test("animated dependency edges require an observed running target, not invented progress", () => {
+  const design = { architecture: { id: "system", moduleIds: ["a", "b", "c"] },
+    modules: [{ id: "a", status: "accepted", dependsOn: [] },
+      { id: "b", status: "in_progress", dependsOn: ["a"] },
+      { id: "c", status: "not_reviewed", dependsOn: ["b"] }] };
+  const view = createPrdKnowledgeGraph({ doc, graph: buildLivePrdGraph(design),
+    copy: key => LIVE_WORKSPACE_MESSAGES.zh[key] || key, onSelect() {}, onDepthChange() {} });
+  const dependencies = findAll(view, node => node.tagName === "path" && node.attributes.get("class")?.includes("required"));
+  assert.equal(dependencies.length, 2);
+  assert.equal(dependencies.filter(node => node.attributes.get("data-activity") === "observed-running").length, 1);
 });

@@ -577,7 +577,9 @@ test("rendered version labels are compact while full material bindings and acces
   h.renderer.render();
   assert.ok(h.node("update").textContent.length < 45);
   assert.equal(h.node("update").title, h.fullVersion);
-  const version = h.article().children[0].children.find((node) => node.className === "uw-version");
+  const findVersion = (node) => node.className === "uw-version"
+    ? node : node.children?.map(findVersion).find(Boolean);
+  const version = findVersion(h.article());
   assert.ok(version.textContent.length < 45);
   assert.equal(version.title, h.fullVersion);
   assert.equal(version.attributes.get("aria-label"), LIVE_WORKSPACE_MESSAGES.zh.version + " " + h.fullVersion);

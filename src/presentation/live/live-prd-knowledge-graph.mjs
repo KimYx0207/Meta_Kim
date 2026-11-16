@@ -42,12 +42,13 @@ export function createPrdKnowledgeGraph({ doc, graph, copy, focusId = null, dept
   root.append(header);
   const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
   const edges = Array.isArray(graph?.edges) ? graph.edges : [];
+  root.dataset.livePrdKnowledgeNodeCount = String(nodes.length);
   if (!nodes.length) {
     root.append(el("p", "uw-knowledge-empty", copy("noGraphNodes")));
     return root;
   }
 
-  const cardWidth = 200, cardHeight = 72, verticalGap = 32;
+  const cardWidth = 200, cardHeight = 72, verticalGap = 24;
   const byId = new Map(nodes.map(node => [node.id, node]));
   const positions = new Map();
   let width, height;
@@ -56,9 +57,11 @@ export function createPrdKnowledgeGraph({ doc, graph, copy, focusId = null, dept
     const modules = nodes.filter(node => node.kind !== "architecture");
     const columns = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(modules.length))));
     const xGap = 40;
-    width = Math.max(620, columns * (cardWidth + xGap) + xGap);
+    // Avoid reserving 620px for a two-column graph on a narrow reading surface.
+    // The CSS camera fits small maps while keeping large maps horizontally scrollable.
+    width = Math.max(cardWidth + 48, columns * (cardWidth + xGap) + xGap);
     if (architecture) positions.set(architecture.id, { x: (width - cardWidth) / 2, y: 22 });
-    const firstRow = architecture ? 170 : 22;
+    const firstRow = architecture ? 138 : 22;
     for (const [index, node] of modules.entries()) positions.set(node.id, {
       x: (width - columns * (cardWidth + xGap) + xGap) / 2 + index % columns * (cardWidth + xGap),
       y: firstRow + Math.floor(index / columns) * (cardHeight + verticalGap),
@@ -93,10 +96,12 @@ export function createPrdKnowledgeGraph({ doc, graph, copy, focusId = null, dept
     for (const node of nodes) if (!levels.has(node.id)) levels.set(node.id, node.kind === "architecture" ? -1 : 1);
     const columns = [...new Set(levels.values())].sort((a, b) => a - b);
     const groups = columns.map(level => nodes.filter(node => levels.get(node.id) === level));
-    width = Math.max(620, columns.length * (cardWidth + 76) + 44);
-    height = Math.max(300, Math.max(...groups.map(group => group.length)) * (cardHeight + verticalGap) + 68);
+    // A two-node dependency should be a compact relationship strip, not a
+    // 300px tall empty diagram. Both dimensions follow the visible nodes.
+    width = Math.max(320, columns.length * (cardWidth + 54) + 24);
+    height = Math.max(132, Math.max(...groups.map(group => group.length)) * (cardHeight + 18) + 32);
     groups.forEach((group, column) => group.forEach((node, index) => positions.set(node.id, {
-      x: 28 + column * (cardWidth + 76), y: (height - group.length * (cardHeight + verticalGap) + verticalGap) / 2 + index * (cardHeight + verticalGap),
+      x: 18 + column * (cardWidth + 54), y: (height - group.length * (cardHeight + 18) + 18) / 2 + index * (cardHeight + 18),
     })));
   }
   const canvas = el("div", "uw-knowledge-canvas");
@@ -106,11 +111,18 @@ export function createPrdKnowledgeGraph({ doc, graph, copy, focusId = null, dept
   const focusNode = focusId ? nodes.find(node => node.sourceId === focusId || node.id === focusId || node.id === `module:${focusId}`) : architecture;
   const focusPoint = positions.get(focusNode?.id);
   if (focusPoint) canvas.dataset.focusCenterX = String(focusPoint.x + cardWidth / 2);
-  const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, width, height, role: "group", "aria-label": copy("prdGraphTitle") });
+  // Narrow screens pan the map instead of shrinking 11px labels to illegibility.
+  // The companion module index deliberately narrows the map on desktop;
+  // let compact diagrams fit that column fully instead of clipping node cards.
+  const readableFloor = width > 760 ? 760 : Math.min(width, focusId ? 480 : 360);
+  const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, width, height,
+    style: `--uw-graph-content-width:${width}px;--uw-graph-readable-width:${readableFloor}px`,
+    role: "group", "aria-label": copy("prdGraphTitle") });
   const defs = svgEl("defs");
   const arrow = svgEl("marker", { id: "uw-prd-edge-arrow", markerWidth: 9, markerHeight: 9, refX: 7, refY: 3.5, orient: "auto", markerUnits: "userSpaceOnUse" });
-  arrow.append(svgEl("path", { d: "M0 0L7 3.5L0 7", fill: "none", stroke: "#d5b67f", "stroke-width": 1.5 }));
+  arrow.append(svgEl("path", { d: "M0 0L7 3.5L0 7", class: "uw-kg-arrow-head" }));
   defs.append(arrow); svg.append(defs);
+  const activeNodeIds = new Set(nodes.filter(node => ["running", "active", "in_progress"].includes(workspaceStatusKey(node.status))).map(node => node.id));
   for (const edge of edges) {
     const start = positions.get(edge.from), end = positions.get(edge.to);
     if (!start || !end) continue;
@@ -127,6 +139,7 @@ export function createPrdKnowledgeGraph({ doc, graph, copy, focusId = null, dept
       : `M${sx} ${sy} C${sx} ${sy + (descending ? 35 : -35)},${tx} ${ty + (descending ? -35 : 35)},${tx} ${ty}`;
     const path = svgEl("path", { d, class: `uw-kg-edge ${containment ? "contains" : "required"}` });
     if (!containment) path.setAttribute("marker-end", "url(#uw-prd-edge-arrow)");
+    if (!containment && activeNodeIds.has(edge.to)) path.setAttribute("data-activity", "observed-running");
     path.append(svgEl("title"));
     path.lastChild.textContent = containment ? copy("includesModule") : copy("requiredDependency");
     svg.append(path);
@@ -160,7 +173,41 @@ export function createPrdKnowledgeGraph({ doc, graph, copy, focusId = null, dept
   canvas.append(svg);
   const legend = el("div", "uw-knowledge-legend");
   legend.append(el("span", "contains", copy("includesModule")), el("span", "required", copy("requiredDependency")));
-  root.append(canvas, legend);
+  const map = el("div", "uw-knowledge-map");
+  map.append(canvas, legend);
+  const index = el("aside", "uw-knowledge-index");
+  index.setAttribute("aria-label", copy(focusId ? "moduleRelations" : "prdModules"));
+  const indexHeading = el("div", "uw-knowledge-index-heading");
+  const indexLabel = el("span", "uw-knowledge-index-kicker", copy(focusId ? "moduleRelations" : "prdModules"));
+  const moduleNodes = nodes.filter(node => node.kind !== "architecture");
+  indexHeading.append(indexLabel, el("strong", "uw-knowledge-index-count", String(moduleNodes.length).padStart(2, "0")));
+  index.append(indexHeading);
+  const list = el("div", "uw-knowledge-index-list");
+  for (const [indexNumber, node] of moduleNodes.entries()) {
+    const row = el("button", "uw-knowledge-index-row");
+    row.type = "button";
+    row.dataset.livePrdGraphIndexNode = String(node.sourceId || node.id);
+    row.dataset.state = workspaceStatusKey(node.status);
+    row.dataset.selected = String(Boolean(focusId && (node.sourceId === focusId || node.id === focusId || node.id === `module:${focusId}`)));
+    const number = el("span", "uw-knowledge-index-number", String(indexNumber + 1).padStart(2, "0"));
+    const detail = el("span", "uw-knowledge-index-copy");
+    detail.append(el("strong", "", node.title || node.sourceId || node.id));
+    if (node.summary) detail.append(el("small", "", node.summary));
+    const prerequisites = edges
+      .filter(edge => edge.type !== "containment" && edge.to === node.id)
+      .map(edge => byId.get(edge.from)?.title)
+      .filter(Boolean);
+    if (prerequisites.length) detail.append(el("small", "uw-knowledge-index-links",
+      `${copy("requiredDependency")}：${prerequisites.join(" · ")}`));
+    const status = el("span", "uw-knowledge-index-state", copy(workspaceStatusKey(node.status)));
+    row.append(number, detail, status);
+    row.addEventListener("click", () => onSelect(node));
+    list.append(row);
+  }
+  index.append(list);
+  const surface = el("div", "uw-knowledge-surface");
+  surface.append(map, index);
+  root.append(surface);
   const clipped = Math.max(0, (graph?.totalNodes || 0) - nodes.length);
   const unloaded = Math.max(0, (graph?.totalModules || 0) - (graph?.loadedModules || 0));
   if (clipped || unloaded) {
@@ -175,11 +222,11 @@ export function createPrdKnowledgeGraph({ doc, graph, copy, focusId = null, dept
       }
     }
     if (unloaded) counts.append(el("span", "", copy("graphUnloadedCount").replace("{count}", String(unloaded))));
-    root.append(counts);
+    map.append(counts);
   }
   const unknownEdges = (graph?.omissions || []).filter(row => ["unknown_dependency", "unloaded_dependency"].includes(row.type)).length;
-  if (unknownEdges) root.append(el("p", "uw-knowledge-warning", copy("graphUnknownEdges").replace("{count}", String(unknownEdges))));
+  if (unknownEdges) map.append(el("p", "uw-knowledge-warning", copy("graphUnknownEdges").replace("{count}", String(unknownEdges))));
   const note = el("p", "uw-knowledge-note", copy(unloaded ? "graphPartial" : "graphHint"));
-  root.append(note);
+  map.append(note);
   return root;
 }

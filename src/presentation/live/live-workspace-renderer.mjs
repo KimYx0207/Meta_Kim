@@ -441,6 +441,7 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
     }
     if (item.moduleId && !state.selectedModuleId) state.selectedModuleId = item.moduleId;
     const layout = e("div", "uw-prd-layout");
+    layout.dataset.prdMode = state.prdMode;
     const focusId = state.prdMode === "module" ? state.selectedModuleId : null;
     const graph = buildLivePrdGraph(state.workspace?.design || {}, { focusId, depth: state.prdDepth === "all" ? "all" : state.prdDepth, limit: state.prdGraphLimit || 40 });
     layout.append(createPrdKnowledgeGraph({ doc, graph, copy, focusId: graph.focusKind === "module" ? focusId : null,
@@ -454,7 +455,14 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
     version.title = fullVersion;
     version.dataset.version = fullVersion;
     version.setAttribute("aria-label", copy("version") + " " + fullVersion);
-    header.append(e("h3", "", item.title || item.id), version, e("span", "uw-source-ref", item.artifactId || item.id), e("span", "uw-source-ref", label(item.status)));
+    const heading = e("div", "uw-document-heading");
+    heading.append(e("span", "uw-knowledge-kicker", copy(item.kind === "module" ? "prdSecondLayer" : "prdFirstLayer")),
+      e("h3", "", item.title || item.id), e("span", "uw-source-ref", item.artifactId || item.id));
+    const metadata = e("div", "uw-document-meta");
+    const currentStatus = e("span", "uw-document-state", label(item.status));
+    currentStatus.dataset.state = workspaceStatusKey(item.status);
+    metadata.append(version, currentStatus);
+    header.append(heading, metadata);
     article.append(header);
     if (item.purpose || item.summary) article.append(section(copy(item.kind === "module" ? "moduleSummary" : "overview"), item.purpose || item.summary));
     if (item.dependsOn?.length) article.append(section(copy("dependsOn"), item.dependsOn.join(" · ")));
@@ -471,7 +479,9 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
       const body = e("div", "uw-document-body"); body.dataset.liveWorkspaceMaterial = ""; body.dataset.version = String(item.version ?? ""); body.dataset.sha256 = item.sha256 || "";
       const structured = workspaceStructuredPrdMaterial(item, material);
       if (structured) {
-        appendStructuredPrd(body, structured);
+        const reading = e("div", "uw-prd-structured");
+        appendStructuredPrd(reading, structured);
+        body.append(reading);
         const full = e("details", "uw-prd-raw");
         full.append(e("summary", "", copy("prdRawMaterial")));
         const original = e("pre", "", material.text);
