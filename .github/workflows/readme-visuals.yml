@@ -39,19 +39,50 @@ jobs:
         run: python scripts/capture-live-readme-screenshots.py --output browser-artifacts/readme
       - name: Verify the unified workspace through real Hub HTTP and host CLI
         run: python scripts/verify-live-workspace-browser.py --output browser-artifacts/workspace
-      - name: Preserve raw screenshots and capture records
-        if: always()
+      # Preserve concise success receipts; the full browser evidence remains available on failures.
+      - name: Prepare compact successful-run evidence
+        if: success()
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import shutil
+          root = Path('browser-artifacts')
+          target = Path('compact-browser-evidence')
+          for folder, preferred in (
+              ('readme', ('meta-kim-live-task.png', 'meta-kim-live-detail.png')),
+              ('workspace', ('live-workspace-desktop.png', 'live-workspace-mobile.png')),
+          ):
+              source = root / folder
+              destination = target / folder
+              destination.mkdir(parents=True, exist_ok=True)
+              for name in preferred:
+                  file = source / name
+                  if file.is_file():
+                      shutil.copy2(file, destination / name)
+              for file in source.glob('*.json'):
+                  shutil.copy2(file, destination / file.name)
+          PY
+      - name: Save compact successful-run screenshots and receipts
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: live-browser-success-evidence
+          path: compact-browser-evidence/
+          if-no-files-found: error
+          retention-days: 3
+      - name: Preserve full README browser evidence on failure
+        if: failure() || cancelled()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: live-readme-screenshots
           path: browser-artifacts/readme/
-          if-no-files-found: error
-          retention-days: 14
-      - name: Preserve unified workspace screenshots and integration evidence
-        if: always()
+          if-no-files-found: warn
+          retention-days: 3
+      - name: Preserve full workspace integration evidence on failure
+        if: failure() || cancelled()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: live-workspace-browser
           path: browser-artifacts/workspace/
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 3
