@@ -263,6 +263,7 @@
     "src/domain/governance/numeric-measurement.mjs",
     "src/domain/governance/governance-requirement-cutover.mjs",
     "src/domain/quota/quota-usage-projection.mjs",
+    "src/domain/runtime/agent-host-diagnostics.mjs",
     "src/domain/runtime/runtime-health-projection.mjs",
     "src/domain/shared/canonical-digest.mjs",
     "src/domain/live/live-continuation-command.mjs",
