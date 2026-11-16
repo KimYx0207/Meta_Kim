@@ -4,6 +4,15 @@
 
 User-facing changes for each release. Detailed test results live in the linked verification records.
 
+## [3.16.3] - 2026-11-16
+
+### Claude legacy migration and ZCode plugin compatibility
+
+- Ordinary upgrades now migrate old Claude MCP launch entries when the original Meta_Kim source identity can still be verified, backing up the original config first. Missing or unverified source identities remain protected; the explicit repair option stays available.
+- Claude plugin installation, updates and retirement now use the official `claude plugin` CLI rather than editing the private registry. Known legacy plugins retain their persistent data and unrelated installation scopes are preserved.
+- Refresh ZCode native plugin compatibility facts for manifests, Skills, Commands, Subagents, MCP, Hooks, marketplace versions, session reload and SSH/WSL sync. Add a read-only client inventory probe that never claims a live session was verified.
+- Structural and simulated installer tests do not establish live acceptance. Reload Claude in an active session or start a new one, and observe ZCode plugin components and a bounded invocation in a new session before marking `live_verified`.
+
 ## [3.16.2] - 2026-11-16
 
 ### Recover a stale Claude Code MCP registration without taking over user configuration

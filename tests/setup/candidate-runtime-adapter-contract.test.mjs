@@ -79,6 +79,13 @@ test("catalog separates native integrations from unchanged plan-only candidate a
   assert.equal(zcode.genericCompatibility.status, "partial");
   assert.match(zcode.genericCompatibility.hookConfig, /~\/\.zcode\/cli\/config\.json/u);
   assert.match(zcode.genericCompatibility.hookConfig, /project hooks.*ignored/iu);
+  assert.equal(zcode.nativePlugin.status, "documented_not_live_verified");
+  assert.deepEqual(zcode.nativePlugin.manifestSearchOrder, [".zcode-plugin/plugin.json", ".claude-plugin/plugin.json"]);
+  assert.deepEqual(zcode.nativePlugin.components, ["skills", "commands", "agents", "mcpServers", "hooks"]);
+  assert.match(zcode.nativePlugin.reload, /new session/i);
+  assert.match(zcode.nativePlugin.clientVerification, /bounded Agent\/Skill\/Hook/i);
+  assert.match(zcode.nativePlugin.remoteSync, /Sync Plugin/i);
+  assert.ok(zcode.evidence.some((entry) => entry.ref === "https://zcode.z.ai/en/docs/plugin"));
   assert.ok(zcode.evidence.some((entry) => entry.type === "official_docs"
     && entry.ref.includes("zcode-guide 0.3.0")
     && entry.ref.includes("zcode.docs.configuration.2026-10-17")));

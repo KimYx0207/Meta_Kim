@@ -170,25 +170,25 @@ function isStrictNodeExecutable(value) {
     path.posix.isAbsolute(value);
 }
 
-function isStrictLegacyMetaKimMcpDefinition(definition, legacyScriptSuffix) {
-  if (!isPlainObject(definition) || !legacyScriptSuffix) return false;
-  if (!hasOnlyKeys(definition, ["type", "command", "args", "env"])) return false;
-  if (definition.type !== undefined && definition.type !== "stdio") return false;
+export function legacyMetaKimSourceScriptPath(definition, legacyScriptSuffix) {
+  if (!isPlainObject(definition) || !legacyScriptSuffix) return null;
+  if (!hasOnlyKeys(definition, ["type", "command", "args", "env"])) return null;
+  if (definition.type !== undefined && definition.type !== "stdio") return null;
   if (definition.env !== undefined && (!isPlainObject(definition.env) || Object.keys(definition.env).length > 0)) {
-    return false;
+    return null;
   }
-  if (!Array.isArray(definition.args)) return false;
+  if (!Array.isArray(definition.args)) return null;
 
   let scriptArg = null;
   if (isStrictNodeExecutable(definition.command)) {
-    if (definition.args.length !== 1) return false;
+    if (definition.args.length !== 1) return null;
     [scriptArg] = definition.args;
   } else if (isTrustedWindowsCmdWrapperCommand(definition.command)) {
     const args = [...definition.args];
     const seenFlags = new Set();
     while (/^\/(?:d|s)$/iu.test(args[0] ?? "")) {
       const flag = args.shift().toLowerCase();
-      if (seenFlags.has(flag)) return false;
+      if (seenFlags.has(flag)) return null;
       seenFlags.add(flag);
     }
     if (
@@ -196,18 +196,22 @@ function isStrictLegacyMetaKimMcpDefinition(definition, legacyScriptSuffix) {
       !/^\/c$/iu.test(args[0] ?? "") ||
       !isStrictNodeExecutable(args[1])
     ) {
-      return false;
+      return null;
     }
     scriptArg = args[2];
-    if (typeof scriptArg !== "string" || /[&|<>^%!\r\n\0]/u.test(scriptArg)) return false;
+    if (typeof scriptArg !== "string" || /[&|<>^%!\r\n\0]/u.test(scriptArg)) return null;
   } else {
-    return false;
+    return null;
   }
 
   const normalizedArg = String(scriptArg).replace(/\\/g, "/");
   const normalizedSuffix = legacyScriptSuffix.replace(/\\/g, "/").replace(/^\/+/, "");
   const isAbsolute = /^[A-Za-z]:\//u.test(normalizedArg) || normalizedArg.startsWith("/");
-  return isAbsolute && normalizedArg.endsWith(`/${normalizedSuffix}`);
+  return isAbsolute && normalizedArg.endsWith(`/${normalizedSuffix}`) ? scriptArg : null;
+}
+
+function isStrictLegacyMetaKimMcpDefinition(definition, legacyScriptSuffix) {
+  return legacyMetaKimSourceScriptPath(definition, legacyScriptSuffix) !== null;
 }
 
 /**

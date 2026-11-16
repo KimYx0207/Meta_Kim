@@ -1,6 +1,6 @@
 {
   "name": "meta-kim",
-  "version": "3.16.2",
+  "version": "3.16.3",
   "description": "General agent governance for evidence-backed decisions, capability discovery, orchestration and outcome verification across domains, with primary Claude Code/Codex projections and opt-in compatibility adapters.",
   "private": true,
   "type": "module",
@@ -124,6 +124,7 @@
     "meta:install-scope:verify": "node scripts/verify-install-scope-matrix.mjs",
     "meta:project-cache:verify": "node scripts/verify-project-cache-generation.mjs",
     "meta:runtime:probe": "node scripts/probe-runtime-capabilities.mjs",
+    "meta:client:plugins": "node scripts/probe-native-plugin-client.mjs",
     "meta:runtime:check": "node scripts/probe-runtime-capabilities.mjs --check",
     "meta:runtime:accept": "node scripts/attest-runtime-capability-acceptance.mjs",
     "meta:runtime:produce": "node scripts/run-runtime-capability-producers.mjs",

@@ -17,6 +17,9 @@ Read the actual host tool inventory, trusted project root, selected install scop
 - Rules: workspace `AGENTS.md` and `~/.zcode/AGENTS.md`. Preserve user-authored rules and the host's instruction precedence.
 - Native config: project `.zcode/config.json`; user `~/.zcode/cli/config.json`. MCP servers use `mcp.servers`. If native MCP is nonempty, the same-scope `.agents/mcp.json` fallback is not merged by ZCode; Meta_Kim carries fallback definitions into its reversible merge so adding one native server cannot hide existing user servers.
 - Hooks execute only from user config or enabled plugins. **Current ZCode ignores project hooks.** Project projection therefore writes no hook registration. Global hooks require `hooks.enabled: true`, events under `hooks.events`, and native `type: "process"` with `command` plus `args`. Claude settings are not executable ZCode hook configuration.
+- Native plugin packages are separate from Meta_Kim's plain agent/skill projection. The current host discovers `.zcode-plugin/plugin.json` first and accepts `.claude-plugin/plugin.json` as a compatible fallback. Enabled plugins can bundle Skills, Commands, Subagents, MCP servers and `hooks/hooks.json`; do not copy plugin Hooks into ignored project config or duplicate a standard auto-discovered hook file. Official plugin UI lives in Settings > Plugins, with public/personal marketplaces, installed versions and enable switches.
+- Plugin version refresh compares the marketplace `marketplace.json` version with the installed `plugin.json` version, so an unchanged marketplace entry may hide changed files. Enabling/disabling refreshes affected Agent/Skill state, but Hook snapshots take effect in **new sessions**. A fresh CLI inventory or installed files alone cannot certify the running desktop session.
+- Local plugins are not automatically present in SSH/WSL workspaces. ZCode's **Sync Plugin** is an explicit user action; remote pre-existing plugins are not overwritten. Sensitive and path-specific settings may need independent configuration. UI Plugins with MCP Apps are described in upstream experimental branch material, not established as a public release feature.
 - Keep `~/.zcode/v2/` model-provider settings, credentials and telemetry outside this installer. The installer neither chooses a model nor grants payment, account or external-action authority.
 
 ## Do
@@ -55,6 +58,8 @@ Use target `zcode` with the existing project/global sync entry. Global hooks are
 
 Open a new ZCode session after changes; hook settings are snapshotted at session start. Refresh Skills, inspect the projected nine agents and verify an ordinary intent through an actual host decision and bounded task. Keep `projection_implemented` separate from `live_verified`. No paid CLI or model invocation is part of structural tests.
 
+For plugin-backed capabilities, first refresh the marketplace and inspect the actual plugin version under Settings > Plugins. Enable the plugin, then in a **new local workspace session** confirm its entries under Plugin Skills, Plugin Subagents, Plugin MCP servers and Settings > Hooks. Invoke one bounded Skill/Agent path and observe the Hook's event result in that actual session. If an installed ZCode CLI supports `plugins list --json`, use it only as additional native inventory evidence; the desktop session reload and behavior observation remain mandatory. Where the installed version exposes only UI management, do not invent a CLI mutation command.
+
 ## Writeback
 
 Record exact installation mutations in the existing ownership manifest and actual work in the bound run/checkpoint. Keep projection evidence separate from live acceptance, with unavailable live proof explicitly unverified; route reusable changes through the existing Evolution review.
@@ -69,6 +74,8 @@ Preserve canonical governance, user rules/settings, fallback MCP definitions, ru
 - https://zcode.z.ai/en/docs/subagents
 - https://zcode.z.ai/en/docs/hooks
 - https://zcode.z.ai/en/docs/mcp-services
+- https://zcode.z.ai/en/docs/plugin
+- https://zcode.z.ai/en/docs/remote-development
 - https://zcode.z.ai/en/docs/qa
 
-Reviewed 2026-11-10. The current hook restrictions supersede the scope interpretation of the older bundled zcode-guide observation; retain that record with its date and limitations.
+Reviewed 2026-11-16. The current hook restrictions supersede the scope interpretation of the older bundled zcode-guide observation; retain that record with its date and limitations. Plugin support is documented, not a Meta_Kim live host certification.

@@ -185,6 +185,66 @@ async function runScriptCapturingExit(args, env) {
 }
 
 describe("sync-global-meta-theory hook policy", () => {
+  test("ordinary update auto-migrates a verifiable old Claude source checkout and preserves user config", async () => {
+    await withTempRuntimeHomes(async ({ env, root }) => {
+      const sourceRoot = path.join(root, "old-Meta_Kim");
+      const scriptPath = path.join(sourceRoot, "scripts", "mcp", "meta-runtime-server.mjs");
+      await mkdir(path.dirname(scriptPath), { recursive: true });
+      await mkdir(path.join(sourceRoot, "bin"), { recursive: true });
+      await writeFile(path.join(sourceRoot, "package.json"), JSON.stringify({
+        name: "meta-kim", version: "3.10.0", bin: { "meta-kim": "./bin/meta-kim.mjs" },
+      }));
+      await writeFile(path.join(sourceRoot, "AGENTS.md"), "# Meta_Kim for Codex\n");
+      await writeFile(path.join(sourceRoot, "CLAUDE.md"), "# Meta_Kim for Claude Code\n");
+      await writeFile(path.join(sourceRoot, "bin", "meta-kim.mjs"), "// old CLI\n");
+      await writeFile(scriptPath, "// old Meta_Kim MCP\n");
+
+      const configPath = path.join(root, ".claude.json");
+      const original = {
+        account: { keep: true },
+        mcpServers: {
+          meta_kim_runtime: { command: process.execPath, args: [scriptPath] },
+          user_server: { command: "other-server", args: ["serve"] },
+        },
+      };
+      const originalText = `${JSON.stringify(original, null, 2)}\n`;
+      await writeFile(configPath, originalText);
+      await execFileAsync(process.execPath, [SCRIPT, "--targets", "claude"], {
+        cwd: REPO_ROOT, env, maxBuffer: 8 * 1024 * 1024,
+      });
+
+      const migrated = JSON.parse(await readFile(configPath, "utf8"));
+      assert.deepEqual(migrated.account, original.account);
+      assert.deepEqual(migrated.mcpServers.user_server, original.mcpServers.user_server);
+      assert.equal(Object.hasOwn(migrated.mcpServers, "meta_kim_runtime"), false);
+      assert.deepEqual(migrated.mcpServers["meta-kim-runtime"].args.slice(-2), ["mcp", "serve"]);
+      const backupRoot = path.join(root, "claude", ".meta-kim", "backups", "mcp");
+      const snapshots = await readdir(backupRoot);
+      assert.ok(snapshots.length > 0);
+      assert.equal(await readFile(path.join(backupRoot, snapshots[0], ".claude.json"), "utf8"), originalText);
+    });
+  });
+
+  test("normal Claude migration refuses a forged old source identity", async () => {
+    await withTempRuntimeHomes(async ({ env, root }) => {
+      const scriptPath = path.join(root, "unknown", "scripts", "mcp", "meta-runtime-server.mjs");
+      await mkdir(path.dirname(scriptPath), { recursive: true });
+      await mkdir(path.join(root, "unknown", "bin"), { recursive: true });
+      await writeFile(path.join(root, "unknown", "package.json"), JSON.stringify({ name: "other-package", version: "3.10.0", bin: { "meta-kim": "bin/meta-kim.mjs" } }));
+      await writeFile(path.join(root, "unknown", "AGENTS.md"), "# Other project\n");
+      await writeFile(path.join(root, "unknown", "CLAUDE.md"), "# Meta_Kim for Claude Code\n");
+      await writeFile(path.join(root, "unknown", "bin", "meta-kim.mjs"), "// other CLI\n");
+      await writeFile(scriptPath, "// other MCP\n");
+      const configPath = path.join(root, ".claude.json");
+      const originalText = `${JSON.stringify({ mcpServers: { "meta-kim-runtime": { command: process.execPath, args: [scriptPath] } } }, null, 2)}\n`;
+      await writeFile(configPath, originalText);
+      await assert.rejects(execFileAsync(process.execPath, [SCRIPT, "--targets", "claude"], {
+        cwd: REPO_ROOT, env, maxBuffer: 8 * 1024 * 1024,
+      }), /collision|unowned/i);
+      assert.equal(await readFile(configPath, "utf8"), originalText);
+    });
+  });
+
   test("Claude MCP repair requires opt-in and backs up only a recognized stale Meta_Kim entry", async () => {
     await withTempRuntimeHomes(async ({ env, root }) => {
       const configPath = path.join(root, ".claude.json");

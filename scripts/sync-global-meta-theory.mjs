@@ -61,6 +61,8 @@ import {
 import {
   buildDurableMetaKimMcpServer,
   isExplicitClaudeMcpRepairCandidate,
+  legacyMetaKimMcpAliases,
+  legacyMetaKimSourceScriptPath,
   mcpDefinitionFingerprint,
   isStrictSemVer,
   mergeClaudeUserMcpConfig,
@@ -1083,6 +1085,9 @@ async function buildClaudeUserMcpPlan() {
   for (const fingerprint of await verifiedHistoricalClaudeMcpFingerprints(base, canonical)) {
     managedFingerprints.add(fingerprint);
   }
+  for (const fingerprint of await verifiedLegacySourceClaudeMcpFingerprints(base, canonical)) {
+    managedFingerprints.add(fingerprint);
+  }
   if (repairClaudeMcp) {
     for (const alias of [canonical.name, canonical.name.replaceAll("-", "_")]) {
       const existing = base?.mcpServers?.[alias];
@@ -1160,6 +1165,59 @@ async function directoryChainHasNoLinks(root, target) {
     if (!(await pathIsPlainOwnedDirectory(cursor))) return false;
   }
   return true;
+}
+
+/**
+ * Migrate the original checkout-backed Claude MCP launch on ordinary update,
+ * but only while its complete Meta_Kim source identity is still inspectable.
+ * A matching script basename alone is not ownership proof. Deleted checkouts,
+ * unknown command flags and edited configurations still need explicit repair.
+ */
+async function verifiedLegacySourceClaudeMcpFingerprints(base, canonical) {
+  const fingerprints = new Set();
+  const scriptSuffix = canonical.legacyScriptSuffix.replaceAll("\\", "/");
+  const binPath = canonical.packageManifest.bin?.[canonical.identity.cliName];
+  if (typeof binPath !== "string") return fingerprints;
+
+  for (const alias of legacyMetaKimMcpAliases(canonical.name)) {
+    const definition = base?.mcpServers?.[alias];
+    const script = legacyMetaKimSourceScriptPath(definition, scriptSuffix);
+    if (!script || !path.isAbsolute(script)) continue;
+    const scriptPath = path.resolve(script);
+    const sourceRoot = path.resolve(scriptPath, "../../..");
+    if (packagePathKey(path.join(sourceRoot, scriptSuffix)) !== packagePathKey(scriptPath)) continue;
+
+    try {
+      const expectedFiles = [
+        path.join(sourceRoot, "package.json"),
+        path.join(sourceRoot, binPath),
+        path.join(sourceRoot, "AGENTS.md"),
+        path.join(sourceRoot, "CLAUDE.md"),
+        scriptPath,
+      ];
+      if (!(await pathIsPlainOwnedDirectory(sourceRoot)) ||
+          !(await directoryChainHasNoLinks(sourceRoot, path.dirname(scriptPath))) ||
+          !(await directoryChainHasNoLinks(sourceRoot, path.dirname(path.join(sourceRoot, binPath))))) continue;
+      if (!(await Promise.all(expectedFiles.map(pathIsPlainOwnedFile))).every(Boolean)) continue;
+      if (packagePathKey(await fs.realpath(sourceRoot)) !== packagePathKey(sourceRoot) ||
+          packagePathKey(await fs.realpath(scriptPath)) !== packagePathKey(scriptPath)) continue;
+
+      const installed = JSON.parse(await fs.readFile(expectedFiles[0], "utf8"));
+      const agentsHeader = await fs.readFile(expectedFiles[2], "utf8");
+      const claudeHeader = await fs.readFile(expectedFiles[3], "utf8");
+      if (installed.name !== canonical.identity.packageName ||
+          !isStrictSemVer(installed.version) ||
+          Object.keys(installed.bin ?? {}).length !== 1 ||
+          path.normalize(installed.bin?.[canonical.identity.cliName] ?? "") !== path.normalize(binPath) ||
+          !agentsHeader.startsWith("# Meta_Kim for Codex") ||
+          !claudeHeader.startsWith("# Meta_Kim for Claude Code")) continue;
+
+      fingerprints.add(mcpDefinitionFingerprint(definition));
+    } catch {
+      // Missing, unreadable, modified or linked source is not auto-adopted.
+    }
+  }
+  return fingerprints;
 }
 
 async function verifiedHistoricalClaudeMcpFingerprints(base, canonical) {

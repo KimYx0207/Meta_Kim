@@ -188,6 +188,20 @@
             "uniqueItems": true,
             "minItems": 1
           },
+          "nativePlugin": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "manifestSearchOrder", "components", "installation", "reload", "remoteSync", "clientVerification"],
+            "properties": {
+              "status": { "type": "string", "enum": ["documented_not_live_verified"] },
+              "manifestSearchOrder": { "type": "array", "items": { "type": "string" }, "minItems": 1, "uniqueItems": true },
+              "components": { "type": "array", "items": { "type": "string" }, "minItems": 1, "uniqueItems": true },
+              "installation": { "type": "string" },
+              "reload": { "type": "string" },
+              "remoteSync": { "type": "string" },
+              "clientVerification": { "type": "string" }
+            }
+          },
           "dependencyInstall": {
             "type": "object",
             "additionalProperties": false,

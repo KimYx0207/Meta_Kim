@@ -1462,7 +1462,7 @@
         { "path": "scripts/meta-kim-sync-config.mjs", "digestKind": "sha256", "sha256": "24315d6145b31d8e62a1a1bf94ef1d38ced5a99a43ebe65ef10205d95af54d0f" },
         { "path": "scripts/native-runtime-projection.mjs", "digestKind": "sha256", "sha256": "4ca0499a542ef447eaf536ba44949f46093984d7dd6ba0e0bcba90c6353176dd" },
         { "path": "scripts/sync-runtimes.mjs", "digestKind": "sha256", "sha256": "b815e3c160c2140f521a820e0588f1d95db80040ecc4854c420a6088e66931e3" },
-        { "path": "scripts/sync-global-meta-theory.mjs", "digestKind": "sha256", "sha256": "ae153273046fb68fc2ca30070609310584803995027ef760a66faa0b6cd50703" },
+        { "path": "scripts/sync-global-meta-theory.mjs", "digestKind": "sha256", "sha256": "70c057ea2e6bd887d655ad87606c88418e5f6714d59b6213e21e39cbe3bf0a78" },
         { "path": "canonical/runtime-assets/shared/hooks/native-runtime-adapter.mjs", "digestKind": "sha256", "sha256": "d2ba0b6af1f872cf8a0baaa4a4e0cee10d5ca3fffe359705dc25a926a0f28750" }
       ],
       "summary": "Canonical projections and existing install/update/check/uninstall wiring include native schema adapters and exact JSON mutation ownership.",
@@ -1599,7 +1599,7 @@
         { "path": "scripts/meta-kim-sync-config.mjs", "digestKind": "sha256", "sha256": "24315d6145b31d8e62a1a1bf94ef1d38ced5a99a43ebe65ef10205d95af54d0f" },
         { "path": "scripts/native-runtime-projection.mjs", "digestKind": "sha256", "sha256": "4ca0499a542ef447eaf536ba44949f46093984d7dd6ba0e0bcba90c6353176dd" },
         { "path": "scripts/sync-runtimes.mjs", "digestKind": "sha256", "sha256": "b815e3c160c2140f521a820e0588f1d95db80040ecc4854c420a6088e66931e3" },
-        { "path": "scripts/sync-global-meta-theory.mjs", "digestKind": "sha256", "sha256": "ae153273046fb68fc2ca30070609310584803995027ef760a66faa0b6cd50703" },
+        { "path": "scripts/sync-global-meta-theory.mjs", "digestKind": "sha256", "sha256": "70c057ea2e6bd887d655ad87606c88418e5f6714d59b6213e21e39cbe3bf0a78" },
         { "path": "canonical/runtime-assets/shared/hooks/native-runtime-adapter.mjs", "digestKind": "sha256", "sha256": "d2ba0b6af1f872cf8a0baaa4a4e0cee10d5ca3fffe359705dc25a926a0f28750" }
       ],
       "summary": "Canonical projections and existing install/update/check/uninstall wiring include native schema adapters and exact JSON mutation ownership.",

@@ -10,7 +10,7 @@
   },
   "npm": {
     "lockFile": "npm-shrinkwrap.json",
-    "sha256": "81ba47a4092aa01549f31d307b83710c781ff403e416e7c94befedd9878ef786",
+    "sha256": "677925e18016c05fc4c63a7697b564e2734e698b7ef44a886211b98ec5bcc6a4",
     "nodeRegression": "22.13.0",
     "nodeDshHost": "24.22.1",
     "resolutionBefore": "2026-11-10T00:00:00.000Z"

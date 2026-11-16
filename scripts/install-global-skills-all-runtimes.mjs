@@ -91,6 +91,11 @@ import {
 } from "./meta-kim-config-loader.mjs";
 import { checkedPath, componentHash } from "./dependency-agent-discovery.mjs";
 import { upstreamCliTargetMode, upstreamCliArgsForTarget } from "./upstream-cli-install-plan.mjs";
+import {
+  legacyUserPluginsForMigration,
+  parseClaudePluginInventory,
+  requireInstalledClaudePlugin,
+} from "./claude-plugin-migration.mjs";
 
 // ── ANSI colors (matching setup.mjs) ─────────────────────────────────
 
@@ -3351,260 +3356,76 @@ async function installClaudePlugins() {
     }
   }
 
-  // Load installed plugin records from installed_plugins.json
-  // Format: { version: 2, plugins: { "<fullKey>": [records] } }
-  let installedPluginsFile = { version: 2, plugins: {} };
-  const configHome =
-    process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude");
-  // Claude Code writes installed_plugins.json under the plugins/ subdirectory
-  const installedPluginsPath = path.join(
-    configHome,
-    "plugins",
-    "installed_plugins.json",
-  );
-  function readInstalledPluginsFromDisk() {
-    try {
-      if (existsSync(installedPluginsPath)) {
-        const raw = readFileSync(installedPluginsPath, "utf8");
-        const parsed = JSON.parse(raw);
-        if (!parsed.plugins) parsed.plugins = {};
-        return parsed;
-      }
-    } catch {
-      // If file missing or corrupt, fall through with fresh structure.
-    }
-    return { version: 2, plugins: {} };
-  }
-  installedPluginsFile = readInstalledPluginsFromDisk();
-
-  for (const repoSpec of SKILL_REPOS.filter((s) => s.claudePlugin)) {
-    const canonicalSpec = repoSpec.claudePlugin;
-    for (const legacyName of repoSpec.legacyNames || []) {
-      for (const key of Object.keys(installedPluginsFile.plugins)) {
-        if (key === canonicalSpec) continue;
-        if (!key.startsWith(`${legacyName}@`)) continue;
-        console.warn(
-          `${C.yellow}⚠${C.reset} ${t.staleClaudePluginRecordRemoved(repoSpec.id, key)}`,
-        );
-        delete installedPluginsFile.plugins[key];
-      }
-    }
-  }
-  try {
-    await fs.mkdir(path.dirname(installedPluginsPath), { recursive: true });
-    await fs.writeFile(
-      installedPluginsPath,
-      JSON.stringify(installedPluginsFile, null, 2),
-      "utf8",
+  // The native CLI is the only authoritative plugin registry. The historical
+  // direct-write path silently dropped legacy entries while leaving enabled
+  // flags, cached plugins and loaded sessions unchanged.
+  function listInstalledPlugins() {
+    const result = spawnCliWithShellOptionSync(
+      "claude", ["plugin", "list", "--json"],
+      { encoding: "utf8" }, claudeShellOpt,
     );
-  } catch {
-    // Non-fatal; Claude can recreate this file during plugin install.
-  }
-
-  // Flat lookup by bare name (first matching record across all full keys)
-  function getInstalledRecord(bareName) {
-    const key = Object.keys(installedPluginsFile.plugins).find((k) =>
-      k.startsWith(bareName + "@"),
-    );
-    const records = installedPluginsFile.plugins[key];
-    return records?.[0] ?? null;
-  }
-
-  // Probe currently-active plugins via CLI (for bare-name dedup in non-update mode)
-  const listOut = spawnCliWithShellOptionSync(
-    "claude",
-    ["plugins", "list", "--json"],
-    { encoding: "utf8" },
-    claudeShellOpt,
-  );
-  let installedNames = new Set();
-  if (listOut.status === 0 && listOut.stdout) {
-    try {
-      const plugins = JSON.parse(listOut.stdout);
-      if (Array.isArray(plugins)) {
-        for (const p of plugins) {
-          const name = (p.name || p.id || "").split("@")[0].trim();
-          if (name) installedNames.add(name);
-        }
-      }
-    } catch {
-      // If JSON parse fails, fall through to blind install.
+    if (result.status !== 0) {
+      throw new Error("Claude plugin list --json failed; refusing unverified plugin migration");
     }
+    return parseClaudePluginInventory(result.stdout);
   }
-
-  /**
-   * Fetch the latest plugin version from GitHub marketplace.json.
-   * Returns version string or null if unreachable/unparseable.
-   * Version source: .claude-plugin/marketplace.json → plugins[].version
-   */
-  async function fetchLatestPluginVersion(versionSource) {
-    const repoFull = versionSource.repository.fullName;
-    const encodedManifestPath = versionSource.manifestPath
-      .split("/")
-      .filter(Boolean)
-      .map(encodeURIComponent)
-      .join("/");
-    const url = `${versionSource.apiBase}/repos/${repoFull}/contents/${encodedManifestPath}`;
-    try {
-      const res = await fetch(url, {
-        headers: {
-          "user-agent": "meta-kim/2.0",
-          accept: "application/vnd.github.v3+json",
-        },
-      });
-      if (!res.ok) return null;
-      const data = await res.json();
-      const content = Buffer.from(data.content, "base64").toString("utf8");
-      const m = JSON.parse(content);
-      // marketplace.json format: { plugins: [{ name, version, ... }] }
-      if (m.plugins && Array.isArray(m.plugins)) {
-        const found = m.plugins.find(
-          (plugin) => plugin.name === versionSource.pluginName,
-        );
-        return found?.version ?? null;
-      }
-      // Fallback: top-level version (some older formats)
-      return m.version ?? null;
-    } catch {
-      return null;
-    }
-  }
+  let inventory = listInstalledPlugins();
 
   for (const spec of CLAUDE_PLUGIN_SPECS) {
-    const bareName = spec.split("@")[0];
     const repoSpec = SKILL_REPOS.find((skill) => skill.claudePlugin === spec);
-    const versionSource = repoSpec.versionSource;
-    const repoFull = versionSource.repository.fullName;
-    // Look up by full spec ("bareName@marketplace"), not bare name.
-    // installed_plugins.json can carry stale cross-marketplace entries for the
-    // same bare name (e.g. both "superpowers@claude-plugins-official" and
-    // "superpowers@superpowers-marketplace"); matching by bare name alone
-    // returns whichever record happens to be first, which caused every run
-    // to look like an "upgrade" (old marketplace version vs new marketplace
-    // latest never matched).
-    const localRecord = installedPluginsFile.plugins[spec]?.[0] ?? null;
-    const localVersion = localRecord?.version ?? null;
-
-    if (!updateMode) {
-      // Non-update mode: skip only when the canonical full spec is installed.
-      if (localRecord) {
-        console.log(
-          `${C.yellow}⊘${C.reset} ${C.dim}${t.skipAlreadyInstalled(spec)}${C.reset}`,
-        );
-        continue;
-      }
-    } else {
-      // Update mode: fetch latest from GitHub and compare
-      const latestVersion = await fetchLatestPluginVersion(versionSource);
-      if (latestVersion) {
-        if (localVersion === latestVersion) {
-          console.log(
-            `${C.green}✓${C.reset} ${C.dim}${bareName} ${latestVersion} — ${t.labelUpToDate}${C.reset}`,
-          );
-          continue;
-        }
-        console.log(
-          `${C.cyan}↺${C.reset} ${bareName}: ${C.dim}${localVersion ?? "unknown"}${C.reset} → ${C.bold}${latestVersion}${C.reset} ${C.dim}(${repoFull})${C.reset}`,
-        );
-      } else {
-        // GitHub unreachable or unparseable — warn but proceed with install
-        if (localVersion) {
-          console.log(
-            `${C.yellow}⚠${C.reset} ${C.dim}${bareName} — ${t.labelCannotCheckGitHub}${C.reset} ${C.dim}(${t.labelUsingLocalRecord(localVersion)})${C.reset}`,
-          );
-        } else {
-          console.log(
-            `${C.yellow}⚠${C.reset} ${C.dim}${bareName} — ${t.labelCannotCheckGitHub}${C.reset}`,
-          );
-        }
-      }
-    }
-
-    if (dryRun) {
-      console.log(t.dryRun(`claude plugin install ${spec}`));
-      continue;
-    }
-    const pluginCommand = updateMode && localRecord ? "update" : "install";
-    console.log(
-      `${C.cyan}→${C.reset} ${
-        pluginCommand === "update"
-          ? t.updatingPlugin(spec)
-          : t.installingPlugin(spec)
-      }`,
-    );
-    const p = spawnCliWithShellOptionSync(
-      "claude",
-      ["plugin", pluginCommand, spec],
-      { stdio: "inherit" },
-      claudeShellOpt,
-    );
-    if (p.status !== 0) {
-      console.warn(
-        `${C.yellow}⚠${C.reset} ${t.warnPluginFailed(spec, p.status)}`,
+    const legacy = legacyUserPluginsForMigration(inventory, spec, repoSpec.legacyNames);
+    const userState = inventory.find((row) => row.id === spec && row.scope === "user");
+    // A project-scoped plugin is not a replacement for the user's legacy
+    // global plugin: removing the latter would break every other project.
+    const oldState = userState ?? (legacy.length ? null : inventory.find((row) => row.id === spec));
+    const pluginCommand = updateMode && oldState ? "update" : oldState ? null : "install";
+    if (pluginCommand) {
+      console.log(`${C.cyan}→${C.reset} ${pluginCommand === "update" ? t.updatingPlugin(spec) : t.installingPlugin(spec)}`);
+      const result = spawnCliWithShellOptionSync(
+        "claude", ["plugin", pluginCommand, spec, "--scope", oldState?.scope ?? "user"],
+        { stdio: "inherit" }, claudeShellOpt,
       );
-      continue;
-    } else if (updateMode) {
-      console.log(`${C.green}✓${C.reset} ${t.pluginUpdated(spec)}`);
+      if (result.status !== 0) throw new Error(`Claude native plugin ${pluginCommand} failed: ${spec}`);
+    } else {
+      console.log(`${C.green}✓${C.reset} ${C.dim}${t.skipAlreadyInstalled(spec)}${C.reset}`);
     }
 
-    // Record installed version so --update mode can detect future mismatches.
-    // Both update-mode reinstalls and first-time installs write here.
-    if (p.status === 0) {
-      // Prefer the plugin manager's own updated record. This preserves install
-      // paths and commit SHAs after `claude plugin update`.
-      const refreshedInstalledPluginsFile = readInstalledPluginsFromDisk();
-      if (refreshedInstalledPluginsFile.plugins?.[spec]?.[0]) {
-        installedPluginsFile = refreshedInstalledPluginsFile;
-        continue;
-      }
+    inventory = listInstalledPlugins();
+    let canonical = requireInstalledClaudePlugin(inventory, spec);
+    if (legacy.length > 0 && canonical.scope !== "user") {
+      throw new Error(`Refusing to retire user-scoped legacy plugins without user-scoped ${spec}`);
+    }
+    if (legacy.length > 0 && !oldState && legacy.every((row) => !row.enabled)) {
+      // A disabled old plugin must not silently become enabled during repair.
+      const disable = spawnCliWithShellOptionSync(
+        "claude", ["plugin", "disable", spec, "--scope", "user"],
+        { encoding: "utf8" }, claudeShellOpt,
+      );
+      if (disable.status !== 0) throw new Error(`Could not preserve disabled Claude plugin state: ${spec}`);
+      inventory = listInstalledPlugins();
+      canonical = requireInstalledClaudePlugin(inventory, spec);
+    }
 
-      // Priority: (1) GitHub API version, (2) parse version from installPath dir name.
-      // installPath format: ~/.claude/plugins/cache/{marketplace}/{name}/{version}/
-      // The directory name IS the version — more reliable than GitHub API rate limits.
-      let resolvedVersion = await fetchLatestPluginVersion(repoFull);
-      if (!resolvedVersion && localRecord?.installPath) {
-        const dirName = path.basename(localRecord.installPath);
-        // Directory name matches "1.2.0" or "v1.2.0" pattern
-        const v = dirName.match(/^v?(\d+\.\d+\.\d+.*)$/)?.[1] ?? dirName;
-        if (v && v !== dirName) resolvedVersion = v;
+    for (const old of legacy) {
+      if (old.enabled && !canonical.enabled) {
+        throw new Error(`Refusing to retire enabled legacy ${old.id} while ${spec} is disabled`);
       }
-      // Update installPath to new version dir if version changed (update mode)
-      let resolvedInstallPath = localRecord?.installPath ?? "";
-      if (updateMode && resolvedVersion) {
-        // Reconstruct installPath with new version
-        const oldPathParts = (localRecord?.installPath ?? "")
-          .split(path.sep)
-          .filter(Boolean);
-        if (oldPathParts.length >= 2) {
-          // Replace last path segment (version dir) with new version
-          oldPathParts[oldPathParts.length - 1] = resolvedVersion;
-          resolvedInstallPath = oldPathParts.join(path.sep);
-        }
+      // Let Claude remove its own enabledPlugins entries and install record.
+      // --keep-data preserves any user state from the previous plugin.
+      const remove = spawnCliWithShellOptionSync(
+        "claude", ["plugin", "uninstall", old.id, "--scope", "user", "--keep-data"],
+        { encoding: "utf8" }, claudeShellOpt,
+      );
+      if (remove.status !== 0) throw new Error(`Claude could not migrate legacy plugin ${old.id}; its data was preserved`);
+      inventory = listInstalledPlugins();
+      if (inventory.some((row) => row.id === old.id && row.scope === "user")) {
+        throw new Error(`Claude still reports legacy plugin after uninstall: ${old.id}`);
       }
-      const newRecord = {
-        scope: "user",
-        installPath: resolvedInstallPath,
-        version: resolvedVersion ?? spec,
-        installedAt: localRecord?.installedAt ?? new Date().toISOString(),
-        lastUpdated: new Date().toISOString(),
-        ...(localRecord?.gitCommitSha
-          ? { gitCommitSha: localRecord.gitCommitSha }
-          : {}),
-      };
-      // Keep full key format: "bareName@marketplace"
-      const fullKey = spec;
-      installedPluginsFile.plugins[fullKey] = [newRecord];
-      try {
-        fs.writeFileSync(
-          installedPluginsPath,
-          JSON.stringify(installedPluginsFile, null, 2),
-          "utf8",
-        );
-      } catch {
-        // Write failure is non-fatal; the version will be re-detected next run.
-      }
+      requireInstalledClaudePlugin(inventory, spec);
+      console.log(`${C.green}✓${C.reset} Migrated ${old.id} -> ${spec} (legacy plugin data preserved)`);
     }
   }
+  console.log("Claude plugin files verified by the native CLI; an already-running Claude session must run /reload-plugins (or start a new session) before live acceptance.");
   return true;
 }
 

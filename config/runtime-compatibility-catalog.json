@@ -1,7 +1,7 @@
 {
   "$schema": "./contracts/runtime-compatibility-catalog.schema.json",
   "schemaVersion": 1,
-  "lastReviewedAt": "2026-11-13",
+  "lastReviewedAt": "2026-11-16",
   "decisionBoundary": {
     "noAutoPromotionFromDependencyInstall": true,
     "noAutoPromotionFromGenericSkillPath": true,
@@ -920,6 +920,15 @@
         "command_cli",
         "permission_safety"
       ],
+      "nativePlugin": {
+        "status": "documented_not_live_verified",
+        "manifestSearchOrder": [".zcode-plugin/plugin.json", ".claude-plugin/plugin.json"],
+        "components": ["skills", "commands", "agents", "mcpServers", "hooks"],
+        "installation": "Settings > Plugins: official and personal marketplaces, including the preloaded Claude marketplace; installation, enablement and updates belong to ZCode. Do not write its private registry or assume a released headless plugins CLI without a version probe.",
+        "reload": "Enabling or disabling a plugin automatically refreshes affected skills and sessions; hook snapshots attach to a new session and require a real invocation to verify. File projections and installed plugin rows are insufficient.",
+        "remoteSync": "SSH/WSL plugins must be synced explicitly through Sync Plugin; remote entries are skipped, not overwritten; sensitive settings need reconfiguration.",
+        "clientVerification": "After refresh/update and a fresh local workspace session, inspect Plugin skills, Plugin subagents, Plugin MCP and Hooks panels, then invoke a bounded Agent/Skill/Hook path. Record the observed current ZCode version and session outcome separately from structural tests."
+      },
       "dependencyInstall": {
         "ecc": {
           "support": "not_supported",
@@ -967,10 +976,25 @@
           "type": "official_docs",
           "ref": "https://zcode.z.ai/en/docs/hooks",
           "claim": "Current 2026-11-10 docs explicitly ignore project hooks. The retained 2026-10-17 bundled-guide observation is historical and must not be used to claim project hook execution."
+        },
+        {
+          "type": "official_docs",
+          "ref": "https://zcode.z.ai/en/docs/plugin",
+          "claim": "Reviewed 2026-11-16: ZCode plugins bundle Skills, Commands, Subagents, MCP and Hooks; .zcode-plugin/plugin.json precedes Claude-compatible .claude-plugin/plugin.json; marketplace manifest versions govern updates, and enable/disable refreshes the Agent runtime. Plugin hooks require a new session."
+        },
+        {
+          "type": "official_docs",
+          "ref": "https://zcode.z.ai/en/docs/remote-development",
+          "claim": "Reviewed 2026-11-16: SSH/WSL Sync Plugin is explicit, preserves existing remote copies and skips sensitive settings. Local installation does not establish remote runtime acceptance."
+        },
+        {
+          "type": "official_docs",
+          "ref": "https://github.com/zai-org/ZCode/blob/main/UI_PLUGIN.en.md",
+          "claim": "UI Plugins based on MCP Apps are described for a feature branch not yet published as a release; the experimental UI plugin path is not promoted to the supported install target."
         }
       ],
-      "decision": "Formal optional projection with native schema, merge-safe lifecycle and structural tests; projection_implemented is separate from live_verified. No live certification is claimed.",
-      "nextAction": "Run actual host discovery and bounded behavior acceptance in a new session; keep native live claims unverified. The historical beta candidate API remains no-quota and plan-only."
+      "decision": "Formal optional projection with native schema, merge-safe lifecycle and structural tests; projection_implemented remains separate from live_verified. Native plugin distribution and reload are documented capabilities, but the installer must not mutate ZCode plugin-private registries or claim live_verified without host reload and invocation evidence. Experimental UI plugins remain excluded.",
+      "nextAction": "Refresh plugin catalog and installed version in the actual ZCode client, open a new workspace session, then observe loaded skill/agent/MCP/hook and a bounded native invocation; retain live_verified=false without that evidence. The historical beta candidate API remains no-quota and plan-only."
     },
     {
       "id": "deepseek-harness",
