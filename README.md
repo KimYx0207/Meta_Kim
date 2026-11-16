@@ -62,6 +62,14 @@ Accepting the outline makes the next module available to the host; accepting a m
 
 The PRD view also contains an interactive **human-readable knowledge graph**: the system outline, modules, containment and prerequisite arrows. Select a node to read its source-bound design; expand hidden nodes and inspect unavailable dependencies. This is separate from Graphify's code graph and does not replace the existing system panorama.
 
+Live retains a **near-black background with fine champagne-gold node outlines**. Only nodes with an observed running state receive brighter gold emphasis and animated dependency edges; other surfaces stay charcoal and gray. The module index opens the matching source-bound material and review controls alongside the graph. Narrow layouts reflow without shrinking the labels or reserving a large blank canvas. Color alone never claims a task has finished.
+
+<p align="center">
+  <a href="docs/images/meta-kim-live-prd-overview.zh-CN.png"><img src="docs/images/meta-kim-live-prd-overview.zh-CN.png" alt="Actual Meta_Kim Live PRD browser screenshot: black workspace and gold-framed system/module graph" width="900"></a>
+</p>
+
+*Actual browser capture of the current Live PRD using a clearly marked Chinese-language acceptance fixture; no model was called. [Open the module-level relationship view](docs/images/meta-kim-live-prd-module.zh-CN.png).*
+
 ## A mind map of the whole system
 
 <p align="center">

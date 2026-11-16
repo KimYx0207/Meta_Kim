@@ -62,6 +62,14 @@
 
 PRD 页面还增加了**可点击的知识图谱**：一级系统、二级模块、包含关系和前置依赖一眼可见。点击节点看对应材料，按需展开关系，缺失或未加载的依赖会单独标注。这张图用于人类读 PRD，与代码 Graphify 分开；原有系统全景图保留。
 
+这版 Live 以**深黑背景和克制的香槟金节点细框**为主。只有真实处于运行状态的节点才加强金色高亮，对应依赖线才出现流动效果；其它内容保持黑灰。图谱旁的模块索引可直接切换材料，右侧继续显示原文、版本和审阅操作；窄屏自动调整布局，少量节点不会撑出大片空白。颜色不代表已经完成，实际状态仍以运行记录为准。
+
+<p align="center">
+  <a href="docs/images/meta-kim-live-prd-overview.zh-CN.png"><img src="docs/images/meta-kim-live-prd-overview.zh-CN.png" alt="Meta_Kim Live PRD 真实浏览器截图：深黑背景、金色节点细框、可点击的系统与模块关系图" width="900"></a>
+</p>
+
+*本版 Live 的真实浏览器截图，使用明确标记的验收样例，未调用模型。[查看二级模块关系与材料页面](docs/images/meta-kim-live-prd-module.zh-CN.png)。*
+
 ## 一张思维导图，先看清整套系统
 
 <p align="center">
