@@ -1,0 +1,63 @@
+{
+  "schemaVersion": "meta-kim-agent-launch-profiles-v1",
+  "hosts": [
+    {
+      "id": "claude",
+      "label": "Claude Code",
+      "command": "claude",
+      "launchProfile": "claude-read-only-plan-v1",
+      "minimumVersion": "2.1.259",
+      "reviewedDocumentation": [
+        "https://code.claude.com/docs/en/cli-reference",
+        "https://code.claude.com/docs/en/headless"
+      ]
+    },
+    {
+      "id": "gemini",
+      "label": "Gemini CLI",
+      "command": "gemini",
+      "launchProfile": "gemini-read-only-plan-v1",
+      "minimumVersion": "0.68.0",
+      "reviewedDocumentation": [
+        "https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/cli-reference.md",
+        "https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/plan-mode.md",
+        "https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/headless.md"
+      ]
+    },
+    {
+      "id": "codex",
+      "label": "Codex CLI",
+      "command": "codex",
+      "launchProfile": null,
+      "unavailableReason": "personal_codex_token_not_authorized"
+    },
+    {
+      "id": "zcode",
+      "label": "ZCode",
+      "command": "zcode",
+      "launchProfile": null,
+      "unavailableReason": "needs_native_launch_review"
+    },
+    {
+      "id": "dsh",
+      "label": "DSH",
+      "command": "dsh",
+      "launchProfile": null,
+      "unavailableReason": "needs_native_launch_review"
+    },
+    {
+      "id": "opencode",
+      "label": "OpenCode",
+      "command": "opencode",
+      "launchProfile": null,
+      "unavailableReason": "needs_native_launch_review"
+    },
+    {
+      "id": "openclaw",
+      "label": "OpenClaw",
+      "command": "openclaw",
+      "launchProfile": null,
+      "unavailableReason": "needs_native_launch_review"
+    }
+  ]
+}

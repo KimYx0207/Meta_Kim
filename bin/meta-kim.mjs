@@ -41,6 +41,7 @@ ${status.usageHeading}:
   meta-kim update [options]
   meta-kim check [options]
   meta-kim live [--port <port>] [--profile <name>] [--restart] [--no-open] [--project-root <dir>] [--json] [--enable-control]  Start, reuse, or restart the global local Live Hub
+  meta-kim agent [--project-root <dir>] [--port <port>] [--no-open] [--json]  Open the local Agent workspace for this project
   ${status.usage}
   meta-kim doctor
   meta-kim doctor hooks [--fix] [--project|--all] [--project-root <dir>]
@@ -65,7 +66,7 @@ ${status.optionsHeading}:
 `;
 }
 
-const commands = new Set(["install", "update", "check", "live", "status", "doctor", "release", "uninstall", "project", "mcp", "runtime", "capability", "dsh"]);
+const commands = new Set(["install", "update", "check", "live", "agent", "status", "doctor", "release", "uninstall", "project", "mcp", "runtime", "capability", "dsh"]);
 
 function fail(message, copy = statusCopy()) {
   console.error(`meta-kim: ${message}`);
@@ -248,6 +249,9 @@ switch (command) {
     break;
   case "live":
     runLongLived("scripts/meta-kim-live.mjs", commandArgs);
+    break;
+  case "agent":
+    runLongLived("scripts/meta-kim-agent.mjs", commandArgs);
     break;
   case "status":
     {

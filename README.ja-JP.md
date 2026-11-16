@@ -16,6 +16,8 @@
 
 日常の言葉では、**目的を理解する → オンラインで調べる → 案を比較する → 設計を定める → 実行して検証する**です。まず根拠のある選択肢を提示し、決定を実行・確認できる作業へ展開します。全体の流れを見た後、予約ツールの例で設計、タスク、成果物を説明します。
 
+**初心者向けの入口：** プロジェクトのフォルダーで `meta-kim agent` を実行すると、やりたいことを入力し、対応するローカル AI クライアントを選び、既存の Live ワークスペースで受付状況と調査案を確認できます。現在のネイティブ起動は Claude Code と Gemini CLI の**読み取り専用の計画モード**に限られます。[使い方と制限](docs/agent-entry.md)。
+
 <p align="center">
   <a href="docs/images/system-panorama.ja-JP.svg"><img src="docs/images/system-panorama.ja-JP.svg" alt="Meta_Kim のシステム全景：8 段階、依存関係による実行、人の判断、差し戻し、記録先" width="1000"></a>
   <br>

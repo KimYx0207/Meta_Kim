@@ -16,6 +16,8 @@
 
 일상적인 표현으로는 **목표 파악 → 온라인 조사 → 대안 비교 → 설계 확정 → 실행과 검증**입니다. 먼저 근거 있는 선택지를 제시하고 결정을 실행·검토 가능한 작업으로 구체화합니다. 전체 흐름을 본 다음 예약 도구 사례로 설계, 작업과 결과물을 설명합니다.
 
+**처음 사용하는 사람을 위한 시작점:** 프로젝트 폴더에서 `meta-kim agent`를 실행하고 원하는 일을 입력한 뒤 지원되는 로컬 AI 클라이언트를 선택하세요. 기존 Live 작업 공간에서 실제 접수 상태와 조사 제안을 확인할 수 있습니다. 현재 네이티브 실행은 Claude Code와 Gemini CLI의 **읽기 전용 계획 모드**만 지원합니다. [사용 방법과 제한 사항](docs/agent-entry.md).
+
 <p align="center">
   <a href="docs/images/system-panorama.ko-KR.svg"><img src="docs/images/system-panorama.ko-KR.svg" alt="Meta_Kim 시스템 전경: 8단계, 의존성에 따른 실행, 사람의 판단, 수정 경로와 기록 위치" width="1000"></a>
   <br>

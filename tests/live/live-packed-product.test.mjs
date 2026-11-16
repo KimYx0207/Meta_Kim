@@ -68,6 +68,7 @@ test("the real packed CLI serves the read-only control room without a source che
   const extractRoot = path.join(temp, "extract");
   const projectRoot = path.join(temp, "project");
   let child;
+  let agentChild;
   let daemonState = null;
   try {
     await mkdir(extractRoot);
@@ -95,6 +96,28 @@ test("the real packed CLI serves the read-only control room without a source che
     assert.equal(help.status, 0, help.stderr);
     assert.match(help.stdout, /read-only/iu);
     assert.match(help.stdout, /--enable-control/u);
+
+    // The opt-in Agent application must survive the same real npm tarball
+    // boundary. It must not reconfigure the global read-only Hub or invoke a
+    // provider while merely opening its window/service.
+    const agentHelp = spawnSync(process.execPath, [cli, "agent", "--help"], {
+      cwd: projectRoot, encoding: "utf8",
+    });
+    assert.equal(agentHelp.status, 0, agentHelp.stderr);
+    assert.match(agentHelp.stdout, /local workspace/u);
+    agentChild = spawn(process.execPath, [cli, "agent", "--project-root", projectRoot, "--port", "0", "--no-open", "--json"], {
+      cwd: projectRoot,
+      env: { ...process.env, META_KIM_CALLER_CWD: projectRoot },
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    const agentAddress = await waitForJsonLine(agentChild);
+    assert.equal(agentAddress.status, "listening");
+    const agentHealth = await (await fetch(`${agentAddress.url}/api/health`)).json();
+    assert.equal(agentHealth.singleton, false);
+    assert.equal(agentHealth.agentEntry.enabled, true);
+    agentChild.kill("SIGTERM");
+    agentChild = null;
 
     child = spawn(process.execPath, [
       cli,
@@ -150,6 +173,7 @@ test("the real packed CLI serves the read-only control room without a source che
     assert.equal(snapshot.run, null);
     assert.equal(snapshot.permissions.mutationAllowed, false);
   } finally {
+    if (agentChild && agentChild.exitCode === null) agentChild.kill("SIGTERM");
     if (child && child.exitCode === null) {
       child.kill("SIGTERM");
       await Promise.race([

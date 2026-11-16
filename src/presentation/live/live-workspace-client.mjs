@@ -2,7 +2,7 @@ import { LIVE_WORKSPACE_MESSAGES, serializeLiveWorkspaceModel, workspaceArtifact
 import { createLiveWorkspaceRenderer } from "./live-workspace-renderer.mjs";
 import { createPrdKnowledgeGraph } from "./live-prd-knowledge-graph.mjs";
 
-export const LIVE_WORKSPACE_UI_POLICY = Object.freeze({ pageSize: 50, refreshMs: 15000, requestTimeoutMs: 12000, refreshCoalesceMs: 1500 });
+export const LIVE_WORKSPACE_UI_POLICY = Object.freeze({ pageSize: 50, refreshMs: 15000, requestTimeoutMs: 12000, refreshCoalesceMs: 1500, agentReceiptPollMs: 2500 });
 
 /** Same-origin transport and view state only. The server owns decisions and progress. */
 export function createLiveWorkspaceController(options) {
@@ -12,6 +12,7 @@ export function createLiveWorkspaceController(options) {
   const policy = options.policy;
   const doc = root.ownerDocument;
   const win = doc.defaultView;
+  const agentEntryEnabled = options.config?.agentEntryEnabled === true;
   const token = options.config?.controlHeader === "x-meta-kim-workspace-token" && typeof options.config?.controlToken === "string" && options.config.controlToken.length >= 16 ? options.config.controlToken : null;
   const emptyHistory = () => ({ rows: [], revision: null, total: null, nextCursor: null, loading: false, loaded: false, attempted: false, stale: false, error: null });
   const state = {
@@ -30,6 +31,21 @@ export function createLiveWorkspaceController(options) {
   let disposed = false;
   const pendingControllers = new Set();
   const copy = (key) => LIVE_WORKSPACE_MESSAGES[state.language]?.[key] || LIVE_WORKSPACE_MESSAGES.en[key] || String(key || "");
+  const agentForm = root.querySelector("[data-uw-agent-start]");
+  const agentEntry = root.querySelector("[data-uw-agent-entry]");
+  if (agentEntry) agentEntry.hidden = !agentEntryEnabled;
+  if (root.dataset) root.dataset.agentEntryEnabled = String(agentEntryEnabled);
+  const agentGoal = root.querySelector("[data-uw-agent-goal]");
+  const agentHost = root.querySelector("[data-uw-agent-host]");
+  const agentSubmit = root.querySelector("[data-uw-agent-submit]");
+  const agentStatus = root.querySelector("[data-uw-agent-status]");
+  const agentRecovery = root.querySelector("[data-uw-agent-recovery]");
+  const agentVerify = root.querySelector("[data-uw-agent-verify]");
+  const agentRedetect = root.querySelector("[data-uw-agent-redetect]");
+  const agentNew = root.querySelector("[data-uw-agent-new]");
+  const agentResult = root.querySelector("[data-uw-agent-result]");
+  const agentOutput = root.querySelector("[data-uw-agent-output]");
+  const agent = { hosts: [], executionAllowed: false, loading: false, busy: false, pending: null, status: "idle" };
   const route = (path, extra = {}, selection = state.selection) => {
     const url = new URL(path, win.location.origin);
     for (const [key, value] of Object.entries({ projectId: selection.projectId, runId: selection.runId, ...extra })) if (value !== undefined && value !== null && value !== "") url.searchParams.set(key, String(value));
@@ -49,6 +65,179 @@ export function createLiveWorkspaceController(options) {
       if (!response.ok) { const error = new Error(payload?.error?.message || payload?.message || "Workspace request failed"); error.status = response.status; error.code = typeof payload?.error === "string" ? payload.error : payload?.error?.code; throw error; }
       return payload;
     } finally { win.clearTimeout(timer); pendingControllers.delete(controller); }
+  }
+  function agentMessage(kind, message, { verify = false, retry = false, redetect = false, next = false } = {}) {
+    agent.status = kind;
+    if (agentStatus) {
+      agentStatus.hidden = !message;
+      agentStatus.dataset.state = kind;
+      agentStatus.textContent = message || "";
+    }
+    if (agentRecovery) agentRecovery.hidden = !(verify || retry || redetect || next);
+    if (agentVerify) agentVerify.hidden = !verify;
+    if (agentNew) agentNew.hidden = !next;
+    if (agentRedetect) {
+      agentRedetect.hidden = !(retry || redetect);
+      agentRedetect.textContent = retry ? "重试同一请求" : "重新检测客户端";
+      agentRedetect.dataset.action = retry ? "retry" : "redetect";
+    }
+    updateAgentControls();
+  }
+  function launchableHosts() {
+    return agent.hosts.filter((host) => host.available === true && host.launchSupported === true);
+  }
+  function updateAgentControls() {
+    const canLaunch = agentEntryEnabled && state.canWrite && agent.executionAllowed && !agent.loading && !agent.busy && !agent.pending
+      && launchableHosts().some((host) => host.id === agentHost?.value);
+    if (agentHost) agentHost.disabled = !agentEntryEnabled || !state.canWrite || !agent.executionAllowed || agent.loading || agent.busy || !launchableHosts().length;
+    if (agentSubmit) {
+      agentSubmit.disabled = !canLaunch || !agentGoal?.value?.trim();
+      agentSubmit.setAttribute("aria-busy", agent.busy ? "true" : "false");
+    }
+  }
+  function populateAgentHosts() {
+    if (!agentHost) return;
+    const previousHost = agentHost.value;
+    const entries = agent.hosts.filter((host) => host && typeof host.id === "string" && host.id && typeof host.label === "string");
+    agentHost.textContent = "";
+    if (!entries.length) {
+      const option = doc.createElement("option"); option.value = ""; option.textContent = "没有可用客户端"; agentHost.appendChild(option);
+    } else {
+      for (const host of entries) {
+        const option = doc.createElement("option");
+        option.value = host.id;
+        option.textContent = host.label + (host.available === true && host.launchSupported === true ? "" : " · 不可启动");
+        option.disabled = host.available !== true || host.launchSupported !== true;
+        if (host.reason) option.title = String(host.reason);
+        agentHost.appendChild(option);
+      }
+      const usable = launchableHosts();
+      agentHost.value = usable.some((item) => item.id === previousHost) ? previousHost : usable[0]?.id || "";
+    }
+    updateAgentControls();
+  }
+  async function loadAgentHosts() {
+    if (!agentEntryEnabled || !agentForm || disposed || agent.loading || agent.busy) return;
+    if (!state.canWrite) {
+      agent.hosts = []; agent.executionAllowed = false; populateAgentHosts();
+      agentMessage("blocked", "此工作台尚未启用私有控制权限，暂时只能查看运行记录。");
+      return;
+    }
+    agent.loading = true; updateAgentControls();
+    if (!agent.pending) agentMessage("checking", "正在检查可启动的客户端…");
+    try {
+      const payload = await request("/api/agent/hosts", { selection: {} });
+      if (disposed) return;
+      if (payload?.schemaVersion !== "meta-kim-agent-hosts-v1" || !Array.isArray(payload.hosts) || typeof payload.executionAllowed !== "boolean") throw new Error("Client capability contract mismatch");
+      agent.hosts = payload.hosts; agent.executionAllowed = payload.executionAllowed;
+      populateAgentHosts();
+      if (!agent.pending) {
+        if (!agent.executionAllowed) agentMessage("blocked", "当前环境尚未开放客户端启动权限。可继续查看已有记录。");
+        else if (!launchableHosts().length) agentMessage("blocked", "暂未找到可启动的客户端。请先打开已安装的客户端，再重新检测。", { redetect: true });
+        else agentMessage("idle", "");
+      }
+    } catch {
+      if (disposed) return;
+      agent.hosts = []; agent.executionAllowed = false; populateAgentHosts();
+      if (!agent.pending) agentMessage("unconfirmed", "客户端状态获取失败，请检查当前工作台连接后重试。", { redetect: true });
+    } finally { agent.loading = false; updateAgentControls(); }
+  }
+  function showAgentReceipt(payload) {
+    if (!agent.pending) return;
+    const receiptStatus = payload?.status;
+    if (payload?.capabilityState && typeof payload.capabilityState === "object") {
+      agent.pending.capabilityState = payload.capabilityState;
+    }
+    const methodState = agent.pending.capabilityState;
+    const methodNote = methodState?.status === "verified_local_method_bound" && methodState.methodProvidedToRuntime === true
+      ? " · Kim_Service 专业方法已关联（来源已核验）" : "";
+    const preview = receiptStatus === "completed" && typeof payload?.resultPreview === "string"
+      ? payload.resultPreview.slice(0, 2400).trim() : "";
+    if (agentResult) { agentResult.hidden = !preview; agentResult.open = Boolean(preview); }
+    // Never render untrusted model output as HTML, even inside a local app.
+    if (agentOutput) agentOutput.textContent = preview;
+    if (payload?.runId && typeof payload.runId === "string") agent.pending.runId = payload.runId;
+    if (receiptStatus === "accepted") {
+      agentMessage("accepted", (agent.pending.runId ? "执行请求已接收，运行记录已建立。" : "已接单，等待客户端建立会话。") + methodNote, { verify: true, next: true });
+    } else if (receiptStatus === "running") {
+      agentMessage("running", (agent.pending.runId ? "客户端已确认开始运行，可在运行记录中查看进展。" : "客户端已确认开始运行，等待关联运行记录。") + methodNote, { verify: true, next: true });
+    } else if (receiptStatus === "completed") {
+      agentMessage("completed", preview
+        ? "只读研究已返回建议，请核对后决定是否继续执行。" + methodNote
+        : "只读研究已结束，但没有可展示的建议。完整任务尚未执行。", { verify: true, next: true });
+    } else if (receiptStatus === "failed") {
+      agentMessage("blocked", "客户端报告执行失败：" + (payload.reason || "请检查运行记录后重试。"));
+      agent.pending = null;
+    } else if (receiptStatus === "blocked" || receiptStatus === "unavailable") {
+      agentMessage("blocked", payload.reason || "当前客户端无法接收此任务，请检查权限或切换客户端。", { redetect: true });
+      agent.pending = null;
+    } else {
+      agentMessage("unconfirmed", "尚未查到这次提交的回执。为避免重复执行，请先检查；必要时使用同一请求号重试。", { verify: true, retry: true });
+    }
+    updateAgentControls();
+  }
+  async function verifyAgentRequest() {
+    if (!agent.pending || agent.busy || disposed) return;
+    agent.busy = true; updateAgentControls();
+    try {
+      const payload = await request("/api/agent/requests", { query: { idempotencyKey: agent.pending.key }, selection: {} });
+      if (disposed || !agent.pending) return;
+      if (payload?.schemaVersion !== "meta-kim-agent-request-v1" || !["unknown", "accepted", "running", "completed", "failed", "blocked"].includes(payload.status)) throw new Error("Request receipt contract mismatch");
+      showAgentReceipt(payload);
+    } catch {
+      if (!disposed) agentMessage("unconfirmed", "暂时无法确认提交结果。请稍后检查，或使用同一请求号安全重试。", { verify: true, retry: true });
+    } finally { agent.busy = false; updateAgentControls(); }
+  }
+  async function submitAgent({ retry = false } = {}) {
+    if (!agentEntryEnabled || !agentForm || agent.busy || disposed || !state.canWrite || !agent.executionAllowed) return;
+    let launch = agent.pending;
+    if (!retry) {
+      if (launch) return;
+      const goal = agentGoal?.value?.trim() || "";
+      const hostId = agentHost?.value || "";
+      if (!goal || goal.length > 6000) { agentMessage("blocked", "请先描述你想完成的事情（最多 6000 字）。"); return; }
+      if (!launchableHosts().some((host) => host.id === hostId)) { agentMessage("blocked", "请选择可以启动的客户端，或重新检测客户端。", { redetect: true }); return; }
+      const key = win.crypto?.randomUUID?.();
+      if (!key) { agentMessage("blocked", "当前浏览器无法生成安全请求号，请使用受支持的浏览器。 "); return; }
+      launch = { key, goal, hostId, runId: null };
+      agent.pending = launch;
+      if (agentResult) agentResult.hidden = true;
+      if (agentOutput) agentOutput.textContent = "";
+    } else if (!launch) return;
+    agent.busy = true;
+    agentMessage("sending", retry ? "正在用原请求号重试…" : "正在提交，请稍候…");
+    try {
+      const payload = await request("/api/agent/start", {
+        method: "POST", selection: {}, body: {
+          goal: launch.goal, hostId: launch.hostId, idempotencyKey: launch.key,
+        },
+      });
+      if (disposed || agent.pending !== launch) return;
+      if (!payload || !["accepted", "blocked", "unavailable"].includes(payload.status) || typeof payload.requestId !== "string" || !payload.requestId) throw new Error("Agent submission receipt contract mismatch");
+      if (payload.status === "accepted") showAgentReceipt(payload);
+      else showAgentReceipt({ status: payload.status, reason: payload.reason || payload.nextAction });
+    } catch (error) {
+      if (disposed || agent.pending !== launch) return;
+      if (error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429) {
+        const reasons = {
+          400: "任务内容不符合要求，请检查描述后重试。",
+          401: "当前授权已失效，请重新连接私有工作台。",
+          403: "当前工作台无权启动客户端。",
+          404: "此环境尚未开放一键启动服务。",
+          409: "客户端当前有冲突任务，请先查看已有运行。",
+          413: "任务描述超出服务端长度限制，请缩短后重试。",
+          422: "任务描述或客户端选择无效，请修改后重试。",
+        };
+        agentMessage("blocked", reasons[error.status] || "请求被拒绝，请检查客户端状态后重试。", { redetect: [401, 403, 404, 409].includes(error.status) });
+        agent.pending = null;
+      } else {
+        // A timed-out POST may already have reached the client. Never issue a
+        // second POST with a fresh key before reconciling its original receipt.
+        agentMessage("unconfirmed", "请求可能已送达，正在检查提交结果…", { verify: true });
+        agent.busy = false;
+        await verifyAgentRequest();
+      }
+    } finally { agent.busy = false; updateAgentControls(); }
   }
   function selectedArtifact() {
     const items = workspaceArtifactItems(state.workspace);
@@ -351,6 +540,23 @@ export function createLiveWorkspaceController(options) {
     },
   };
   const renderer = createLiveWorkspaceRenderer({ app, root, state, copy, actions, taskOutputs: options.taskOutputs });
+  agentForm?.addEventListener("submit", (event) => { event.preventDefault(); void submitAgent(); });
+  agentGoal?.addEventListener("input", updateAgentControls);
+  agentHost?.addEventListener("change", updateAgentControls);
+  agentVerify?.addEventListener("click", () => { void verifyAgentRequest(); });
+  agentRedetect?.addEventListener("click", () => {
+    if (agentRedetect?.dataset.action === "retry") void submitAgent({ retry: true });
+    else void loadAgentHosts();
+  });
+  agentNew?.addEventListener("click", () => {
+    if (agent.busy || !agent.pending || !["accepted", "running", "completed"].includes(agent.status)) return;
+    if (agentGoal?.value?.trim() === agent.pending.goal) agentGoal.value = "";
+    agent.pending = null;
+    if (agentResult) agentResult.hidden = true;
+    if (agentOutput) agentOutput.textContent = "";
+    agentMessage("idle", "");
+    agentGoal?.focus();
+  });
   app.querySelectorAll("[data-uw-view]").forEach((node) => node.addEventListener("click", () => setView(node.dataset.uwView)));
   app.querySelector("[data-uw-project-switch]")?.addEventListener("click", options.openProjects);
   app.querySelector("[data-uw-nav-open]")?.addEventListener("click", () => { app.querySelector("[data-uw-navigation]")?.setAttribute("data-open", "true"); app.querySelector("[data-uw-nav-open]")?.setAttribute("aria-expanded", "true"); app.querySelector("[data-uw-nav-close]")?.focus(); });
@@ -377,7 +583,14 @@ export function createLiveWorkspaceController(options) {
   state.prdDepth = requestedDepth === "all" ? "all" : ["1", "2", "3"].includes(requestedDepth) ? Number(requestedDepth) : 2;
   state.selectedModuleId = initial.searchParams.get("moduleId");
   const interval = win.setInterval(() => { if (doc.visibilityState === "visible" && !state.externalView) void refresh({ force: true }); }, policy.refreshMs);
+  // The intake is a real native request, so reflect its status without making
+  // the user click "check" repeatedly. Stop polling after any terminal state.
+  const agentInterval = agentEntryEnabled ? win.setInterval(() => {
+    if (!disposed && doc.visibilityState === "visible" && agent.pending && !agent.busy
+      && ["accepted", "running"].includes(agent.status)) void verifyAgentRequest();
+  }, policy.agentReceiptPollMs) : null;
   renderer.render();
+  void loadAgentHosts();
   return {
     initialView: state.externalView === "graph" ? "run" : state.externalView === "repository" ? "repository" : "workspace",
     update({ snapshot, project, selection, tasks, fallbackStages, origin }) {
@@ -398,7 +611,7 @@ export function createLiveWorkspaceController(options) {
       ensureMaterial(); ensureRecords();
     },
     show(view) { state.externalView = view === "run" ? "graph" : view === "repository" ? "repository" : null; renderer.render(); },
-    dispose() { disposed = true; win.clearInterval(interval); doc.removeEventListener("keydown", onKey); for (const controller of pendingControllers) controller.abort(); },
+    dispose() { disposed = true; win.clearInterval(interval); if (agentInterval !== null) win.clearInterval(agentInterval); doc.removeEventListener("keydown", onKey); for (const controller of pendingControllers) controller.abort(); },
   };
 }
 

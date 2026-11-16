@@ -552,6 +552,16 @@ export function createLiveControlRoomServer(options = {}) {
   const enableControl = !globalHub && options.enableControl === true;
   const workspaceEnabled = options.workspaceEnabled !== false;
   const workspaceToken = workspaceEnabled ? randomBytes(32).toString("base64url") : null;
+  // An explicit local Agent application can start a native host. The regular
+  // Live Hub remains a read-only observer, even when another option requests
+  // the existing pause/resume control surface.
+  const agentEntryEnabled = !globalHub && options.enableAgentStart === true
+    && workspaceEnabled && typeof options.agentStartService?.getHosts === "function"
+    && typeof options.agentStartService?.start === "function"
+    && typeof options.agentStartService?.inspect === "function";
+  // Explicit dependency injection keeps the ordinary observer sidecar unable
+  // to construct or invoke a native CLI, even if a route were misconfigured.
+  const agentStartService = agentEntryEnabled ? options.agentStartService : null;
   const workspaceServices = new Map();
   const exposure = controlExposure(options, enableControl);
   const controlToken = enableControl
@@ -825,7 +835,47 @@ export function createLiveControlRoomServer(options = {}) {
         readOnly: !exposure.enabled,
         readOnlyScope: "runtime_dispatch",
         workspace: { enabled: workspaceEnabled, localReview: workspaceEnabled, providerExecution: false },
+        agentEntry: { enabled: agentEntryEnabled, requiresExplicitUserAction: true },
       });
+      return;
+    }
+
+    if (["/api/agent/hosts", "/api/agent/start", "/api/agent/requests"].includes(parsed.pathname)) {
+      if (!agentEntryEnabled) {
+        jsonResponse(response, 403, safeError("agent_entry_not_enabled")); return;
+      }
+      if (!workspaceEnabled || request.headers[WORKSPACE_HEADER] !== workspaceToken) {
+        jsonResponse(response, 403, safeError("workspace_token_required")); return;
+      }
+      const startRequest = parsed.pathname === "/api/agent/start";
+      const requiredMethod = startRequest ? "POST" : "GET";
+      if (request.method !== requiredMethod) {
+        response.setHeader("allow", requiredMethod);
+        jsonResponse(response, 405, safeError("method_not_allowed")); return;
+      }
+      if (startRequest && (!requestHasSameOrigin(request, server)
+        || !String(request.headers["content-type"] || "").toLowerCase().startsWith("application/json"))) {
+        jsonResponse(response, 403, safeError("agent_start_same_origin_json_required")); return;
+      }
+      try {
+        if (parsed.pathname === "/api/agent/hosts") {
+          jsonResponse(response, 200, await agentStartService.getHosts());
+        } else if (startRequest) {
+          const body = await readJsonBody(request, maxJsonBytes);
+          // The desktop application is bound to this server's exact project;
+          // arbitrary browser-selected directories/projects cannot enter spawn.
+          if (body?.projectId) {
+            jsonResponse(response, 409, safeError("agent_project_selection_not_bound")); return;
+          }
+          jsonResponse(response, 200, await agentStartService.start(body));
+        } else {
+          jsonResponse(response, 200, await agentStartService.inspect({ idempotencyKey: parsed.searchParams.get("idempotencyKey") }));
+        }
+      } catch (error) {
+        const status = error.code === "LIVE_REQUEST_BODY_TOO_LARGE" ? 413
+          : error.code === "AGENT_REQUEST_CONFLICT" ? 409 : 400;
+        jsonResponse(response, status, safeError(status === 409 ? "agent_request_conflict" : "agent_request_invalid"));
+      }
       return;
     }
 
@@ -1142,7 +1192,12 @@ export function createLiveControlRoomServer(options = {}) {
         commandCapabilities: exposure.capabilities,
         controlHeader: exposure.enabled ? CONTROL_HEADER : null,
         controlToken: exposure.enabled ? controlToken : null,
-        workspaceConfig: { enabled: workspaceEnabled, controlHeader: WORKSPACE_HEADER, controlToken: workspaceToken },
+        workspaceConfig: {
+          enabled: workspaceEnabled,
+          controlHeader: WORKSPACE_HEADER,
+          controlToken: workspaceToken,
+          agentEntryEnabled,
+        },
       });
       textResponse(response, 200, body, "text/html; charset=utf-8");
       return;
@@ -1214,6 +1269,7 @@ export function createLiveControlRoomServer(options = {}) {
       }
     }
     clients.clear();
+    await agentStartService?.close();
     closePromise = new Promise((resolve) => {
       if (!server.listening) {
         listening = null;

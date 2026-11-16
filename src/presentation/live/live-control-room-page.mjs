@@ -365,7 +365,11 @@ function normalizeControlConfig(value) {
 function normalizeWorkspaceConfig(value) {
   const token = normalizeControlToken(value?.controlToken);
   return value?.enabled === true && value.controlHeader === "x-meta-kim-workspace-token" && token
-    ? { enabled: true, controlHeader: value.controlHeader, controlToken: token }
+    ? { enabled: true, controlHeader: value.controlHeader, controlToken: token,
+        // The regular Live Hub is a viewer. Native Agent starts require the
+        // separately launched local application and cannot be inferred from
+        // the presence of an ordinary workspace review token.
+        agentEntryEnabled: value.agentEntryEnabled === true }
     : { enabled: false };
 }
 

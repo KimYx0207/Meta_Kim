@@ -16,6 +16,8 @@
 
 用日常说法就是：**弄清目标 → 联网研究 → 比较方案 → 确定设计 → 执行与验收**。先给你有依据的选择，再把决定展开成能执行、能检查的工作。下面先看这条主线，再用预约工具说明具体的设计、任务和交付。
 
+**小白可以从一个窗口开始：** 在项目目录运行 `meta-kim agent`，直接说想做的事，选择本机可用的 AI 客户端，并在原有 Live 工作台查看接单状态和研究建议。首版经过审阅的自动启动能力为 Claude Code、Gemini CLI 的**只读规划**；完整执行和验收仍以真实任务记录为准。[查看 Agent 工作台的打开方式与能力边界](docs/agent-entry.md)。
+
 <p align="center">
   <a href="docs/images/system-panorama.zh-CN.svg"><img src="docs/images/system-panorama.zh-CN.svg" alt="Meta_Kim 系统运行全景：八阶段主线、依赖调度、人的决定、问题回退和过程记录" width="1000"></a>
   <br>

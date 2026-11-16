@@ -12,6 +12,7 @@
   "scripts": {
     "dsh:test": "node --test tests/setup/dsh-profile-package.test.mjs",
     "meta:live": "node scripts/meta-kim-live.mjs --port 4331",
+    "meta:agent": "node scripts/meta-kim-agent.mjs",
     "meta:live:restart": "node scripts/meta-kim-live.mjs --restart --port 4331",
     "meta:live:compact": "node scripts/compact-governed-runs.mjs",
     "meta:live:compact:apply": "node scripts/compact-governed-runs.mjs --apply",
@@ -270,6 +271,7 @@
     "src/domain/presentation/read-only-run-projection-schema.mjs",
     "src/domain/presentation/read-only-run-projection-surfaces.mjs",
     "src/application/decision/route-candidate-options.mjs",
+    "src/application/agent/agent-start-service.mjs",
     "src/application/governance/task-design-dispatch.mjs",
     "src/application/runtime/operating-system.mjs",
     "src/data/repositories/live-deliverable-repository.mjs",
@@ -355,6 +357,7 @@
     "config/contracts/meta-kim-live-share-schema.json",
     "docs/images/",
     "docs/live-sdk.md",
+    "docs/agent-entry.md",
     "docs/graphify-managed-lifecycle.md",
     "examples/live-sdk/adapter-example.mjs",
     "examples/live-sdk/evidence-card-example.mjs",

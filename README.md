@@ -16,6 +16,8 @@ Use it to investigate a business problem, create a report or content, improve an
 
 In everyday terms: **understand the goal → research online → compare routes → settle the design → execute and check**. Present evidence-backed choices, then turn the decision into work that can be performed and reviewed. The overview below shows that flow; the booking example then explains the designs, tasks and deliverables.
 
+**A simpler first step:** Run `meta-kim agent` in your project directory. Describe the result you want, choose a supported local AI client, and see the real intake status and research advice in the existing Live workspace. The reviewed native launch profiles currently cover **read-only planning** with Claude Code and Gemini CLI; full execution and acceptance still require actual project evidence. [Agent workspace guide and limitations](docs/agent-entry.md).
+
 <p align="center">
   <a href="docs/images/system-panorama.en.svg"><img src="docs/images/system-panorama.en.svg" alt="Meta_Kim system panorama: eight stages, dependency routing, human decisions, revision paths, and saved records" width="1000"></a>
   <br>
