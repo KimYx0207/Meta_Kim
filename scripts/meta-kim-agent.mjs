@@ -15,6 +15,7 @@ import { pathToFileURL } from "node:url";
 import { createLiveControlRoomServer } from "../src/infrastructure/live/live-control-room-server.mjs";
 import { resolveLiveProjectRoot } from "../src/infrastructure/live/live-read-repository.mjs";
 import { createAgentStartService } from "../src/application/agent/agent-start-service.mjs";
+import { createAgentWorkflowService } from "../src/application/agent/agent-workflow-service.mjs";
 
 export function parseAgentArgs(args) {
   const parsed = { open: true, port: 0, json: false, help: false, projectRoot: null };
@@ -110,7 +111,11 @@ export async function main(args = process.argv.slice(2), environment = process.e
   const projectRoot = await resolveLiveProjectRoot({ cwd: callerCwd, projectRoot: options.projectRoot, env: environment });
   if (!projectRoot) throw new Error("Project folder is not initialized. Open a project containing .git or .meta-kim, or pass --project-root with that folder's absolute path.");
 
-  const agentStartService = createAgentStartService({ projectRoot, enabled: true, environment });
+  const nativePlanService = createAgentStartService({ projectRoot, enabled: true, environment });
+  // The user-facing Agent path must survive app reloads. Its own records
+  // commit decisions, never native execution authority or a synthetic run ID.
+  const agentStartService = createAgentWorkflowService({ projectRoot, profile: "default",
+    agentStartService: nativePlanService });
   const controller = createLiveControlRoomServer({
     projectRoot, port: options.port, globalHub: false, workspaceEnabled: true,
     // This opt-in path is separate from the global read-only Live Hub.

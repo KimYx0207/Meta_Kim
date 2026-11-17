@@ -138,6 +138,10 @@ def main() -> None:
                     expect(page.locator("[data-live-workspace-module]")).to_have_count(4)
                     expect(page.locator("[data-uw-origin]")).to_contain_text("验收")
                     capture("live-workspace-desktop.png", "Work / eight stages")
+                    # The B-path workbench deliberately collapses the expert
+                    # eight-stage detail behind the five user-facing stages.
+                    # Expand it before exercising individual native stages.
+                    page.locator("details.uw-advanced-stages > summary").click()
                     stage = page.locator('[data-live-workspace-stage="thinking"]')
                     stage.click()
                     expect(page.locator("[data-live-workspace-detail-close]")).to_be_focused()
@@ -221,6 +225,21 @@ def main() -> None:
                     expect(mobile_feedback).to_have_value("移动端验收：输入内容保留在当前草稿。")
                     mobile_submit = page.locator("[data-live-workspace-submit-feedback]")
                     mobile_submit.scroll_into_view_if_needed()
+                    mobile_layout = page.evaluate("""() => {
+                      const button = document.querySelector('[data-live-workspace-submit-feedback]');
+                      const bounds = (node) => node?.getBoundingClientRect().toJSON();
+                      const related = [];
+                      for (let node = button, i = 0; node && i < 9; node = node.parentElement, i++) {
+                        const style = getComputedStyle(node);
+                        related.push({tag: node.tagName, className: String(node.className || ''),
+                          bounds: bounds(node), scrollHeight: node.scrollHeight, clientHeight: node.clientHeight,
+                          overflowY: style.overflowY, position: style.position, transform: style.transform});
+                      }
+                      return {viewport: {width: innerWidth, height: innerHeight}, button: bounds(button),
+                        centerHit: document.elementFromPoint((bounds(button).left + bounds(button).right) / 2,
+                          (bounds(button).top + bounds(button).bottom) / 2)?.outerHTML.slice(0,300), related};
+                    }""")
+                    (output / "mobile-feedback-layout.json").write_text(json.dumps(mobile_layout, ensure_ascii=False, indent=2), encoding="utf-8")
                     expect(mobile_submit).to_be_in_viewport(ratio=1)
                     expect(mobile_submit).to_be_enabled()
                     capture("live-workspace-mobile-feedback.png", "Mobile feedback controls reached by normal scrolling")

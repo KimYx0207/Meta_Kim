@@ -1053,6 +1053,35 @@
       "nextAction": "Use the existing manifest-backed install/update/check/uninstall path. Rerun the official-host probe for pinned config/Skills/MCP evidence, and require separate native task/delegation and professional-outcome observations before those claims."
     },
     {
+      "id": "pi",
+      "label": "Pi Coding Agent",
+      "tier": "candidate_probe",
+      "formalProjection": {
+        "inSyncManifest": false,
+        "hasRuntimeProfile": false,
+        "hasProjectionLayout": false,
+        "isDefaultTarget": false
+      },
+      "genericCompatibility": {
+        "skillPath": ".pi/skills/{name}/SKILL.md; ~/.pi/agent/skills/{name}/SKILL.md",
+        "agentPath": ".pi/agents/{name}.md; ~/.pi/agent/agents/{name}.md (third-party Subagent extension)",
+        "hookConfig": ".pi/extensions/ (extension lifecycle, not native enforced Meta Hooks)",
+        "mcpConfig": ".pi/mcp.json; ~/.pi/agent/mcp.json (optional MCP adapter extension)",
+        "status": "partial"
+      },
+      "compatibilitySurfaces": ["instruction_context", "skill_workflow", "agent_mode", "mcp_tooling", "command_cli"],
+      "dependencyInstall": {
+        "ecc": { "support": "not_supported", "mode": "not_applicable", "evidenceRef": null }
+      },
+      "evidence": [
+        { "type": "official_docs", "ref": "https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/usage.md", "claim": "Pi core deliberately does not bundle MCP or subagents; optional extensions can add these features." },
+        { "type": "official_docs", "ref": "https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/settings.md", "claim": "Pi supports project and user Skills, extensions and configuration resources." },
+        { "type": "community_extension", "ref": "https://github.com/FableFatale/pi-coding-agent/tree/main/pi-subagents", "claim": "One independent Pi Subagent extension uses project and user Markdown agent definitions with YAML frontmatter and optional MCP adapter." }
+      ],
+      "decision": "Expose a read-only inventory of reviewed Pi config roots and optional extensions. Installed config does not prove extension activation, MCP connectivity, Subagent dispatch or user-authorized native execution.",
+      "nextAction": "Verify Pi binary, optional Subagent and MCP extensions, project scope trust and a real native transcript before promoting the integration."
+    },
+    {
       "id": "qoder",
       "label": "Qoder CLI",
       "tier": "beta_compatibility",

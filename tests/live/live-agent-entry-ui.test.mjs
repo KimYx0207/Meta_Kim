@@ -91,16 +91,22 @@ test("the new agent input is the original Live work surface and stays responsive
   assert.match(LIVE_WORKSPACE_CSS, /@media \(max-width: 767px\) \{ \.uw-agent-entry/);
 });
 
-test("read-only Live never calls agent endpoints or enables launch", async (t) => {
-  const h = harness(() => { throw new Error("The client should never contact a launch endpoint"); }, false);
+test("read-only Agent desktop reads only the safe capability index, never probes or launches native hosts", async (t) => {
+  const h = harness(({ url }) => {
+    assert.equal(url.pathname, "/api/agent/capabilities");
+    return reply({ schemaVersion: 1, evidenceLevel: "registered_only", observedRuntime: false,
+      agents: [{ id: "meta-scout", label: "meta-scout", registrationState: "registered", invocationState: "not_observed" }],
+      skills: [], hooks: [], mcpServers: [] });
+  }, false);
   t.after(() => h.controller.dispose());
   await settled();
-  assert.equal(h.calls.length, 0);
+  assert.deepEqual(h.calls.map(({ url, method }) => [url.pathname, method]), [["/api/agent/capabilities", "GET"]]);
+  assert.equal(h.state.capabilityCatalog.agents[0].id, "meta-scout");
   assert.equal(h.ui.submit.disabled, true);
   assert.equal(h.ui.host.disabled, true);
   assert.match(h.ui.status.textContent, /私有控制权限/);
   h.ui.start.dispatch("submit"); await settled();
-  assert.equal(h.calls.length, 0);
+  assert.equal(h.calls.length, 1);
 });
 
 test("launch uses one private same-origin request and accepts without claiming execution", async (t) => {
@@ -283,7 +289,9 @@ test("unavailable hosts cannot appear launchable", async (t) => {
   assert.match(h.ui.status.textContent, /暂未找到可启动的客户端/);
   assert.equal(h.ui.redetect.dataset.action, "redetect");
   h.ui.start.dispatch("submit"); await settled();
-  assert.equal(h.calls.length, 1);
+  assert.equal(h.calls.filter(({ url }) => url.pathname.endsWith("/hosts")).length, 1);
+  assert.equal(h.calls.filter(({ url }) => url.pathname.endsWith("/start")).length, 0,
+    "a registered capability directory does not enable a host launch");
 });
 
 test("Hub without explicit agent entry capability never exposes launch", async (t) => {

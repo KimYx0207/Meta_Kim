@@ -1,6 +1,33 @@
 import { workspaceStatusKey, workspaceArtifactItems, workspaceMaterialIdentity, workspaceMaterialReady, workspaceReviewForArtifact, workspaceCommandMessage, workspaceStructuredPrdMaterial, buildLivePrdGraph } from "./live-workspace-model.mjs";
 import { createPrdKnowledgeGraph } from "./live-prd-knowledge-graph.mjs";
 
+/** Product-facing grouping of native stages. Missing/partial records never imply completion. */
+export function projectLiveUserPhases(stages) {
+  const phases = [
+    { title: "理解目标", ids: ["critical"], note: "明确需求与边界" },
+    { title: "调查研究", ids: ["fetch"], note: "查证依据与备选方案" },
+    { title: "设计决策", ids: ["thinking"], note: "方案与人工确认" },
+    { title: "落实与复核", ids: ["execution", "review", "metareview"], note: "真实执行与两轮复核" },
+    { title: "验收沉淀", ids: ["verification", "evolution"], note: "证据验证与经验回写" },
+  ];
+  const byId = new Map((Array.isArray(stages) ? stages : []).map((stage) => [String(stage.id || "").toLowerCase().replace(/[^a-z]/g, ""), stage]));
+  return phases.map((phase, index) => {
+    const members = phase.ids.map((id) => byId.get(id)).filter(Boolean);
+    const statuses = members.map((item) => workspaceStatusKey(item.status));
+    const complete = members.length === phase.ids.length && statuses.every((status) => status === "completed");
+    const status = complete ? "completed"
+      : statuses.some((value) => value === "blocked") ? "blocked"
+      : statuses.some((value) => value === "waiting_human") ? "waiting_human"
+      : statuses.some((value) => value === "running") ? "running"
+      : statuses.some((value) => value === "unproven") ? "unproven"
+      : statuses.some((value) => value === "completed") ? "partial"
+      : statuses.some((value) => value === "planned") ? "planned"
+      : statuses.some((value) => value === "waiting") ? "waiting" : "unknown";
+    const statusLabel = ({ completed: "已完成", blocked: "已阻塞", waiting_human: "等待你确认", running: "正在运行", unproven: "待核实", partial: "部分有记录", planned: "尚未开始", waiting: "等待接续", unknown: "无可核验记录" })[status];
+    return { index: index + 1, title: phase.title, note: phase.note, status, statusLabel };
+  });
+}
+
 /** DOM-only workspace rendering. Inputs are retained across refreshes. */
 export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, taskOutputs }) {
   const doc = root.ownerDocument;
@@ -112,10 +139,13 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
   function renderHeader() {
     const snapshot = state.snapshot;
     root.dataset.workspaceRevision = state.workspace?.revision == null ? "" : String(state.workspace.revision);
-    const title = snapshot?.run?.title || state.project?.displayName || copy("projectEmpty");
-    const subtitle = snapshot?.run?.task || nextActionSummary(workspaceActions()[0]?.action) || (state.workspace ? copy("noReviews") : copy("chooseRun"));
+    const boundProject = !snapshot?.run && !state.project && state.agentServerProjectLabel;
+    const title = snapshot?.run?.title || state.project?.displayName || (boundProject
+      ? `本地项目 ${boundProject} · 尚未开始正式运行` : copy("projectEmpty"));
+    const subtitle = snapshot?.run?.task || nextActionSummary(workspaceActions()[0]?.action) || (boundProject
+      ? "上方可先做研究与设计；正式 Run 需要真实运行记录。" : state.workspace ? copy("noReviews") : copy("chooseRun"));
     text("title", title);
-    text("project-label", state.project?.displayName || copy("workspace"));
+    text("project-label", state.project?.displayName || (boundProject ? boundProject : copy("workspace")));
     text("next", subtitle);
     find("next").hidden = !subtitle || String(subtitle).trim() === String(title).trim();
     text("status", snapshot?.run?.status ? label(snapshot.run.status) : copy("waitingRun"));
@@ -143,7 +173,8 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
     if (!nav) return;
     nav.setAttribute("aria-label", copy("workspace"));
     nav.querySelector("[data-uw-nav-heading-text]").textContent = copy("workspace");
-    nav.querySelector("[data-uw-module-heading]").textContent = copy("modules");
+    const researchingWithoutRun = root.dataset.agentEntryEnabled === "true" && !state.snapshot?.run;
+    nav.querySelector("[data-uw-module-heading]").textContent = researchingWithoutRun ? "正式运行模块" : copy("modules");
     nav.querySelector("[data-uw-nav-footer]").textContent = copy("footer");
     nav.querySelector("[data-uw-project-switch]").setAttribute("aria-label", copy("chooseRun"));
     nav.querySelector("[data-uw-nav-close]").setAttribute("aria-label", copy("closeNavigation"));
@@ -188,7 +219,8 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
     };
     search.addEventListener("input", () => { state.moduleSearch = search.value; filterModules(); });
     if (modules.length) host.append(search);
-    if (!modules.length) children.append(e("p", "uw-nav-empty", copy("noModules")));
+    if (!modules.length) children.append(e("p", "uw-nav-empty", researchingWithoutRun
+      ? "正式 Run 尚未生成模块。已采纳的设计模块请到上方 B2 审阅。" : copy("noModules")));
     for (const module of modules) {
       const item = e("button"); item.type = "button";
       item.dataset.liveWorkspaceModule = module.id;
@@ -215,7 +247,25 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
     const host = find("stages");
     const previousFocus = doc.activeElement?.dataset?.liveWorkspaceStage;
     replace(host);
-    for (const [index, stage] of (state.workspace?.stages || state.fallbackStages || []).entries()) {
+    const stages = state.workspace?.stages || state.fallbackStages || [];
+    // A product-facing projection of recorded stages. No progress is inferred
+    // merely because a later stage exists; the canonical eight remain below.
+    const phases = projectLiveUserPhases(stages);
+    const phaseHost = find("phases");
+    if (phaseHost) {
+      replace(phaseHost);
+      for (const phase of phases) {
+        const item = e("li", "uw-phase");
+        item.dataset.state = phase.status;
+        item.append(e("span", "uw-phase-number", String(phase.index).padStart(2, "0")));
+        const description = e("div", "uw-phase-copy");
+        description.append(e("strong", "", phase.title), e("small", "", phase.statusLabel));
+        item.title = `${phase.title} · ${phase.note} · ${phase.statusLabel}`;
+        item.append(description);
+        phaseHost.append(item);
+      }
+    }
+    for (const [index, stage] of stages.entries()) {
       const node = e("button", "uw-stage"); node.type = "button";
       node.setAttribute("role", "listitem"); node.dataset.liveWorkspaceStage = stage.id;
       node.dataset.state = workspaceStatusKey(stage.status);

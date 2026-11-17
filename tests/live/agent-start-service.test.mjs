@@ -69,8 +69,8 @@ test("host diagnostics tell beginners what to do without expanding launch author
   assert.equal(snapshot.executionAllowed, false);
   assert.equal(host("claude").reason, "client_not_installed");
   assert.match(host("claude").nextAction, /安装 Claude Code.*重新检测/u);
-  assert.equal(host("gemini").reason, "client_version_unreviewed");
-  assert.match(host("gemini").nextAction, /0\.68\.0/u);
+  assert.equal(host("gemini").reason, "gemini_noninteractive_plan_auto_execution_risk");
+  assert.match(host("gemini").nextAction, /自动离开只读状态/u);
   assert.equal(host("codex").reason, "personal_codex_token_not_authorized");
   assert.match(host("codex").nextAction, /不会读取或使用个人 Codex Token/u);
   assert.equal(host("zcode").reason, "needs_native_launch_review");
@@ -129,7 +129,7 @@ test("only reviewed Claude plan mode launches, using stdin and fixed local CWD",
   service.close();
 });
 
-test("reviewed Gemini plan mode uses stdin, strict plan policy and a bounded JSON response", async () => {
+test("Gemini noninteractive plan is detected but cannot launch under an auto-execution risk", async () => {
   const invocations = [];
   const service = createAgentStartService({ projectRoot, enabled: true,
     probe: () => ({ status: "detected", version: "0.68.0" }),
@@ -139,19 +139,147 @@ test("reviewed Gemini plan mode uses stdin, strict plan policy and a bounded JSO
     },
   });
   const capability = await service.getHosts();
-  assert.equal(capability.hosts.find((host) => host.id === "gemini").launchSupported, true);
+  assert.equal(capability.hosts.find((host) => host.id === "gemini").launchSupported, false);
   const receipt = await service.start({ goal: "研究企业知识库方案", hostId: "gemini", idempotencyKey: key("gemini-plan") });
-  assert.equal(receipt.status, "accepted");
-  assert.equal(invocations.length, 1);
-  assert.equal(invocations[0].command, "gemini");
-  assert.ok(invocations[0].args.includes("--approval-mode=plan"));
-  assert.ok(invocations[0].args.includes("--output-format=json"));
-  assert.equal(invocations[0].args.at(-1), "Review the supplied goal in read-only plan mode. Provide options and the next decision; do not implement changes.");
-  assert.equal(invocations[0].options.input, "研究企业知识库方案");
-  assert.equal(invocations[0].options.cwd, path.resolve(projectRoot));
+  assert.equal(receipt.status, "unavailable");
+  assert.equal(receipt.reason, "gemini_noninteractive_plan_auto_execution_risk");
+  assert.equal(invocations.length, 0);
   await flush();
-  assert.equal(service.inspect({ idempotencyKey: key("gemini-plan") }).status, "completed");
-  assert.match(service.inspect({ idempotencyKey: key("gemini-plan") }).resultPreview, /先调查资料/u);
+  assert.equal(service.inspect({ idempotencyKey: key("gemini-plan") }).status, "unknown");
+  service.close();
+});
+
+test("native plan result may contain two validated strategy cards without promoting model claims to evidence", async () => {
+  const cards = {
+    summary: "选择知识库试点范围",
+    strategies: [
+      { id: "A", title: "单业务试点", approach: "先做客服知识检索",
+        tradeoffs: "投入低，跨部门价值有限", evidenceSummary: "只有当前目标可见，外部来源尚待核实",
+        risks: "权限映射需要确认" },
+      { id: "B", title: "跨部门分阶段", approach: "先接权限与目录，再扩展采购",
+        tradeoffs: "集成多一些，但可逐模块验收", evidenceSummary: "已看到需求描述，真实数据尚待核实",
+        risks: "数据源可能不一致" },
+    ],
+    recommendedStrategyId: "B", openQuestions: ["有哪些现有知识库？"],
+    evidenceVerified: true, // A model statement must never become trusted attestation.
+    extraneousPrivateMessage: "do-not-expose",
+  };
+  const service = createAgentStartService({ projectRoot, enabled: true,
+    probe: detection,
+    launch: () => ({ status: 0, stdout: JSON.stringify({ result: JSON.stringify(cards) }) }),
+  });
+  await service.start({ goal: "比较知识库方案", hostId: "claude", idempotencyKey: key("structured-cards") });
+  await flush();
+  const receipt = service.inspect({ idempotencyKey: key("structured-cards") });
+  assert.equal(receipt.status, "completed");
+  const preview = JSON.parse(receipt.resultPreview);
+  assert.equal(preview.schemaVersion, "meta-kim-agent-strategy-options-v1");
+  assert.equal(preview.provenance, "native_plan_unverified");
+  assert.equal(preview.evidenceVerified, false);
+  assert.deepEqual(preview.strategies.map(strategy => strategy.id), ["A", "B"]);
+  assert.equal(preview.recommendedStrategyId, "B");
+  assert.equal(preview.extraneousPrivateMessage, undefined);
+  assert.ok(!receipt.resultPreview.includes("do-not-expose"));
+  service.close();
+});
+
+test("malformed candidate cards never turn into model-verified strategy options", async () => {
+  const invalid = { summary: "方案比较", strategies: [
+    { id: "A", title: "重复", approach: "同一方法", tradeoffs: "权衡", evidenceSummary: "无来源", risks: "风险" },
+    { id: "B", title: "重复", approach: "同一方法", tradeoffs: "权衡", evidenceSummary: "无来源", risks: "风险" },
+  ], recommendedStrategyId: "A", openQuestions: [] };
+  const service = createAgentStartService({ projectRoot, enabled: true,
+    probe: detection,
+    launch: () => ({ status: 0, stdout: JSON.stringify({ result: JSON.stringify(invalid) }) }),
+  });
+  await service.start({ goal: "查出三个方案", hostId: "claude", idempotencyKey: key("invalid-cards") });
+  await flush();
+  const raw = service.inspect({ idempotencyKey: key("invalid-cards") }).resultPreview;
+  assert.ok(raw);
+  assert.equal(JSON.parse(raw).schemaVersion, undefined,
+    "Unverified or malformed input is retained as unstructured text; the UI must not render cards");
+  service.close();
+});
+
+test("structured result secrets are scrubbed before strategy cards are exposed", async () => {
+  const privateCards = { summary: "研究摘要", strategies: [
+    { id: "A", title: "方法一", approach: "读取资料", tradeoffs: "速度快", evidenceSummary: "无独立来源", risks: "sk-ant-1234567890" },
+    { id: "B", title: "方法二", approach: "先整理资料", tradeoffs: "成本低", evidenceSummary: "需再次核对", risks: "数据缺口" },
+  ], recommendedStrategyId: null, openQuestions: [] };
+  const service = createAgentStartService({ projectRoot, enabled: true,
+    probe: detection,
+    launch: () => ({ status: 0, stdout: JSON.stringify({ result: JSON.stringify(privateCards) }) }),
+  });
+  await service.start({ goal: "研究两个方案", hostId: "claude", idempotencyKey: key("private-cards") });
+  await flush();
+  const preview = service.inspect({ idempotencyKey: key("private-cards") }).resultPreview;
+  assert.ok(!preview.includes("sk-ant"));
+  assert.match(JSON.parse(preview).strategies[0].risks, /凭据已隐藏/u);
+  service.close();
+});
+
+test("explicit automatic selection only chooses an installed reviewed read-only host", async () => {
+  const calls = [];
+  const observed = [];
+  const service = createAgentStartService({ projectRoot, enabled: true,
+    environment: { PATH: process.env.PATH, CODEX_TOKEN: "never-forward-this-token" },
+    probe: (command) => {
+      observed.push(command);
+      if (command === "claude") return { status: "not_found", version: null };
+      if (command === "gemini") return { status: "detected", version: "0.69.0" };
+      return { status: "detected", version: "999.0.0" };
+    },
+    launch: (command, args, options) => {
+      calls.push({ command, args, options });
+      return { status: 0, stdout: JSON.stringify({ response: "只读研究结果" }) };
+    },
+  });
+  const hosts = await service.getHosts();
+  assert.equal(hosts.recommendedHostId, null);
+  assert.ok(hosts.hosts.find((entry) => entry.id === "codex").launchSupported === false);
+  const receipt = await service.start({ goal: "设计一套知识库", hostId: "auto", idempotencyKey: key("auto-gemini") });
+  assert.equal(receipt.status, "unavailable");
+  assert.equal(receipt.reason, "no_reviewed_client_available");
+  assert.equal(receipt.runId, null);
+  assert.equal(calls.length, 0);
+  await flush();
+  assert.equal(service.inspect({ idempotencyKey: key("auto-gemini") }).status, "blocked");
+  assert.ok(observed.includes("codex"), "Host diagnostics can detect Codex without authorizing it");
+  service.close();
+});
+
+test("automatic selection never falls back to an unreviewed host or overrides an explicit choice", async () => {
+  let launchCount = 0;
+  const service = createAgentStartService({ projectRoot, enabled: true,
+    probe: (command) => command === "codex" || command === "zcode"
+      ? { status: "detected", version: "999.0.0" } : { status: "not_found", version: null },
+    launch: () => { launchCount += 1; throw new Error("Must never execute"); },
+  });
+  const capability = await service.getHosts();
+  assert.equal(capability.recommendedHostId, null);
+  assert.equal((await service.start({ goal: "Investigate", hostId: "auto",
+    idempotencyKey: key("auto-unavailable") })).reason, "no_reviewed_client_available");
+  assert.equal(service.inspect({ idempotencyKey: key("auto-unavailable") }).status, "blocked");
+  assert.equal((await service.start({ goal: "Investigate", hostId: "claude",
+    idempotencyKey: key("explicit-unavailable") })).reason, "client_not_installed");
+  assert.equal((await service.start({ goal: "Investigate", hostId: "codex",
+    idempotencyKey: key("explicit-codex") })).reason, "personal_codex_token_not_authorized");
+  assert.equal(launchCount, 0);
+  service.close();
+});
+
+test("an overlong native plan is not silently truncated into an approvable choice", async () => {
+  const service = createAgentStartService({ projectRoot, enabled: true,
+    probe: detection,
+    launch: () => ({ status: 0, stdout: JSON.stringify({ result: "a".repeat(2_401) }) }),
+  });
+  const keyValue = key("long-result");
+  const started = await service.start({ goal: "Compare three alternatives", hostId: "claude", idempotencyKey: keyValue });
+  assert.equal(started.status, "accepted");
+  await flush();
+  const receipt = service.inspect({ idempotencyKey: keyValue });
+  assert.equal(receipt.status, "completed");
+  assert.equal(receipt.resultPreview, undefined, "Incomplete preview must not reach human approval");
   service.close();
 });
 
@@ -341,6 +469,25 @@ async function verifiedMethodFixture(t) {
   fs.writeFileSync(path.join(sourceRoot, "generated", "capabilities.json"), JSON.stringify(index));
   return { sourceRoot, agentRoot };
 }
+
+test("professional Agent directory reads only hash-verified method names and never loads or invokes them", async (t) => {
+  const fixture = await verifiedMethodFixture(t);
+  let launches = 0;
+  const service = createAgentStartService({ projectRoot, enabled: true,
+    environment: { META_KIM_KIM_SERVICE_ROOT: fixture.sourceRoot, HOME: "" },
+    probe: () => { throw new Error("directory cannot probe runtime"); },
+    launch: () => { launches += 1; throw new Error("directory cannot launch runtime"); } });
+  const catalog = await service.getProfessionalDirectory();
+  assert.equal(catalog.status, "verified_local");
+  assert.equal(catalog.verification, "component_hash_verified");
+  assert.deepEqual(catalog.agents, [{ id: "kim-service:product-listing-writer", label: "商品详情页专业方法",
+    registrationState: "verified_source_only", invocationState: "not_observed",
+    agentKind: "professional_method_contract" }]);
+  assert.equal(launches, 0);
+  assert.ok(!JSON.stringify(catalog).includes(fixture.sourceRoot));
+  assert.ok(!JSON.stringify(catalog).includes("DO_NOT_EXECUTE_FIXTURE_METHOD"));
+  service.close();
+});
 
 test("uses hash-verified Kim_Service method as read-only reference and shows redacted Claude result", async (t) => {
   const fixture = await verifiedMethodFixture(t);

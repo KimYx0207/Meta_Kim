@@ -26,6 +26,7 @@ import {
 import { renderLiveControlRoomPage } from "../../presentation/live/live-control-room-page.mjs";
 import { createLiveNativeBindings } from "./live-native-bindings.mjs";
 import { createLiveWorkspaceService } from "../../application/live/live-workspace-service.mjs";
+import { loadLiveCapabilityCatalog } from "../../application/live/live-capability-catalog.mjs";
 
 const LOOPBACK_HOST = "127.0.0.1";
 const DEFAULT_PORT = 0;
@@ -840,7 +841,7 @@ export function createLiveControlRoomServer(options = {}) {
       return;
     }
 
-    if (["/api/agent/hosts", "/api/agent/start", "/api/agent/requests"].includes(parsed.pathname)) {
+    if (["/api/agent/capabilities", "/api/agent/hosts", "/api/agent/start", "/api/agent/requests", "/api/agent/decisions", "/api/agent/designs", "/api/agent/design-drafts", "/api/agent/handoff"].includes(parsed.pathname)) {
       if (!agentEntryEnabled) {
         jsonResponse(response, 403, safeError("agent_entry_not_enabled")); return;
       }
@@ -848,17 +849,54 @@ export function createLiveControlRoomServer(options = {}) {
         jsonResponse(response, 403, safeError("workspace_token_required")); return;
       }
       const startRequest = parsed.pathname === "/api/agent/start";
-      const requiredMethod = startRequest ? "POST" : "GET";
-      if (request.method !== requiredMethod) {
+      const decisionRequest = parsed.pathname === "/api/agent/decisions";
+      const designRequest = parsed.pathname === "/api/agent/designs";
+      const draftRequest = parsed.pathname === "/api/agent/design-drafts";
+      const handoffRequest = parsed.pathname === "/api/agent/handoff";
+      const designWrite = designRequest && request.method === "POST";
+      const draftWrite = draftRequest && request.method === "POST";
+      const handoffWrite = handoffRequest && request.method === "POST";
+      const requiredMethod = designRequest || draftRequest || handoffRequest ? "GET, POST" : startRequest || decisionRequest ? "POST" : "GET";
+      if (designRequest || draftRequest || handoffRequest ? !["GET", "POST"].includes(request.method) : request.method !== requiredMethod) {
         response.setHeader("allow", requiredMethod);
         jsonResponse(response, 405, safeError("method_not_allowed")); return;
       }
-      if (startRequest && (!requestHasSameOrigin(request, server)
+      if ((startRequest || decisionRequest || designWrite || draftWrite || handoffWrite) && (!requestHasSameOrigin(request, server)
         || !String(request.headers["content-type"] || "").toLowerCase().startsWith("application/json"))) {
-        jsonResponse(response, 403, safeError("agent_start_same_origin_json_required")); return;
+        jsonResponse(response, 403, safeError(startRequest
+          ? "agent_start_same_origin_json_required" : decisionRequest
+            ? "agent_decision_same_origin_json_required" : designWrite
+              ? "agent_design_same_origin_json_required" : draftWrite
+                ? "agent_design_draft_same_origin_json_required" : "agent_handoff_same_origin_json_required")); return;
       }
       try {
-        if (parsed.pathname === "/api/agent/hosts") {
+        if (parsed.pathname === "/api/agent/capabilities") {
+          // Registry inventory says what this installation declares. Only
+          // observed Run nodes may claim execution, completion or results.
+          const [catalog, professional, native] = await Promise.all([
+            loadLiveCapabilityCatalog(),
+            typeof agentStartService.getProfessionalDirectory === "function"
+              ? agentStartService.getProfessionalDirectory()
+              : Promise.resolve({ status: "not_configured", agents: [] }),
+            typeof agentStartService.getNativeDirectory === "function"
+              ? agentStartService.getNativeDirectory()
+              : Promise.resolve({ nativeHosts: [], nativeCapabilities: [] }),
+          ]);
+          const professionalAgents = Array.isArray(professional?.agents) ? professional.agents : [];
+          jsonResponse(response, 200, {
+            ...catalog,
+            professionalAgents,
+            professionalSourceStatus: professional?.status || "unavailable",
+            nativeHosts: Array.isArray(native?.nativeHosts) ? native.nativeHosts : [],
+            nativeCapabilities: Array.isArray(native?.nativeCapabilities) ? native.nativeCapabilities : [],
+            scanScope: native?.scanScope === "server_host" ? "server_host" : "not_available",
+            nativeInventoryEvidence: native?.nativeInventoryEvidence || "not_available",
+            nativeSubagentInvocationEvidence: "live_run_tasks_only",
+            counts: { ...catalog.counts, professionalAgents: professionalAgents.length,
+              nativeHosts: Array.isArray(native?.nativeHosts) ? native.nativeHosts.length : 0,
+              nativeCapabilities: Array.isArray(native?.nativeCapabilities) ? native.nativeCapabilities.length : 0 },
+          });
+        } else if (parsed.pathname === "/api/agent/hosts") {
           jsonResponse(response, 200, await agentStartService.getHosts());
         } else if (startRequest) {
           const body = await readJsonBody(request, maxJsonBytes);
@@ -868,6 +906,73 @@ export function createLiveControlRoomServer(options = {}) {
             jsonResponse(response, 409, safeError("agent_project_selection_not_bound")); return;
           }
           jsonResponse(response, 200, await agentStartService.start(body));
+        } else if (decisionRequest) {
+          if (typeof agentStartService.recordDecision !== "function") {
+            jsonResponse(response, 409, safeError("agent_decision_not_available")); return;
+          }
+          const body = await readJsonBody(request, maxJsonBytes);
+          // A human can record a version-bound plan decision here; this API
+          // never grants native execution or calls the governed run scheduler.
+          jsonResponse(response, 200, await agentStartService.recordDecision(body));
+        } else if (designRequest) {
+          // B2 is an immutable, project/plan-bound human design record. It has
+          // no capability to invoke native clients or mutate a governed run.
+          if (designWrite) {
+            if (typeof agentStartService.recordDesign !== "function") {
+              jsonResponse(response, 409, safeError("agent_design_not_available")); return;
+            }
+            const body = await readJsonBody(request, maxJsonBytes);
+            jsonResponse(response, 200, await agentStartService.recordDesign(body));
+          } else {
+            if (typeof agentStartService.inspectDesign !== "function") {
+              jsonResponse(response, 409, safeError("agent_design_not_available")); return;
+            }
+            const versionRaw = parsed.searchParams.get("version");
+            if (versionRaw != null && !/^[1-9][0-9]{0,2}$/u.test(versionRaw)) {
+              jsonResponse(response, 400, safeError("agent_design_version_invalid")); return;
+            }
+            jsonResponse(response, 200, await agentStartService.inspectDesign({
+              idempotencyKey: parsed.searchParams.get("idempotencyKey"),
+              version: versionRaw == null ? null : Number(versionRaw),
+            }));
+          }
+        } else if (draftRequest) {
+          if (draftWrite) {
+            if (typeof agentStartService.startDesignDraft !== "function") {
+              jsonResponse(response, 409, safeError("agent_design_draft_not_available")); return;
+            }
+            const body = await readJsonBody(request, maxJsonBytes);
+            if (body?.projectId) {
+              jsonResponse(response, 409, safeError("agent_project_selection_not_bound")); return;
+            }
+            // Draft generation is read-only and requires an adopted B1 decision;
+            // this route never opens a governed Run or authorizes side effects.
+            jsonResponse(response, 200, await agentStartService.startDesignDraft(body));
+          } else {
+            if (typeof agentStartService.inspectDesignDraft !== "function") {
+              jsonResponse(response, 409, safeError("agent_design_draft_not_available")); return;
+            }
+            jsonResponse(response, 200, await agentStartService.inspectDesignDraft({
+              idempotencyKey: parsed.searchParams.get("idempotencyKey"),
+            }));
+          }
+        } else if (handoffRequest) {
+          // This is only a content-addressed preparation packet. A real Run
+          // still requires separate native host confirmation and governed
+          // scheduler entry; no route here may authorize those side effects.
+          if (handoffWrite) {
+            if (typeof agentStartService.prepareHandoff !== "function") {
+              jsonResponse(response, 409, safeError("agent_handoff_not_available")); return;
+            }
+            jsonResponse(response, 200, await agentStartService.prepareHandoff(await readJsonBody(request, maxJsonBytes)));
+          } else {
+            if (typeof agentStartService.inspectHandoff !== "function") {
+              jsonResponse(response, 409, safeError("agent_handoff_not_available")); return;
+            }
+            jsonResponse(response, 200, await agentStartService.inspectHandoff({
+              idempotencyKey: parsed.searchParams.get("idempotencyKey"),
+            }));
+          }
         } else {
           jsonResponse(response, 200, await agentStartService.inspect({ idempotencyKey: parsed.searchParams.get("idempotencyKey") }));
         }

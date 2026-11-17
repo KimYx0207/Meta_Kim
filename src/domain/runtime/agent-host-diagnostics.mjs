@@ -45,6 +45,11 @@ function statusGuidance(host, reason) {
         statusLabel: "已检测，暂不开放启动",
         nextAction: "当前入口不会读取或使用个人 Codex Token。请选用已开放安全启动的客户端。",
       };
+    case "gemini_noninteractive_plan_auto_execution_risk":
+      return {
+        statusLabel: "已检测，安全启动暂缓",
+        nextAction: "Gemini CLI 非交互计划模式可能自动离开只读状态并继续执行。安全隔离与工具权限机制完成核验前，仅展示检测状态，不会启动客户端；可改用已开放的 Claude Code。",
+      };
     case "read_only_plan_verified":
       return {
         statusLabel: "可用于只读研究",

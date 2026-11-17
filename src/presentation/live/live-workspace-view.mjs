@@ -22,6 +22,7 @@ export function renderLiveWorkspaceNavigation() {
     <div class="uw-nav-heading"><span data-uw-nav-heading-text>工作空间</span><button type="button" class="uw-icon-button uw-mobile-close" data-uw-nav-close aria-label="关闭导航">${liveWorkspaceIcon("close")}</button></div>
     <button class="uw-project-switch" type="button" data-uw-project-switch aria-label="选择项目与运行"><span class="uw-project-avatar" aria-hidden="true">K</span><span class="uw-project-copy"><strong data-uw-project-name>选择项目</strong><small data-uw-run-name>查看真实运行记录</small></span>${liveWorkspaceIcon("chevron")}</button>
     <nav class="uw-primary-nav" aria-label="主视图">${nav("work", "工作", "work")}${nav("prd", "PRD", "document")}${nav("records", "记录", "history")}${nav("graph", "运行图", "graph")}</nav>
+    <section class="uw-agent-inventory" data-uw-agent-inventory aria-label="Agent 协作与能力清单"></section>
     <div class="uw-nav-section-heading"><span data-uw-module-heading>系统模块</span><span data-uw-module-count>—</span></div>
     <div class="uw-module-nav" data-uw-modules aria-label="全部系统模块"><p class="uw-nav-empty">模块拆分后会出现在这里</p></div>
     <div class="uw-nav-footer"><button class="uw-nav-item" type="button" data-uw-view="repository">${liveWorkspaceIcon("layers")}<span data-uw-label="repository">项目资料</span></button><p data-uw-nav-footer>同一工作 · 持续接续</p></div>
@@ -36,23 +37,100 @@ export function renderLiveWorkspaceSurface() {
       <p class="uw-overview-subtitle" data-uw-next>选择已有项目，查看模块、产物和接续状态。</p>
       <div class="uw-overview-meta"><span class="uw-status" data-uw-status>等待运行记录</span><span data-uw-update></span></div>
     </header>
-    <section class="uw-agent-entry" data-uw-agent-entry aria-labelledby="uw-agent-entry-title">
+    <section class="uw-agent-entry" data-uw-agent-entry aria-label="Meta_Kim Agent 对话">
+      <div class="uw-agent-chat" data-uw-agent-chat>
+        <header class="uw-agent-chat-header">
+          <div class="uw-agent-chat-identity"><span class="uw-agent-chat-emblem" aria-hidden="true">K</span><div><strong>Meta_Kim</strong><span>Agent 对话 · 关键节点由你决定</span></div></div>
+          <span class="uw-agent-chat-connection" data-uw-chat-connection>正在连接</span>
+        </header>
+        <div class="uw-agent-chat-scope"><span class="uw-agent-chat-scope-dot" aria-hidden="true"></span><span>当前项目</span><strong data-uw-chat-project>正在核对…</strong></div>
+        <div class="uw-agent-chat-thread" data-uw-chat-thread role="log" aria-label="Agent 对话记录" aria-live="off"></div>
+        <div class="uw-chat-announcement" data-uw-chat-announcement role="status" aria-live="polite" aria-atomic="true"></div>
+        <div class="uw-agent-chat-target" data-uw-chat-target hidden><span data-uw-chat-target-text></span><button type="button" data-uw-chat-target-clear aria-label="取消关联节点">×</button></div>
+        <form class="uw-agent-chat-composer" data-uw-chat-form autocomplete="off">
+          <label class="uw-agent-chat-label" for="uw-chat-input">向 Meta_Kim 发送消息</label>
+          <textarea id="uw-chat-input" data-uw-chat-input rows="2" maxlength="6000" placeholder="说说你想完成什么，或直接指出右侧节点的问题…"></textarea>
+          <div class="uw-agent-chat-composer-bottom"><span data-uw-chat-guidance>只需对话。研究与执行过程会同步显示在 Live。</span><button type="submit" data-uw-chat-send aria-label="发送消息" title="发送消息">${liveWorkspaceIcon("arrow")}</button></div>
+        </form>
+      </div>
+      <div class="uw-agent-legacy" hidden>
       <form data-uw-agent-start autocomplete="off">
-        <div class="uw-agent-entry-heading"><div><span class="uw-agent-entry-kicker">新任务</span><h2 id="uw-agent-entry-title">说出你想做的事</h2></div><span class="uw-agent-entry-project" title="由本地服务验证执行目录；切换页面中的项目不会改变执行位置">本地执行</span></div>
+        <div class="uw-agent-entry-heading"><div><span class="uw-agent-entry-kicker">新任务研究草稿 · 尚未进入正式 Run</span><h2 id="uw-agent-entry-title">说出你想做的事</h2></div><a class="uw-agent-entry-path" href="#uw-user-flow">查看正式运行的五步进度</a></div>
+        <div class="uw-agent-scope" role="note"><span>研究所属项目</span><strong data-uw-agent-scope>正在核对本地执行范围…</strong><small data-uw-agent-scope-note>左侧项目只用于查看记录；切换页面中的项目不会改变执行位置。</small></div>
         <label class="uw-agent-entry-goal-label" for="uw-agent-goal">任务描述</label>
-        <textarea class="uw-agent-entry-goal" data-uw-agent-goal id="uw-agent-goal" rows="2" maxlength="6000" placeholder="比如：帮我研究三个方案，比较优缺点，并说明推荐理由。" aria-describedby="uw-agent-entry-help"></textarea>
+        <textarea class="uw-agent-entry-goal" data-uw-agent-goal id="uw-agent-goal" rows="2" maxlength="6000" placeholder="比如：调查这项需求，提出 2—3 个真正不同的方案，比较依据、成本和风险，并说明推荐理由。" aria-describedby="uw-agent-entry-help"></textarea>
         <div class="uw-agent-entry-actions">
-          <span class="uw-agent-entry-help" id="uw-agent-entry-help">关键决策由你确认；进度以客户端回执为准。</span>
+          <span class="uw-agent-entry-help" id="uw-agent-entry-help">先生成只读方案，采纳后仅记录设计意向；实际执行必须由受控运行接续。</span>
           <label class="uw-agent-entry-host-label" for="uw-agent-host">研究客户端<select class="uw-agent-entry-host" data-uw-agent-host id="uw-agent-host" disabled><option value="">正在检测…</option></select></label>
           <button class="uw-agent-entry-submit" data-uw-agent-submit type="submit" disabled>生成方案${liveWorkspaceIcon("arrow")}</button>
         </div>
         <details class="uw-agent-host-status" data-uw-agent-host-status hidden><summary>查看客户端连接情况</summary><ul data-uw-agent-host-list></ul></details>
         <div class="uw-agent-entry-status" data-uw-agent-status role="status" aria-live="polite" aria-atomic="true" hidden></div>
-        <details class="uw-agent-entry-result" data-uw-agent-result hidden><summary>研究建议 · 等待你确认</summary><pre data-uw-agent-output></pre><p>这只是客户端的只读研究结果，后续执行和交付仍以 Meta 的真实记录为准。</p></details>
+        <details class="uw-agent-entry-result" data-uw-agent-result hidden><summary><span data-uw-agent-result-summary>研究建议 · 等待你确认</span></summary><div class="uw-agent-options" data-uw-agent-options hidden></div><details class="uw-agent-entry-raw" data-uw-agent-raw open><summary>原始研究回执</summary><pre data-uw-agent-output></pre></details><p>这里展示客户端完整且符合服务端限制的只读方案。内容和依据仍待独立核验；未通过完整性校验的方案不能采纳。采纳、修改或放弃只写入决策回执。</p></details>
+        <section class="uw-agent-decision" data-uw-agent-decision aria-labelledby="uw-agent-decision-title" hidden>
+          <div class="uw-agent-decision-heading"><h3 id="uw-agent-decision-title">关键确认 · 方案怎么处理？</h3><span>人工选择</span></div>
+          <p class="uw-agent-decision-note">请先核对方案与依据。出现结构化候选卡片时可以点选；如果返回普通文本，请手工写明所选方案。如缺少可比较的选择，请要求修改。采纳仅表示同意进入设计准备。</p>
+          <div class="uw-agent-choice">
+            <label for="uw-agent-strategy">我选择的方案 <span>采纳必填</span><input data-uw-agent-strategy id="uw-agent-strategy" maxlength="180" placeholder="例如：方案 B — 分阶段接入" /></label>
+            <label for="uw-agent-choice-reason">选择理由 <span>采纳必填</span><textarea data-uw-agent-choice-reason id="uw-agent-choice-reason" rows="2" maxlength="1200" placeholder="为什么选择它？对应的限制和取舍是什么？"></textarea></label>
+          </div>
+          <label class="uw-agent-decision-feedback-label" for="uw-agent-feedback">修改要求（选择“要求修改”时必填）</label>
+          <textarea class="uw-agent-decision-feedback" data-uw-agent-feedback id="uw-agent-feedback" rows="2" maxlength="2000" placeholder="说清楚哪些地方需要改、应补充哪些依据。"></textarea>
+          <div class="uw-agent-decision-actions"><button type="button" class="uw-agent-adopt" data-uw-agent-adopt disabled>采纳用于设计</button><button type="button" data-uw-agent-revise disabled>要求修改</button><button type="button" data-uw-agent-reject disabled>放弃本方案</button></div>
+          <p class="uw-agent-decision-receipt" data-uw-agent-decision-receipt role="status" aria-live="polite" hidden></p>
+          <button type="button" class="uw-agent-decision-reconcile" data-uw-agent-decision-reconcile hidden>用原决策号安全重试</button>
+        </section>
+        <section class="uw-agent-design" data-uw-agent-design aria-labelledby="uw-agent-design-title" hidden>
+          <div class="uw-agent-design-heading"><div><span>第二步 · B2 设计</span><h3 id="uw-agent-design-title">把采纳方案变成可审阅的设计</h3></div><button type="button" data-uw-agent-design-refresh>检查设计版本</button></div>
+          <p class="uw-agent-design-status" data-uw-agent-design-status role="status" aria-live="polite">待生成／导入真实设计</p>
+          <p class="uw-agent-design-note">系统级 PRD 和模块任务图会绑定你已采纳的方案。这里仅记录真实输入和人工确认；保存设计不会启动代码执行或发布。</p>
+          <div class="uw-agent-draft" data-uw-agent-draft hidden>
+            <p data-uw-agent-draft-status role="status" aria-live="polite">准备自动生成可修改的两级设计草稿…</p>
+            <div class="uw-agent-draft-actions"><button type="button" data-uw-agent-draft-generate hidden>生成设计草稿（只读）</button><button type="button" data-uw-agent-draft-manual>改用手工填写</button><button type="button" data-uw-agent-draft-reconcile hidden>用原草稿号核对</button></div>
+          </div>
+          <div class="uw-agent-design-body" data-uw-agent-design-body></div>
+        </section>
+        <section class="uw-agent-transfer" data-uw-agent-transfer aria-labelledby="uw-agent-transfer-title" hidden>
+          <div class="uw-agent-design-heading"><div><span>设计之后 · 正式任务预交接</span><h3 id="uw-agent-transfer-title">准备正式运行的交接材料</h3></div><button type="button" data-uw-agent-transfer-check>核对交接状态</button></div>
+          <p class="uw-agent-design-status" data-uw-agent-transfer-status role="status" aria-live="polite">等待系统与模块设计全部人工批准。</p>
+          <p class="uw-agent-design-note">交接只封存方案与设计的版本、摘要和批准证据。正式执行仍需受控客户端另行确认；这里不会自动启动 CLI、修改项目或创建 Run。</p>
+          <div class="uw-agent-transfer-actions"><button type="button" data-uw-agent-transfer-prepare disabled hidden>准备交接材料（未执行）</button><button type="button" data-uw-agent-transfer-reconcile hidden>用原交接号安全重试</button></div>
+          <div class="uw-agent-transfer-receipt" data-uw-agent-transfer-receipt hidden></div>
+        </section>
+        <section class="uw-agent-gate" data-uw-agent-execution aria-labelledby="uw-agent-execution-title" hidden>
+          <div class="uw-agent-design-heading"><div><span>下一关 · 真实运行与 B3 权限</span><h3 id="uw-agent-execution-title">执行前，还要核验什么？</h3></div><button type="button" data-uw-agent-execution-records>查看正式 Run 记录</button></div>
+          <p class="uw-agent-design-status" data-uw-agent-execution-status role="status">等待真实宿主、正式运行身份与必要的副作用授权。</p>
+          <ul class="uw-agent-gate-list" data-uw-agent-execution-evidence></ul>
+          <p class="uw-agent-design-note">这里会清楚区分“设计批准”“交接封存”“宿主确认”“实际运行”和“敏感操作授权”。左侧选中的 Run 不会自动视作本任务的执行证据。</p>
+        </section>
+        <section class="uw-agent-gate" data-uw-agent-acceptance aria-labelledby="uw-agent-acceptance-title" hidden>
+          <div class="uw-agent-design-heading"><div><span>最终关 · B4 用户验收</span><h3 id="uw-agent-acceptance-title">有证据后再交付</h3></div></div>
+          <p class="uw-agent-design-status" data-uw-agent-acceptance-status role="status">尚无与本任务绑定的可验收成果。</p>
+          <ul class="uw-agent-gate-list" data-uw-agent-acceptance-evidence></ul>
+          <p class="uw-agent-design-note">在真实产物、测试、独立复核与最终用户选择都有可核验记录之前，不显示“已完成／已验收”。</p>
+        </section>
         <div class="uw-agent-entry-recovery" data-uw-agent-recovery hidden><button type="button" data-uw-agent-verify>检查提交结果</button><button type="button" data-uw-agent-redetect>重新检测客户端</button><button type="button" data-uw-agent-new hidden>发起下一项</button></div>
       </form>
+      </div>
     </section>
-    <div class="uw-stage-strip" data-uw-stages role="list" aria-label="八阶段与当前状态"></div>
+    <section class="uw-agent-live" data-uw-agent-live aria-label="Meta_Kim Live 可视化画布">
+      <header class="uw-agent-live-header">
+        <div class="uw-agent-live-title"><span class="uw-agent-live-pulse" aria-hidden="true"></span><div><strong>Meta_Kim <span>LIVE</span></strong><small>工作过程 · 实时可视化</small></div></div>
+        <span class="uw-agent-live-source" data-uw-live-source>等待数据</span>
+      </header>
+      <div class="uw-agent-live-modes" role="tablist" aria-label="Live 可视化视图">
+        <button type="button" id="uw-live-tab-flow" data-uw-live-mode="flow" role="tab" aria-controls="uw-live-content" aria-selected="true">执行流程</button>
+        <button type="button" id="uw-live-tab-knowledge" data-uw-live-mode="knowledge" role="tab" aria-controls="uw-live-content" aria-selected="false">知识图谱</button>
+        <button type="button" id="uw-live-tab-agents" data-uw-live-mode="agents" role="tab" aria-controls="uw-live-content" aria-selected="false">Agent 协作</button>
+      </div>
+      <div class="uw-agent-live-viewport" id="uw-live-content" data-uw-live-viewport role="tabpanel" aria-labelledby="uw-live-tab-flow" aria-live="off"></div>
+      <footer class="uw-agent-live-footer"><span data-uw-live-caption>选择节点，可在左侧同一个输入框反馈</span><span data-uw-live-count>0 个节点</span></footer>
+    </section>
+    <section class="uw-user-flow" id="uw-user-flow" data-uw-user-flow aria-label="已选正式运行的用户路径">
+      <div class="uw-user-flow-heading"><strong>已选正式 Run · 五步治理进度</strong><span>仅显示左侧所选运行的真实阶段。上方研究草稿或采纳回执不会直接推进这里。</span></div>
+      <ol class="uw-phase-strip" data-uw-phases aria-label="五步用户进度"></ol>
+      <details class="uw-advanced-stages"><summary>展开 Meta 治理八阶段 · 查看原始状态和证据</summary><div class="uw-stage-strip" data-uw-stages role="list" aria-label="八阶段与当前状态"></div></details>
+    </section>
     <div class="uw-notice" data-uw-notice role="status" hidden></div>
     <div class="uw-body">
       <section class="uw-primary" aria-labelledby="uw-view-title">
