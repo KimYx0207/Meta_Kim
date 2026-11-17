@@ -41,6 +41,9 @@ const NATIVE_SCOPES = Object.freeze({
   gemini: { project: ".gemini", global: "gemini", agents: "agents", skills: "skills",
     hooks: "hooks", plugins: "extensions", commands: "commands",
     projectConfigs: [".gemini/settings.json"], globalConfigs: ["settings.json"] },
+  antigravity: { project: ".agents", global: "antigravity", skills: "skills",
+    hooks: "hooks", plugins: "plugins",
+    projectConfigs: [".agents/hooks.json"], globalConfigs: ["mcp_config.json", "hooks.json"] },
   zcode: { project: ".zcode", global: "zcode", agents: "agents", skills: "skills",
     hooks: "hooks", commands: "commands",
     projectConfigs: [".zcode/config.json"], globalConfigs: ["cli/config.json"] },
@@ -267,7 +270,9 @@ async function scanHostScope({ hostId, spec, scope, projectRoot, runtimeHomeReso
       else await scanNamedFiles({ ...common, dir: path.join(base, spec.agents),
         kind: "subagent_config", extensions: hostId === "codex" ? [".toml"] : [".md"], depth: 1 });
     }
-    if (spec.skills) await scanSkills({ ...common, dir: path.join(base, spec.skills) });
+    if (spec.skills && !(hostId === "antigravity" && scope === "project")) {
+      await scanSkills({ ...common, dir: path.join(base, spec.skills) });
+    }
     if (spec.hooks) await scanNamedFiles({ ...common, dir: path.join(base, spec.hooks),
       kind: "hook", extensions: [".mjs", ".js", ".sh", ".ps1", ".json", ".py", ".md"], depth: 1 });
     if (spec.plugins) await scanNamedFiles({ ...common, dir: path.join(base, spec.plugins),

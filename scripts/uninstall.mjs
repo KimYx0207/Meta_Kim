@@ -358,6 +358,7 @@ function buildGlobalRemovalPolicy() {
     const safeRelPath = relPath && !path.isAbsolute(relPath) &&
       !relPath.split("/").some((segment) => !segment || segment === "." || segment === "..");
     const supportedBase = rule.base === "home" ||
+      rule.base === "runtimeHome" ||
       rule.base === "runtimeHomeParent";
     if (
       !profile ||
@@ -373,12 +374,12 @@ function buildGlobalRemovalPolicy() {
     ) {
       throw new Error(`Invalid global ownership externalEntries[${index}]`);
     }
-    const runtimeBaseDir = path.dirname(
-      resolveRuntimeProjection(rule.runtime, "global").baseDir,
-    );
+    const runtimeDir = resolveRuntimeProjection(rule.runtime, "global").baseDir;
     const rootPath = rule.base === "home"
       ? path.resolve(homedir(), relPath)
-      : path.resolve(runtimeBaseDir, relPath);
+      : rule.base === "runtimeHome"
+        ? path.resolve(runtimeDir, relPath)
+        : path.resolve(path.dirname(runtimeDir), relPath);
     return { ...rule, rootPath };
   });
   const durableRule = ownershipPolicy.durableRuntimeBundle;

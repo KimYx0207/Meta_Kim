@@ -244,6 +244,7 @@ test("native global package survives source removal and checks, updates, and uni
   }
   result = runtime.run(["scripts/sync-global-meta-theory.mjs", "--targets", "gemini,zcode", "--with-global-hooks"]);
   assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(existsSync(path.join(runtime.home, ".gemini/config/skills/meta-theory/SKILL.md")), true);
   const sharedAlias = path.join(runtime.home, ".agents/skills/meta-theory");
   mkdirSync(sharedAlias, { recursive: true });
   writeFileSync(path.join(sharedAlias, "SKILL.md"), "User-owned shared alias must not be hidden or deleted.\n");
@@ -256,6 +257,7 @@ test("native global package survives source removal and checks, updates, and uni
   assert.equal(result.status, 0, result.stderr || result.stdout);
   result = runtime.run(["scripts/sync-global-meta-theory.mjs", "--targets", "gemini,zcode", "--with-global-hooks"]);
   assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(existsSync(path.join(runtime.home, ".gemini/config/skills/meta-theory/SKILL.md")), true);
   for (const name of ["gemini", "zcode"]) {
     const configPath = path.join(runtime.home, `.${name}`, name === "zcode" ? "cli/config.json" : "settings.json");
     const config = JSON.parse(readFileSync(configPath, "utf8"));

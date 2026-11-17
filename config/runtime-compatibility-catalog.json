@@ -470,12 +470,18 @@
         "isDefaultTarget": false
       },
       "genericCompatibility": {
-        "skillPath": null,
+        "skillPath": ".agents/skills/<skill>/SKILL.md and ~/.gemini/config/skills/<skill>/SKILL.md",
         "agentPath": null,
-        "hookConfig": null,
-        "mcpConfig": null,
-        "status": "needs_probe"
+        "hookConfig": ".agents/hooks.json and ~/.gemini/config/hooks.json",
+        "mcpConfig": "~/.gemini/config/mcp_config.json",
+        "status": "partial"
       },
+      "compatibilitySurfaces": [
+        "instruction_context",
+        "skill_workflow",
+        "hook_automation",
+        "mcp_tooling"
+      ],
       "dependencyInstall": {
         "ecc": {
           "support": "native",
@@ -493,10 +499,15 @@
           "type": "command_output",
           "ref": "npx --yes --package ecc-universal@latest ecc install --help",
           "claim": "ECC install help lists antigravity as a supported target."
+        },
+        {
+          "type": "official_docs",
+          "ref": "https://antigravity.google/docs/skills",
+          "claim": "Antigravity discovers workspace skills under .agents/skills/<skill>/SKILL.md and global skills under ~/.gemini/config/skills/<skill>/SKILL.md."
         }
       ],
-      "decision": "Keep as an ECC install target; do not promote without a Meta_Kim projection.",
-      "nextAction": "Probe Antigravity runtime surfaces before any sync manifest change."
+      "decision": "Keep as an ECC install target; workspace .agents/skills/meta-theory is shared with Codex/Gemini project sync and ~/.gemini/config/skills/meta-theory is synced alongside Gemini global skill projection.",
+      "nextAction": "Verify live Antigravity hook and MCP execution before any formal runtime_projection promotion."
     },
     {
       "id": "joycode",

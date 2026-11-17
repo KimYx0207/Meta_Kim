@@ -84,6 +84,11 @@ test("native Agent/Subagent, Skills, MCP, Hooks, Plugins, Commands only reveal c
   const piHome = path.join(globals, "pi");
   await fs.mkdir(path.join(piHome, "skills", "pi-global-skill"), { recursive: true });
   await fs.writeFile(path.join(piHome, "skills", "pi-global-skill", "SKILL.md"), "global private");
+  const agyHome = path.join(globals, "antigravity");
+  await fs.mkdir(path.join(agyHome, "skills", "meta-theory"), { recursive: true });
+  await fs.writeFile(path.join(agyHome, "skills", "meta-theory", "SKILL.md"), "agy skill private");
+  await fs.mkdir(path.join(agyHome, "plugins", "chrome-devtools-plugin"), { recursive: true });
+  await fs.writeFile(path.join(agyHome, "mcp_config.json"), JSON.stringify({ mcpServers: { "mcp-chrome": { env: { TOKEN: "hide-me" } } } }));
   const directory = await discoverNativeHostInventory({ projectRoot, hostSnapshot: snapshot,
     runtimeHomeResolver: resolver,
     claudeMcpConfigResolver: () => path.join(projectRoot, ".claude.json") });
@@ -95,6 +100,10 @@ test("native Agent/Subagent, Skills, MCP, Hooks, Plugins, Commands only reveal c
     "a nested plugin manifest must not be a second generic plugin entry");
   for (const expected of ["subagent_config:architect", "subagent_config:researcher", "mcp:postgres",
     "skill:shared-plan"]) assert.ok(kinds("codex").includes(expected), expected);
+  for (const expected of ["skill:meta-theory", "plugin:chrome-devtools-plugin", "mcp:mcp-chrome"]) {
+    assert.ok(kinds("antigravity").includes(expected), expected);
+  }
+  assert.equal(kinds("antigravity").includes("skill:shared-plan"), false);
   for (const expected of ["subagent_config:pi-research", "skill:pi-skill", "skill:pi-global-skill",
     "plugin:flow.mjs", "command:refactor", "mcp:pi-mcp"]) assert.ok(kinds("pi").includes(expected), expected);
   const serialized = JSON.stringify(directory);
@@ -120,7 +129,7 @@ test("a project-root Claude MCP declaration remains visible without a .claude fo
 test("symlink escapes and oversized configs are rejected without reading private external content", async (t) => {
   const { projectRoot, external, write, resolver } = await fixture(t);
   await fs.writeFile(path.join(external, "SECRET_CONFIG.md"), "SECRET_PRIVATE_OUTSIDE");
-  await fs.symlink(external, path.join(projectRoot, ".claude"), "dir");
+  await fs.symlink(external, path.join(projectRoot, ".claude"), process.platform === "win32" ? "junction" : "dir");
   await write(".mcp.json", "x".repeat(130 * 1024));
   await write(".pi/mcp.json", JSON.stringify({ mcpServers: { safe: {}, "api-key-private": {}, token: {} } }));
   const directory = await discoverNativeHostInventory({ projectRoot, hostSnapshot: snapshot,

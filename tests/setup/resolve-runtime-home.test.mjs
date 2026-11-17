@@ -5,9 +5,14 @@ import path from 'node:path';
 import { resolveRuntimeHomeInfo, resolveRuntimeHomeDir } from '../../scripts/meta-kim-sync-config.mjs';
 import { mockEnv } from './_mocks.mjs';
 const runtimes=['claude','codex','cursor','openclaw','qoder'];
-const keys=runtimes.flatMap(r=>['META_KIM_'+r.toUpperCase()+'_HOME',r.toUpperCase()+'_HOME']).concat('CLAUDE_CONFIG_DIR','META_KIM_GEMINI_HOME','GEMINI_CLI_HOME','GEMINI_HOME','META_KIM_ZCODE_HOME');
+const keys=runtimes.flatMap(r=>['META_KIM_'+r.toUpperCase()+'_HOME',r.toUpperCase()+'_HOME']).concat('CLAUDE_CONFIG_DIR','META_KIM_GEMINI_HOME','GEMINI_CLI_HOME','GEMINI_HOME','META_KIM_ZCODE_HOME','META_KIM_ANTIGRAVITY_HOME','ANTIGRAVITY_HOME');
 function withEnv(values, action){const restore=mockEnv({...Object.fromEntries(keys.map(k=>[k,''])),...values});try{return action();}finally{restore();}}
 describe('actual runtime home resolver',()=>{
+ test('Antigravity defaults to ~/.gemini/config and honors explicit overrides',()=>{
+   withEnv({},()=>assert.deepEqual(resolveRuntimeHomeInfo('antigravity'),{dir:path.join(os.homedir(),'.gemini','config'),source:'default'}));
+   const custom=path.join(os.tmpdir(),'Antigravity Config');
+   withEnv({ANTIGRAVITY_HOME:custom},()=>assert.deepEqual(resolveRuntimeHomeInfo('antigravity'),{dir:custom,source:'env:ANTIGRAVITY_HOME'}));
+ });
  test('Gemini native home is a parent root and Meta override names the config directory',()=>{
    const base=path.join(os.tmpdir(),'Gemini Job Home');
    withEnv({GEMINI_CLI_HOME:base},()=>assert.deepEqual(resolveRuntimeHomeInfo('gemini'),{dir:path.join(base,'.gemini'),source:'env:GEMINI_CLI_HOME'}));

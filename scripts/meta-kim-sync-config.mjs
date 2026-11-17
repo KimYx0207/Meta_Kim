@@ -623,7 +623,7 @@ const runtimeHomeSpecs = {
   },
   antigravity: {
     envKeys: ["META_KIM_ANTIGRAVITY_HOME", "ANTIGRAVITY_HOME"],
-    defaultDir: ".agent",
+    defaultDir: path.join(".gemini", "config"),
   },
   joycode: {
     envKeys: ["META_KIM_JOYCODE_HOME", "JOYCODE_HOME"],

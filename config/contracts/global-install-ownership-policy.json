@@ -70,6 +70,19 @@
       "base": "runtimeHomeParent",
       "path": ".claude.json",
       "match": "exact"
+    },
+    {
+      "runtime": "gemini",
+      "assetType": "skills",
+      "category": "A",
+      "sourceOwner": "sync-global-meta-theory",
+      "purpose": "antigravity-global-skill",
+      "kinds": [
+        "dir"
+      ],
+      "base": "runtimeHome",
+      "path": "config/skills/meta-theory",
+      "match": "exact"
     }
   ]
 }

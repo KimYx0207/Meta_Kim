@@ -1628,9 +1628,18 @@ async function resolveTargets() {
     { requireMigrationSupport: true },
   );
 
+  const antigravityHome = selectedTargetIds.includes("gemini")
+    ? (process.env.META_KIM_ANTIGRAVITY_HOME?.trim() || process.env.ANTIGRAVITY_HOME?.trim()
+      ? resolveRuntimeHomeInfo("antigravity").dir
+      : path.join(runtimeHomes.gemini.dir, "config"))
+    : null;
+
   allowedRoots = Object.values(runtimeHomes).map(({ dir }) =>
     path.resolve(dir),
   );
+  if (antigravityHome) {
+    allowedRoots.push(path.resolve(antigravityHome));
+  }
   if (selectedTargetIds.includes("codex")) {
     allowedRoots.push(path.resolve(path.dirname(CODEX_LEGACY_SHARED_SKILL_ROOT)));
   }
@@ -1653,9 +1662,18 @@ async function resolveTargets() {
 
   activeTargets = selectedTargetIds.map((targetId) => ({
     targetId,
+    purpose: `${targetId}-global-skill`,
     label: `${targetContext.profiles[targetId]?.label ?? targetId} global skill`,
     dir: path.join(runtimeHomes[targetId].dir, "skills", "meta-theory"),
   }));
+  if (antigravityHome) {
+    activeTargets.push({
+      targetId: "gemini",
+      purpose: "antigravity-global-skill",
+      label: "Antigravity global skill",
+      dir: path.join(antigravityHome, "skills", "meta-theory"),
+    });
+  }
 
   const legacyFlatSkillLabels = {
     claude: "legacy Claude Code flat skill",
@@ -1675,6 +1693,9 @@ async function resolveTargets() {
     const roots = [path.join(runtimeHomes[targetId].dir, "skills")];
     if (targetId === "codex") {
       roots.push(CODEX_LEGACY_SHARED_SKILL_ROOT);
+    }
+    if (targetId === "gemini" && antigravityHome) {
+      roots.push(path.join(antigravityHome, "skills"));
     }
     for (const skillsRoot of roots) {
       for (const aliasSpec of STALE_META_KIM_SKILL_ALIAS_SPECS) {
@@ -1906,13 +1927,13 @@ async function assertGeminiSharedSkillPrecedence(targetId) {
   }
 }
 
-async function copyCanonicalSkill(targetDir, targetId) {
+async function copyCanonicalSkill(targetDir, targetId, purpose = `${targetId ?? "runtime"}-global-skill`) {
   await assertGeminiSharedSkillPrecedence(targetId);
   assertHomeBound(targetDir);
   await assertRealHomeBound(targetDir);
   if (NATIVE_PROJECTION_RUNTIME_IDS.includes(targetId) && await pathExists(targetDir)) {
     const recorded = globalManifestSnapshot?.entries?.find((entry) =>
-      entry.path === targetDir && entry.kind === "dir" && entry.source === "sync-global-meta-theory" && entry.purpose === `${targetId}-global-skill`);
+      entry.path === targetDir && entry.kind === "dir" && entry.source === "sync-global-meta-theory" && entry.purpose === purpose);
     const currentClosure = directoryClosureSync(targetDir);
     const owned = recorded && currentClosure?.sha256 === recorded.directoryClosureSha256 &&
       currentClosure?.entryCount === recorded.directoryClosureEntryCount;
@@ -1952,8 +1973,9 @@ async function copyCanonicalSkill(targetDir, targetId) {
   recordSafe((rec) =>
     rec.recordDir(targetDir, {
       source: "sync-global-meta-theory",
-      purpose: `${targetId ?? "runtime"}-global-skill`,
+      purpose,
       category: CATEGORIES.A,
+      runtimeTarget: targetId,
     }),
   );
 }
@@ -3425,7 +3447,7 @@ async function runSync() {
   }
 
   for (const target of activeTargets) {
-    await copyCanonicalSkill(target.dir, target.targetId);
+    await copyCanonicalSkill(target.dir, target.targetId, target.purpose);
     console.log(
       `${C.green}✓${C.reset} ${C.dim}Synced ${target.label}: ${target.dir}${C.reset}`,
     );
