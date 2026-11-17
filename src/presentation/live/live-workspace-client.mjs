@@ -376,14 +376,14 @@ export function createLiveWorkspaceController(options) {
     const hasSelectedRun = Boolean(state.snapshot?.run?.id || state.selection?.runId);
     if (agentExecutionStatus) {
       agentExecutionStatus.textContent = !prepared
-        ? "先完成当前版本的设计批准与交接。"
+        ? "当前设计批准还不足以执行；先完成交接并独立授权。"
         : execution.error ? execution.error
           : native?.status === "ready_to_authorize" ? "B1、B2、交接已核对。现在可以单独批准一次本地草稿操作。"
             : native?.status === "running" ? "B3 已批准，原生客户端正在运行。修改暂未经过正式 Run 和测试验收。"
               : native?.status === "ready_for_review" ? "原生任务已结束，请核验文件和测试；还没有通过 B4 验收。"
                 : native?.status === "waiting_input" ? "原生任务需要你在客户端处理输入或权限问题。"
                   : native?.status === "blocked" ? "受限执行暂不可用。请检查原生客户端或已批准版本。"
-                    : native ? "原生任务状态尚未完全核实，已保留启动回执。" : "交接已准备，正在核对 B3 入口。";
+                    : native ? "原生任务状态尚未完全核实，已保留启动回执。" : "交接已封存；没有授权任何写入、发布、付费操作，正在核对 B3 入口。";
       agentExecutionStatus.dataset.state = execution.error || native?.status === "blocked" ? "blocked"
         : native?.status === "running" ? "prepared" : "waiting";
     }
@@ -412,7 +412,7 @@ export function createLiveWorkspaceController(options) {
         ["原生执行证据", native?.nativeSessionId
           ? "已有后台任务 " + native.nativeSessionId + "；状态来自原生 CLI，仍需核对具体文件与正式 Run"
           : "尚无与本次批准交接绑定且可复核的原生任务"],
-        ["B3 本地草稿权限", native?.authorizedByLocalB3
+        ["B3 副作用授权（本地草稿）", native?.authorizedByLocalB3
           ? "已批准一次本项目本地草稿操作；没有授予发布、付款、消息或其他外部权限"
           : "待单独批准一次本地草稿操作；不自动执行"],
 
@@ -585,7 +585,9 @@ export function createLiveWorkspaceController(options) {
         saveAgent();
       }
     } catch {
-      if (!disposed) execution.error = "原生任务暂无法核对；原授权号已保留，不会自动重复启动。";
+      if (!disposed) execution.error = execution.pendingKey || execution.snapshot?.authorizedByLocalB3
+        ? "原生任务暂无法核对；原授权号已保留，不会自动重复启动。"
+        : "交接已封存；没有授权任何写入、发布、付费操作，原生执行入口暂无法核对。";
     } finally {
       execution.loading = false; renderAgentFollowthrough(); desktop?.render();
     }
