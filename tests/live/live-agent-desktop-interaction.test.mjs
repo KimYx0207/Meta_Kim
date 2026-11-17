@@ -15,6 +15,8 @@ function fakeNode(tag = "div", name = "") {
     dispatch(event, extras = {}) { handlers.get(event)?.({ preventDefault() {}, key: "", ...extras }); },
     click() { this.dispatch("click"); },
     append(...items) { this.children.push(...items); },
+    insertBefore(item, reference) { const position = this.children.indexOf(reference);
+      this.children.splice(position < 0 ? this.children.length : position, 0, item); },
     replaceChildren(...items) { this.children = items; },
     setAttribute(key, value) { this.attributes[key] = String(value); },
     focus() { this.focused = true; },
@@ -149,6 +151,55 @@ test("native capability graph links configured Subagents, Skills, MCP and Hooks 
   for (const entry of ["Subagent · research", "Skill · analysis", "MCP · semantic", "Hook · post-tool"]) {
     assert.ok(byText(env.elements["live-viewport"], entry).length, `host focus lost ${entry}`);
   }
+});
+
+test("inventory search narrows native capabilities and a host opens its own graph with a way back", () => {
+  const env = fixture();
+  const nativeCapabilities = Array.from({ length: 42 }, (_, index) => ({
+    id: `event-${index}`, label: `Event Hook ${index}`, hostId: "claude", kind: "hook", scope: "project", installationState: "configured",
+  }));
+  nativeCapabilities.push({ id: "special", label: "Unique Review Skill", hostId: "claude", kind: "skill", scope: "global", installationState: "configured" });
+  env.state.capabilityCatalog = {
+    agents: [{ id: "warden", label: "Warden", registrationState: "registered" }],
+    nativeHosts: [{ id: "claude", label: "Claude Code", status: "detected" }],
+    nativeCapabilities,
+  };
+  env.desktop.render();
+  let inventory = env.navigationInventory;
+  assert.equal(byClass(inventory, "uw-native-host-capability").length, 43);
+  assert.equal(byClass(inventory, "uw-native-host-family").length, 2);
+  assert.ok(byClass(inventory, "uw-native-host-family").every(group => group.open === false),
+    "large capability groups should begin collapsed");
+  assert.equal(byText(inventory, "已发现配置 · 未确认加载").length, 1,
+    "configuration truth remains visible once per host rather than crowding every native capability row");
+
+  let search = byClass(inventory, "uw-agent-inventory-search")[0];
+  inventory.scrollTop = 320;
+  search.value = "Unique Review Skill";
+  search.dispatch("input");
+  inventory = env.navigationInventory;
+  search = byClass(inventory, "uw-agent-inventory-search")[0];
+  assert.equal(search.value, "Unique Review Skill");
+  assert.equal(inventory.scrollTop, 0, "search results must not be stranded below the scroll position of a long catalog");
+  assert.ok(byText(inventory, "已筛出").length);
+  assert.equal(byClass(inventory, "uw-native-host-capability").length, 1);
+  assert.equal(byClass(inventory, "uw-native-host-family").length, 1);
+  assert.equal(byClass(inventory, "uw-native-host-family")[0].open, true,
+    "the matching group should expand while searching");
+  assert.ok(byClass(inventory, "uw-agent-inventory-section").some(section => section.hidden),
+    "empty unrelated sections should disappear during search");
+
+  findButton(inventory, "查看能力关系").click();
+  assert.equal(env.desktop.mode, "knowledge");
+  assert.ok(byText(env.elements["live-viewport"], "Claude Code").length,
+    "the host graph should open with the detected client in focus");
+  findButton(env.elements["live-viewport"], "返回完整图谱").click();
+  assert.ok(byText(env.elements["live-viewport"], "Claude Code").length);
+  byClass(env.navigationInventory, "uw-native-host-capability")[0].click();
+  assert.ok(byText(env.elements["live-viewport"], "Unique Review Skill").length,
+    "the search hit should open its exact graph node even when its source index exceeds the overview limit");
+  for (const fact of ["配置范围", "用户配置", "尚未从原生客户端确认", "当前目录记录未证明实际调用"])
+    assert.ok(byText(env.elements["live-viewport"], fact).length, `a selected capability must reveal ${fact}`);
 });
 
 test("an exactly bound pending research Run exposes real main/subagent evidence and isolates unrelated Runs", () => {

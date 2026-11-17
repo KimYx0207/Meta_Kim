@@ -48,6 +48,8 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
   let lastAnnouncement = "";
   let lastCanvasSignature = "";
   let lastInventorySignature = "";
+  let inventoryQuery = "";
+  let resetInventoryScroll = false;
   const inventoryExpanded = new Set(["run", "registered-agents", "subagents"]);
   let nodeCount = 0;
 
@@ -58,6 +60,11 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
     return node;
   };
   const clean = (value, max = 2200) => String(value || "").trim().slice(0, max);
+  const normalizedInventoryQuery = () => clean(inventoryQuery, 100).normalize("NFKC").toLocaleLowerCase();
+  const inventoryMatches = (...values) => {
+    const query = normalizedInventoryQuery();
+    return !query || values.some(value => String(value || "").normalize("NFKC").toLocaleLowerCase().includes(query));
+  };
   const makeButton = (label, action, className = "") => {
     const button = el("button", className, label);
     button.type = "button";
@@ -596,7 +603,7 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
       host_detection_only: "客户端检测记录 · 不是执行回执" })[blueprint.kind] || "来源待核对";
     const top = el("div", "uw-agent-knowledge-top");
     top.append(el("span", "uw-live-view-kicker", label));
-    if (selection?.kind === "module") top.append(makeButton("返回完整图谱", () => { selection = null; render(); }, "uw-agent-knowledge-back"));
+    if (focusId) top.append(makeButton("返回完整图谱", () => { selection = null; render(); }, "uw-agent-knowledge-back"));
     shell.append(top);
     shell.append(createGraph({ doc, graph, copy, focusId, depth: knowledgeDepth,
       onSelect: node => selectDesktopAnnotationNode({ id: node.sourceId || node.id, title: node.title,
@@ -623,6 +630,26 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
           inspector.append(el("p", "", `依据（未独立核验）：${option.evidenceSummary}`));
           inspector.append(el("p", "", `限制与风险：${option.tradeoffs} · ${option.risks}`));
         }
+      } else if (knowledgeLayer === "hosts" && selection.kind === "capability") {
+        const entry = (Array.isArray(state.capabilityCatalog?.nativeCapabilities)
+          ? state.capabilityCatalog.nativeCapabilities : []).find(item =>
+          `config:${item.hostId}:${item.scope}:${item.kind}:${item.id}` === selection.id);
+        if (entry) {
+          const detail = el("div", "uw-native-host-inspection");
+          const host = (state.capabilityCatalog?.nativeHosts || []).find(item => item.id === entry.hostId);
+          const label = nativeFamilies.find(item => item.kind === entry.kind)?.label || "能力";
+          const fields = [["宿主", host?.label || entry.hostId], ["类别", label],
+            ["配置范围", entry.scope === "project" ? "当前项目" : entry.scope === "global" ? "用户配置" : "来源待确认"],
+            ["配置来源", entry.source || "未提供"],
+            ["加载状态", "尚未从原生客户端确认"], ["调用证据", "当前目录记录未证明实际调用"]];
+          for (const [label, value] of fields) {
+            const row = el("div", "uw-native-host-inspection-row");
+            row.append(el("span", "", label), el("strong", "", clean(value, 160)));
+            detail.append(row);
+          }
+          inspector.append(detail);
+        }
+        inspector.append(el("p", "", "该信息为只读发现记录，点击并未启动客户端或调用工具。"));
       } else inspector.append(el("p", "", "此视图为只读关系。选择不会启动或授权任何客户端。"));
       shell.append(inspector);
     }
@@ -690,7 +717,7 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
     const catalog = state.capabilityCatalog;
     const signature = JSON.stringify({ runId: isCurrentRun() ? state.selection?.runId : null,
       agentLoading: agent.loading === true, canWrite: state.canWrite !== false,
-      selectionId: selection?.id,
+      selectionId: selection?.id, inventoryQuery,
       tasks: tasks.map(task => ({ id: task.id, owner: taskOwner(task), role: taskRole(task), title: task.title,
         status: task.status, source: { summary: task.source.summary, task: task.source.task,
           ownerReport: task.source.ownerReport, nativeReturnEvidence: task.source.nativeReturnEvidence,
@@ -711,6 +738,24 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
     const title = el("div", "uw-agent-inventory-title");
     title.append(el("strong", "", "Agent 协作"), el("span", "", tasks.length ? `${tasks.length} 个执行任务` : "等待执行"));
     surface.append(title);
+    const search = el("input", "uw-agent-inventory-search");
+    search.type = "search";
+    search.value = inventoryQuery;
+    search.placeholder = "搜索 Agent、客户端、Skill、MCP…";
+    search.setAttribute("aria-label", "搜索 Agent、客户端与能力");
+    search.setAttribute("autocomplete", "off");
+    search.addEventListener("input", () => {
+      const cursor = typeof search.selectionStart === "number" ? search.selectionStart : null;
+      inventoryQuery = clean(search.value, 100);
+      resetInventoryScroll = true;
+      lastInventorySignature = "";
+      renderInventory();
+      const replacement = inventory.children?.[0]?.children?.[1];
+      replacement?.focus?.();
+      if (cursor !== null) replacement?.setSelectionRange?.(cursor, cursor);
+    });
+    surface.append(search);
+    let resultCount = 0;
     const nativeHosts = new Map();
     for (const host of Array.isArray(catalog?.nativeHosts) ? catalog.nativeHosts : []) {
       const id = clean(host?.id, 50);
@@ -752,7 +797,13 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
     ];
     for (const [id, name, amount] of quickGroups) {
       const shortcut = makeButton(`${name} ${amount}`, () => {
-        const section = [...surface.children].find(child => child?.dataset?.section === id);
+        if (inventoryQuery) {
+          inventoryQuery = "";
+          lastInventorySignature = "";
+          renderInventory();
+        }
+        const currentSurface = inventory.children?.[0];
+        const section = [...(currentSurface?.children || [])].find(child => child?.dataset?.section === id);
         if (!section) return;
         section.open = true;
         inventoryExpanded.add(id);
@@ -766,11 +817,12 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
     const makeSection = (id, heading, amount, open = false) => {
       const details = el("details", "uw-agent-inventory-section");
       details.dataset.section = id;
-      details.open = inventoryExpanded.has(id) || (open && !inventoryExpanded.has(`${id}:closed`));
+      details.open = Boolean(normalizedInventoryQuery()) || inventoryExpanded.has(id) || (open && !inventoryExpanded.has(`${id}:closed`));
       const summary = el("summary", "uw-agent-inventory-summary");
       summary.append(el("span", "", heading), el("small", "", String(amount)));
       details.append(summary);
       details.addEventListener("toggle", () => {
+        if (inventoryQuery) return;
         if (details.open) { inventoryExpanded.add(id); inventoryExpanded.delete(`${id}:closed`); }
         else { inventoryExpanded.delete(id); inventoryExpanded.add(`${id}:closed`); }
       });
@@ -779,11 +831,14 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
     const agentsByOwner = new Map();
     for (const task of tasks) {
       const name = taskOwner(task);
+      const outcome = taskOutcome(task);
+      if (!inventoryMatches(name, taskRole(task), task.title, task.statusLabel, outcome.heading, outcome.detail)) continue;
       if (!agentsByOwner.has(name)) agentsByOwner.set(name, []);
       agentsByOwner.get(name).push(task);
     }
     const activeSection = makeSection("run", "当前 Run", agentsByOwner.size, true);
-    if (!tasks.length) activeSection.append(el("p", "uw-agent-inventory-hint", "暂无绑定当前 Run 的 Agent 结论。"));
+    if (!tasks.length && !inventoryQuery) activeSection.append(el("p", "uw-agent-inventory-hint", "暂无绑定当前 Run 的 Agent 结论。"));
+    resultCount += agentsByOwner.size;
     for (const [name, owned] of agentsByOwner) {
       const latest = owned.find(task => taskVisualState(task) === "running") || owned.at(-1);
       const outcome = taskOutcome(latest);
@@ -800,8 +855,11 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
       row.append(agentMark(name), copy);
       activeSection.append(row);
     }
+    if (inventoryQuery && !agentsByOwner.size) activeSection.hidden = true;
     surface.append(activeSection);
-    const nativeSection = makeSection("native-hosts", "当前服务端宿主", discoveredHosts.length,
+    const matchingHosts = discoveredHosts.filter(host => inventoryMatches(host.id, host.label, host.statusLabel)
+      || nativeCapabilities.some(item => item.hostId === host.id && inventoryMatches(item.id, item.label, item.kind)));
+    const nativeSection = makeSection("native-hosts", "当前服务端宿主", matchingHosts.length,
       discoveredHosts.length > 0);
     if (typeof callbacks.redetect === "function" && state.canWrite !== false) {
       const controls = el("div", "uw-native-host-controls");
@@ -811,14 +869,26 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
       controls.append(detectButton);
       nativeSection.append(controls);
     }
-    if (!discoveredHosts.length) nativeSection.append(el("p", "uw-agent-inventory-hint",
+    if (!discoveredHosts.length && !inventoryQuery) nativeSection.append(el("p", "uw-agent-inventory-hint",
       "当前服务端宿主尚无可验证的客户端检测或配置；不等于您的 Windows 电脑未安装。"));
-    for (const host of discoveredHosts) {
+    resultCount += matchingHosts.length;
+    const inspectHostCapability = (id, label, kind = "host") => {
+      mode = "knowledge";
+      knowledgeLayer = "hosts";
+      selection = { id, title: clean(label, 100), kind, layer: "hosts" };
+      lastCanvasSignature = "";
+      render();
+      viewport.scrollIntoView?.({ block: "nearest" });
+    };
+    for (const host of matchingHosts) {
       const hostId = clean(host.id, 50);
-      const hostItems = nativeCapabilities.filter(item => item.hostId === hostId);
+      const hostMatch = inventoryMatches(host.id, host.label, host.statusLabel);
+      const hostItems = nativeCapabilities.filter(item => item.hostId === hostId
+        && (hostMatch || inventoryMatches(item.id, item.label, item.kind)));
       const details = el("details", "uw-native-host");
-      details.open = inventoryExpanded.has(`native-host:${hostId}`);
+      details.open = Boolean(inventoryQuery) || inventoryExpanded.has(`native-host:${hostId}`);
       details.addEventListener("toggle", () => {
+        if (inventoryQuery) return;
         if (details.open) inventoryExpanded.add(`native-host:${hostId}`);
         else inventoryExpanded.delete(`native-host:${hostId}`);
       });
@@ -881,18 +951,34 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
         access.append(el("span", "", "不可用原因"), el("strong", "", blockedReason));
       if (nextAction) access.append(el("span", "", "下一步"), el("strong", "", nextAction));
       body.append(access);
+      if (hostItems.length) {
+        const viewGraph = makeButton("查看能力关系", () =>
+          inspectHostCapability(`host:${hostId}`, host.label || hostId), "uw-native-host-graph");
+        viewGraph.setAttribute("aria-label", `在 Live 查看 ${host.label || hostId} 的能力关系`);
+        body.append(viewGraph);
+        body.append(el("p", "uw-native-host-capability-disclaimer", "已发现配置 · 未确认加载。点具体能力可查看关系。"));
+      }
       if (!hostItems.length) body.append(el("p", "uw-agent-inventory-hint", "暂无当前项目或用户配置中可核对的能力；CLI 检测不代表已经加载 Agent。"));
       for (const family of nativeFamilies) {
         const entries = hostItems.filter(item => item.kind === family.kind);
         if (!entries.length) continue;
-        const group = el("div", "uw-native-host-family");
-        group.append(el("b", "", `${family.label} · ${entries.length}`));
+        const group = el("details", "uw-native-host-family");
+        const familyKey = `native-host:${hostId}:${family.kind}`;
+        group.open = Boolean(inventoryQuery) || inventoryExpanded.has(familyKey);
+        group.addEventListener("toggle", () => {
+          if (inventoryQuery) return;
+          if (group.open) inventoryExpanded.add(familyKey);
+          else inventoryExpanded.delete(familyKey);
+        });
+        group.append(el("summary", "uw-native-host-family-summary", `${family.label} · ${entries.length}`));
         for (const item of entries) {
-          const row = el("div", "uw-native-host-capability");
           const label = clean(item.label || item.id, 110);
-          const present = item.installationState === "configured";
-          row.append(el("span", "", label), el("small", "", present ? "已发现配置 · 未确认加载" : "记录待核对 · 未确认加载"));
-          row.title = `${clean(item.scope || "当前配置范围", 40)} · ${clean(item.source || "来源待核对", 80)} · 配置记录不证明实际调用`;
+          const row = makeButton("", () => inspectHostCapability(
+            `config:${item.hostId}:${item.scope}:${item.kind}:${item.id}`, label, "capability"),
+          "uw-native-host-capability");
+          row.append(el("span", "", label));
+          row.setAttribute("aria-label", `查看 ${host.label || hostId} 的 ${family.label} ${label} 关系`);
+          row.title = `${clean(item.scope || "当前配置范围", 40)} · ${clean(item.source || "来源待核对", 80)} · ${item.installationState === "configured" ? "已发现配置" : "记录待核对"}，未确认加载或实际调用`;
           group.append(row);
         }
         body.append(group);
@@ -900,7 +986,7 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
       details.append(body);
       nativeSection.append(details);
     }
-    if (referenceHosts.length) {
+    if (referenceHosts.length && !inventoryQuery) {
       const candidates = el("details", "uw-native-host-candidates");
       const candidateHeader = el("summary", "uw-native-host-candidates-summary",
         `兼容性参考 · ${referenceHosts.length} 项（未检测）`);
@@ -915,12 +1001,15 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
       nativeSection.append(candidates);
     }
     nativeSection.append(el("p", "uw-agent-inventory-hint",
-      "扫描对象是 Meta_Kim 服务运行环境；云端扫描不代表连接了您的 Windows 电脑。配置被发现不等于已加载或调用，结论请看当前 Run。"));
+      "云端扫描不代表连接了您的 Windows 电脑。发现配置不等于已加载或调用。"));
+    if (inventoryQuery && !matchingHosts.length) nativeSection.hidden = true;
     surface.append(nativeSection);
     const subagents = tasks.filter(task => task.source?.isMain !== true
-      && (task.source?.parentId || task.source?.nativeTaskCaption));
+      && (task.source?.parentId || task.source?.nativeTaskCaption)
+      && inventoryMatches(task.title, taskOwner(task), task.source?.nativeTaskCaption, task.statusLabel, taskOutcome(task).detail));
     const subagentsSection = makeSection("subagents", "Subagents · 编排与回执", subagents.length, subagents.length > 0);
-    if (!subagents.length) subagentsSection.append(el("p", "uw-agent-inventory-hint", "未观测到已绑定的子 Agent 任务。"));
+    if (!subagents.length && !inventoryQuery) subagentsSection.append(el("p", "uw-agent-inventory-hint", "未观测到已绑定的子 Agent 任务。"));
+    resultCount += subagents.length;
     for (const task of subagents) {
       const row = makeButton("", () => {
         mode = "agents";
@@ -931,11 +1020,14 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
         el("small", "", `${taskOwner(task)} · ${task.statusLabel || labelFor(task.status)} · ${taskOutcome(task).heading}`));
       subagentsSection.append(row);
     }
+    if (inventoryQuery && !subagents.length) subagentsSection.hidden = true;
     surface.append(subagentsSection);
     const registeredAgents = catalogItems("agents").filter(item =>
-      ![...agentsByOwner.keys()].some(owner => [item.id, item.label].some(value => clean(value).toLowerCase() === owner.toLowerCase())));
+      ![...agentsByOwner.keys()].some(owner => [item.id, item.label].some(value => clean(value).toLowerCase() === owner.toLowerCase()))
+      && inventoryMatches(item.id, item.label, item.role, ...(Array.isArray(item.owns) ? item.owns : [item.owns])));
     const rolesSection = makeSection("registered-agents", "已注册 Agent", registeredAgents.length, true);
-    if (!registeredAgents.length) rolesSection.append(el("p", "uw-agent-inventory-hint", "尚无可读取的注册角色。"));
+    if (!registeredAgents.length && !inventoryQuery) rolesSection.append(el("p", "uw-agent-inventory-hint", "尚无可读取的注册角色。"));
+    resultCount += registeredAgents.length;
     for (const item of registeredAgents) {
       const label = clean(item.label || item.id, 90);
       const row = el("div", "uw-agent-inventory-agent uw-agent-inventory-registered");
@@ -945,12 +1037,15 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
       row.title = `${clean(item.role || item.owns || label, 240)} · 注册不代表已调用`;
       rolesSection.append(row);
     }
+    if (inventoryQuery && !registeredAgents.length) rolesSection.hidden = true;
     surface.append(rolesSection);
     const professionalAgents = catalog?.professionalSourceStatus === "verified_local"
-      && Array.isArray(catalog?.professionalAgents) ? catalog.professionalAgents : [];
+      && Array.isArray(catalog?.professionalAgents) ? catalog.professionalAgents.filter(item =>
+        inventoryMatches(item.id, item.label, item.agentKind)) : [];
     const professionalSection = makeSection("professional-agents", "Kim_Service 专业 Agent", professionalAgents.length);
-    if (!professionalAgents.length) professionalSection.append(el("p", "uw-agent-inventory-hint",
+    if (!professionalAgents.length && !inventoryQuery) professionalSection.append(el("p", "uw-agent-inventory-hint",
       "当前项目尚未绑定已核验的专业 Agent 来源；注册来源不等于已安装或已调用。"));
+    resultCount += professionalAgents.length;
     for (const item of professionalAgents) {
       if (!item || item.registrationState !== "verified_source_only" || !item.id) continue;
       const label = clean(item.label || item.id, 100);
@@ -960,11 +1055,14 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
       row.append(agentMark(item.id, true), copy);
       professionalSection.append(row);
     }
+    if (inventoryQuery && !professionalAgents.length) professionalSection.hidden = true;
     surface.append(professionalSection);
     for (const family of capabilityFamilies) {
-      const entries = capabilityEntries(family.kind, family.catalog);
+      const entries = capabilityEntries(family.kind, family.catalog).filter(entry =>
+        inventoryMatches(entry.label, family.name));
       const section = makeSection(family.kind, family.name, entries.length);
-      if (!entries.length) section.append(el("p", "uw-agent-inventory-hint", "暂无注册项或本轮调用证据。"));
+      if (!entries.length && !inventoryQuery) section.append(el("p", "uw-agent-inventory-hint", "暂无注册项或本轮调用证据。"));
+      resultCount += entries.length;
       for (const entry of entries) {
         const row = el("div", "uw-agent-inventory-capability");
         row.dataset.state = entry.state;
@@ -974,12 +1072,19 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
             : "已注册 · 未观测调用"));
         section.append(row);
       }
+      if (inventoryQuery && !entries.length) section.hidden = true;
       surface.append(section);
+    }
+    if (inventoryQuery) {
+      const searchResult = el("p", "uw-agent-inventory-search-result", resultCount
+        ? `已筛出 ${resultCount} 条记录，点分类可查看` : "没有找到匹配记录，试试 Agent、客户端或能力名称");
+      surface.insertBefore?.(searchResult, quicknav);
     }
     surface.append(el("p", "uw-agent-inventory-footnote", catalog?.evidenceLevel === "registered_only"
       ? "注册目录是能力索引。真实调用以当前 Run 回执为准。" : "无真实回执时，不把能力注册或任务分派当作执行。"));
     inventory.replaceChildren(surface);
-    inventory.scrollTop = previousScroll;
+    inventory.scrollTop = resetInventoryScroll ? 0 : previousScroll;
+    resetInventoryScroll = false;
   }
   function renderCanvas() {
     const blueprint = designSource();
