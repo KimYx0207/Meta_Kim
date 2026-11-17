@@ -100,6 +100,13 @@ export function renderLiveWorkspaceSurface() {
         <section class="uw-agent-gate" data-uw-agent-execution aria-labelledby="uw-agent-execution-title" hidden>
           <div class="uw-agent-design-heading"><div><span>下一关 · 真实运行与 B3 权限</span><h3 id="uw-agent-execution-title">执行前，还要核验什么？</h3></div><button type="button" data-uw-agent-execution-records>查看正式 Run 记录</button></div>
           <p class="uw-agent-design-status" data-uw-agent-execution-status role="status">等待真实宿主、正式运行身份与必要的副作用授权。</p>
+          <p class="uw-agent-design-note">B3 仅允许当前项目的一次本地草稿修改。原生客户端使用受限工具，禁止命令、对外发送、付款和发布；正式 Run、测试与 B4 验收仍需单独核对。</p>
+          <div class="uw-agent-transfer-actions">
+            <button type="button" data-uw-agent-execution-authorize hidden>批准 B3 并启动本地草稿</button>
+            <button type="button" data-uw-agent-execution-check>检查原生任务状态</button>
+          </div>
+          <p class="uw-agent-design-status" data-uw-agent-execution-native role="status" aria-live="polite"></p>
+
           <ul class="uw-agent-gate-list" data-uw-agent-execution-evidence></ul>
           <p class="uw-agent-design-note">这里会清楚区分“设计批准”“交接封存”“宿主确认”“实际运行”和“敏感操作授权”。左侧选中的 Run 不会自动视作本任务的执行证据。</p>
         </section>

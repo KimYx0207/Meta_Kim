@@ -16,6 +16,8 @@ import { createLiveControlRoomServer } from "../src/infrastructure/live/live-con
 import { resolveLiveProjectRoot } from "../src/infrastructure/live/live-read-repository.mjs";
 import { createAgentStartService } from "../src/application/agent/agent-start-service.mjs";
 import { createAgentWorkflowService } from "../src/application/agent/agent-workflow-service.mjs";
+import { createAgentExecutionBridge } from "../src/application/agent/agent-execution-bridge.mjs";
+import { createAgentNativeExecutionService } from "../src/application/agent/agent-native-execution-service.mjs";
 
 export function parseAgentArgs(args) {
   const parsed = { open: true, port: 0, json: false, help: false, projectRoot: null };
@@ -116,10 +118,16 @@ export async function main(args = process.argv.slice(2), environment = process.e
   // commit decisions, never native execution authority or a synthetic run ID.
   const agentStartService = createAgentWorkflowService({ projectRoot, profile: "default",
     agentStartService: nativePlanService });
+  const executionBridge = createAgentExecutionBridge({ projectRoot, profile: "default",
+    agentWorkflowService: agentStartService });
+  const agentNativeExecutionService = createAgentNativeExecutionService({
+    projectRoot, profile: "default", workflowService: agentStartService, executionBridge, environment,
+  });
   const controller = createLiveControlRoomServer({
     projectRoot, port: options.port, globalHub: false, workspaceEnabled: true,
     // This opt-in path is separate from the global read-only Live Hub.
     enableControl: false, enableAgentStart: true, agentStartService,
+    agentNativeExecutionService,
   });
   const address = await controller.start();
   let closing = false;

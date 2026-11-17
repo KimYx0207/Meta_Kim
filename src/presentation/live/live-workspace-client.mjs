@@ -83,6 +83,10 @@ export function createLiveWorkspaceController(options) {
   const agentExecutionStatus = root.querySelector("[data-uw-agent-execution-status]");
   const agentExecutionEvidence = root.querySelector("[data-uw-agent-execution-evidence]");
   const agentExecutionRecords = root.querySelector("[data-uw-agent-execution-records]");
+  const agentExecutionAuthorize = root.querySelector("[data-uw-agent-execution-authorize]");
+  const agentExecutionCheck = root.querySelector("[data-uw-agent-execution-check]");
+  const agentExecutionNative = root.querySelector("[data-uw-agent-execution-native]");
+
   const agentAcceptance = root.querySelector("[data-uw-agent-acceptance]");
   const agentAcceptanceStatus = root.querySelector("[data-uw-agent-acceptance-status]");
   const agentAcceptanceEvidence = root.querySelector("[data-uw-agent-acceptance-evidence]");
@@ -93,12 +97,16 @@ export function createLiveWorkspaceController(options) {
   const nativeDraft = { loading: false, busy: false, snapshot: null, error: null, pendingKey: null, autoAttempted: false,
     editorVisible: false, manualOverride: false, sourceApplied: false };
   const handoff = { loading: false, busy: false, snapshot: null, error: null, pendingKey: null };
+  const execution = { loading: false, busy: false, snapshot: null, error: null, pendingKey: null };
+
   let desktop = null;
   function saveAgent() {
     if (!agentEntryEnabled) return;
     try {
       if (agent.pending) win.sessionStorage?.setItem(agentStorageKey, JSON.stringify({ pending: agent.pending, decisionPending: agent.decisionPending,
-        designPendingMutation: design.pendingMutation, draftPendingKey: nativeDraft.pendingKey, handoffPendingKey: handoff.pendingKey }));
+        designPendingMutation: design.pendingMutation, draftPendingKey: nativeDraft.pendingKey, handoffPendingKey: handoff.pendingKey,
+        executionPendingKey: execution.pendingKey }));
+
       else win.sessionStorage?.removeItem(agentStorageKey);
     } catch { /* Session storage is optional; server receipts remain authoritative. */ }
   }
@@ -115,6 +123,10 @@ export function createLiveWorkspaceController(options) {
         nativeDraft.pendingKey = saved.draftPendingKey?.key && typeof saved.draftPendingKey.key === "string" ? saved.draftPendingKey : null;
         handoff.pendingKey = saved.handoffPendingKey?.key && Number.isSafeInteger(saved.handoffPendingKey.designVersion)
           && /^[a-f0-9]{64}$/iu.test(saved.handoffPendingKey.designDigest || "") ? saved.handoffPendingKey : null;
+        execution.pendingKey = saved.executionPendingKey?.key
+          && /^[a-f0-9]{64}$/iu.test(saved.executionPendingKey.handoffDigest || "")
+          ? saved.executionPendingKey : null;
+
         if (agentGoal) agentGoal.value = saved.pending.goal;
         agent.status = "unconfirmed";
       }
@@ -360,12 +372,36 @@ export function createLiveWorkspaceController(options) {
     const current = handoff.snapshot;
     const prepared = current?.status === "prepared" && handoffReady()
       && current.designVersion === design.snapshot.version && current.designDigest === design.snapshot.designDigest;
+    const native = execution.snapshot?.handoffDigest === current?.handoffDigest ? execution.snapshot : null;
     const hasSelectedRun = Boolean(state.snapshot?.run?.id || state.selection?.runId);
     if (agentExecutionStatus) {
-      agentExecutionStatus.textContent = prepared
-        ? "当前设计已封存交接，但尚未绑定经过核验的正式 Run；没有授权任何写入、发布、付费或对外操作。"
-        : "B2 的设计批准还不足以执行。先封存与当前版本绑定的交接材料，随后由真实受控宿主核对。";
-      agentExecutionStatus.dataset.state = "waiting";
+      agentExecutionStatus.textContent = !prepared
+        ? "先完成当前版本的设计批准与交接。"
+        : execution.error ? execution.error
+          : native?.status === "ready_to_authorize" ? "B1、B2、交接已核对。现在可以单独批准一次本地草稿操作。"
+            : native?.status === "running" ? "B3 已批准，原生客户端正在运行。修改暂未经过正式 Run 和测试验收。"
+              : native?.status === "ready_for_review" ? "原生任务已结束，请核验文件和测试；还没有通过 B4 验收。"
+                : native?.status === "waiting_input" ? "原生任务需要你在客户端处理输入或权限问题。"
+                  : native?.status === "blocked" ? "受限执行暂不可用。请检查原生客户端或已批准版本。"
+                    : native ? "原生任务状态尚未完全核实，已保留启动回执。" : "交接已准备，正在核对 B3 入口。";
+      agentExecutionStatus.dataset.state = execution.error || native?.status === "blocked" ? "blocked"
+        : native?.status === "running" ? "prepared" : "waiting";
+    }
+    if (agentExecutionAuthorize) {
+      const canAuthorize = prepared && native?.status === "ready_to_authorize" && !execution.pendingKey;
+      agentExecutionAuthorize.hidden = !canAuthorize && !execution.pendingKey;
+      agentExecutionAuthorize.disabled = !state.canWrite || execution.busy || execution.loading || !prepared
+        || !canAuthorize && !execution.pendingKey;
+      agentExecutionAuthorize.textContent = execution.pendingKey
+        ? "用原授权号核对／安全重试" : "批准 B3 · 启动本地草稿";
+    }
+    if (agentExecutionCheck) agentExecutionCheck.disabled = execution.busy || execution.loading || !prepared;
+    if (agentExecutionNative) {
+      agentExecutionNative.textContent = execution.loading ? "正在查询原生任务…"
+        : execution.error || (native?.nativeSessionId
+          ? "Claude 后台任务 " + native.nativeSessionId + " · " + (native.nextAction || "等待核对")
+          : native?.nextAction || "");
+
     }
     if (agentExecutionEvidence) {
       agentExecutionEvidence.replaceChildren();
@@ -373,8 +409,13 @@ export function createLiveWorkspaceController(options) {
         ["当前交接", prepared ? `仅静态材料已封存 · ${current.handoffDigest.slice(0, 12)}…` : "尚无当前版本的已封存交接"],
         ["真实 Run 身份", hasSelectedRun
           ? "左侧存在已选 Run，但尚无证据证明其与本次 B1/B2 相同" : "未关联经过核验的正式 Run"],
-        ["原生执行证据", "尚无与本方案绑定的真实宿主调用、工作单或文件副作用记录"],
-        ["B3 副作用授权", "尚无明确的操作对象、范围、后果和独立人类批准；执行权限未授予"],
+        ["原生执行证据", native?.nativeSessionId
+          ? "已有后台任务 " + native.nativeSessionId + "；状态来自原生 CLI，仍需核对具体文件与正式 Run"
+          : "尚无与本次批准交接绑定且可复核的原生任务"],
+        ["B3 本地草稿权限", native?.authorizedByLocalB3
+          ? "已批准一次本项目本地草稿操作；没有授予发布、付款、消息或其他外部权限"
+          : "待单独批准一次本地草稿操作；不自动执行"],
+
       ]) {
         const item = designElement("li");
         item.append(designElement("strong", "", name), designElement("span", "", value));
@@ -384,7 +425,10 @@ export function createLiveWorkspaceController(options) {
     if (agentExecutionRecords) agentExecutionRecords.textContent = hasSelectedRun
       ? "查看已选 Run 的记录" : "选择正式 Run 查看记录";
     if (agentAcceptanceStatus) {
-      agentAcceptanceStatus.textContent = "本任务尚无已核验的运行产物或 B4 最终验收结果，不能标记完成。";
+      agentAcceptanceStatus.textContent = native?.status === "ready_for_review"
+        ? "原生任务已结束。需先核验隔离工作区的真实改动、测试及正式 Run，才可以人工验收。"
+        : "本任务尚无已核验的运行产物或 B4 最终验收结果，不能标记完成。";
+
       agentAcceptanceStatus.dataset.state = "waiting";
     }
     if (agentAcceptanceEvidence) {
@@ -462,7 +506,11 @@ export function createLiveWorkspaceController(options) {
       if (!handoff.pendingKey) handoff.error = null;
     } catch (error) {
       if (!disposed) handoff.error = error.status === 409 ? "交接版本发生变化，请先核对设计并重新准备。" : "交接状态暂时无法核对，请检查本地服务连接后重试。";
-    } finally { handoff.loading = false; renderAgentHandoff(); }
+    } finally {
+      handoff.loading = false; renderAgentHandoff();
+      if (handoff.snapshot?.status === "prepared") void loadAgentExecution();
+    }
+
   }
   async function prepareAgentHandoff({ retry = false } = {}) {
     const basis = designBasis();
@@ -501,7 +549,84 @@ export function createLiveWorkspaceController(options) {
         handoff.busy = false;
         await loadAgentHandoff();
       }
-    } finally { handoff.busy = false; renderAgentHandoff(); }
+    } finally {
+      handoff.busy = false; renderAgentHandoff();
+      if (handoff.snapshot?.status === "prepared") void loadAgentExecution();
+    }
+  }
+  function validNativeExecutionReceipt(payload, digest) {
+    return payload?.schemaVersion === "meta-kim-agent-b3-native-execution-v1"
+      && ["ready_to_authorize", "running", "waiting_input", "ready_for_review",
+        "failed", "in_doubt", "unconfirmed", "blocked"].includes(payload.status)
+      && payload.scope === "local_project_draft"
+      && payload.handoffDigest === digest
+      && payload.officialRunId === null
+      && payload.governedRunVerified === false
+      && payload.acceptanceVerified === false
+      && payload.publicReady === false;
+  }
+  async function loadAgentExecution() {
+    const basis = designBasis();
+    const digest = handoff.snapshot?.status === "prepared" ? handoff.snapshot.handoffDigest : null;
+    if (!basis || !digest || execution.loading || execution.busy || disposed) return;
+    execution.loading = true;
+    renderAgentFollowthrough();
+    try {
+      const payload = await request("/api/agent/execution", {
+        selection: {}, query: { idempotencyKey: basis.idempotencyKey },
+      });
+      if (disposed || designBasis()?.idempotencyKey !== basis.idempotencyKey
+        || handoff.snapshot?.handoffDigest !== digest) return;
+      if (!validNativeExecutionReceipt(payload, digest)) throw new Error("B3 receipt is not bound to this design");
+      execution.snapshot = payload;
+      execution.error = null;
+      if (execution.pendingKey && payload.authorizedByLocalB3) {
+        execution.pendingKey = null;
+        saveAgent();
+      }
+    } catch {
+      if (!disposed) execution.error = "原生任务暂无法核对；原授权号已保留，不会自动重复启动。";
+    } finally {
+      execution.loading = false; renderAgentFollowthrough(); desktop?.render();
+    }
+  }
+  async function submitAgentExecution() {
+    const basis = designBasis();
+    const digest = handoff.snapshot?.status === "prepared" ? handoff.snapshot.handoffDigest : null;
+    if (!basis || !digest || execution.busy || execution.loading || disposed || !state.canWrite) return;
+    const pending = execution.pendingKey;
+    if (pending && pending.handoffDigest !== digest) return;
+    if (!pending && execution.snapshot?.status !== "ready_to_authorize") return;
+    const approvalKey = pending?.key || win.crypto?.randomUUID?.();
+    if (!approvalKey) {
+      execution.error = "无法生成一次性授权号，请更新浏览器后重试。";
+      renderAgentFollowthrough(); return;
+    }
+    execution.pendingKey = { key: approvalKey, handoffDigest: digest };
+    saveAgent();
+    execution.busy = true; execution.error = null;
+    renderAgentFollowthrough();
+    try {
+      const payload = await request("/api/agent/execution", { method: "POST", selection: {},
+        body: { idempotencyKey: basis.idempotencyKey, handoffDigest: digest,
+          approvalKey, scope: "local_project_draft" },
+      });
+      if (disposed || designBasis()?.idempotencyKey !== basis.idempotencyKey
+        || handoff.snapshot?.handoffDigest !== digest) return;
+      if (!validNativeExecutionReceipt(payload, digest)) throw new Error("B3 response is not current");
+      execution.snapshot = payload;
+      if (payload.authorizedByLocalB3 || payload.status === "blocked") {
+        execution.pendingKey = null;
+        saveAgent();
+      }
+      execution.error = payload.status === "blocked"
+        ? "无法启动受限草稿：" + (payload.reason || "请检查本机原生客户端") : null;
+    } catch {
+      execution.error = "启动回执暂时无法确定。请先核对原生状态，切勿换授权号重复启动。";
+    } finally {
+      execution.busy = false; renderAgentFollowthrough(); desktop?.render();
+    }
+
   }
   function designMessage(message, kind = "waiting") {
     if (agentDesignStatus) { agentDesignStatus.textContent = message; agentDesignStatus.dataset.state = kind; }
@@ -956,6 +1081,8 @@ export function createLiveWorkspaceController(options) {
         nativeDraft.snapshot = null; nativeDraft.error = null; nativeDraft.pendingKey = null;
         nativeDraft.autoAttempted = false; nativeDraft.editorVisible = false; nativeDraft.manualOverride = false; nativeDraft.sourceApplied = false;
         handoff.snapshot = null; handoff.error = null; handoff.pendingKey = null;
+        execution.snapshot = null; execution.error = null; execution.pendingKey = null;
+
         agent.scopeMismatch = true;
         if (agentResult) agentResult.hidden = true;
         if (agentOutput) agentOutput.textContent = "";
@@ -1593,7 +1720,8 @@ export function createLiveWorkspaceController(options) {
   };
   const renderer = createLiveWorkspaceRenderer({ app, root, state, copy, actions, taskOutputs: options.taskOutputs });
   desktop = agentEntryEnabled && typeof createUnifiedAgentDesktop === "function" ? createUnifiedAgentDesktop({
-    root, state, agent, design, nativeDraft, handoff, copy,
+    root, state, agent, design, nativeDraft, handoff, execution, copy,
+
     buildGraph: buildLivePrdGraph, createGraph: createPrdKnowledgeGraph,
     callbacks: {
       parseStrategies: parseNativeStrategyOptions,
@@ -1679,6 +1807,9 @@ export function createLiveWorkspaceController(options) {
       },
       prepareHandoff() { void prepareAgentHandoff(); },
       reconcileHandoff() { void loadAgentHandoff(); },
+      authorizeExecution() { void submitAgentExecution(); },
+      inspectExecution() { void loadAgentExecution(); },
+
     },
   }) : null;
   // Keep the single composer and Live diagrams in sync with real governed
@@ -1715,6 +1846,9 @@ export function createLiveWorkspaceController(options) {
   agentHandoffCheck?.addEventListener("click", () => { void loadAgentHandoff(); });
   agentHandoffPrepare?.addEventListener("click", () => { void prepareAgentHandoff(); });
   agentHandoffReconcile?.addEventListener("click", () => { void prepareAgentHandoff({ retry: true }); });
+  agentExecutionAuthorize?.addEventListener("click", () => { void submitAgentExecution(); });
+  agentExecutionCheck?.addEventListener("click", () => { void loadAgentExecution(); });
+
   agentExecutionRecords?.addEventListener("click", () => {
     if (state.snapshot?.run?.id || state.selection?.runId) setView("records");
     else options.openProjects();
@@ -1739,6 +1873,8 @@ export function createLiveWorkspaceController(options) {
     nativeDraft.snapshot = null; nativeDraft.error = null; nativeDraft.pendingKey = null;
     nativeDraft.autoAttempted = false; nativeDraft.editorVisible = false; nativeDraft.manualOverride = false; nativeDraft.sourceApplied = false;
     handoff.snapshot = null; handoff.error = null; handoff.pendingKey = null;
+    execution.snapshot = null; execution.error = null; execution.pendingKey = null;
+
     if (agentFeedback) agentFeedback.value = "";
     if (agentStrategy) agentStrategy.value = "";
     if (agentChoiceReason) agentChoiceReason.value = "";
@@ -1787,6 +1923,10 @@ export function createLiveWorkspaceController(options) {
     if (!disposed && doc.visibilityState === "visible" && designBasis() && design.snapshot?.status === "not_started"
       && nativeDraft.snapshot && ["accepted", "running"].includes(nativeDraft.snapshot.status)
       && !nativeDraft.loading && !nativeDraft.busy) void loadNativeDraft();
+    if (!disposed && doc.visibilityState === "visible" && handoff.snapshot?.status === "prepared"
+      && execution.snapshot && ["unconfirmed", "running", "waiting_input", "in_doubt"].includes(execution.snapshot.status)
+      && !execution.loading && !execution.busy) void loadAgentExecution();
+
   }, policy.agentReceiptPollMs) : null;
   renderer.render();
   void loadAgentCapabilities();

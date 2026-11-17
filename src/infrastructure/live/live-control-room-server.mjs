@@ -563,6 +563,10 @@ export function createLiveControlRoomServer(options = {}) {
   // Explicit dependency injection keeps the ordinary observer sidecar unable
   // to construct or invoke a native CLI, even if a route were misconfigured.
   const agentStartService = agentEntryEnabled ? options.agentStartService : null;
+  const agentNativeExecutionService = agentEntryEnabled
+    && typeof options.agentNativeExecutionService?.inspect === "function"
+    && typeof options.agentNativeExecutionService?.authorizeAndLaunch === "function"
+    ? options.agentNativeExecutionService : null;
   const workspaceServices = new Map();
   const exposure = controlExposure(options, enableControl);
   const controlToken = enableControl
@@ -841,7 +845,8 @@ export function createLiveControlRoomServer(options = {}) {
       return;
     }
 
-    if (["/api/agent/capabilities", "/api/agent/hosts", "/api/agent/start", "/api/agent/requests", "/api/agent/decisions", "/api/agent/designs", "/api/agent/design-drafts", "/api/agent/handoff"].includes(parsed.pathname)) {
+    if (["/api/agent/capabilities", "/api/agent/hosts", "/api/agent/start", "/api/agent/requests", "/api/agent/decisions", "/api/agent/designs", "/api/agent/design-drafts", "/api/agent/handoff", "/api/agent/execution"].includes(parsed.pathname)) {
+
       if (!agentEntryEnabled) {
         jsonResponse(response, 403, safeError("agent_entry_not_enabled")); return;
       }
@@ -853,21 +858,26 @@ export function createLiveControlRoomServer(options = {}) {
       const designRequest = parsed.pathname === "/api/agent/designs";
       const draftRequest = parsed.pathname === "/api/agent/design-drafts";
       const handoffRequest = parsed.pathname === "/api/agent/handoff";
+      const executionRequest = parsed.pathname === "/api/agent/execution";
       const designWrite = designRequest && request.method === "POST";
       const draftWrite = draftRequest && request.method === "POST";
       const handoffWrite = handoffRequest && request.method === "POST";
-      const requiredMethod = designRequest || draftRequest || handoffRequest ? "GET, POST" : startRequest || decisionRequest ? "POST" : "GET";
-      if (designRequest || draftRequest || handoffRequest ? !["GET", "POST"].includes(request.method) : request.method !== requiredMethod) {
+      const executionWrite = executionRequest && request.method === "POST";
+      const requiredMethod = designRequest || draftRequest || handoffRequest || executionRequest ? "GET, POST" : startRequest || decisionRequest ? "POST" : "GET";
+      if (designRequest || draftRequest || handoffRequest || executionRequest ? !["GET", "POST"].includes(request.method) : request.method !== requiredMethod) {
         response.setHeader("allow", requiredMethod);
         jsonResponse(response, 405, safeError("method_not_allowed")); return;
       }
-      if ((startRequest || decisionRequest || designWrite || draftWrite || handoffWrite) && (!requestHasSameOrigin(request, server)
+      if ((startRequest || decisionRequest || designWrite || draftWrite || handoffWrite || executionWrite) && (!requestHasSameOrigin(request, server)
+
         || !String(request.headers["content-type"] || "").toLowerCase().startsWith("application/json"))) {
         jsonResponse(response, 403, safeError(startRequest
           ? "agent_start_same_origin_json_required" : decisionRequest
             ? "agent_decision_same_origin_json_required" : designWrite
               ? "agent_design_same_origin_json_required" : draftWrite
-                ? "agent_design_draft_same_origin_json_required" : "agent_handoff_same_origin_json_required")); return;
+                ? "agent_design_draft_same_origin_json_required" : handoffWrite
+                  ? "agent_handoff_same_origin_json_required" : "agent_execution_same_origin_json_required")); return;
+
       }
       try {
         if (parsed.pathname === "/api/agent/capabilities") {
@@ -956,6 +966,22 @@ export function createLiveControlRoomServer(options = {}) {
               idempotencyKey: parsed.searchParams.get("idempotencyKey"),
             }));
           }
+        } else if (executionRequest) {
+          // Local-only B3 consent is an independent, one-use, version-bound
+          // authorization. It may dispatch only the reviewed restricted
+          // native draft profile, never a payment/publish/messaging adapter.
+          if (!agentNativeExecutionService) {
+            jsonResponse(response, 409, safeError("agent_execution_not_available")); return;
+          }
+          if (executionWrite) {
+            const body = await readJsonBody(request, maxJsonBytes);
+            jsonResponse(response, 200, await agentNativeExecutionService.authorizeAndLaunch(body));
+          } else {
+            jsonResponse(response, 200, await agentNativeExecutionService.inspect({
+              idempotencyKey: parsed.searchParams.get("idempotencyKey"),
+            }));
+          }
+
         } else if (handoffRequest) {
           // This is only a content-addressed preparation packet. A real Run
           // still requires separate native host confirmation and governed

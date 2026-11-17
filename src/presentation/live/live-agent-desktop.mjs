@@ -9,6 +9,8 @@
  * Kept dependency-free so the Live single-file client can serialize it.
  */
 export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDraft, handoff,
+  execution = { snapshot: null, error: null, pendingKey: null, busy: false, loading: false },
+
   copy, buildGraph, createGraph, callbacks }) {
   const doc = root.ownerDocument;
   const find = (name) => root.querySelector(`[data-uw-${name}]`);
@@ -277,6 +279,9 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
     designStatus: design.snapshot?.status, systemApproval: design.snapshot?.system?.approval?.state,
     moduleApprovals: (design.snapshot?.modules || []).map(item => `${item.id}:${item.approval?.state}`),
     draftStatus: nativeDraft.snapshot?.status, handoffStatus: handoff.snapshot?.status,
+    executionStatus: execution.snapshot?.status, executionSession: execution.snapshot?.nativeSessionId,
+    executionError: execution.error, executionPending: execution.pendingKey?.key,
+
     designError: design.error, handoffError: handoff.error, draftError: nativeDraft.error,
     reviewNotes: (design.snapshot?.pendingReviewNotes || []).map(note => `${note.noteId}:${note.target?.kind}:${note.target?.moduleId}`),
     reviewHistory: design.snapshot?.history?.length, pendingMutation: design.pendingMutation?.mutationKey,
@@ -395,7 +400,33 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
         if (handoff.snapshot?.status === "eligible" && !handoff.busy) {
           box.append(makeButton("准备交接材料（不执行）", () => callbacks.prepareHandoff(), "uw-chat-action"));
         } else if (handoff.snapshot?.status === "prepared") {
-          box.append(el("p", "uw-chat-options-hint", `已封存交接：${handoff.snapshot.handoffDigest?.slice(0,12) || "待核对"}…。B3 尚未授权执行；B4 尚无验收产物。`));
+          const currentExecution = execution.snapshot?.handoffDigest === handoff.snapshot.handoffDigest
+            ? execution.snapshot : null;
+          box.append(el("p", "uw-chat-options-hint",
+            "已封存交接 · " + (handoff.snapshot.handoffDigest?.slice(0, 12) || "待核对") + "…"));
+          if (execution.error) box.append(el("p", "uw-chat-error", execution.error));
+          if (currentExecution?.status === "ready_to_authorize" && !execution.pendingKey) {
+            box.append(el("p", "uw-chat-options-hint",
+              "授权范围：仅当前项目的一次本地草稿操作。无命令、外网、付款、发消息、发布权限；成果仍需测试和验收。"));
+            const start = makeButton("批准 B3 · 启动受限草稿", () => callbacks.authorizeExecution(), "uw-chat-action");
+            start.disabled = execution.busy || execution.loading;
+            box.append(start);
+          } else if (execution.pendingKey) {
+            box.append(el("p", "uw-chat-options-hint", "原生执行请求结果不确定，先用原授权号核对。"));
+            box.append(makeButton("核对原 B3 授权", () => callbacks.authorizeExecution(), "uw-chat-secondary"));
+          } else if (currentExecution?.nativeSessionId) {
+            box.append(el("p", "uw-chat-options-hint",
+              "原生任务 " + currentExecution.nativeSessionId + " · " + currentExecution.status
+              + "。已发起草稿，并不代表正式 Run 或 B4 验收。"));
+            box.append(makeButton("查看原生任务状态", () => callbacks.inspectExecution(), "uw-chat-secondary"));
+          } else if (currentExecution?.status === "blocked") {
+            box.append(el("p", "uw-chat-options-hint",
+              "受限客户端暂不可用：" + (currentExecution.reason || "请检查本机 Claude")));
+            box.append(makeButton("重新检测 B3 入口", () => callbacks.inspectExecution(), "uw-chat-secondary"));
+          } else {
+            box.append(el("p", "uw-chat-options-hint", "正在确认本地受限执行入口；尚未授权任何副作用。"));
+          }
+
         } else box.append(el("p", "uw-chat-options-hint", handoff.error || "正在核对交接资格；设计已完成不代表代码已执行。"));
       }
     } else box.append(el("p", "", "正在检查设计草稿。生成后可在右侧查看模块关系。"));
@@ -495,7 +526,14 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
         designStatus === "reviewing" || designStatus === "draft" ? "waiting_human" :
           nativeDraft.snapshot && ["accepted", "running"].includes(nativeDraft.snapshot.status) ? "running" :
             nativeDraft.snapshot?.status === "completed" ? "waiting_human" : "planned" },
-      { id: "execution", title: "交接与执行", summary: handoff.snapshot?.status === "prepared" ? "B3 已封存；尚无真实 Run" : "B3 设计交接 / B4 真实 Run", status: handoff.snapshot?.status === "prepared" ? "partial" : "planned" },
+      { id: "execution", title: "交接与执行",
+        summary: execution.snapshot?.nativeSessionId
+          ? "B3 原生任务 " + execution.snapshot.status + " · 正式 Run 待验"
+          : handoff.snapshot?.status === "prepared" ? "交接已封存 · B3 权限待确认" : "先批准交接，再授权 B3",
+        status: ["running", "waiting_input"].includes(execution.snapshot?.status) ? "running"
+          : execution.snapshot?.status === "ready_for_review" ? "partial"
+            : handoff.snapshot?.status === "prepared" ? "waiting_human" : "planned" },
+
       { id: "acceptance", title: "最终验收", summary: "可复核成果与 B4 交付", status: "planned" },
     ];
   };

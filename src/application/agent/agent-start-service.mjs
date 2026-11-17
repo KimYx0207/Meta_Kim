@@ -839,5 +839,7 @@ export function createAgentStartService({
   }
 
   return Object.freeze({ getHosts, getProfessionalDirectory, getNativeDirectory,
-    start, inspect, startDesignDraft, inspectDesignDraft, close });
+    start, inspect, startDesignDraft, inspectDesignDraft, close,
+    // Host-only: the verified Kim_Service method is never sent to the UI.
+    getProfessionalReference: prepareProfessionalReference });
 }

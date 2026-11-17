@@ -452,6 +452,35 @@ export function createAgentWorkflowService({ projectRoot, agentStartService, pro
       plan: getRecord(idempotencyKey) });
   }
 
+  // Trusted application-only input for the separate, explicitly approved B3
+  // adapter. Never expose this through the browser's GET receipt: it contains
+  // the original user goal and can include private project information.
+  function getTrustedExecutionInput({ idempotencyKey } = {}) {
+    const basis = adoptedDesignBasis(idempotencyKey);
+    const record = basis && getRecord(idempotencyKey);
+    const goal = record?.originalGoal;
+    if (!basis || typeof goal !== "string" || !validateAgentWorkflowIntake({
+      goal, hostId: record.requestedHostId, idempotencyKey,
+    }) || agentWorkflowFingerprint(goal, record.requestedHostId) !== record.fingerprint) return null;
+    const handoff = inspectHandoff({ idempotencyKey });
+    if (handoff.status !== "prepared" || handoff.basis.requestId !== basis.requestId
+      || handoff.basis.planDigest !== basis.planDigest) return null;
+    return Object.freeze({
+      goal, requestedHostId: record.requestedHostId,
+      selectedHostId: record.selectedHostId ?? null,
+      planPreview: record.resultPreview, basis,
+      handoffDigest: handoff.handoffDigest,
+      envelope: handoff.envelope,
+    });
+  }
+
+  async function getTrustedProfessionalMethod({ idempotencyKey } = {}) {
+    const trusted = getTrustedExecutionInput({ idempotencyKey });
+    if (!trusted || typeof agentStartService.getProfessionalReference !== "function") return null;
+    return agentStartService.getProfessionalReference(trusted.goal);
+  }
+
+
   function prepareHandoff(input) {
     const basis = adoptedDesignBasis(input?.idempotencyKey);
     if (!basis) throw agentWorkflowConflict("agent_plan_not_adopted");
@@ -671,5 +700,7 @@ export function createAgentWorkflowService({ projectRoot, agentStartService, pro
   return Object.freeze({
     getHosts, start, inspect, recordDecision, inspectDesign, recordDesign,
     inspectDesignDraft, startDesignDraft, inspectHandoff, prepareHandoff, close,
+    getTrustedExecutionInput, getTrustedProfessionalMethod,
+
   });
 }
