@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { translateAgentUi } from "../../src/presentation/live/live-agent-copy.mjs";
@@ -10,6 +10,9 @@ import { createPrdKnowledgeGraph } from "../../src/presentation/live/live-prd-kn
 import { LIVE_WORKSPACE_MESSAGES } from "../../src/presentation/live/live-workspace-copy.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+// Facts are named after the real checkout directory, which is not always
+// "Meta_Kim" (for example /workspace in containers).
+const checkoutName = path.basename(realpathSync(repoRoot));
 
 test("4-locale Agent UI copy translates chrome across en/ja/ko while leaving unknown user text intact", () => {
   for (const lang of ["en", "ja", "ko"]) {
@@ -101,7 +104,7 @@ test("PRD knowledge graph exposes zoom controls, reset, maximize toggle, and dra
   assert.ok(nodeGroup.listeners.has("pointermove"));
 });
 
-test("standalone Tauri v2 + Rust desktop client enforces release hardening, loopback guard, and tray persistence", () => {
+test("Tauri v2 + Rust desktop shell enforces release hardening, loopback guard, tray persistence and single-connection ownership", () => {
   const cargoToml = readFileSync(path.join(repoRoot, "desktop/src-tauri/Cargo.toml"), "utf8");
   assert.match(cargoToml, /strip\s*=\s*true/);
   assert.match(cargoToml, /lto\s*=\s*true/);
@@ -115,6 +118,20 @@ test("standalone Tauri v2 + Rust desktop client enforces release hardening, loop
   assert.match(mainRs, /tauri_plugin_single_instance/);
   assert.match(mainRs, /TrayIconBuilder/);
   assert.match(mainRs, /RELEASE_SURFACE_GUARD_JS/);
+  // Reconnect/switch: only the newest connect generation may own the child or show errors.
+  assert.match(mainRs, /generation: AtomicU64/);
+  assert.match(mainRs, /fn show_boot_error_if_current\(/);
+  assert.doesNotMatch(
+    mainRs.split("fn spawn_and_connect")[1].split("const RELEASE_SURFACE_GUARD_JS")[0],
+    /\bshow_boot_error\(/,
+    "spawn_and_connect must only report errors through the generation guard",
+  );
+  // Version and Node requirement come from the root package.json.
+  assert.match(mainRs, /env!\("META_KIM_NODE_ENGINE"\)/);
+  assert.doesNotMatch(mainRs, /Node\.js >= 20/);
+  const tauriConf = JSON.parse(readFileSync(path.join(repoRoot, "desktop/src-tauri/tauri.conf.json"), "utf8"));
+  assert.equal(tauriConf.version, "../../package.json");
+  assert.match(cargoToml, /rust-version = "1\.85"/);
 });
 
 test("compact single-column sidebar CSS, duplicate topbar session guard, and single-project /api/projects catalog work end-to-end", async (t) => {
@@ -189,7 +206,7 @@ test("repository facts, bidirectional agent session discovery, top flow ribbon, 
 
   const facts = inspectRepositoryFacts({ projectRoot: repoRoot, startupProjectRoot: repoRoot });
   assert.equal(facts.schemaVersion, AGENT_REPOSITORY_FACTS_SCHEMA);
-  assert.equal(facts.projectName, "Meta_Kim");
+  assert.equal(facts.projectName, checkoutName);
   assert.equal(facts.isExecutionBoundRepo, true);
   assert.equal(facts.hasGit, true);
   assert.ok(facts.branch, "Git branch must be measured");
@@ -197,7 +214,7 @@ test("repository facts, bidirectional agent session discovery, top flow ribbon, 
 
   const bindings = await discoverBidirectionalAgentSessions({ projectRoot: repoRoot, startupProjectRoot: repoRoot });
   assert.equal(bindings.schemaVersion, AGENT_BINDINGS_SCHEMA);
-  assert.equal(bindings.projectName, "Meta_Kim");
+  assert.equal(bindings.projectName, checkoutName);
   assert.equal(bindings.bidirectionalModes.forwardCallFromApp, true);
   assert.equal(bindings.bidirectionalModes.reverseAttachFromExternalAgent, true);
   assert.ok(Array.isArray(bindings.enrolledRuntimes));
