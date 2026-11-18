@@ -1241,21 +1241,41 @@ export function createLiveHubProjectCatalog(options = {}) {
   const selectionPolicy = options.selectionPolicy || loadLiveDefaultSelectionPolicy();
   const scanPolicy = options.scanPolicy || loadLiveCatalogScanPolicy();
 
+  const seedProjectRoot = typeof options.seedProjectRoot === "string" && path.isAbsolute(options.seedProjectRoot)
+    ? path.resolve(options.seedProjectRoot)
+    : null;
+
   const validatedProjects = async () => {
-    let entries;
+    let entries = [];
     try {
       // The shared registry helper also supports writers and initializes its
       // database when missing. Live is a read-only observer, so avoid invoking
       // that default helper until its database already exists.
       if (listJoinedProjects === listJoinedProjectRegistryEntries) {
         const { projectRegistryPath } = getProjectRegistryPaths({ homeDir });
-        if (!(await pathInfo(projectRegistryPath))?.isFile()) return [];
+        if ((await pathInfo(projectRegistryPath))?.isFile()) {
+          entries = await listJoinedProjects({ homeDir });
+        }
+      } else {
+        entries = await listJoinedProjects({ homeDir });
       }
-      entries = await listJoinedProjects({ homeDir });
     } catch {
-      return [];
+      entries = [];
     }
-    if (!Array.isArray(entries)) return [];
+    if (!Array.isArray(entries)) entries = [];
+    if (seedProjectRoot) {
+      const seedRef = buildProjectRef({ repoPath: seedProjectRoot });
+      if (!entries.some((entry) => entry?.projectRef === seedRef)) {
+        entries = [
+          {
+            projectRef: seedRef,
+            repoRoot: seedProjectRoot,
+            displayName: path.basename(seedProjectRoot) || "Meta_Kim",
+          },
+          ...entries,
+        ];
+      }
+    }
     const projects = [];
     for (const entry of entries.slice(0, maxProjects)) {
       const project = await validateProjectEntry(entry);

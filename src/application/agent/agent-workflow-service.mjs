@@ -697,10 +697,20 @@ export function createAgentWorkflowService({ projectRoot, agentStartService, pro
     closed = true;
   }
 
+  const getProfessionalDirectory = (...args) => typeof agentStartService.getProfessionalDirectory === "function"
+    ? agentStartService.getProfessionalDirectory(...args)
+    : Promise.resolve({ status: "not_configured", agents: [] });
+  const getNativeDirectory = (...args) => typeof agentStartService.getNativeDirectory === "function"
+    ? agentStartService.getNativeDirectory(...args)
+    : Promise.resolve({ nativeHosts: [], nativeCapabilities: [] });
+  const getArchitecturePrd = (...args) => typeof agentStartService.getArchitecturePrd === "function"
+    ? agentStartService.getArchitecturePrd(...args)
+    : Promise.resolve(null);
+
   return Object.freeze({
-    getHosts, start, inspect, recordDecision, inspectDesign, recordDesign,
+    getHosts, getProfessionalDirectory, getNativeDirectory, getArchitecturePrd,
+    start, inspect, recordDecision, inspectDesign, recordDesign,
     inspectDesignDraft, startDesignDraft, inspectHandoff, prepareHandoff, close,
     getTrustedExecutionInput, getTrustedProfessionalMethod,
-
   });
 }

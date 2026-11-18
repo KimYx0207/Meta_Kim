@@ -116,3 +116,51 @@ test("standalone Tauri v2 + Rust desktop client enforces release hardening, loop
   assert.match(mainRs, /TrayIconBuilder/);
   assert.match(mainRs, /RELEASE_SURFACE_GUARD_JS/);
 });
+
+test("compact single-column sidebar CSS, duplicate topbar session guard, and single-project /api/projects catalog work end-to-end", async (t) => {
+  const { LIVE_WORKSPACE_CSS } = await import("../../src/presentation/live/live-workspace-styles.mjs");
+  const { translateLiveUiCopy } = await import("../../src/presentation/live/live-ui-copy.mjs");
+  const { createLiveControlRoomServer } = await import("../../src/infrastructure/live/live-control-room-server.mjs");
+
+  assert.match(LIVE_WORKSPACE_CSS, /--uw-nav-width:\s*176px/);
+  assert.match(LIVE_WORKSPACE_CSS, /\.uw-agent-inventory-quicknav\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+  assert.match(LIVE_WORKSPACE_CSS, /\[data-unified-workspace="true"\]:not\(\[data-nav-collapsed="true"\]\)\s+\.topbar-actions\s*>\s*\[data-live-open-sessions\]\s*\{\s*display:\s*none;\s*\}/);
+  assert.match(LIVE_WORKSPACE_CSS, /\[data-work-view="repository"\]\s+\.main\s*>\s*\.run-context/);
+
+  assert.equal(translateLiveUiCopy("Registered project", "ja"), "登録済みプロジェクト");
+  assert.equal(translateLiveUiCopy("Registered project", "ko"), "등록된 프로젝트");
+
+  const controller = createLiveControlRoomServer({
+    projectRoot: repoRoot,
+    port: 0,
+    globalHub: false,
+    enableProjectCatalog: true,
+    workspaceEnabled: true,
+  });
+  t.after(() => controller.close());
+  const address = await controller.start();
+  const res = await fetch(`${address.url}/api/projects`);
+  assert.equal(res.status, 200);
+  const catalog = await res.json();
+  assert.ok(Array.isArray(catalog.projects) && catalog.projects.length >= 1, "bound project must appear in /api/projects");
+  assert.ok(catalog.projects.some((p) => p.displayName === "Meta_Kim" || p.projectId === catalog.selected.projectId));
+});
+
+test("project architecture PRD baseline extracts Level-1 system framework and Level-2 acyclic module organization without leaking host paths", async () => {
+  const { discoverProjectArchitecturePrd, PROJECT_ARCHITECTURE_PRD_SCHEMA } = await import("../../src/application/agent/project-architecture-prd-service.mjs");
+  const prd = discoverProjectArchitecturePrd({ projectRoot: repoRoot });
+  assert.ok(prd, "should extract architecture PRD for Meta_Kim");
+  assert.equal(prd.schemaVersion, PROJECT_ARCHITECTURE_PRD_SCHEMA);
+  assert.equal(prd.recordOrigin, "repository_architecture_baseline");
+  assert.equal(prd.approvalClaimed, false);
+  assert.equal(prd.dagValid, true, "measured cross-module dependencies must form a valid acyclic DAG");
+  assert.ok(prd.system.title.includes("Meta_Kim"));
+  assert.ok(Array.isArray(prd.system.layers) && prd.system.layers.length >= 4);
+  assert.ok(prd.modules.length >= 8, `expected >= 8 subsystems, got ${prd.modules.length}`);
+  const serialized = JSON.stringify(prd);
+  assert.doesNotMatch(serialized, /[A-Za-z]:\\\\/u, "must never leak raw Windows absolute paths");
+  const presentation = prd.modules.find((m) => m.id === "presentation-workspace");
+  assert.ok(presentation, "presentation-workspace subsystem must be discovered");
+  assert.ok(presentation.dependencies.includes("app-live-projection"),
+    "presentation layer must reflect its real import dependency on app-live-projection");
+});

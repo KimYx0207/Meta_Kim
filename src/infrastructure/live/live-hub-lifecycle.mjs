@@ -150,6 +150,7 @@ export const LIVE_HUB_RUNTIME_IDENTITY_PATHS = Object.freeze([
   "src/presentation/live/live-ui-copy.ja.mjs",
   "src/presentation/live/live-ui-copy.ko.mjs",
   "src/presentation/live/live-workspace-client.mjs",
+  "src/presentation/live/live-agent-copy.mjs",
   "src/presentation/live/live-agent-desktop.mjs",
   "src/presentation/live/live-prd-knowledge-graph.mjs",
   "src/presentation/live/live-workspace-copy.mjs",

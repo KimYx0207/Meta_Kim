@@ -174,9 +174,15 @@ export function buildLivePrdGraph(design, { focusId = null, depth = 2, limit = 4
   for (const id of ordered) {
     if (!visibleIds.has(id)) continue;
     const row = modules.get(id);
-    nodes.push({ id: moduleKey(id), sourceId: id, title: label(row.title, id), status: row.status ?? null,
+    const nodeRecord = { id: moduleKey(id), sourceId: id, title: label(row.title, id), status: row.status ?? null,
       summary: label(row.summary, label(row.purpose, "")), kind: "module",
-      depth: selectedModuleId === null ? 1 : relative.get(id) });
+      depth: selectedModuleId === null ? 1 : relative.get(id) };
+    if (present(row.layer)) nodeRecord.layer = row.layer.trim();
+    if (present(row.layerShort)) nodeRecord.layerShort = row.layerShort.trim();
+    if (Number.isInteger(row.layerRank)) nodeRecord.layerRank = row.layerRank;
+    if (present(row.directory)) nodeRecord.directory = row.directory.trim();
+    if (Number.isInteger(row.fileCount)) nodeRecord.fileCount = row.fileCount;
+    nodes.push(nodeRecord);
     if (selectedModuleId === null && architecture) edges.push({ from: architectureKey(architecture.id), to: moduleKey(id), type: "containment" });
   }
   for (const dependentId of ordered) {

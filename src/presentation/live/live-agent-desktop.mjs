@@ -42,6 +42,7 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
 
   let mode = "flow";
   let knowledgeLayer = "system";
+  let prdSourcePref = "auto";
   let knowledgeDepth = 2;
   let knowledgeLimit = 40;
   let selection = null;
@@ -55,11 +56,30 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
   let lastCanvasSignature = "";
   let lastInventorySignature = "";
   let inventoryQuery = "";
+  let inventoryFlyoutOpen = false;
+  let activeFlyoutSection = "all";
+  let selectedNativeCapId = null;
   let resetInventoryScroll = false;
   const inventoryExpanded = new Set();
   let nodeCount = 0;
   const dockedRunSlot = find("docked-run-slot");
   const liveFooter = find("live-footer");
+
+  doc.addEventListener?.("keydown", event => {
+    if (event?.key === "Escape" && inventoryFlyoutOpen) {
+      inventoryFlyoutOpen = false;
+      lastInventorySignature = "";
+      renderInventory();
+    }
+  });
+  doc.addEventListener?.("pointerdown", event => {
+    if (!inventoryFlyoutOpen || typeof event?.target?.closest !== "function") return;
+    if (!event.target.closest("[data-uw-agent-inventory]")) {
+      inventoryFlyoutOpen = false;
+      lastInventorySignature = "";
+      renderInventory();
+    }
+  });
 
   const el = (tag, className = "", value = null) => {
     const node = doc.createElement(tag);
@@ -165,6 +185,14 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
     ? state.tasks.filter(task => task?.source && ["agent", "worker"].includes(task.source.kind)
       && (!task.source.runId || task.source.runId === state.selection?.runId))
     : [];
+  const isDispatchedRunTask = task => {
+    if (!task || state.snapshot?.run?.executionEvidenceState === "structural_planning_only") return false;
+    const record = task.source || {};
+    if (record.declaredNotStarted === true || record.executionState === "not_executed") return false;
+    if (["not_started", "planned"].includes(task.status)
+      && !record.executionObserved && !record.ownerReport && !record.nativeReturnEvidence) return false;
+    return true;
+  };
   const taskOwner = task => {
     const owner = clean(task?.source?.ownerAgent || task?.source?.agent || task?.owner, 90);
     return owner && !["unavailable", "unknown", "worker"].includes(owner.toLowerCase()) ? owner : "未确认执行者";
@@ -288,14 +316,15 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
   const strategies = () => {
     return callbacks.parseStrategies?.(agent.pending?.resultPreview || "") || null;
   };
-  const designSource = () => {
+  const taskDesignSource = () => {
     if (design.snapshot?.system && Array.isArray(design.snapshot.modules)) {
       const saved = design.snapshot;
       return {
         kind: "agent_saved_design",
         version: saved.version,
+        raw: saved,
         design: {
-          architecture: { id: "agent-system", title: saved.system.title || "系统设计",
+          architecture: { id: "agent-system", title: saved.system.title || "系统整体框架",
             status: saved.system.approval?.state === "approved" ? "completed" : "waiting_human",
             summary: saved.system.goal, moduleIds: saved.modules.map(item => item.id) },
           modules: saved.modules.map(item => ({ id: item.id, title: item.title, summary: item.objective,
@@ -309,6 +338,7 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
       return {
         kind: "agent_unverified_draft",
         version: null,
+        raw: draft,
         design: {
           architecture: { id: "agent-system", title: draft.system.title, status: "unproven",
             summary: draft.system.goal, moduleIds: draft.modules.map(item => item.id) },
@@ -317,8 +347,47 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
         },
       };
     }
-    if (isCurrentRun() && state.workspace?.design?.architecture) return { kind: "governed_run", version: state.workspace.revision, design: state.workspace.design };
+    if (isCurrentRun() && state.workspace?.design?.architecture) {
+      return { kind: "governed_run", version: state.workspace.revision, raw: null, design: state.workspace.design };
+    }
     return null;
+  };
+  const baselineDesignSource = () => {
+    const base = state.projectArchitecturePrd;
+    if (!base?.system || !Array.isArray(base.modules) || !base.modules.length) return null;
+    return {
+      kind: "project_architecture_baseline",
+      version: null,
+      raw: base,
+      design: {
+        architecture: {
+          id: base.system.id || "system-architecture",
+          title: base.system.title || "系统整体框架",
+          status: "baseline",
+          summary: base.system.goal || "",
+          moduleIds: base.modules.map(item => item.id),
+        },
+        modules: base.modules.map(item => ({
+          id: item.id,
+          title: item.title,
+          summary: item.objective,
+          status: "baseline",
+          layer: item.layer,
+          layerShort: item.layerShort,
+          layerRank: item.layerRank,
+          directory: item.directory,
+          fileCount: item.fileCount,
+          dependsOn: item.dependencies || [],
+        })),
+      },
+    };
+  };
+  const designSource = () => {
+    const taskSrc = taskDesignSource();
+    const baseSrc = baselineDesignSource();
+    if (prdSourcePref === "baseline" && baseSrc) return baseSrc;
+    if (prdSourcePref === "task" && taskSrc) return taskSrc;
+    return taskSrc || baseSrc;
   };
   const conversationSignature = () => JSON.stringify({
     goal: agent.pending?.goal, agentStatus: agent.status,
@@ -1112,139 +1181,297 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
     }
     return shell;
   }
+  function appendPrdSpecSection(host, titleText, itemsOrText) {
+    if (!itemsOrText || (Array.isArray(itemsOrText) && !itemsOrText.length)) return;
+    const block = el("div", "uw-prd-spec-field");
+    block.append(el("strong", "", titleText));
+    if (Array.isArray(itemsOrText)) {
+      const ul = el("ul", "uw-prd-spec-list");
+      for (const row of itemsOrText) {
+        const textVal = clean(row, 420);
+        if (textVal) ul.append(el("li", "", textVal));
+      }
+      if (!ul.children.length) return;
+      block.append(ul);
+    } else {
+      block.append(el("p", "", clean(itemsOrText, 1600)));
+    }
+    host.append(block);
+  }
+  function renderSystemSpecCard(blueprint, { compact = false, onSelectModule = null } = {}) {
+    const rawSystem = blueprint.raw?.system || {
+      title: blueprint.design?.architecture?.title || "系统整体框架",
+      goal: blueprint.design?.architecture?.summary || "",
+      architecture: "",
+      techStack: "",
+      boundaries: [],
+      acceptance: [],
+      layers: [],
+    };
+    const card = el("section", "uw-prd-spec-card uw-prd-spec-level1");
+    const head = el("div", "uw-prd-spec-card-head");
+    const titleGroup = el("div", "uw-prd-spec-title-group");
+    titleGroup.append(
+      el("span", "uw-prd-level-badge", "一级设计 PRD · 系统整体框架"),
+      el("h4", "", clean(rawSystem.title || "系统整体框架", 160)),
+    );
+    const modCount = Array.isArray(blueprint.design?.modules) ? blueprint.design.modules.length : 0;
+    head.append(titleGroup, el("span", "uw-prd-spec-meta", `${modCount} 个二级模块`));
+    card.append(head);
+    const grid = el("div", "uw-prd-spec-grid");
+    appendPrdSpecSection(grid, "系统定位与目标", rawSystem.goal);
+    if (rawSystem.techStack) appendPrdSpecSection(grid, "技术栈与运行底座", rawSystem.techStack);
+    if (Array.isArray(rawSystem.layers) && rawSystem.layers.length) {
+      const layerBox = el("div", "uw-prd-spec-field uw-prd-spec-wide");
+      layerBox.append(el("strong", "", "系统整体分层框架（自底向上单向治理与依赖流）"));
+      const layerStack = el("div", "uw-prd-layer-stack");
+      for (const [idx, layer] of rawSystem.layers.entries()) {
+        const row = el("div", "uw-prd-layer-row");
+        row.append(el("span", "uw-prd-layer-tag", `L${idx + 1} · ${clean(layer.label, 60)}`));
+        const chips = el("div", "uw-prd-layer-chips");
+        for (const [mIdx, modId] of (layer.moduleIds || []).entries()) {
+          const modTitle = layer.moduleTitles?.[mIdx] || modId;
+          if (typeof onSelectModule === "function") {
+            const chip = makeButton(clean(modTitle, 60), () => onSelectModule(modId, modTitle), "uw-prd-module-chip");
+            chips.append(chip);
+          } else {
+            chips.append(el("span", "uw-prd-module-chip", clean(modTitle, 60)));
+          }
+        }
+        row.append(chips);
+        layerStack.append(row);
+      }
+      layerBox.append(layerStack);
+      grid.append(layerBox);
+    } else if (rawSystem.architecture) {
+      appendPrdSpecSection(grid, "整体分层架构", rawSystem.architecture);
+    }
+    if (!compact || !rawSystem.layers?.length) {
+      appendPrdSpecSection(grid, "全局治理与架构边界", rawSystem.boundaries);
+    }
+    appendPrdSpecSection(grid, "系统级验收标准", rawSystem.acceptance);
+    card.append(grid);
+    if (savedDesign() && blueprint.kind === "agent_saved_design") {
+      for (const note of designNotes("system", "system")) {
+        card.append(el("p", "uw-live-node-note", `待修改 · ${note.feedback}`));
+      }
+    }
+    return card;
+  }
+  function renderModuleSpecCard(blueprint, moduleId, { onSelectModule = null, onFocusGraph = null } = {}) {
+    const rawModules = Array.isArray(blueprint.raw?.modules) ? blueprint.raw.modules : [];
+    const designModules = Array.isArray(blueprint.design?.modules) ? blueprint.design.modules : [];
+    const rawMod = rawModules.find(item => item.id === moduleId);
+    const projMod = designModules.find(item => item.id === moduleId);
+    if (!rawMod && !projMod) return null;
+    const titleText = clean(rawMod?.title || projMod?.title || moduleId, 140);
+    const deps = rawMod?.dependencies || projMod?.dependsOn || [];
+    const dependents = designModules.filter(item => (item.dependsOn || []).includes(moduleId));
+    const card = el("section", "uw-prd-spec-card uw-prd-spec-level2");
+    const head = el("div", "uw-prd-spec-card-head");
+    const titleGroup = el("div", "uw-prd-spec-title-group");
+    const badgeParts = ["二级设计 PRD · 模块组织"];
+    if (rawMod?.layer) badgeParts.push(clean(rawMod.layer, 50));
+    titleGroup.append(el("span", "uw-prd-level-badge", badgeParts.join(" · ")), el("h4", "", titleText));
+    const headActions = el("div", "uw-prd-spec-head-actions");
+    if (rawMod?.directory) {
+      const dirMeta = Number.isInteger(rawMod.fileCount) ? `${rawMod.directory}（${rawMod.fileCount} 文件）` : rawMod.directory;
+      headActions.append(el("span", "uw-prd-spec-meta", dirMeta));
+    }
+    if (typeof onFocusGraph === "function") {
+      headActions.append(makeButton("在图谱定位", () => onFocusGraph(moduleId, titleText), "uw-agent-knowledge-back"));
+    }
+    head.append(titleGroup, headActions);
+    card.append(head);
+    const grid = el("div", "uw-prd-spec-grid");
+    appendPrdSpecSection(grid, "模块职责与设计目标", rawMod?.objective || projMod?.summary);
+    if (rawMod?.entrypoints?.length) appendPrdSpecSection(grid, "核心组织入口", rawMod.entrypoints);
+    appendPrdSpecSection(grid, "输入契约（Input Contract）", rawMod?.inputContract);
+    appendPrdSpecSection(grid, "输出契约（Output Contract）", rawMod?.outputContract);
+    const relBlock = el("div", "uw-prd-spec-field");
+    relBlock.append(el("strong", "", "上下游模块依赖组织（DAG）"));
+    const relWrap = el("div", "uw-prd-layer-chips");
+    if (!deps.length && !dependents.length) {
+      relWrap.append(el("span", "uw-prd-spec-meta", "独立基础模块 · 无前置依赖"));
+    } else {
+      for (const depId of deps) {
+        const depTitle = designModules.find(m => m.id === depId)?.title || depId;
+        const label = `前置：${clean(depTitle, 48)}`;
+        relWrap.append(typeof onSelectModule === "function"
+          ? makeButton(label, () => onSelectModule(depId, depTitle), "uw-prd-module-chip")
+          : el("span", "uw-prd-module-chip", label));
+      }
+      for (const child of dependents) {
+        const label = `支撑下游：${clean(child.title || child.id, 48)}`;
+        relWrap.append(typeof onSelectModule === "function"
+          ? makeButton(label, () => onSelectModule(child.id, child.title || child.id), "uw-prd-module-chip uw-prd-chip-downstream")
+          : el("span", "uw-prd-module-chip uw-prd-chip-downstream", label));
+      }
+    }
+    relBlock.append(relWrap);
+    grid.append(relBlock);
+    appendPrdSpecSection(grid, "架构边界与禁止项", rawMod?.boundaries);
+    appendPrdSpecSection(grid, "模块验收标准", rawMod?.acceptance);
+    card.append(grid);
+    if (savedDesign() && blueprint.kind === "agent_saved_design") {
+      for (const note of designNotes("module", moduleId)) {
+        card.append(el("p", "uw-live-node-note", `待修改 · ${note.feedback}`));
+      }
+      card.append(el("p", "uw-prd-spec-hint", "已圈选此二级模块：可在左侧输入框直接输入修改意见，或用「验收改为：…」修订字段。"));
+    }
+    return card;
+  }
   function renderKnowledge() {
     const shell = el("div", "uw-agent-knowledge");
-    const layers = [["system", "系统与模块"], ["strategies", "方案与依据"], ["hosts", "客户端能力"]];
+    const hasTaskDesign = Boolean(taskDesignSource());
+    const hasBaselineDesign = Boolean(baselineDesignSource());
+    const parsedStrategies = strategies();
+    if (!["system", "spec", "strategies"].includes(knowledgeLayer)
+      || (knowledgeLayer === "strategies" && !parsedStrategies)) {
+      knowledgeLayer = "system";
+    }
+    const toolbar = el("div", "uw-agent-knowledge-toolbar");
+    const layers = [["system", "一二级架构图"], ["spec", "两级 PRD 规格书"]];
+    if (parsedStrategies) layers.push(["strategies", "B1 候选方案对照"]);
     const chooser = el("div", "uw-agent-knowledge-layers");
-    chooser.setAttribute("role", "group"); chooser.setAttribute("aria-label", "选择知识关系类型");
+    chooser.setAttribute("role", "group"); chooser.setAttribute("aria-label", "选择设计 PRD 视图");
     for (const [id, label] of layers) {
-      const button = makeButton(label, () => { knowledgeLayer = id; selection = null; render(); }, "uw-agent-knowledge-layer");
+      const button = makeButton(label, () => { knowledgeLayer = id; lastCanvasSignature = ""; render(); }, "uw-agent-knowledge-layer");
       button.setAttribute("aria-pressed", String(knowledgeLayer === id));
       chooser.append(button);
     }
-    shell.append(chooser);
-    let blueprint = designSource();
-    if (knowledgeLayer === "strategies") {
-      const parsed = strategies();
-      blueprint = parsed ? { kind: "native_plan_unverified", design: {
-        architecture: { id: "research-options", title: "研究候选", status: "unproven", summary: parsed.summary,
-          moduleIds: parsed.strategies.map(item => `option-${item.id.toLowerCase()}`) },
-        modules: parsed.strategies.map(item => ({ id: `option-${item.id.toLowerCase()}`, title: `${item.id} · ${item.title}`,
-          summary: `${item.evidenceSummary} · 风险：${item.risks}`, status: "unproven", dependsOn: [] })),
-      } } : null;
-    } else if (knowledgeLayer === "hosts") {
-      const catalogHosts = Array.isArray(state.capabilityCatalog?.nativeHosts)
-        ? state.capabilityCatalog.nativeHosts : [];
-      const probes = new Map((agent.hosts || []).filter(host => host?.id).map(host => [host.id, host]));
-      const hosts = new Map();
-      for (const host of [...catalogHosts, ...(agent.hosts || [])]) {
-        if (!host?.id || !host?.label) continue;
-        const existing = hosts.get(host.id);
-        hosts.set(host.id, existing ? { ...existing, ...host } : host);
+    toolbar.append(chooser);
+    if (hasTaskDesign && hasBaselineDesign && knowledgeLayer !== "strategies") {
+      const currentBlueprint = designSource();
+      const srcGroup = el("div", "uw-agent-knowledge-layers");
+      srcGroup.setAttribute("role", "group"); srcGroup.setAttribute("aria-label", "切换 PRD 设计来源");
+      for (const [pref, label, active] of [
+        ["task", "本轮任务设计 PRD", currentBlueprint?.kind !== "project_architecture_baseline"],
+        ["baseline", "当前项目架构 PRD", currentBlueprint?.kind === "project_architecture_baseline"],
+      ]) {
+        const btn = makeButton(label, () => { prdSourcePref = pref; selection = null; lastCanvasSignature = ""; render(); }, "uw-agent-knowledge-layer");
+        btn.setAttribute("aria-pressed", String(active));
+        srcGroup.append(btn);
       }
-      const modules = [...hosts.values()].map(host => {
-        const probe = probes.get(host.id);
-        const detected = probe?.available === true || host.status === "detected";
-        return { id: `host:${host.id}`, title: host.label, status: "unproven", dependsOn: [],
-          summary: detected ? "本服务端检测到客户端 · 未证明真实调用"
-            : "兼容性登记或配置扫描 · 未证明已连接" };
-      });
-      const capabilities = Array.isArray(state.capabilityCatalog?.nativeCapabilities)
-        ? state.capabilityCatalog.nativeCapabilities : [];
-      const nativeKindLabels = { agent: "Agent", subagent_config: "Subagent", skill: "Skill",
-        mcp: "MCP", hook: "Hook", plugin: "Plugin", command: "Command" };
-      for (const item of capabilities) {
-        if (!hosts.has(item?.hostId) || !item.id || !nativeKindLabels[item.kind]) continue;
-        modules.push({ id: `config:${item.hostId}:${item.scope}:${item.kind}:${item.id}`,
-          title: `${nativeKindLabels[item.kind]} · ${item.label || item.id}`,
-          summary: `${item.scope === "project" ? "项目" : "用户"}配置登记 · 加载和调用均未核验`,
-          status: "unproven", dependsOn: [`host:${item.hostId}`] });
-      }
-      blueprint = hosts.size ? { kind: "host_detection_only", design: {
-        architecture: { id: "host-detection", title: "客户端与配置关系", status: "unproven",
-          summary: "仅展示登记和依赖关系，不代表已连接或执行",
-          moduleIds: modules.map(item => item.id) },
-        modules,
-      } } : null;
+      toolbar.append(srcGroup);
     }
+    shell.append(toolbar);
+
+    if (knowledgeLayer === "strategies" && parsedStrategies) {
+      nodeCount = parsedStrategies.strategies.length;
+      const stratWrap = el("section", "uw-prd-spec-card");
+      stratWrap.append(
+        el("div", "uw-live-view-kicker", "B1 候选方案对照矩阵 · 客户端研究回执（依据尚未独立核验）"),
+        el("p", "uw-prd-spec-summary", clean(parsedStrategies.summary, 600)),
+      );
+      const matrix = el("div", "uw-prd-strategy-grid");
+      for (const option of parsedStrategies.strategies) {
+        const card = el("article", "uw-prd-strategy-card");
+        const topRow = el("div", "uw-prd-spec-card-head");
+        topRow.append(el("strong", "", `方案 ${option.id} · ${clean(option.title, 90)}`));
+        if (parsedStrategies.recommendedStrategyId === option.id) {
+          topRow.append(el("span", "uw-prd-level-badge", "模型推荐 · 待人工拍板"));
+        }
+        card.append(topRow);
+        appendPrdSpecSection(card, "实施路径", option.approach);
+        appendPrdSpecSection(card, "关键取舍", option.tradeoffs);
+        appendPrdSpecSection(card, "潜在风险", option.risks);
+        appendPrdSpecSection(card, "参考依据（未经独立核验）", option.evidenceSummary);
+        matrix.append(card);
+      }
+      stratWrap.append(matrix);
+      shell.append(stratWrap);
+      return shell;
+    }
+
+    const blueprint = designSource();
     if (!blueprint) {
       nodeCount = 0;
       const empty = el("div", "uw-live-empty");
-      empty.append(el("span", "uw-live-empty-symbol", "◎"), el("h3", "", "等待真实关系记录"),
-        el("p", "", knowledgeLayer === "system" ? "原生草稿、两级 PRD 与模块依赖将出现在这里。"
-          : knowledgeLayer === "strategies" ? "需要符合结构化规则的原生研究回执才能绘制方案依据。"
-            : "检测到本地客户端后，展示真实能力及权限边界。"));
-      if (knowledgeLayer === "system") {
-        const actions = el("div", "uw-chat-action-group");
-        actions.append(
-          makeButton("查看客户端能力图谱", () => { knowledgeLayer = "hosts"; selection = null; lastCanvasSignature = ""; render(); }, "uw-chat-secondary"),
-          makeButton("打开完整运行图", () => activateMode("live-run"), "uw-chat-secondary"),
-        );
-        empty.append(actions);
-      }
+      empty.append(
+        el("span", "uw-live-empty-symbol", "◎"),
+        el("h3", "", "正在同步两级系统设计 PRD"),
+        el("p", "", "一级展示系统整体分层框架，二级展示系统模块职责、接口契约与依赖组织。可在左侧发起设计任务，或等待当前项目架构基线载入。"),
+      );
+      const actions = el("div", "uw-chat-action-group");
+      actions.append(makeButton("打开完整运行图", () => activateMode("live-run"), "uw-chat-secondary"));
+      empty.append(actions);
       shell.append(empty);
       return shell;
     }
-    const focusId = knowledgeLayer === "system" && selection?.kind === "module" ? selection.id.replace(/^module:/u, "")
-      : knowledgeLayer === "hosts" && selection?.layer === "hosts" && selection?.id !== "host-detection"
-        ? selection.id : null;
-    const graph = buildGraph(blueprint.design, { focusId, depth: knowledgeDepth, limit: knowledgeLimit });
-    nodeCount = graph.nodes.length;
-    const label = ({ governed_run: "正式 Run · 已核对身份", agent_saved_design: `人类设计记录 · v${blueprint.version}`,
-      agent_unverified_draft: "原生设计草稿 · 未批准", native_plan_unverified: "客户端候选方案 · 依据未独立核验",
-      host_detection_only: "客户端检测记录 · 不是执行回执" })[blueprint.kind] || "来源待核对";
+
+    const pickModule = (modId, modTitle) => {
+      const cleanId = String(modId || "").replace(/^module:/u, "");
+      selectDesktopAnnotationNode({ id: cleanId, title: modTitle || cleanId, kind: "module", layer: "system" });
+    };
+    const focusId = selection?.kind === "module" && ["knowledge", "system"].includes(selection?.layer)
+      ? selection.id.replace(/^module:/u, "")
+      : null;
+    const label = ({
+      governed_run: "正式 Run 两级设计 PRD · 已核对身份",
+      agent_saved_design: `本轮 B2 两级设计 PRD · v${blueprint.version}`,
+      agent_unverified_draft: "本轮 B2 原生设计草稿 · 未批准",
+      project_architecture_baseline: "当前项目两级设计 PRD · 源码实测架构基线（非 B2 审批记录）",
+    })[blueprint.kind] || "两级系统设计 PRD";
+
     const top = el("div", "uw-agent-knowledge-top");
     top.append(el("span", "uw-live-view-kicker", label));
-    if (focusId) top.append(makeButton("返回完整图谱", () => { selection = null; render(); }, "uw-agent-knowledge-back"));
+    if (focusId && knowledgeLayer === "system") {
+      top.append(makeButton("返回完整一二级架构图", () => { selection = null; lastCanvasSignature = ""; render(); }, "uw-agent-knowledge-back"));
+    }
     shell.append(top);
+
+    if (knowledgeLayer === "spec") {
+      nodeCount = (blueprint.design?.modules?.length || 0) + 1;
+      const specDoc = el("div", "uw-prd-full-spec");
+      specDoc.append(renderSystemSpecCard(blueprint, {
+        compact: false,
+        onSelectModule: (modId, modTitle) => { knowledgeLayer = "system"; pickModule(modId, modTitle); },
+      }));
+      const modulesHeading = el("div", "uw-prd-spec-section-heading");
+      modulesHeading.append(
+        el("span", "uw-prd-level-badge", "二级设计 PRD · 系统本身的设计组织"),
+        el("strong", "", `共 ${blueprint.design?.modules?.length || 0} 个子系统 / 模块规格`),
+      );
+      specDoc.append(modulesHeading);
+      for (const mod of blueprint.design?.modules || []) {
+        const modCard = renderModuleSpecCard(blueprint, mod.id, {
+          onSelectModule: (targetId, targetTitle) => {
+            knowledgeLayer = "system";
+            pickModule(targetId, targetTitle);
+          },
+          onFocusGraph: (targetId, targetTitle) => {
+            knowledgeLayer = "system";
+            pickModule(targetId, targetTitle);
+          },
+        });
+        if (modCard) specDoc.append(modCard);
+      }
+      shell.append(specDoc);
+      return shell;
+    }
+
+    const graph = buildGraph(blueprint.design, { focusId, depth: knowledgeDepth, limit: knowledgeLimit });
+    nodeCount = graph.nodes.length;
     shell.append(createGraph({ doc, graph, copy, focusId, depth: knowledgeDepth,
-      onSelect: node => selectDesktopAnnotationNode({ id: node.sourceId || node.id, title: node.title,
-        kind: knowledgeLayer === "system" ? node.kind : knowledgeLayer === "hosts"
-          ? node.sourceId?.startsWith("config:") ? "capability" : "host" : "strategy", layer: knowledgeLayer }),
+      onSelect: node => {
+        if (node.kind === "architecture") {
+          selectDesktopAnnotationNode({ id: node.sourceId || node.id, title: node.title, kind: "architecture", layer: "system" });
+        } else {
+          pickModule(node.sourceId || node.id, node.title);
+        }
+      },
       onDepthChange: value => { knowledgeDepth = value; lastCanvasSignature = ""; render(); },
       onExpand: () => { knowledgeLimit = Math.min(2000, knowledgeLimit + 40); lastCanvasSignature = ""; render(); } }));
-    if (selection?.layer === "knowledge" || selection?.layer === knowledgeLayer) {
-      const inspector = el("div", "uw-live-node-inspector");
-      inspector.append(el("div", "uw-chat-inline-heading", `圈选节点 · ${selection.title}`));
-      if (knowledgeLayer === "system" && savedDesign()) {
-        const record = selection.kind === "architecture" ? design.snapshot.system
-          : design.snapshot.modules.find(item => item.id === selection.id);
-        if (record) {
-          inspector.append(el("p", "", clean(record.goal || record.objective, 1300)));
-          for (const note of designNotes(selection.kind === "architecture" ? "system" : "module", selection.id)) {
-            inspector.append(el("p", "uw-live-node-note", `待修改 · ${note.feedback}`));
-          }
-          inspector.append(el("p", "", "在左侧同一个输入框提出返工意见；用「验收改为：…」等命令可直接修订。"));
-        }
-      } else if (knowledgeLayer === "strategies") {
-        const option = strategies()?.strategies?.find(item => `option-${item.id.toLowerCase()}` === selection.id);
-        if (option) {
-          inspector.append(el("p", "", `依据（未独立核验）：${option.evidenceSummary}`));
-          inspector.append(el("p", "", `限制与风险：${option.tradeoffs} · ${option.risks}`));
-        }
-      } else if (knowledgeLayer === "hosts" && selection.kind === "capability") {
-        const entry = (Array.isArray(state.capabilityCatalog?.nativeCapabilities)
-          ? state.capabilityCatalog.nativeCapabilities : []).find(item =>
-          `config:${item.hostId}:${item.scope}:${item.kind}:${item.id}` === selection.id);
-        if (entry) {
-          const detail = el("div", "uw-native-host-inspection");
-          const host = (state.capabilityCatalog?.nativeHosts || []).find(item => item.id === entry.hostId);
-          const label = nativeFamilies.find(item => item.kind === entry.kind)?.label || "能力";
-          const fields = [["宿主", host?.label || entry.hostId], ["类别", label],
-            ["配置范围", entry.scope === "project" ? "当前项目" : entry.scope === "global" ? "用户配置" : "来源待确认"],
-            ["配置来源", entry.source || "未提供"],
-            ["加载状态", "尚未从原生客户端确认"], ["调用证据", "当前目录记录未证明实际调用"]];
-          for (const [label, value] of fields) {
-            const row = el("div", "uw-native-host-inspection-row");
-            row.append(el("span", "", label), el("strong", "", clean(value, 160)));
-            detail.append(row);
-          }
-          inspector.append(detail);
-        }
-        inspector.append(el("p", "", "该信息为只读发现记录，点击并未启动客户端或调用工具。"));
-      } else inspector.append(el("p", "", "此视图为只读关系。选择不会启动或授权任何客户端。"));
-      shell.append(inspector);
+
+    const specInspector = el("div", "uw-prd-spec-inspector");
+    if (focusId) {
+      const modSpec = renderModuleSpecCard(blueprint, focusId, { onSelectModule: pickModule });
+      if (modSpec) specInspector.append(modSpec);
+    } else {
+      specInspector.append(renderSystemSpecCard(blueprint, { compact: true, onSelectModule: pickModule }));
     }
+    shell.append(specInspector);
     return shell;
   }
   function renderAgents() {
@@ -1305,13 +1532,18 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
   }
   function renderInventory() {
     if (!inventory) return;
-    const tasks = runTasks();
+    const allRunTasks = runTasks();
+    const tasks = allRunTasks.filter(isDispatchedRunTask);
+    const hasPlanningOnlyTasks = !tasks.length && allRunTasks.length > 0;
     const catalog = state.capabilityCatalog;
     const signature = JSON.stringify({ runId: isCurrentRun() ? state.selection?.runId : null,
+      planningOnly: state.snapshot?.run?.executionEvidenceState === "structural_planning_only",
       agentLoading: agent.loading === true, canWrite: state.canWrite !== false,
-      selectionId: selection?.id, inventoryQuery,
-      tasks: tasks.map(task => ({ id: task.id, owner: taskOwner(task), role: taskRole(task), title: task.title,
-        status: task.status, source: { summary: task.source.summary, task: task.source.task,
+      selectionId: selection?.id, inventoryQuery, inventoryFlyoutOpen, activeFlyoutSection, selectedNativeCapId,
+      tasks: allRunTasks.map(task => ({ id: task.id, owner: taskOwner(task), role: taskRole(task), title: task.title,
+        status: task.status, declaredNotStarted: task.source?.declaredNotStarted === true,
+        executionState: task.source?.executionState,
+        source: { summary: task.source.summary, task: task.source.task,
           ownerReport: task.source.ownerReport, nativeReturnEvidence: task.source.nativeReturnEvidence,
           statusReason: task.source.statusReason, parentId: task.source.parentId,
           nativeTaskCaption: task.source.nativeTaskCaption, capabilityTruth: task.source.capabilityTruth } })),
@@ -1326,19 +1558,41 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
     if (signature === lastInventorySignature) return;
     lastInventorySignature = signature;
     const previousScroll = inventory.scrollTop;
+    const isFlyoutVisible = Boolean(inventoryFlyoutOpen || normalizedInventoryQuery());
     const surface = el("div", "uw-agent-inventory-body");
+    surface.dataset.flyoutOpen = String(isFlyoutVisible);
     const title = el("div", "uw-agent-inventory-title");
-    title.append(el("strong", "", "能力与宿主"), el("span", "", tasks.length ? `${tasks.length} 个执行任务` : "等待执行"));
+    const toggleFlyoutBtn = makeButton(isFlyoutVisible ? "收起 ×" : "展开 ›", () => {
+      inventoryFlyoutOpen = !isFlyoutVisible;
+      if (inventoryFlyoutOpen && (!activeFlyoutSection || activeFlyoutSection === "all")) {
+        activeFlyoutSection = "native-hosts";
+        inventoryExpanded.add("native-hosts");
+      }
+      if (!inventoryFlyoutOpen) {
+        inventoryQuery = "";
+        selectedNativeCapId = null;
+      }
+      lastInventorySignature = "";
+      renderInventory();
+    }, "uw-inventory-flyout-trigger");
+    toggleFlyoutBtn.title = isFlyoutVisible ? "收起侧边能力大面板" : "在侧边展开宽幅能力与宿主大面板";
+    title.append(el("strong", "", "能力与宿主"), toggleFlyoutBtn);
     surface.append(title);
     const search = el("input", "uw-agent-inventory-search");
     search.type = "search";
     search.value = inventoryQuery;
-    search.placeholder = "搜索能力、Agent、宿主…";
+    search.placeholder = "搜索能力 / Agent";
     search.setAttribute("aria-label", "搜索 Agent、客户端与能力");
     search.setAttribute("autocomplete", "off");
     search.addEventListener("input", () => {
       const cursor = typeof search.selectionStart === "number" ? search.selectionStart : null;
       inventoryQuery = clean(search.value, 100);
+      if (inventoryQuery) {
+        inventoryFlyoutOpen = true;
+        activeFlyoutSection = "all";
+      } else if (activeFlyoutSection === "all") {
+        inventoryFlyoutOpen = false;
+      }
       resetInventoryScroll = true;
       lastInventorySignature = "";
       renderInventory();
@@ -1371,14 +1625,40 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
       || nativeCapabilities.some(item => item.hostId === host.id)
       || !["not_probed", "unprobed", undefined, null].includes(host.status));
     const referenceHosts = [...nativeHosts.values()].filter(host => !discoveredHosts.includes(host));
-    // Keep the capability families discoverable without making a 35-Hook or
-    // 25-Skill directory occupy the entire sidebar by default. These are
-    // navigation shortcuts, not second copies of the capability records.
+
+    const openFlyoutCategory = (id) => {
+      const wasSearching = Boolean(inventoryQuery);
+      const alreadySameOpen = !wasSearching && inventoryFlyoutOpen && activeFlyoutSection === id && inventoryExpanded.has(id);
+      if (wasSearching) inventoryQuery = "";
+      const willOpen = !alreadySameOpen;
+      for (const existingSec of sectionsHost.children || []) {
+        if (existingSec?.dataset?.section) existingSec.open = willOpen && existingSec.dataset.section === id;
+      }
+      if (!willOpen) {
+        inventoryFlyoutOpen = false;
+        inventoryExpanded.delete(id);
+        inventoryExpanded.add(`${id}:closed`);
+      } else {
+        inventoryFlyoutOpen = true;
+        activeFlyoutSection = id;
+        for (const key of [...inventoryExpanded]) {
+          if (!key.startsWith("native-host:") && !key.endsWith(":closed")) inventoryExpanded.delete(key);
+        }
+        if (id !== "all") {
+          inventoryExpanded.add(id);
+          inventoryExpanded.delete(`${id}:closed`);
+        }
+      }
+      resetInventoryScroll = true;
+      lastInventorySignature = "";
+      renderInventory();
+    };
+
     const quicknav = el("div", "uw-agent-inventory-quicknav");
     quicknav.setAttribute("aria-label", "快速查看 Agent 与能力");
     const quickGroups = [
-      ["run", "结论", new Set(tasks.map(task => taskOwner(task))).size],
-      ["subagents", "子任务", tasks.filter(task => task.source?.isMain !== true
+      ["run", "本轮活跃", new Set(tasks.map(task => taskOwner(task))).size],
+      ["subagents", "Subagents", tasks.filter(task => task.source?.isMain !== true
         && (task.source?.parentId || task.source?.nativeTaskCaption)).length],
       ["native-hosts", "宿主", discoveredHosts.length],
       ["registered-agents", "Agents", catalogItems("agents").length],
@@ -1388,45 +1668,116 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
       ["hook", "Hooks", capabilityEntries("hook", "hooks").length],
     ];
     for (const [id, name, amount] of quickGroups) {
-      const shortcut = makeButton(`${name} ${amount}`, () => {
-        const wasSearching = Boolean(inventoryQuery);
-        if (wasSearching) {
-          inventoryQuery = "";
-          lastInventorySignature = "";
-          renderInventory();
-        }
-        const currentSurface = inventory.children?.[0];
-        const listHost = [...(currentSurface?.children || [])].find(child => child?.className === "uw-agent-inventory-sections") || currentSurface;
-        const allSections = [...(listHost?.children || [])].filter(child => child?.dataset?.section);
-        const section = allSections.find(child => child.dataset.section === id);
-        if (!section) return;
-        const willOpen = wasSearching || !section.open;
-        for (const other of allSections) {
-          if (other !== section) {
-            other.open = false;
-            inventoryExpanded.delete(other.dataset.section);
-            inventoryExpanded.add(`${other.dataset.section}:closed`);
-          }
-        }
-        section.open = willOpen;
-        if (willOpen) {
-          inventoryExpanded.add(id);
-          inventoryExpanded.delete(`${id}:closed`);
-          section.scrollIntoView?.({ block: "nearest" });
-        } else {
-          inventoryExpanded.delete(id);
-          inventoryExpanded.add(`${id}:closed`);
-        }
-      }, "uw-agent-inventory-shortcut");
+      const shortcut = makeButton("", () => openFlyoutCategory(id), "uw-agent-inventory-shortcut");
       shortcut.dataset.targetSection = id;
+      const isShortcutActive = isFlyoutVisible && activeFlyoutSection === id && !normalizedInventoryQuery();
+      shortcut.setAttribute("aria-pressed", String(isShortcutActive));
+      shortcut.setAttribute("aria-label", `${name} ${amount}`);
+      shortcut.append(
+        el("span", "uw-inventory-shortcut-label", name),
+        el("strong", "uw-inventory-shortcut-count", `${amount} ›`),
+      );
       quicknav.append(shortcut);
     }
+    const extraCount = capabilityEntries("plugin", "plugins").length
+      + capabilityEntries("command", "commands").length
+      + capabilityEntries("mcp_tool", "mcpTools").length;
+    if (extraCount > 0) {
+      const moreBtn = makeButton("", () => openFlyoutCategory("plugin"), "uw-inventory-more-trigger");
+      moreBtn.setAttribute("aria-pressed", String(isFlyoutVisible && ["plugin", "command", "mcp_tool", "runtime_tool"].includes(activeFlyoutSection)));
+      moreBtn.append(
+        el("span", "uw-inventory-shortcut-label", "更多工具与插件"),
+        el("strong", "uw-inventory-shortcut-count", `${extraCount} ›`),
+      );
+      quicknav.append(moreBtn);
+    }
     surface.append(quicknav);
+
+    const flyout = el("aside", "uw-agent-inventory-flyout");
+    flyout.dataset.uwInventoryFlyout = "true";
+    flyout.setAttribute("aria-label", "能力与宿主侧边大面板");
+    const flyoutHead = el("header", "uw-inventory-flyout-head");
+    const flyoutTitleWrap = el("div", "uw-inventory-flyout-title");
+    flyoutTitleWrap.append(
+      el("strong", "", "能力与宿主目录"),
+      el("small", "", tasks.length ? `${tasks.length} 个执行任务运行中` : hasPlanningOnlyTasks ? "仅规划 · 未执行（尚未派发实际任务）" : "只读能力与宿主配置状态"),
+    );
+    const flyoutClose = makeButton("关闭 ×", () => {
+      inventoryFlyoutOpen = false;
+      inventoryQuery = "";
+      selectedNativeCapId = null;
+      lastInventorySignature = "";
+      renderInventory();
+    }, "uw-inventory-flyout-close");
+    flyoutHead.append(flyoutTitleWrap, flyoutClose);
+    flyout.append(flyoutHead);
+
+    const flyoutTabs = el("div", "uw-inventory-flyout-tabs");
+    const allFlyoutGroups = [
+      ["all", "全部"],
+      ...quickGroups.map(([id, name, amount]) => [id, `${name} ${amount}`]),
+      ["plugin", `Plugins ${capabilityEntries("plugin", "plugins").length}`],
+      ["command", `Commands ${capabilityEntries("command", "commands").length}`],
+      ["mcp_tool", `MCP Tools ${capabilityEntries("mcp_tool", "mcpTools").length}`],
+    ];
+    for (const [tabId, tabLabel] of allFlyoutGroups) {
+      const pill = makeButton(tabLabel, () => {
+        activeFlyoutSection = tabId;
+        inventoryFlyoutOpen = true;
+        if (tabId !== "all") {
+          inventoryExpanded.add(tabId);
+          inventoryExpanded.delete(`${tabId}:closed`);
+        }
+        lastInventorySignature = "";
+        renderInventory();
+      }, "uw-inventory-flyout-tab");
+      pill.setAttribute("aria-pressed", String(activeFlyoutSection === tabId && !normalizedInventoryQuery()));
+      flyoutTabs.append(pill);
+    }
+    flyout.append(flyoutTabs);
+
+    if (selectedNativeCapId) {
+      const selectedEntry = nativeCapabilities.find(item =>
+        `config:${item.hostId}:${item.scope}:${item.kind}:${item.id}` === selectedNativeCapId);
+      if (selectedEntry) {
+        const capCard = el("div", "uw-inventory-flyout-detail");
+        const capHead = el("div", "uw-inventory-flyout-detail-head");
+        capHead.append(
+          el("strong", "", `能力配置详情 · ${clean(selectedEntry.label || selectedEntry.id, 90)}`),
+          makeButton("收起详情", () => { selectedNativeCapId = null; lastInventorySignature = ""; renderInventory(); }, "uw-inventory-flyout-close"),
+        );
+        capCard.append(capHead);
+        const detailGrid = el("div", "uw-native-host-inspection");
+        const hostObj = nativeHosts.get(selectedEntry.hostId);
+        const famLabel = nativeFamilies.find(item => item.kind === selectedEntry.kind)?.label || "能力";
+        const rawSourceLabel = ({
+          user_native_config: "用户级客户端配置目录",
+          project_native_config: "当前项目客户端配置目录",
+        })[selectedEntry.source] || selectedEntry.source || "未提供";
+        for (const [k, v] of [
+          ["所属宿主", hostObj?.label || selectedEntry.hostId],
+          ["能力类别", famLabel],
+          ["配置范围", selectedEntry.scope === "project" ? "当前项目" : selectedEntry.scope === "global" ? "用户配置" : "来源待确认"],
+          ["配置来源", rawSourceLabel],
+          ["加载状态", "尚未从原生客户端确认"],
+          ["调用证据", "当前目录记录未证明实际调用"],
+        ]) {
+          const r = el("div", "uw-native-host-inspection-row");
+          r.append(el("span", "", k), el("strong", "", clean(v, 160)));
+          detailGrid.append(r);
+        }
+        capCard.append(detailGrid);
+        flyout.append(capCard);
+      }
+    }
+
     const sectionsHost = el("div", "uw-agent-inventory-sections");
     const makeSection = (id, heading, amount, open = false) => {
       const details = el("details", "uw-agent-inventory-section");
       details.dataset.section = id;
-      details.open = Boolean(normalizedInventoryQuery()) || inventoryExpanded.has(id) || (open && !inventoryExpanded.has(`${id}:closed`));
+      const isFocusedTab = activeFlyoutSection === id || activeFlyoutSection === "all";
+      details.dataset.flyoutFiltered = String(!normalizedInventoryQuery() && activeFlyoutSection !== "all" && activeFlyoutSection !== id);
+      details.open = Boolean(normalizedInventoryQuery()) || activeFlyoutSection === id || inventoryExpanded.has(id) || (open && !inventoryExpanded.has(`${id}:closed`)) || (activeFlyoutSection === "all" && isFocusedTab && open);
       const summary = el("summary", "uw-agent-inventory-summary");
       summary.append(el("span", "", heading), el("small", "", String(amount)));
       details.append(summary);
@@ -1445,14 +1796,16 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
       if (!agentsByOwner.has(name)) agentsByOwner.set(name, []);
       agentsByOwner.get(name).push(task);
     }
-    const activeSection = makeSection("run", "当前 Run", agentsByOwner.size, false);
-    if (!tasks.length && !inventoryQuery) activeSection.append(el("p", "uw-agent-inventory-hint", "暂无绑定当前 Run 的 Agent 结论。"));
+    const activeSection = makeSection("run", "本轮活跃 Agent", agentsByOwner.size, false);
+    if (!tasks.length && !inventoryQuery) activeSection.append(el("p", "uw-agent-inventory-hint",
+      hasPlanningOnlyTasks ? "当前记录仅含任务规划，尚未派发执行。" : "暂无绑定当前 Run 的活跃 Agent 或结论。"));
     resultCount += agentsByOwner.size;
     for (const [name, owned] of agentsByOwner) {
       const latest = owned.find(task => taskVisualState(task) === "running") || owned.at(-1);
       const outcome = taskOutcome(latest);
       const row = makeButton("", () => {
         mode = "agents";
+        inventoryFlyoutOpen = false;
         selectDesktopAnnotationNode({ id: latest.id, title: latest.title, kind: "task", layer: "agents" });
       }, "uw-agent-inventory-agent");
       row.dataset.state = taskVisualState(latest);
@@ -1480,13 +1833,11 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
     if (!discoveredHosts.length && !inventoryQuery) nativeSection.append(el("p", "uw-agent-inventory-hint",
       "当前服务端宿主尚无可验证的客户端检测或配置；不等于您的 Windows 电脑未安装。"));
     resultCount += matchingHosts.length;
-    const inspectHostCapability = (id, label, kind = "host") => {
-      mode = "knowledge";
-      knowledgeLayer = "hosts";
-      selection = { id, title: clean(label, 100), kind, layer: "hosts" };
-      lastCanvasSignature = "";
-      render();
-      viewport.scrollIntoView?.({ block: "nearest" });
+    const inspectHostCapability = (id) => {
+      inventoryFlyoutOpen = true;
+      selectedNativeCapId = selectedNativeCapId === id ? null : id;
+      lastInventorySignature = "";
+      renderInventory();
     };
     for (const host of matchingHosts) {
       const hostId = clean(host.id, 50);
@@ -1560,11 +1911,7 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
       if (nextAction) access.append(el("span", "", "下一步"), el("strong", "", nextAction));
       body.append(access);
       if (hostItems.length) {
-        const viewGraph = makeButton("查看能力关系", () =>
-          inspectHostCapability(`host:${hostId}`, host.label || hostId), "uw-native-host-graph");
-        viewGraph.setAttribute("aria-label", `在 Live 查看 ${host.label || hostId} 的能力关系`);
-        body.append(viewGraph);
-        body.append(el("p", "uw-native-host-capability-disclaimer", "已发现配置 · 未确认加载。点具体能力可查看关系。"));
+        body.append(el("p", "uw-native-host-capability-disclaimer", "已发现配置 · 未确认加载。点击具体能力可在此面板查看来源与权限边界。"));
       }
       if (!hostItems.length) body.append(el("p", "uw-agent-inventory-hint", "暂无当前项目或用户配置中可核对的能力；CLI 检测不代表已经加载 Agent。"));
       for (const family of nativeFamilies) {
@@ -1579,16 +1926,18 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
           else inventoryExpanded.delete(familyKey);
         });
         group.append(el("summary", "uw-native-host-family-summary", `${family.label} · ${entries.length}`));
+        const capGrid = el("div", "uw-native-host-cap-grid");
         for (const item of entries) {
           const label = clean(item.label || item.id, 110);
-          const row = makeButton("", () => inspectHostCapability(
-            `config:${item.hostId}:${item.scope}:${item.kind}:${item.id}`, label, "capability"),
-          "uw-native-host-capability");
+          const capKey = `config:${item.hostId}:${item.scope}:${item.kind}:${item.id}`;
+          const row = makeButton("", () => inspectHostCapability(capKey), "uw-native-host-capability");
+          row.dataset.selected = String(selectedNativeCapId === capKey);
           row.append(el("span", "", label));
-          row.setAttribute("aria-label", `查看 ${host.label || hostId} 的 ${family.label} ${label} 关系`);
+          row.setAttribute("aria-label", `查看 ${host.label || hostId} 的 ${family.label} ${label} 配置详情`);
           row.title = `${clean(item.scope || "当前配置范围", 40)} · ${clean(item.source || "来源待核对", 80)} · ${item.installationState === "configured" ? "已发现配置" : "记录待核对"}，未确认加载或实际调用`;
-          group.append(row);
+          capGrid.append(row);
         }
+        group.append(capGrid);
         body.append(group);
       }
       details.append(body);
@@ -1616,18 +1965,22 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
       && (task.source?.parentId || task.source?.nativeTaskCaption)
       && inventoryMatches(task.title, taskOwner(task), task.source?.nativeTaskCaption, task.statusLabel, taskOutcome(task).detail));
     const subagentsSection = makeSection("subagents", "Subagents · 编排与回执", subagents.length, false);
-    if (!subagents.length && !inventoryQuery) subagentsSection.append(el("p", "uw-agent-inventory-hint", "未观测到已绑定的子 Agent 任务。"));
+    if (!subagents.length && !inventoryQuery) subagentsSection.append(el("p", "uw-agent-inventory-hint",
+      hasPlanningOnlyTasks ? "当前记录仅含规划节点，尚无实际派发的 Subagents。" : "未观测到已绑定的子 Agent 任务。"));
     resultCount += subagents.length;
+    const subagentGrid = el("div", "uw-inventory-card-grid");
     for (const task of subagents) {
       const row = makeButton("", () => {
         mode = "agents";
+        inventoryFlyoutOpen = false;
         selectDesktopAnnotationNode({ id: task.id, title: task.title, kind: "task", layer: "agents" });
       }, "uw-agent-inventory-capability");
       row.dataset.state = taskVisualState(task);
       row.append(el("span", "uw-agent-inventory-item-title", clean(task.title, 90)),
         el("small", "", `${taskOwner(task)} · ${task.statusLabel || labelFor(task.status)} · ${taskOutcome(task).heading}`));
-      subagentsSection.append(row);
+      subagentGrid.append(row);
     }
+    if (subagents.length) subagentsSection.append(subagentGrid);
     if (inventoryQuery && !subagents.length) subagentsSection.hidden = true;
     sectionsHost.append(subagentsSection);
     const registeredAgents = catalogItems("agents").filter(item =>
@@ -1636,15 +1989,17 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
     const rolesSection = makeSection("registered-agents", "已注册 Agent", registeredAgents.length, false);
     if (!registeredAgents.length && !inventoryQuery) rolesSection.append(el("p", "uw-agent-inventory-hint", "尚无可读取的注册角色。"));
     resultCount += registeredAgents.length;
+    const rolesGrid = el("div", "uw-inventory-card-grid");
     for (const item of registeredAgents) {
       const label = clean(item.label || item.id, 90);
       const row = el("div", "uw-agent-inventory-agent uw-agent-inventory-registered");
       const copy = el("span", "uw-agent-inventory-agent-copy");
-      copy.append(el("strong", "", label), el("small", "", "已注册 · 无本轮结论"));
+      copy.append(el("strong", "", label), el("small", "", clean(item.role || "已注册 · 无本轮结论", 60)));
       row.append(agentMark(item.id || label, true), copy);
       row.title = `${clean(item.role || item.owns || label, 240)} · 注册不代表已调用`;
-      rolesSection.append(row);
+      rolesGrid.append(row);
     }
+    if (registeredAgents.length) rolesSection.append(rolesGrid);
     if (inventoryQuery && !registeredAgents.length) rolesSection.hidden = true;
     sectionsHost.append(rolesSection);
     const professionalAgents = catalog?.professionalSourceStatus === "verified_local"
@@ -1654,6 +2009,7 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
     if (!professionalAgents.length && !inventoryQuery) professionalSection.append(el("p", "uw-agent-inventory-hint",
       "当前项目尚未绑定已核验的专业 Agent 来源；注册来源不等于已安装或已调用。"));
     resultCount += professionalAgents.length;
+    const profGrid = el("div", "uw-inventory-card-grid");
     for (const item of professionalAgents) {
       if (!item || item.registrationState !== "verified_source_only" || !item.id) continue;
       const label = clean(item.label || item.id, 100);
@@ -1661,8 +2017,9 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
       const copy = el("span", "uw-agent-inventory-agent-copy");
       copy.append(el("strong", "", label), el("small", "", "来源哈希已核验 · 未观测调用"));
       row.append(agentMark(item.id, true), copy);
-      professionalSection.append(row);
+      profGrid.append(row);
     }
+    if (professionalAgents.length) professionalSection.append(profGrid);
     if (inventoryQuery && !professionalAgents.length) professionalSection.hidden = true;
     sectionsHost.append(professionalSection);
     for (const family of capabilityFamilies) {
@@ -1671,6 +2028,7 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
       const section = makeSection(family.kind, family.name, entries.length);
       if (!entries.length && !inventoryQuery) section.append(el("p", "uw-agent-inventory-hint", "暂无注册项或本轮调用证据。"));
       resultCount += entries.length;
+      const famGrid = el("div", "uw-inventory-card-grid");
       for (const entry of entries) {
         const row = el("div", "uw-agent-inventory-capability");
         row.dataset.state = entry.state;
@@ -1678,17 +2036,19 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
         row.append(el("small", "", entry.referenceOnly ? "参考资料 · 非可调用能力"
           : entry.state === "observed" ? "本轮已观测调用" : entry.state === "planned" ? "已选择 · 未观测调用"
             : "已注册 · 未观测调用"));
-        section.append(row);
+        famGrid.append(row);
       }
+      if (entries.length) section.append(famGrid);
       if (inventoryQuery && !entries.length) section.hidden = true;
       sectionsHost.append(section);
     }
-    surface.append(sectionsHost);
+    flyout.append(sectionsHost);
     if (inventoryQuery) {
       const searchResult = el("p", "uw-agent-inventory-search-result", resultCount
-        ? `已筛出 ${resultCount} 条记录，点分类可查看` : "没有找到匹配记录，试试 Agent、客户端或能力名称");
+        ? `已筛出 ${resultCount} 条记录` : "没有找到匹配记录");
       surface.insertBefore?.(searchResult, quicknav);
     }
+    surface.append(flyout);
     inventory.replaceChildren(surface);
     sectionsHost.scrollTop = resetInventoryScroll ? 0 : previousScroll;
     inventory.scrollTop = resetInventoryScroll ? 0 : previousScroll;
@@ -1696,7 +2056,7 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
   }
   function renderCanvas() {
     const blueprint = designSource();
-    const signature = JSON.stringify({ mode, knowledgeLayer, knowledgeDepth, knowledgeLimit, selection, agentStatus: agent.status,
+    const signature = JSON.stringify({ mode, knowledgeLayer, prdSourcePref, knowledgeDepth, knowledgeLimit, selection, agentStatus: agent.status,
       decision: agent.pending?.decision?.state, pendingId: agent.pending?.key,
       nativeDraftStatus: nativeDraft.snapshot?.status, designVersion: design.snapshot?.version,
       pendingReviewNotes: design.snapshot?.pendingReviewNotes, hosts: agent.hosts,
@@ -1709,12 +2069,7 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
         capabilityTruth: task.source.capabilityTruth, task: task.source.task })),
       stages: (state.workspace?.stages || []).map(stage => `${stage.id}:${stage.status}`),
       graphData: blueprint?.design,
-      // Host/Skill/MCP/Hook discovery completes after the initial Live paint.
-      // Without this key a user already viewing the capability graph would
-      // stay on a stale empty graph until manually changing tabs.
-      nativeGraph: mode === "knowledge" && knowledgeLayer === "hosts"
-        ? { hosts: state.capabilityCatalog?.nativeHosts, capabilities: state.capabilityCatalog?.nativeCapabilities }
-        : null });
+      archModules: state.projectArchitecturePrd?.modules?.length || 0 });
     if (signature === lastCanvasSignature) return;
     lastCanvasSignature = signature;
     const isLiveRunDocked = mode === "live-run" && !state.externalView && state.view === "work";
@@ -1889,8 +2244,15 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
     explain(adopted() ? "设计阶段请从右侧圈选系统或模块，用这个输入框修改该节点。新任务请输入「新任务：你的目标」。" :
       "这条研究请求已有处理决定或正在运行。请先核对回执；目前没有经过验证的任意继续对话接口，不会假装已提交。");
   }
-  form.addEventListener("submit", event => { event.preventDefault(); void submitMessage(); });
-  input.addEventListener("input", () => { input.setCustomValidity(""); render(); });
+  const closeFlyoutOnChat = () => {
+    if (!inventoryFlyoutOpen) return;
+    inventoryFlyoutOpen = false;
+    lastInventorySignature = "";
+    renderInventory();
+  };
+  form.addEventListener("submit", event => { event.preventDefault(); closeFlyoutOnChat(); void submitMessage(); });
+  input.addEventListener("focus", closeFlyoutOnChat);
+  input.addEventListener("input", () => { closeFlyoutOnChat(); input.setCustomValidity(""); render(); });
   input.addEventListener("keydown", event => {
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
       event.preventDefault(); void submitMessage();
@@ -1898,9 +2260,11 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
   });
   targetClear?.addEventListener("click", () => { selection = null; render(); input.focus(); });
   function activateMode(nextMode) {
+    const prevMode = mode;
     mode = nextMode;
     selection = null;
     lastCanvasSignature = "";
+    callbacks.onLiveModeChange?.(nextMode, prevMode);
     render();
   }
   function activateTab(tab) {

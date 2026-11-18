@@ -126,34 +126,57 @@ test("the sibling navigation renders its own Agent/Skill/MCP/Hook inventory", ()
     assert.ok(byText(inventory, text).length, `missing sidebar entry ${text}`);
 });
 
-test("native capability graph links configured Subagents, Skills, MCP and Hooks to their real host", () => {
+test("knowledge graph renders strictly Two-Level System Design PRD and never renders CLI hosts as PRD nodes", () => {
   const env = fixture();
-  env.desktop.render();
-  env.tabs[1].click();
-  findButton(env.elements["live-viewport"], "客户端能力").click();
-  assert.equal(byText(env.elements["live-viewport"], "Pi Coding Agent").length, 0);
-  // The directory may arrive asynchronously after the operator has already
-  // opened this layer; rendering must update the graph without a tab switch.
   env.state.capabilityCatalog = {
     nativeHosts: [{ id: "pi", label: "Pi Coding Agent", status: "not_probed" }],
-    nativeCapabilities: [
-      { id: "research", label: "research", hostId: "pi", scope: "project", kind: "subagent_config" },
-      { id: "analysis", label: "analysis", hostId: "pi", scope: "global", kind: "skill" },
-      { id: "semantic", label: "semantic", hostId: "pi", scope: "project", kind: "mcp" },
-      { id: "post-tool", label: "post-tool", hostId: "pi", scope: "project", kind: "hook" },
+    nativeCapabilities: [{ id: "research", label: "research", hostId: "pi", scope: "project", kind: "subagent_config" }],
+  };
+  env.state.projectArchitecturePrd = {
+    schemaVersion: "meta-kim-project-architecture-prd-v1",
+    recordOrigin: "repository_architecture_baseline",
+    approvalClaimed: false,
+    dagValid: true,
+    system: {
+      id: "system-architecture",
+      title: "Meta_Kim · 系统整体框架",
+      goal: "跨运行时意图放大与治理架构",
+      architecture: "L1 契约层 → L2 应用编排层",
+      techStack: "Node.js ESM · SQLite",
+      boundaries: ["单一真值源边界"],
+      acceptance: ["npm test"],
+      layers: [
+        { rank: 0, label: "治理真值层", moduleIds: ["canonical-governance"], moduleTitles: ["Canonical 治理真值核"] },
+        { rank: 2, label: "应用编排层", moduleIds: ["app-agent-workflow"], moduleTitles: ["Agent B1-B4 编排引擎"] },
+      ],
+    },
+    modules: [
+      { id: "canonical-governance", title: "Canonical 治理真值核", layer: "治理真值层", layerShort: "治理真值层", layerRank: 0,
+        directory: "canonical", fileCount: 18, entrypoints: ["canonical/skills/meta-theory/SKILL.md"],
+        objective: "维护核心元角色与协议", inputContract: ["治理请求"], outputContract: ["角色与技能契约"],
+        boundaries: ["单一真值源"], acceptance: ["npm run meta:check"], dependencies: [] },
+      { id: "app-agent-workflow", title: "Agent B1-B4 编排引擎", layer: "应用编排层", layerShort: "应用编排层", layerRank: 2,
+        directory: "src/application/agent", fileCount: 12, entrypoints: ["src/application/agent/agent-workflow-service.mjs"],
+        objective: "编排 B1–B4 人工里程碑闭环", inputContract: ["用户目标"], outputContract: ["阶段回执"],
+        boundaries: ["未经批准不执行写入"], acceptance: ["npm test"], dependencies: ["canonical-governance"] },
     ],
   };
   env.desktop.render();
-  for (const entry of ["Pi Coding Agent", "Subagent · research", "Skill · analysis", "MCP · semantic", "Hook · post-tool"]) {
-    assert.ok(byText(env.elements["live-viewport"], entry).length, `graph missing ${entry}`);
+  env.tabs[1].click();
+  assert.equal(byText(env.elements["live-viewport"], "客户端能力").length, 0, "Host capabilities must never appear as a PRD graph tab");
+  assert.equal(byText(env.elements["live-viewport"], "Pi Coding Agent").length, 0, "Host names must never be drawn as PRD nodes");
+  for (const entry of ["Meta_Kim · 系统整体框架", "一级设计 PRD · 系统整体框架", "Canonical 治理真值核", "Agent B1-B4 编排引擎"]) {
+    assert.ok(byText(env.elements["live-viewport"], entry).length, `PRD graph missing ${entry}`);
   }
-  findButton(env.elements["live-viewport"], "Pi Coding Agent").click();
-  for (const entry of ["Subagent · research", "Skill · analysis", "MCP · semantic", "Hook · post-tool"]) {
-    assert.ok(byText(env.elements["live-viewport"], entry).length, `host focus lost ${entry}`);
+  findButton(env.elements["live-viewport"], "Agent B1-B4 编排引擎").click();
+  for (const detail of ["二级设计 PRD · 模块组织", "模块职责与设计目标", "输入契约（Input Contract）", "输出契约（Output Contract）"]) {
+    assert.ok(byText(env.elements["live-viewport"], detail).length, `Level-2 module spec missing ${detail}`);
   }
+  findButton(env.elements["live-viewport"], "两级 PRD 规格书").click();
+  assert.ok(byText(env.elements["live-viewport"], "二级设计 PRD · 系统本身的设计组织").length);
 });
 
-test("inventory search narrows native capabilities and a host opens its own graph with a way back", () => {
+test("inventory search and category clicks open the spacious side flyout panel and inspect host capabilities in-place", () => {
   const env = fixture();
   const nativeCapabilities = Array.from({ length: 42 }, (_, index) => ({
     id: `event-${index}`, label: `Event Hook ${index}`, hostId: "claude", kind: "hook", scope: "project", installationState: "configured",
@@ -166,6 +189,8 @@ test("inventory search narrows native capabilities and a host opens its own grap
   };
   env.desktop.render();
   let inventory = env.navigationInventory;
+  assert.equal(byClass(inventory, "uw-agent-inventory-body")[0].dataset.flyoutOpen, "false",
+    "the side flyout starts closed so the narrow sidebar stays clean");
   assert.equal(byClass(inventory, "uw-native-host-capability").length, 43);
   assert.equal(byClass(inventory, "uw-native-host-family").length, 2);
   assert.ok(byClass(inventory, "uw-native-host-family").every(group => group.open === false),
@@ -180,6 +205,8 @@ test("inventory search narrows native capabilities and a host opens its own grap
   inventory = env.navigationInventory;
   search = byClass(inventory, "uw-agent-inventory-search")[0];
   assert.equal(search.value, "Unique Review Skill");
+  assert.equal(byClass(inventory, "uw-agent-inventory-body")[0].dataset.flyoutOpen, "true",
+    "typing in search opens the spacious side flyout panel");
   assert.equal(inventory.scrollTop, 0, "search results must not be stranded below the scroll position of a long catalog");
   assert.ok(byText(inventory, "已筛出").length);
   assert.equal(byClass(inventory, "uw-native-host-capability").length, 1);
@@ -189,17 +216,11 @@ test("inventory search narrows native capabilities and a host opens its own grap
   assert.ok(byClass(inventory, "uw-agent-inventory-section").some(section => section.hidden),
     "empty unrelated sections should disappear during search");
 
-  findButton(inventory, "查看能力关系").click();
-  assert.equal(env.desktop.mode, "knowledge");
-  assert.ok(byText(env.elements["live-viewport"], "Claude Code").length,
-    "the host graph should open with the detected client in focus");
-  findButton(env.elements["live-viewport"], "返回完整图谱").click();
-  assert.ok(byText(env.elements["live-viewport"], "Claude Code").length);
   byClass(env.navigationInventory, "uw-native-host-capability")[0].click();
-  assert.ok(byText(env.elements["live-viewport"], "Unique Review Skill").length,
-    "the search hit should open its exact graph node even when its source index exceeds the overview limit");
-  for (const fact of ["配置范围", "用户配置", "尚未从原生客户端确认", "当前目录记录未证明实际调用"])
-    assert.ok(byText(env.elements["live-viewport"], fact).length, `a selected capability must reveal ${fact}`);
+  assert.equal(env.desktop.mode, "flow", "inspecting a host capability stays in the side flyout without hijacking the PRD graph");
+  assert.ok(byText(env.navigationInventory, "能力配置详情 · Unique Review Skill").length);
+  for (const fact of ["所属宿主", "配置范围", "用户配置", "尚未从原生客户端确认", "当前目录记录未证明实际调用"])
+    assert.ok(byText(env.navigationInventory, fact).length, `a selected capability must reveal ${fact} inside the flyout`);
 });
 
 test("an exactly bound pending research Run exposes real main/subagent evidence and isolates unrelated Runs", () => {
@@ -298,12 +319,14 @@ test("B1 choice, B2 graph annotation, approval review and direct field revision 
   assert.equal(elements["chat-input"].value, "");
 
   findButton(elements["live-viewport"], "知识检索").click();
-  assert.ok(byClass(elements["live-viewport"], "uw-live-node-inspector").length);
+  assert.ok(byClass(elements["live-viewport"], "uw-prd-spec-inspector").length);
   assert.ok(byText(elements["live-viewport"], "待修改").length);
-  findButton(elements["live-viewport"], "方案与依据")?.click();
-  const strategyTab = findButton(elements["live-viewport"], "方案与依据");
-  if (strategyTab) strategyTab.click();
-  assert.equal(byClass(elements["live-viewport"], "stub-graph-node").length, 3);
+  const strategyTab = findButton(elements["live-viewport"], "B1 候选方案对照");
+  assert.ok(strategyTab, "B1 strategy comparison tab should be available as a matrix");
+  strategyTab.click();
+  assert.equal(byClass(elements["live-viewport"], "stub-graph-node").length, 0,
+    "B1 options must render as a structured comparison matrix, never fake PRD graph nodes");
+  assert.equal(byClass(elements["live-viewport"], "uw-prd-strategy-card").length, 2);
 });
 
 test("an unstructured plan is not silently adopted, and unsupported nodes do not create fake comments", async () => {

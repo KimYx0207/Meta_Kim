@@ -138,8 +138,10 @@ test("native CLI hosts and user Subagent presets are visible without claiming a 
   agent.hosts = [{ id: "claude", label: "Claude Code", available: true, launchSupported: true,
     statusLabel: "可用于只读研究", version: "2.1.319" }];
   desktop.render();
+  const quicknav = classNodes(elements["agent-inventory"], "uw-agent-inventory-quicknav")[0];
+  classNodes(quicknav, "uw-agent-inventory-shortcut")[2].click();
   const section = visit(elements["agent-inventory"], item => item.dataset.section === "native-hosts")[0];
-  assert.ok(section.open, "native hosts are discoverable by default, detailed lists remain collapsed");
+  assert.ok(section.open, "clicking the hosts shortcut expands native hosts while detailed lists remain collapsed");
   assert.equal(classNodes(section, "uw-native-host").length, 2,
     "two distinct installed/probed clients and no duplicate host for the same id");
   const candidates = classNodes(section, "uw-native-host-candidates");
@@ -184,4 +186,38 @@ test("sidebar and agent conclusions update on receipt changes, and hide other ru
   assert.equal(textNodes(elements["agent-inventory"], "负责人回报").length, 0);
   assert.ok(textNodes(elements["agent-inventory"], "已注册 Agent").length,
     "registry identities remain inspectable but are never conflated with run evidence");
+});
+
+test("planning-only unstarted nodes never inflate Subagents or active execution counts, and shortcut uses literal Subagents", () => {
+  const { desktop, elements, state } = setup();
+  state.snapshot = { run: { id: "run-1", executionEvidenceState: "structural_planning_only" } };
+  state.tasks = [{
+    id: "route-execution",
+    title: "route-execution",
+    owner: "meta-scout",
+    status: "not_started",
+    source: {
+      id: "route-execution",
+      kind: "worker",
+      isMain: false,
+      runId: "run-1",
+      parentId: "root-plan",
+      ownerAgent: "meta-scout",
+      declaredNotStarted: true,
+      executionState: "not_executed",
+      status: "not_started",
+    },
+  }];
+  desktop.render();
+  const sidebar = elements["agent-inventory"];
+  assert.ok(textNodes(sidebar, "仅规划 · 未执行").length, "planning-only snapshots must not claim 1 active task");
+  assert.equal(textNodes(sidebar, "1 个执行任务").length, 0);
+  const quicknav = classNodes(sidebar, "uw-agent-inventory-quicknav")[0];
+  assert.equal(textNodes(quicknav, "结论").length, 0, "confusing '结论' badge removed in favor of clear active run label");
+  assert.equal(textNodes(quicknav, "子任务").length, 0, "must literally say Subagents instead of 子任务");
+  const shortcuts = classNodes(sidebar, "uw-agent-inventory-shortcut");
+  const runShortcut = shortcuts.find(item => item.dataset.targetSection === "run");
+  const subagentShortcut = shortcuts.find(item => item.dataset.targetSection === "subagents");
+  assert.equal(runShortcut.attributes["aria-label"], "本轮活跃 0");
+  assert.equal(subagentShortcut.attributes["aria-label"], "Subagents 0");
 });

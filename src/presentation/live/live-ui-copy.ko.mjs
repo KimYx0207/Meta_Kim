@@ -318,6 +318,8 @@ export const KO_COPY = Object.freeze({
   "Recheck awaiting confirmation; owner record exists, execution provenance and user acceptance remain unconfirmed": "재확인 대기 중입니다. 담당자 기록은 있으나 실행 출처와 사용자 검수는 아직 확인되지 않았습니다",
   "Reconnecting": "다시 연결 중",
   "Record is not enough to judge": "기록이 부족하여 판단할 수 없음",
+  "Registered project": "등록된 프로젝트",
+  "No observed workspace sessions.": "관측된 작업 공간 세션이 없습니다.",
   "Relations · State key": "관계 · 상태 범례",
   "Relayout": "다시 배치",
   "Relayout (R)": "다시 배치(R)",

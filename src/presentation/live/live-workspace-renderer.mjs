@@ -177,27 +177,54 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
     const moduleHeadingEl = nav.querySelector("[data-uw-module-heading]");
     moduleHeadingEl.textContent = researchingWithoutRun ? copy("formalRunModules") : copy("modules");
     nav.querySelector("[data-uw-nav-footer]").textContent = copy("footer");
-    nav.querySelector("[data-uw-project-switch]").setAttribute("aria-label", copy("chooseRun"));
+    const switchBtn = nav.querySelector("[data-uw-project-switch]");
+    switchBtn.setAttribute("aria-label", copy("chooseRun"));
     nav.querySelector("[data-uw-nav-close]").setAttribute("aria-label", copy("closeNavigation"));
     app.querySelector("[data-uw-nav-open]")?.setAttribute("aria-label", copy("openNavigation"));
     const projectName = nav.querySelector("[data-uw-project-name]");
     if (projectName) { projectName.textContent = state.project?.displayName || state.agentServerProjectLabel || copy("project"); projectName.title = projectName.textContent; }
     const runName = nav.querySelector("[data-uw-run-name]");
-    if (runName) { runName.textContent = state.snapshot?.run?.title || copy("chooseRun"); runName.title = runName.textContent; }
+    if (runName) {
+      const runTotal = Number.isFinite(Number(state.project?.sessionCount)) ? Number(state.project.sessionCount) : (state.project?.sessions?.length || 0);
+      const subtitle = runTotal > 0 ? copy("switchRunCount").replace("{count}", String(runTotal)) : copy("chooseRun");
+      runName.textContent = subtitle;
+      runName.title = state.snapshot?.run?.title || subtitle;
+    }
+    switchBtn.title = [projectName?.textContent, state.snapshot?.run?.title || copy("chooseRun")].filter(Boolean).join(" · ");
     nav.querySelectorAll("[data-uw-label]").forEach((node) => { node.textContent = copy(node.dataset.uwLabel); });
     nav.querySelectorAll("[data-uw-view]").forEach((node) => node.setAttribute("aria-current", (state.externalView || state.view) === node.dataset.uwView ? "page" : "false"));
-    const modules = state.workspace?.design?.modules || [];
-    const totalModuleCount = state.workspace?.design?.totalModules ?? modules.length;
+    const runDesign = state.workspace?.design?.modules?.length ? state.workspace.design : null;
+    const baselineArch = !runDesign && state.projectArchitecturePrd?.system && Array.isArray(state.projectArchitecturePrd.modules)
+      ? {
+        architecture: {
+          id: state.projectArchitecturePrd.system.id || "system-architecture",
+          title: state.projectArchitecturePrd.system.title || copy("overview"),
+          status: "baseline",
+          summary: state.projectArchitecturePrd.system.goal || "",
+          moduleIds: state.projectArchitecturePrd.modules.map((m) => m.id),
+        },
+        modules: state.projectArchitecturePrd.modules.map((m) => ({
+          ...m,
+          status: "baseline",
+          summary: m.objective,
+          dependsOn: m.dependencies || [],
+        })),
+        totalModules: state.projectArchitecturePrd.modules.length,
+      }
+      : null;
+    const effectiveNavDesign = runDesign || baselineArch;
+    const modules = effectiveNavDesign?.modules || [];
+    const totalModuleCount = effectiveNavDesign?.totalModules ?? modules.length;
     nav.querySelector("[data-uw-module-count]").textContent = String(totalModuleCount);
-    const hideEmptyAgentModules = root.dataset.agentEntryEnabled === "true" && state.view === "work" && totalModuleCount === 0;
-    if (moduleHeadingEl.parentElement) moduleHeadingEl.parentElement.hidden = hideEmptyAgentModules;
+    const hideSidebarModulesOnWork = root.dataset.agentEntryEnabled === "true" && state.view === "work" && (!runDesign || totalModuleCount === 0);
+    if (moduleHeadingEl.parentElement) moduleHeadingEl.parentElement.hidden = hideSidebarModulesOnWork;
     const host = nav.querySelector("[data-uw-modules]");
-    if (host) host.hidden = hideEmptyAgentModules;
+    if (host) host.hidden = hideSidebarModulesOnWork;
     const selectedFocus = doc.activeElement?.dataset?.liveWorkspaceModule;
     const searchFocused = doc.activeElement?.className === "uw-structure-search";
     const searchCaret = searchFocused ? [doc.activeElement.selectionStart, doc.activeElement.selectionEnd] : null;
     replace(host);
-    const architecture = state.workspace?.design?.architecture;
+    const architecture = effectiveNavDesign?.architecture;
     if (architecture) {
       const overview = e("button", "uw-structure-root"); overview.type = "button";
       overview.dataset.liveWorkspaceOutline = architecture.id;
@@ -489,6 +516,88 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
     const item = state.prdMode === "overview" ? items.find((value) => value.kind === "outline") : state.selectedModuleId
       ? items.find((value) => value.moduleId === state.selectedModuleId)
       : items.find((value) => value.kind === "module");
+    if (!item && state.projectArchitecturePrd?.system && Array.isArray(state.projectArchitecturePrd.modules)) {
+      const base = state.projectArchitecturePrd;
+      const baseDesign = {
+        architecture: {
+          id: base.system.id || "system-architecture",
+          title: base.system.title || copy("overview"),
+          status: "baseline",
+          summary: base.system.goal || "",
+          moduleIds: base.modules.map((m) => m.id),
+        },
+        modules: base.modules.map((m) => ({
+          id: m.id,
+          title: m.title,
+          summary: m.objective,
+          status: "baseline",
+          layer: m.layer,
+          layerShort: m.layerShort,
+          layerRank: m.layerRank,
+          directory: m.directory,
+          fileCount: m.fileCount,
+          dependsOn: m.dependencies || [],
+        })),
+        totalModules: base.modules.length,
+      };
+      const selectedMod = state.prdMode === "module"
+        ? (base.modules.find((m) => m.id === state.selectedModuleId) || base.modules[0])
+        : null;
+      if (selectedMod && !state.selectedModuleId) state.selectedModuleId = selectedMod.id;
+      const layout = e("div", "uw-prd-layout");
+      layout.dataset.prdMode = state.prdMode;
+      const focusId = selectedMod ? selectedMod.id : null;
+      const graph = buildLivePrdGraph(baseDesign, { focusId, depth: state.prdDepth === "all" ? "all" : state.prdDepth, limit: state.prdGraphLimit || 40 });
+      layout.append(createPrdKnowledgeGraph({ doc, graph, copy, focusId: graph.focusKind === "module" ? focusId : null,
+        depth: state.prdDepth, onSelect: node => node.kind === "architecture" ? actions.openOverview() : actions.selectModule(node.sourceId),
+        onDepthChange: actions.setPrdDepth, onExpand: actions.expandPrdGraph }));
+      const article = e("article", "uw-document");
+      const header = e("header", "uw-document-header");
+      const heading = e("div", "uw-document-heading");
+      heading.append(
+        e("span", "uw-knowledge-kicker", copy(selectedMod ? "prdSecondLayer" : "prdFirstLayer")),
+        e("h3", "", selectedMod ? selectedMod.title : base.system.title),
+        e("span", "uw-source-ref", selectedMod ? `${selectedMod.directory} · ${selectedMod.layer}` : "当前项目两级架构 PRD · 源码实测基线"),
+      );
+      const metadata = e("div", "uw-document-meta");
+      const currentStatus = e("span", "uw-document-state", copy("baseline"));
+      currentStatus.dataset.state = "baseline";
+      metadata.append(currentStatus);
+      header.append(heading, metadata);
+      article.append(header);
+      const appendListSection = (secTitle, rows) => {
+        if (!Array.isArray(rows) || !rows.length) return;
+        const ul = e("ul", "uw-prd-facts-list");
+        for (const r of rows) ul.append(e("li", "", String(r)));
+        article.append(section(secTitle, ul));
+      };
+      if (!selectedMod) {
+        article.append(section(copy("overview"), base.system.goal));
+        if (base.system.techStack) article.append(section(copy("prdTechnology"), base.system.techStack));
+        if (Array.isArray(base.system.layers) && base.system.layers.length) {
+          appendListSection("系统整体分层框架", base.system.layers.map((l, idx) => `L${idx + 1} ${l.label}：${(l.moduleTitles || []).join(" / ")}`));
+        } else if (base.system.architecture) {
+          article.append(section("系统整体分层框架", base.system.architecture));
+        }
+        appendListSection(copy("prdConstraints"), base.system.boundaries);
+        appendListSection(copy("prdAcceptance"), base.system.acceptance);
+      } else {
+        article.append(section(copy("prdPurpose"), selectedMod.objective));
+        if (selectedMod.entrypoints?.length) appendListSection("核心组织入口", selectedMod.entrypoints);
+        appendListSection("输入契约（Input Contract）", selectedMod.inputContract);
+        appendListSection("输出契约（Output Contract）", selectedMod.outputContract);
+        if (selectedMod.dependencies?.length) {
+          const depNames = selectedMod.dependencies.map((id) => base.modules.find((m) => m.id === id)?.title || id);
+          article.append(section(copy("dependsOn"), depNames.join(" · ")));
+        }
+        appendListSection(copy("prdConstraints"), selectedMod.boundaries);
+        appendListSection(copy("prdAcceptance"), selectedMod.acceptance);
+      }
+      layout.append(article);
+      content.append(layout);
+      text("footer", copy("itemTotal") + " " + base.modules.length + " " + copy("moduleCount"));
+      return;
+    }
     if (!item) {
       if (state.prdMode === "module" && state.selectedModuleId && state.workspace?.design?.nextCursor) content.append(skeleton());
       else content.append(empty(copy("noDesign"), copy("noDesignNote")));

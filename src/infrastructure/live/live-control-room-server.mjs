@@ -1,7 +1,9 @@
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
+import path from "node:path";
 import { URL } from "node:url";
 import { randomBytes } from "node:crypto";
+import { buildProjectRef } from "../../../scripts/project-registry.mjs";
 
 import {
   createLiveControlRoomService,
@@ -520,10 +522,17 @@ export function createLiveControlRoomServer(options = {}) {
   // request would report the file as it is now rather than the build this Hub was
   // started from, and a default would read as a real version.
   const packageVersion = typeof options.packageVersion === "string" ? options.packageVersion : null;
-  const hubCatalog = globalHub
-    ? (options.hubCatalog || createLiveHubProjectCatalog(options))
+  const projectCatalogEnabled = globalHub || options.enableProjectCatalog === true || Boolean(options.hubCatalog);
+  const defaultBoundProjectId = !globalHub && projectCatalogEnabled && typeof options.projectRoot === "string" && path.isAbsolute(options.projectRoot)
+    ? buildProjectRef({ repoPath: path.resolve(options.projectRoot) })
     : null;
-  const hubProfile = globalHub && typeof hubCatalog?.profile === "string"
+  const hubCatalog = projectCatalogEnabled
+    ? (options.hubCatalog || createLiveHubProjectCatalog({
+        ...options,
+        seedProjectRoot: !globalHub ? options.projectRoot : null,
+      }))
+    : null;
+  const hubProfile = projectCatalogEnabled && typeof hubCatalog?.profile === "string"
     ? hubCatalog.profile
     : typeof options.profile === "string"
       ? options.profile
@@ -762,14 +771,21 @@ export function createLiveControlRoomServer(options = {}) {
   };
 
   const resolveHubSelection = async (parsed) => {
-    if (!globalHub) return { service, projectId: null, runId: parsed.searchParams.get("runId") || null,
+    if (!projectCatalogEnabled) return { service, projectId: null, runId: parsed.searchParams.get("runId") || null,
       projectRoot: options.projectRoot || process.cwd() };
-    const requestedProjectId = parsed.searchParams.get("projectId");
+    const rawRequestedProjectId = parsed.searchParams.get("projectId");
+    const requestedProjectId = rawRequestedProjectId || defaultBoundProjectId;
     const requestedRunId = parsed.searchParams.get("runId");
     const catalog = await publicHubCatalog({ requestedProjectId, requestedRunId });
-    if (catalog.projects.length === 0) return { service: null, projectId: null, runId: null, catalog,
-      ...(requestedProjectId ? { invalidProject: true } : requestedRunId ? { invalidRun: true } : {}) };
-    if (requestedProjectId && catalog.selected.projectId !== requestedProjectId) {
+    if (catalog.projects.length === 0) {
+      if (!globalHub && !rawRequestedProjectId) {
+        return { service, projectId: defaultBoundProjectId, runId: requestedRunId || null, catalog,
+          projectRoot: options.projectRoot || process.cwd() };
+      }
+      return { service: null, projectId: null, runId: null, catalog,
+        ...(rawRequestedProjectId ? { invalidProject: true } : requestedRunId ? { invalidRun: true } : {}) };
+    }
+    if (rawRequestedProjectId && catalog.selected.projectId !== rawRequestedProjectId) {
       return { service: null, projectId: null, runId: null, catalog, invalidProject: true };
     }
     const projectId = catalog.selected.projectId;
@@ -778,8 +794,14 @@ export function createLiveControlRoomServer(options = {}) {
       return { service: null, projectId, runId: null, catalog, invalidRun: true };
     }
     const selectedProject = catalog.projects.find((project) => project.projectId === projectId);
-    if (requestedRunId && !selectedProject?.sessions?.some((session) => session.runId === requestedRunId)) {
+    if (requestedRunId && globalHub && !selectedProject?.sessions?.some((session) => session.runId === requestedRunId)) {
       return { service: null, projectId, runId: requestedRunId, catalog, invalidRun: true };
+    }
+    if (!globalHub && projectId === defaultBoundProjectId && options.projectRoot) {
+      if (requestedRunId && selectedProject?.sessions?.length && !selectedProject.sessions.some((session) => session.runId === requestedRunId)) {
+        return { service: null, projectId, runId: requestedRunId, catalog, invalidRun: true };
+      }
+      return { service, projectId, runId, catalog, projectRoot: options.projectRoot };
     }
     const nativeProject = nativeBindings.projectFor(projectId);
     const internalProject = nativeProject
@@ -867,7 +889,7 @@ export function createLiveControlRoomServer(options = {}) {
       return;
     }
 
-    if (["/api/agent/capabilities", "/api/agent/hosts", "/api/agent/start", "/api/agent/requests", "/api/agent/decisions", "/api/agent/designs", "/api/agent/design-drafts", "/api/agent/handoff", "/api/agent/execution", "/api/agent/acceptance"].includes(parsed.pathname)) {
+    if (["/api/agent/architecture", "/api/agent/capabilities", "/api/agent/hosts", "/api/agent/start", "/api/agent/requests", "/api/agent/decisions", "/api/agent/designs", "/api/agent/design-drafts", "/api/agent/handoff", "/api/agent/execution", "/api/agent/acceptance"].includes(parsed.pathname)) {
 
       if (!agentEntryEnabled) {
         jsonResponse(response, 403, safeError("agent_entry_not_enabled")); return;
@@ -905,7 +927,15 @@ export function createLiveControlRoomServer(options = {}) {
 
       }
       try {
-        if (parsed.pathname === "/api/agent/capabilities") {
+        if (parsed.pathname === "/api/agent/architecture") {
+          const architecture = typeof agentStartService.getArchitecturePrd === "function"
+            ? await agentStartService.getArchitecturePrd()
+            : null;
+          if (!architecture) {
+            jsonResponse(response, 404, safeError("agent_architecture_not_available")); return;
+          }
+          jsonResponse(response, 200, architecture);
+        } else if (parsed.pathname === "/api/agent/capabilities") {
           // Registry inventory says what this installation declares. Only
           // observed Run nodes may claim execution, completion or results.
           const [catalog, professional, native] = await Promise.all([
@@ -1122,7 +1152,7 @@ export function createLiveControlRoomServer(options = {}) {
         jsonResponse(response, 405, safeError("method_not_allowed"));
         return;
       }
-      if (!globalHub) {
+      if (!projectCatalogEnabled) {
         jsonResponse(response, 404, safeError("hub_catalog_unavailable"));
         return;
       }
@@ -1132,7 +1162,7 @@ export function createLiveControlRoomServer(options = {}) {
         // every project or run switch, so forcing a fresh read put the whole walk
         // in front of each click while the cache above was never read.
         jsonResponse(response, 200, await publicHubCatalog({
-          requestedProjectId: parsed.searchParams.get("projectId"),
+          requestedProjectId: parsed.searchParams.get("projectId") || defaultBoundProjectId,
           requestedRunId: parsed.searchParams.get("runId"),
         }));
       } catch {

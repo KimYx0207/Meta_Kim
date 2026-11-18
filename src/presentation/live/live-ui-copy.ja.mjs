@@ -318,6 +318,8 @@ export const JA_COPY = Object.freeze({
   "Recheck awaiting confirmation; owner record exists, execution provenance and user acceptance remain unconfirmed": "再検証の確認待ち・担当者の記録はありますが、実行元の証拠とユーザーの受け入れは未確認です",
   "Reconnecting": "再接続中",
   "Record is not enough to judge": "記録だけでは判断できません",
+  "Registered project": "登録済みプロジェクト",
+  "No observed workspace sessions.": "観測されたワークスペースセッションはありません。",
   "Relations · State key": "関係と状態の凡例",
   "Relayout": "再配置",
   "Relayout (R)": "再配置（R）",

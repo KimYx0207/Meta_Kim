@@ -70,18 +70,66 @@ export function createPrdKnowledgeGraph({ doc, graph, copy, focusId = null, dept
   root.append(header);
   const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
   const edges = Array.isArray(graph?.edges) ? graph.edges : [];
+  const hasDependencyEdges = edges.some(edge => edge.type !== "containment");
+  const hasLayeredModules = nodes.some(node => node.kind !== "architecture" && Number.isInteger(node.layerRank));
+  if (!focusId && hasDependencyEdges && nodes.filter(node => node.kind !== "architecture").length >= 5) {
+    root.dataset.hideContainment = "true";
+    const containBtn = el("button", "uw-knowledge-tool", "包含连线");
+    containBtn.type = "button";
+    containBtn.dataset.uwKgToggleContainment = "true";
+    containBtn.setAttribute("aria-pressed", "false");
+    containBtn.title = "显示或隐藏一级框架对二级模块的包含虚线";
+    containBtn.addEventListener("click", () => {
+      const hiddenNow = root.dataset.hideContainment === "true";
+      root.dataset.hideContainment = String(!hiddenNow);
+      containBtn.setAttribute("aria-pressed", String(hiddenNow));
+    });
+    cameraTools.insertBefore?.(containBtn, zoomOutBtn) || cameraTools.append(containBtn);
+  }
   root.dataset.livePrdKnowledgeNodeCount = String(nodes.length);
   if (!nodes.length) {
     root.append(el("p", "uw-knowledge-empty", copy("noGraphNodes")));
     return root;
   }
 
-  const cardWidth = 200, cardHeight = 72, verticalGap = 24;
+  const cardWidth = hasLayeredModules ? 222 : 200;
+  const cardHeight = hasLayeredModules ? 78 : 72;
+  const verticalGap = hasLayeredModules && !focusId ? 30 : 24;
   const byId = new Map(nodes.map(node => [node.id, node]));
   const positions = new Map();
   let width, height;
   const architecture = nodes.find(node => node.kind === "architecture");
-  if (!focusId) {
+  if (!focusId && hasLayeredModules) {
+    const modules = nodes.filter(node => node.kind !== "architecture");
+    const tierMap = new Map();
+    for (const mod of modules) {
+      const rank = Number.isInteger(mod.layerRank) ? mod.layerRank : 2;
+      if (!tierMap.has(rank)) tierMap.set(rank, []);
+      tierMap.get(rank).push(mod);
+    }
+    const sortedRanks = [...tierMap.keys()].sort((a, b) => a - b);
+    const rows = [];
+    for (const rank of sortedRanks) {
+      const group = tierMap.get(rank);
+      for (let i = 0; i < group.length; i += 3) {
+        rows.push(group.slice(i, i + 3));
+      }
+    }
+    const maxCols = Math.max(1, ...rows.map(r => r.length));
+    const xGap = 34;
+    width = Math.max(cardWidth + 80, maxCols * (cardWidth + xGap) + xGap);
+    if (architecture) positions.set(architecture.id, { x: Math.round((width - cardWidth) / 2), y: 20 });
+    const firstRow = architecture ? 128 : 20;
+    rows.forEach((rowNodes, rowIndex) => {
+      const rowSpan = rowNodes.length * cardWidth + Math.max(0, rowNodes.length - 1) * xGap;
+      const startX = Math.round((width - rowSpan) / 2);
+      const y = firstRow + rowIndex * (cardHeight + verticalGap);
+      rowNodes.forEach((node, colIndex) => {
+        positions.set(node.id, { x: startX + colIndex * (cardWidth + xGap), y });
+      });
+    });
+    height = firstRow + rows.length * (cardHeight + verticalGap) + 18;
+  } else if (!focusId) {
     const modules = nodes.filter(node => node.kind !== "architecture");
     const columns = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(modules.length))));
     const xGap = 40;
@@ -204,16 +252,25 @@ export function createPrdKnowledgeGraph({ doc, graph, copy, focusId = null, dept
     group.dataset.selected = String(selected);
     group.dataset.state = /^[a-z_]+$/iu.test(displayStatus) ? displayStatus : "unknown";
     group.append(svgEl("rect", { x: 0, y: 0, width: cardWidth, height: cardHeight, rx: 11 }));
-    const kind = svgEl("text", { x: 14, y: 21, class: "uw-kg-node-kind" });
-    kind.textContent = copy(node.kind === "architecture" ? "prdFirstLayer" : "prdSecondLayer");
-    const status = svgEl("text", { x: cardWidth - 14, y: 21, "text-anchor": "end", class: "uw-kg-node-state" });
+    const kind = svgEl("text", { x: 14, y: 20, class: "uw-kg-node-kind" });
+    kind.textContent = node.kind === "architecture"
+      ? copy("prdFirstLayer")
+      : (node.layerShort ? `二级 · ${node.layerShort}` : copy("prdSecondLayer"));
+    const status = svgEl("text", { x: cardWidth - 14, y: 20, "text-anchor": "end", class: "uw-kg-node-state" });
     status.textContent = copy(displayStatus);
-    const title = svgEl("text", { x: 14, y: 48, class: "uw-kg-node-title" });
+    const title = svgEl("text", { x: 14, y: node.directory ? 44 : 48, class: "uw-kg-node-title" });
     const fullTitle = String(node.title || node.sourceId || node.id);
     title.textContent = Array.from(fullTitle).length > 14 ? Array.from(fullTitle).slice(0, 13).join("") + "…" : fullTitle;
     const tooltip = svgEl("title");
-    tooltip.textContent = [fullTitle, node.summary || "", copy(displayStatus)].filter(Boolean).join(" · ");
-    group.append(kind, status, title, tooltip);
+    tooltip.textContent = [fullTitle, node.layer || "", node.directory || "", node.summary || "", copy(displayStatus)].filter(Boolean).join(" · ");
+    if (node.directory) {
+      const sub = svgEl("text", { x: 14, y: 63, class: "uw-kg-node-sub" });
+      const metaText = Number.isInteger(node.fileCount) ? `${node.directory} · ${node.fileCount}` : node.directory;
+      sub.textContent = Array.from(metaText).length > 25 ? Array.from(metaText).slice(0, 24).join("") + "…" : metaText;
+      group.append(kind, status, title, sub, tooltip);
+    } else {
+      group.append(kind, status, title, tooltip);
+    }
     group.addEventListener("pointerdown", event => {
       if (!event || (typeof event.button === "number" && event.button !== 0)) return;
       event.stopPropagation?.();

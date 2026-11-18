@@ -14,6 +14,7 @@ import { pathToFileURL } from "node:url";
 
 import { createLiveControlRoomServer } from "../src/infrastructure/live/live-control-room-server.mjs";
 import { resolveLiveProjectRoot } from "../src/infrastructure/live/live-read-repository.mjs";
+import { ensureGovernedLiveProjectRegistration } from "./project-registry.mjs";
 import { createAgentStartService } from "../src/application/agent/agent-start-service.mjs";
 import { createAgentWorkflowService } from "../src/application/agent/agent-workflow-service.mjs";
 import { createAgentExecutionBridge } from "../src/application/agent/agent-execution-bridge.mjs";
@@ -114,6 +115,13 @@ export async function main(args = process.argv.slice(2), environment = process.e
   const projectRoot = await resolveLiveProjectRoot({ cwd: callerCwd, projectRoot: options.projectRoot, env: environment });
   if (!projectRoot) throw new Error("Project folder is not initialized. Open a project containing .git or .meta-kim, or pass --project-root with that folder's absolute path.");
 
+  await ensureGovernedLiveProjectRegistration({
+    homeDir: environment.META_KIM_LIVE_HOME,
+    repoPath: projectRoot,
+    runtimeFamily: "shared",
+    sourceRef: "meta-kim-agent",
+  }).catch(() => null);
+
   const nativePlanService = createAgentStartService({ projectRoot, enabled: true, environment });
   // The user-facing Agent path must survive app reloads. Its own records
   // commit decisions, never native execution authority or a synthetic run ID.
@@ -129,12 +137,18 @@ export async function main(args = process.argv.slice(2), environment = process.e
     nativeExecutionService: agentNativeExecutionService,
   });
   const controller = createLiveControlRoomServer({
-    projectRoot, port: options.port, globalHub: false, workspaceEnabled: true,
+    projectRoot, port: options.port, globalHub: false, enableProjectCatalog: true,
+    homeDir: environment.META_KIM_LIVE_HOME, workspaceEnabled: true,
     // This opt-in path is separate from the global read-only Live Hub.
     enableControl: false, enableAgentStart: true, agentStartService,
     agentNativeExecutionService, agentAcceptanceService,
   });
   const address = await controller.start();
+  void Promise.allSettled([
+    agentStartService.getArchitecturePrd?.(),
+    agentStartService.getProfessionalDirectory?.(),
+    agentStartService.getNativeDirectory?.(),
+  ]);
   let closing = false;
   const stop = async () => {
     if (closing) return;

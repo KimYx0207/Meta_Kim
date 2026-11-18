@@ -27,6 +27,7 @@ import {
 } from "../../domain/runtime/agent-host-diagnostics.mjs";
 import { normalizeDesign } from "../../domain/runtime/agent-design-contract.mjs";
 import { discoverNativeHostInventory } from "./native-host-inventory.mjs";
+import { discoverProjectArchitecturePrd } from "./project-architecture-prd-service.mjs";
 
 const MANIFEST_PATH = fileURLToPath(new URL("../../../config/agent-hosts.json", import.meta.url));
 const DEPENDENCY_REGISTRY_PATH = fileURLToPath(new URL(
@@ -434,6 +435,8 @@ export function createAgentStartService({
   let activeRequest = null;
   let closed = false;
   let catalogCache = null;
+  let nativeDirectoryCache = null;
+  let architecturePrdCache = null;
 
   async function loadProfessionalCatalog() {
     if (catalogCache && Date.now() - catalogCache.at < probeTtlMs) return catalogCache.promise;
@@ -482,24 +485,40 @@ export function createAgentStartService({
     };
   }
 
-  async function getNativeDirectory() {
+  async function getNativeDirectory({ forceRefresh = false } = {}) {
+    if (!forceRefresh && nativeDirectoryCache && Date.now() - nativeDirectoryCache.at < probeTtlMs) {
+      return nativeDirectoryCache.promise;
+    }
     // The explicit native host diagnostics are the sole source of CLI
     // availability. Config discovery is bounded, read-only and never uses
     // credentials, runs a native subagent or registers an MCP server.
-    const [knownHosts, piDetection] = await Promise.all([
-      getHosts(), detect({ id: "pi", command: "pi" }),
-    ]);
-    const hostSnapshot = { hosts: [...knownHosts.hosts, {
-      id: "pi", available: piDetection.status === "detected",
-      version: piDetection.version, launchSupported: false,
-      reason: piDetection.status === "not_found" ? "client_not_installed"
-        : piDetection.status === "detected" ? "needs_native_launch_review"
-          : "client_detection_not_verified",
-      statusLabel: piDetection.status === "detected" ? "已检测到 Pi，未开放启动"
-        : piDetection.status === "not_found" ? "未检测到 Pi 客户端" : "Pi 客户端检测待确认",
-      nextAction: "Pi 可读取本地 Agent/Skill/Extension/MCP 配置；实际调用需独立审阅并授权。",
-    }] };
-    return discoverNativeHostInventory({ projectRoot: root, hostSnapshot });
+    const promise = (async () => {
+      const [knownHosts, piDetection] = await Promise.all([
+        getHosts(), detect({ id: "pi", command: "pi" }),
+      ]);
+      const hostSnapshot = { hosts: [...knownHosts.hosts, {
+        id: "pi", available: piDetection.status === "detected",
+        version: piDetection.version, launchSupported: false,
+        reason: piDetection.status === "not_found" ? "client_not_installed"
+          : piDetection.status === "detected" ? "needs_native_launch_review"
+            : "client_detection_not_verified",
+        statusLabel: piDetection.status === "detected" ? "已检测到 Pi，未开放启动"
+          : piDetection.status === "not_found" ? "未检测到 Pi 客户端" : "Pi 客户端检测待确认",
+        nextAction: "Pi 可读取本地 Agent/Skill/Extension/MCP 配置；实际调用需独立审阅并授权。",
+      }] };
+      return discoverNativeHostInventory({ projectRoot: root, hostSnapshot });
+    })();
+    nativeDirectoryCache = { at: Date.now(), promise };
+    return promise;
+  }
+
+  async function getArchitecturePrd({ forceRefresh = false } = {}) {
+    if (!forceRefresh && architecturePrdCache && Date.now() - architecturePrdCache.at < probeTtlMs) {
+      return architecturePrdCache.value;
+    }
+    const value = discoverProjectArchitecturePrd({ projectRoot: root });
+    architecturePrdCache = { at: Date.now(), value };
+    return value;
   }
 
   async function prepareProfessionalReference(goal) {
@@ -836,9 +855,11 @@ export function createAgentStartService({
     }
     activeRequest = null;
     probeCache.clear();
+    nativeDirectoryCache = null;
+    architecturePrdCache = null;
   }
 
-  return Object.freeze({ getHosts, getProfessionalDirectory, getNativeDirectory,
+  return Object.freeze({ getHosts, getProfessionalDirectory, getNativeDirectory, getArchitecturePrd,
     start, inspect, startDesignDraft, inspectDesignDraft, close,
     // Host-only: the verified Kim_Service method is never sent to the UI.
     getProfessionalReference: prepareProfessionalReference });

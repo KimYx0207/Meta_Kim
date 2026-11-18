@@ -140,9 +140,9 @@ export function createLiveWorkspaceController(options) {
     for (const [key, value] of Object.entries({ projectId: selection.projectId, runId: selection.runId, ...extra })) if (value !== undefined && value !== null && value !== "") url.searchParams.set(key, String(value));
     return url.href;
   };
-  async function request(path, { method = "GET", body, query = {}, selection = state.selection } = {}) {
+  async function request(path, { method = "GET", body, query = {}, selection = state.selection, runScoped = !path.startsWith("/api/agent/") } = {}) {
     const controller = new AbortController();
-    pendingControllers.add(controller);
+    if (runScoped) pendingControllers.add(controller);
     const timer = win.setTimeout(() => controller.abort(), policy.requestTimeoutMs);
     try {
       const headers = { accept: "application/json" };
@@ -155,12 +155,35 @@ export function createLiveWorkspaceController(options) {
       return payload;
     } finally { win.clearTimeout(timer); pendingControllers.delete(controller); }
   }
+  let architectureRead = null;
+  let architectureLastRead = 0;
+  async function loadAgentArchitecture({ force = false } = {}) {
+    if (!agentEntryEnabled || !token || disposed || architectureRead
+      || (!force && Date.now() - architectureLastRead < 60_000)) return;
+    architectureRead = (async () => {
+      try {
+        const arch = await request("/api/agent/architecture", { selection: {}, runScoped: false });
+        if (disposed) return;
+        if (arch?.schemaVersion === "meta-kim-project-architecture-prd-v1"
+          && arch?.system && Array.isArray(arch?.modules)) {
+          state.projectArchitecturePrd = arch;
+          architectureLastRead = Date.now();
+        }
+      } catch (error) {
+        if (disposed || error?.name === "AbortError") return;
+        architectureLastRead = Date.now();
+      }
+      renderer.render();
+      desktop?.render();
+    })();
+    try { await architectureRead; } finally { architectureRead = null; }
+  }
   async function loadAgentCapabilities({ force = false } = {}) {
     if (!agentEntryEnabled || !token || disposed || capabilityCatalogRead
       || (!force && Date.now() - capabilityCatalogLastRead < 60_000)) return;
     capabilityCatalogRead = (async () => {
       try {
-        const catalog = await request("/api/agent/capabilities", { selection: {} });
+        const catalog = await request("/api/agent/capabilities", { selection: {}, runScoped: false });
         if (disposed) return;
         if (catalog?.schemaVersion !== 1 || catalog?.evidenceLevel !== "registered_only"
           || !Array.isArray(catalog.agents) || !Array.isArray(catalog.skills)
@@ -172,8 +195,8 @@ export function createLiveWorkspaceController(options) {
         state.capabilityCatalog = catalog;
         state.capabilityCatalogError = null;
         capabilityCatalogLastRead = Date.now();
-      } catch {
-        if (disposed) return;
+      } catch (error) {
+        if (disposed || error?.name === "AbortError") return;
         state.capabilityCatalogError = "本地能力登记暂不可读取";
         capabilityCatalogLastRead = Date.now();
       }
@@ -1543,18 +1566,108 @@ export function createLiveWorkspaceController(options) {
     app.querySelector("[data-uw-navigation]")?.setAttribute("data-open", "false");
     app.querySelector("[data-uw-nav-open]")?.setAttribute("aria-expanded", "false");
   }
+  const dockedAnchors = new Map();
+  let dockedMetaDetails = null;
+  function ensureOriginAnchor(element) {
+    if (!element || dockedAnchors.has(element)) return dockedAnchors.get(element) || null;
+    if (!element.parentNode || typeof doc.createComment !== "function") return null;
+    const marker = doc.createComment("uw-dock-origin");
+    element.parentNode.insertBefore(marker, element);
+    dockedAnchors.set(element, marker);
+    return marker;
+  }
+  function restoreToOriginAnchor(element) {
+    const marker = dockedAnchors.get(element);
+    if (element && marker?.parentNode) {
+      marker.parentNode.insertBefore(element, marker.nextSibling);
+    }
+  }
+  function ensureDockedMetaBar(slot) {
+    if (dockedMetaDetails) return dockedMetaDetails;
+    if (typeof doc.createElement !== "function") return null;
+    const details = doc.createElement("details");
+    details.className = "uw-docked-run-meta";
+    details.dataset.uwDockedRunMeta = "true";
+    const summary = doc.createElement("summary");
+    summary.className = "uw-docked-run-meta-summary";
+    const titleSpan = doc.createElement("span");
+    titleSpan.className = "uw-docked-run-meta-title";
+    titleSpan.dataset.uwDockedMetaTitle = "true";
+    titleSpan.textContent = translateAgentUi("运行摘要与工作清单", state.language || "zh");
+    const actionsWrap = doc.createElement("span");
+    actionsWrap.className = "uw-docked-run-meta-actions";
+    const switchRunBtn = doc.createElement("button");
+    switchRunBtn.type = "button";
+    switchRunBtn.className = "uw-docked-switch-btn";
+    switchRunBtn.dataset.uwDockedOpenSessions = "true";
+    switchRunBtn.textContent = translateAgentUi("切换运行记录", state.language || "zh");
+    switchRunBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      options.openProjects?.();
+    });
+    const toggleHint = doc.createElement("span");
+    toggleHint.className = "uw-docked-meta-hint";
+    toggleHint.dataset.uwDockedMetaHint = "true";
+    toggleHint.textContent = translateAgentUi("展开摘要", state.language || "zh");
+    details.addEventListener("toggle", () => {
+      toggleHint.textContent = translateAgentUi(details.open ? "收起摘要" : "展开摘要", state.language || "zh");
+      if (win?.requestAnimationFrame) win.requestAnimationFrame(() => win.dispatchEvent?.(new win.Event("resize")));
+    });
+    actionsWrap.append(switchRunBtn, toggleHint);
+    summary.append(titleSpan, actionsWrap);
+    const body = doc.createElement("div");
+    body.className = "uw-docked-run-meta-body";
+    body.dataset.uwDockedMetaBody = "true";
+    details.append(summary, body);
+    dockedMetaDetails = details;
+    if (slot) slot.prepend?.(details);
+    return details;
+  }
+  function syncDockedMetaCopy() {
+    if (!dockedMetaDetails) return;
+    const lang = state.language || "zh";
+    const titleEl = dockedMetaDetails.querySelector?.("[data-uw-docked-meta-title]");
+    const runTitle = state.snapshot?.run?.title;
+    const baseLabel = translateAgentUi("运行摘要与工作清单", lang);
+    if (titleEl) titleEl.textContent = runTitle ? `${baseLabel} · ${runTitle}` : baseLabel;
+    const switchBtn = dockedMetaDetails.querySelector?.("[data-uw-docked-open-sessions]");
+    if (switchBtn) switchBtn.textContent = translateAgentUi("切换运行记录", lang);
+    const hintEl = dockedMetaDetails.querySelector?.("[data-uw-docked-meta-hint]");
+    if (hintEl) hintEl.textContent = translateAgentUi(dockedMetaDetails.open ? "收起摘要" : "展开摘要", lang);
+  }
   function dockLiveRunView(docked) {
     const runPanel = app.querySelector("[data-live-run-view]");
     const inspectorPanel = app.querySelector("[data-live-inspector]");
+    const runContext = app.querySelector(".run-context");
+    const runOverview = app.querySelector("[data-live-run-overview]");
+    const emptyPanel = app.querySelector("[data-live-empty]");
     const slot = root.querySelector("[data-uw-docked-run-slot]");
     const wsGrid = app.querySelector(".workspace-grid");
     if (!runPanel || !wsGrid) return;
     if (docked && slot) {
+      for (const el of [runContext, runOverview, runPanel, inspectorPanel, emptyPanel]) ensureOriginAnchor(el);
       if (app.dataset) app.dataset.dockedLiveRun = "true";
       root.dataset.dockedLiveRun = "true";
+      const metaBar = ensureDockedMetaBar(slot);
+      const metaBody = metaBar?.querySelector?.("[data-uw-docked-meta-body]");
+      if (metaBar && metaBar.parentElement !== slot) slot.prepend(metaBar);
+      if (metaBody) {
+        if (runContext && runContext.parentElement !== metaBody) metaBody.append(runContext);
+        if (runOverview && runOverview.parentElement !== metaBody) metaBody.append(runOverview);
+      }
       if (runPanel.parentElement !== slot) slot.append(runPanel);
       if (inspectorPanel && inspectorPanel.parentElement !== slot) slot.append(inspectorPanel);
-      runPanel.hidden = false;
+      if (emptyPanel && emptyPanel.parentElement !== slot) slot.append(emptyPanel);
+      const hasRun = Boolean(state.snapshot?.run);
+      runPanel.hidden = !hasRun;
+      if (emptyPanel) emptyPanel.hidden = hasRun;
+      const stageOverview = runPanel.querySelector?.(".stage-overview");
+      if (stageOverview && !stageOverview.dataset?.uwInitOpened) {
+        if (stageOverview.dataset) stageOverview.dataset.uwInitOpened = "true";
+        stageOverview.open = true;
+      }
+      syncDockedMetaCopy();
       slot.hidden = false;
       const syncRunCamera = () => {
         options.refreshLiveRunGraph?.();
@@ -1565,11 +1678,13 @@ export function createLiveWorkspaceController(options) {
     } else {
       if (app.dataset) delete app.dataset.dockedLiveRun;
       delete root.dataset.dockedLiveRun;
+      for (const el of [runContext, runOverview, runPanel, inspectorPanel, emptyPanel]) restoreToOriginAnchor(el);
       if (runPanel.parentElement === slot) wsGrid.append(runPanel);
       if (inspectorPanel && inspectorPanel.parentElement === slot) wsGrid.append(inspectorPanel);
       if (slot) slot.hidden = true;
       const onFullRun = state.externalView === "graph";
       runPanel.hidden = !onFullRun;
+      if (emptyPanel && !onFullRun) emptyPanel.hidden = true;
     }
   }
   function setView(view, { updateUrl = true } = {}) {
@@ -1957,6 +2072,19 @@ export function createLiveWorkspaceController(options) {
       },
       rollbackDeliverables() { void decideAgentAcceptance("rollback"); },
       dockLiveRunView,
+      onLiveModeChange(nextMode, prevMode) {
+        if (nextMode === "live-run") {
+          if (!root.dataset.paneLayout || root.dataset.paneLayout === "split") {
+            setPaneLayout("live-max", { autoFromLiveRun: true });
+          } else {
+            syncRestoreChatLabel();
+          }
+        } else if (prevMode === "live-run" && autoExpandedForLiveRun && root.dataset.paneLayout === "live-max") {
+          setPaneLayout("split");
+        } else {
+          syncRestoreChatLabel();
+        }
+      },
     },
   }) : null;
   // Keep the single composer and Live diagrams in sync with real governed
@@ -2055,13 +2183,13 @@ export function createLiveWorkspaceController(options) {
     if (typeof event.button === "number" && event.button !== 0) return;
     event.preventDefault();
     const navBox = app.querySelector("[data-uw-navigation]")?.getBoundingClientRect?.();
-    navDrag = { pointerId: event.pointerId, startX: event.clientX, baseW: navBox?.width || 224 };
+    navDrag = { pointerId: event.pointerId, startX: event.clientX, baseW: navBox?.width || 176 };
     navResizer.dataset.dragging = "true";
     navResizer.setPointerCapture?.(event.pointerId);
   });
   navResizer?.addEventListener("pointermove", (event) => {
     if (!navDrag || event.pointerId !== navDrag.pointerId) return;
-    const nextW = Math.round(Math.min(400, Math.max(176, navDrag.baseW + (event.clientX - navDrag.startX))));
+    const nextW = Math.round(Math.min(360, Math.max(156, navDrag.baseW + (event.clientX - navDrag.startX))));
     app.style?.setProperty?.("--uw-nav-width", `${nextW}px`);
     win?.dispatchEvent?.(new win.Event("resize"));
   });
@@ -2083,15 +2211,25 @@ export function createLiveWorkspaceController(options) {
   const liveMinBtn = root.querySelector('[data-uw-pane-toggle="live-min"]');
   const restoreLiveBtn = root.querySelector("[data-uw-pane-restore-live]");
   const restoreChatBtn = root.querySelector("[data-uw-pane-restore-chat]");
-  const setPaneLayout = (layout) => {
+  let autoExpandedForLiveRun = false;
+  function syncRestoreChatLabel() {
+    if (!restoreChatBtn) return;
+    const label = desktop?.mode === "live-run" ? "并排对话" : "还原分栏";
+    restoreChatBtn.textContent = translateAgentUi(label, state.language || "zh");
+  }
+  function setPaneLayout(layout, { autoFromLiveRun = false } = {}) {
     const next = ["split", "chat-max", "live-max"].includes(layout) ? layout : "split";
+    autoExpandedForLiveRun = next === "live-max" && Boolean(autoFromLiveRun);
     root.dataset.paneLayout = next;
     if (restoreLiveBtn) restoreLiveBtn.hidden = next !== "chat-max";
-    if (restoreChatBtn) restoreChatBtn.hidden = next !== "live-max";
+    if (restoreChatBtn) {
+      restoreChatBtn.hidden = next !== "live-max";
+      syncRestoreChatLabel();
+    }
     chatMaxBtn?.setAttribute("aria-pressed", String(next === "chat-max"));
     liveMaxBtn?.setAttribute("aria-pressed", String(next === "live-max"));
     if (win?.requestAnimationFrame) win.requestAnimationFrame(() => win.dispatchEvent?.(new win.Event("resize")));
-  };
+  }
   chatMaxBtn?.addEventListener("click", () => setPaneLayout(root.dataset.paneLayout === "chat-max" ? "split" : "chat-max"));
   liveMaxBtn?.addEventListener("click", () => setPaneLayout(root.dataset.paneLayout === "live-max" ? "split" : "live-max"));
   liveMinBtn?.addEventListener("click", () => setPaneLayout("chat-max"));
@@ -2187,6 +2325,7 @@ export function createLiveWorkspaceController(options) {
   }, policy.agentReceiptPollMs) : null;
   renderer.render();
   void loadAgentCapabilities();
+  void loadAgentArchitecture();
   const hostScopeCheck = loadAgentHosts();
   if (agent.pending) {
     agentMessage("unconfirmed", "发现本会话的研究回执，先核对本地项目身份，再检查原请求号…");
@@ -2215,6 +2354,8 @@ export function createLiveWorkspaceController(options) {
       }
       state.snapshot = snapshot; state.project = project; state.selection = selection; state.tasks = tasks || []; state.fallbackStages = fallbackStages || []; state.origin = state.workspace?.source?.recordOrigin || origin;
       state.language = options.language();
+      syncDockedMetaCopy();
+      syncRestoreChatLabel();
       renderer.render();
       renderAgentFollowthrough();
       if (!state.externalView || changed) void refresh({ force: changed });
