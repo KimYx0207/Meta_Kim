@@ -8,6 +8,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { createAgentAcceptanceService } from "../../src/application/agent/agent-acceptance-service.mjs";
+import { snapshotProjectBaseline } from "../../src/application/agent/agent-native-execution-service.mjs";
 
 const KEY = "agent_scan_guard_0001";
 const HANDOFF = "a".repeat(64);
@@ -132,5 +133,65 @@ test("B4 blocks only a changed oversize file and says it is too large", async ()
     assert.equal(readFileSync(path.join(projectRoot, "docs/images/social-card.png"))[0], 7);
   } finally {
     rmSync(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("B4 hard-fails a worktree above the scan limit instead of treating unscanned files as deleted", async () => {
+  const { projectRoot, service } = createHarness({
+    baselineFiles(root) {
+      write(root, "zz/keep.txt", "must survive\n");
+      const keep = readFileSync(path.join(root, "zz/keep.txt"));
+      return { ...readmeBaseline(root), "zz/keep.txt": { sha256: sha(keep), bytes: keep.length } };
+    },
+    prepareWorktree(worktree) {
+      write(worktree, "README.md", "# shop\n");
+      write(worktree, "zz/keep.txt", "must survive\n");
+      // Sorted before zz/, these push the baseline file past a 2,500-file scan.
+      for (let index = 0; index < 2_500; index += 1) {
+        write(worktree, `aa/generated-${String(index).padStart(4, "0")}.txt`, `${index}\n`);
+      }
+    },
+  });
+  try {
+    const inspected = await service.inspect({ idempotencyKey: KEY });
+    assert.equal(inspected.status, "blocked");
+    assert.equal(inspected.reason, "worktree_scan_limit_exceeded");
+    assert.match(inspected.nextAction, /扫描上限/u);
+    assert.deepEqual(inspected.changedFiles, []);
+
+    const verified = await service.verifyArtifacts({ idempotencyKey: KEY });
+    assert.equal(verified.status, "blocked");
+    assert.equal(verified.reason, "worktree_scan_limit_exceeded");
+
+    await assert.rejects(
+      service.decide({
+        idempotencyKey: KEY,
+        decisionKey: "agent_scan_decide_0003",
+        handoffDigest: HANDOFF,
+        artifactsDigest: "b".repeat(64),
+        action: "accept",
+      }),
+      (error) => error.reason === "agent_b4_scan_limit_exceeded",
+    );
+    assert.equal(readFileSync(path.join(projectRoot, "zz/keep.txt"), "utf8"), "must survive\n");
+    assert.equal(existsSync(path.join(projectRoot, "aa")), false);
+  } finally {
+    rmSync(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("B3 baseline snapshot reports truncation instead of returning a partial file map", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "meta-kim-b3-baseline-"));
+  try {
+    for (const name of ["a.txt", "b.txt", "c.txt"]) write(root, name, name);
+    const complete = snapshotProjectBaseline(root, { maxFiles: 3 });
+    assert.equal(complete.truncated, false);
+    assert.deepEqual(Object.keys(complete.files).sort(), ["a.txt", "b.txt", "c.txt"]);
+
+    write(root, "d.txt", "d");
+    const partial = snapshotProjectBaseline(root, { maxFiles: 3 });
+    assert.equal(partial.truncated, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

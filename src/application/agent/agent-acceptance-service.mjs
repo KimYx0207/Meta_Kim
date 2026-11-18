@@ -142,20 +142,21 @@ function sameRegularFileContent(leftPath, rightPath, expectedBytes) {
  * differ from the same path in referenceRoot (the main project): an untouched
  * large asset is not a draft change and must not block B4.
  */
-function scanTree(rootDir, { referenceRoot = null } = {}) {
+export function scanTree(rootDir, { referenceRoot = null, maxFiles = MAX_WORKTREE_FILES } = {}) {
   const files = new Map();
   const forbiddenPaths = [];
   const oversizePaths = [];
   let count = 0;
+  let truncated = false;
 
   function walk(currentDir, relPrefix) {
-    if (count >= MAX_WORKTREE_FILES) return;
+    if (truncated) return;
     let entries = [];
     try { entries = readdirSync(currentDir, { withFileTypes: true }); }
     catch { return; }
     entries.sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
-      if (count >= MAX_WORKTREE_FILES) break;
+      if (truncated) return;
       const relPosix = relPrefix ? `${relPrefix}/${entry.name}` : entry.name;
       if (IGNORED_DIRS.has(entry.name) || relPosix === ".claude/worktrees"
         || relPosix.startsWith(".claude/worktrees/")) continue;
@@ -181,6 +182,12 @@ function scanTree(rootDir, { referenceRoot = null } = {}) {
           }
           continue;
         }
+        // A partial scan would make unscanned baseline files look deleted, and
+        // accept would then remove them from the main project. Stop and report.
+        if (count >= maxFiles) {
+          truncated = true;
+          return;
+        }
         const buf = readFileSync(fullPath);
         const textPreview = !buf.includes(0)
           ? buf.toString("utf8").slice(0, 280).trim()
@@ -198,7 +205,7 @@ function scanTree(rootDir, { referenceRoot = null } = {}) {
   }
 
   walk(rootDir, "");
-  return { files, forbiddenPaths, oversizePaths };
+  return { files, forbiddenPaths, oversizePaths, truncated, maxFiles };
 }
 
 function diffAgainstBaseline(baselineMap, worktreeScan) {
@@ -453,6 +460,9 @@ export function createAgentAcceptanceService({
       return { errorReason: "worktree_outside_project", changedFiles: [], forbiddenPaths: [], artifactsDigest: null };
     }
     const worktreeScan = scanTree(resolvedWorktree, { referenceRoot: realRoot });
+    if (worktreeScan.truncated) {
+      return { errorReason: "worktree_scan_limit_exceeded", changedFiles: [], forbiddenPaths: [], oversizePaths: [], artifactsDigest: null };
+    }
     const changedFiles = diffAgainstBaseline(trustedExec.baselineFiles, worktreeScan);
     const artifactsDigest = hashJson({
       handoffDigest: trustedExec.handoffDigest,
@@ -584,7 +594,9 @@ export function createAgentAcceptanceService({
         handoffDigest: trustedExec.handoffDigest,
         matchedPlaybooks,
         reworkLessons: ledger.reworkLessons,
-        nextAction: "未找到可核验的隔离工作区目录；请核对客户端后台任务输出。",
+        nextAction: wt.errorReason === "worktree_scan_limit_exceeded"
+          ? `隔离工作区文件数超过 ${MAX_WORKTREE_FILES} 个扫描上限，无法完整比对，已停止核验；未扫描到的文件不会被当作删除，也不会合入主项目。`
+          : "未找到可核验的隔离工作区目录；请核对客户端后台任务输出。",
       });
     }
     if (wt.forbiddenPaths.length > 0) {
@@ -921,6 +933,9 @@ export function createAgentAcceptanceService({
     }
 
     const wt = buildWorktreeSnapshot(trustedExec);
+    if (wt.errorReason === "worktree_scan_limit_exceeded") {
+      throw agentWorkflowConflict("agent_b4_scan_limit_exceeded");
+    }
     if (wt.oversizePaths?.length > 0) {
       throw agentWorkflowConflict("agent_b4_changed_file_too_large");
     }

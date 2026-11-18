@@ -33,17 +33,24 @@ const IGNORED_SCAN_DIRS = new Set([
   ".git", ".meta-kim", "node_modules", ".claude-worktrees",
 ]);
 
-function snapshotProjectBaseline(root) {
+/**
+ * Hashes the project's files for the B3 baseline. B4 treats a baseline file
+ * that is missing from the worktree as deleted, so the baseline must never be
+ * silently partial: once the file limit would be passed the scan stops and
+ * reports truncated=true, and callers must refuse instead of using it.
+ */
+export function snapshotProjectBaseline(root, { maxFiles = MAX_BASELINE_FILES } = {}) {
   const files = {};
   let count = 0;
+  let truncated = false;
   function walk(currentDir, relPrefix) {
-    if (count >= MAX_BASELINE_FILES) return;
+    if (truncated) return;
     let entries = [];
     try { entries = readdirSync(currentDir, { withFileTypes: true }); }
     catch { return; }
     entries.sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
-      if (count >= MAX_BASELINE_FILES) break;
+      if (truncated) return;
       const relPosix = relPrefix ? `${relPrefix}/${entry.name}` : entry.name;
       if (IGNORED_SCAN_DIRS.has(entry.name) || relPosix === ".claude/worktrees"
         || relPosix.startsWith(".claude/worktrees/")) continue;
@@ -55,6 +62,10 @@ function snapshotProjectBaseline(root) {
       if (info.isDirectory()) {
         walk(fullPath, relPosix);
       } else if (info.isFile() && info.size <= MAX_HASHED_FILE_BYTES) {
+        if (count >= maxFiles) {
+          truncated = true;
+          return;
+        }
         try {
           const data = readFileSync(fullPath);
           files[relPosix] = {
@@ -67,7 +78,7 @@ function snapshotProjectBaseline(root) {
     }
   }
   walk(root, "");
-  return files;
+  return { files, truncated, fileCount: count, maxFiles };
 }
 
 function baselinePath(directory, key) {
@@ -213,7 +224,11 @@ function response(row, { reason = null, currentDigest = null, nativeState = null
     governedRunVerified: false,
     acceptanceVerified: false,
     publicReady: false,
-    nextAction: reason ? "B3 未达到执行条件或已失效。先核实本机客户端、交接版本和原授权记录。"
+    nextAction: reason === "baseline_scan_limit_exceeded"
+      ? `项目文件超过 ${MAX_BASELINE_FILES} 个基线扫描上限，B4 无法完整比对改动，已拒绝启动；本次授权未被占用。`
+      : reason === "baseline_record_too_large"
+        ? "项目基线记录超过大小上限，B4 无法完整比对改动，已拒绝启动；本次授权未被占用。"
+      : reason ? "B3 未达到执行条件或已失效。先核实本机客户端、交接版本和原授权记录。"
       : status === "ready_for_review" ? "原生任务已结束；先核验隔离工作区中的修改、测试和正式 Run，之后再做 B4 验收。"
       : status === "waiting_input" ? "原生客户端正在等待你的输入，请在原客户端处理；系统不会代替你批准。"
         : status === "in_doubt" || status === "unconfirmed" ? "启动或状态尚未核实，请先通过原生客户端核对；不会自动再次启动。"
@@ -374,6 +389,23 @@ export function createAgentNativeExecutionService({
       ? response(existing, { reason: "b3_approval_already_used" }) : inspect({ idempotencyKey });
     if (!await probeClaude()) return response(null, { reason: "claude_restricted_background_unavailable" });
 
+    // Capture the baseline before the one-use approval is reserved, so a
+    // project that cannot be fully scanned is refused without consuming it.
+    const baselineScan = snapshotProjectBaseline(realRoot);
+    if (baselineScan.truncated) return response(null, { reason: "baseline_scan_limit_exceeded" });
+    const baselineCapturedAt = new Date().toISOString();
+    const baselineRecord = JSON.stringify({
+      schemaVersion: "meta-kim-agent-b3-baseline-v1",
+      projectFingerprint: fingerprint,
+      idempotencyKey,
+      handoffDigest,
+      capturedAt: baselineCapturedAt,
+      files: baselineScan.files,
+    });
+    if (Buffer.byteLength(baselineRecord, "utf8") > MAX_BASELINE) {
+      return response(null, { reason: "baseline_record_too_large" });
+    }
+
     const professional = typeof workflowService.getTrustedProfessionalMethod === "function"
       ? await workflowService.getTrustedProfessionalMethod({ idempotencyKey }) : null;
     const method = professional?.capabilityState?.status === "verified_local_method_bound"
@@ -416,18 +448,8 @@ export function createAgentNativeExecutionService({
     try {
       writeExclusive(path.join(directory, "work-" + idempotencyKey + ".json"),
         JSON.stringify({ ...order, orderDigest }), MAX_ORDER);
-      const baselineRecord = JSON.stringify({
-        schemaVersion: "meta-kim-agent-b3-baseline-v1",
-        projectFingerprint: fingerprint,
-        idempotencyKey,
-        handoffDigest,
-        capturedAt: now,
-        files: snapshotProjectBaseline(realRoot),
-      });
-      if (Buffer.byteLength(baselineRecord, "utf8") <= MAX_BASELINE) {
-        const bPath = baselinePath(directory, idempotencyKey);
-        if (bPath && !existsSync(bPath)) writeExclusive(bPath, baselineRecord, MAX_BASELINE);
-      }
+      const bPath = baselinePath(directory, idempotencyKey);
+      if (bPath && !existsSync(bPath)) writeExclusive(bPath, baselineRecord, MAX_BASELINE);
       const current = await preflight(idempotencyKey);
       if (current.reason || current.prepared.handoffDigest !== handoffDigest) {
         replaceReceipt(directory, { ...row, launchStatus: "blocked", launchReason: "handoff_changed_before_launch" });
