@@ -1646,6 +1646,7 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
         blueprint,
         selectedNodeId: focusId,
         busy: Boolean(state.prdWorkflowBusy || design.busy),
+        errorMessage: state.prdWorkflowError || "",
         onSelectNode: node => {
           if (node.kind === "architecture") {
             selectDesktopAnnotationNode({ id: node.sourceId || node.id, title: node.title, kind: "architecture", layer: "system" });
@@ -2486,6 +2487,7 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
       graphData: blueprint?.design,
       prdWfRev: state.prdWorkflowCanvas?.revision || 0,
       prdWfBusy: Boolean(state.prdWorkflowBusy),
+      prdWfError: state.prdWorkflowError || "",
       moduleMockups: (design.snapshot?.modules || []).map(m => `${m.id}:${m.uiMockup?.status}:${m.uiMockup?.version}`),
       archModules: state.projectArchitecturePrd?.modules?.length || 0 });
     if (signature === lastCanvasSignature) return;

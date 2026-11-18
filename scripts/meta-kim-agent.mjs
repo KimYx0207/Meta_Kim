@@ -115,12 +115,18 @@ export async function main(args = process.argv.slice(2), environment = process.e
   const projectRoot = await resolveLiveProjectRoot({ cwd: callerCwd, projectRoot: options.projectRoot, env: environment });
   if (!projectRoot) throw new Error("Project folder is not initialized. Open a project containing .git or .meta-kim, or pass --project-root with that folder's absolute path.");
 
-  await ensureGovernedLiveProjectRegistration({
+  // Registration failure is not fatal for this project, but a later
+  // multi-project switch can then hit agent_project_not_enrolled. Report it in
+  // the startup receipt instead of swallowing it. No host paths are exposed.
+  const projectRegistration = await ensureGovernedLiveProjectRegistration({
     homeDir: environment.META_KIM_LIVE_HOME,
     repoPath: projectRoot,
     runtimeFamily: "shared",
     sourceRef: "meta-kim-agent",
-  }).catch(() => null);
+  }).then(
+    (result) => ({ status: result?.registryStatus ?? "unknown", known: result?.known === true }),
+    (error) => ({ status: "failed", known: false, errorCode: String(error?.code || error?.name || "registration_error").slice(0, 80) }),
+  );
 
   const nativePlanService = createAgentStartService({ projectRoot, enabled: true, environment });
   // The user-facing Agent path must survive app reloads. Its own records
@@ -157,8 +163,13 @@ export async function main(args = process.argv.slice(2), environment = process.e
   };
   for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => { void stop(); });
   const opened = options.open ? await openAgentWindow(address.url) : false;
-  if (options.json) process.stdout.write(`${JSON.stringify({ status: "listening", url: address.url, windowOpened: opened, engine: "meta-kim-live" })}\n`);
-  else process.stdout.write(`Meta_Kim Agent is ready at ${address.url}${opened ? " (app window opened)" : ""}\nPress Ctrl+C to stop.\n`);
+  if (options.json) process.stdout.write(`${JSON.stringify({ status: "listening", url: address.url, windowOpened: opened, engine: "meta-kim-live", projectRegistration })}\n`);
+  else {
+    process.stdout.write(`Meta_Kim Agent is ready at ${address.url}${opened ? " (app window opened)" : ""}\nPress Ctrl+C to stop.\n`);
+    if (projectRegistration.status === "failed") {
+      process.stdout.write(`Project registration failed (${projectRegistration.errorCode}); switching to this project from another workspace may report agent_project_not_enrolled.\n`);
+    }
+  }
   return controller;
 }
 

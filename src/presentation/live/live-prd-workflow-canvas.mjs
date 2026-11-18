@@ -11,6 +11,7 @@ export function createDynamicPrdWorkflowCanvas({
   blueprint,
   selectedNodeId = null,
   busy = false,
+  errorMessage = "",
   onSelectNode,
   onMutateWorkflow,
 } = {}) {
@@ -277,6 +278,12 @@ export function createDynamicPrdWorkflowCanvas({
 
   actionBar.append(quickInput, addParBtn, addUiBtn, drillBtn, resetBtn);
   root.append(actionBar);
+  if (errorMessage) {
+    const errorLine = el("p", "uw-wf-error", errorMessage);
+    errorLine.dataset.uwWfError = "true";
+    errorLine.setAttribute("role", "alert");
+    root.append(errorLine);
+  }
 
   // Hidden/Accessible quick module index buttons so keyboard & unit tests can also jump directly by module title
   const srModuleStrip = el("div", "uw-wf-module-strip");

@@ -2262,6 +2262,7 @@ export function createLiveWorkspaceController(options) {
           }
         }
         state.prdWorkflowBusy = true;
+        state.prdWorkflowError = "";
         desktop?.render();
         try {
           const updated = await request("/api/agent/prd-workflow", {
@@ -2273,11 +2274,15 @@ export function createLiveWorkspaceController(options) {
               ...mutation,
             },
           });
-          if (updated?.schemaVersion === "meta-kim-prd-workflow-canvas-v1") {
-            state.prdWorkflowCanvas = updated;
+          // HTTP 200 alone is not a save: only an authoritative canvas counts.
+          if (updated?.schemaVersion !== "meta-kim-prd-workflow-canvas-v1") {
+            state.prdWorkflowError = "画布保存未生效：服务返回的画布数据结构不正确，已保留原画布。";
+            return false;
           }
+          state.prdWorkflowCanvas = updated;
           return true;
         } catch {
+          state.prdWorkflowError = "画布保存失败，已保留原画布；请稍后重试。";
           return false;
         } finally {
           state.prdWorkflowBusy = false;

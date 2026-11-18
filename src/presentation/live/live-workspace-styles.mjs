@@ -903,6 +903,7 @@ button.uw-agent-inventory-capability:hover { background: #212326; }
 .uw-wf-no-ui-box small, .uw-wf-field-label { color: #94a3b8; font-size: var(--fs-micro); }
 .uw-wf-edit-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-cozy); }
 .uw-wf-action-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-cozy); padding-top: var(--sp-cozy); border-top: 1px solid #1e293b; }
+.uw-wf-error { margin: var(--sp-cozy) 0 0; color: #fca5a5; font-size: var(--fs-micro); }
 .uw-wf-act-btn { padding: var(--sp-cozy) var(--sp-default); border: 1px solid #334155; border-radius: 7px; background: #151e2e; color: #e2e8f0; font: inherit; font-size: var(--fs-micro); font-weight: var(--weight-semibold); cursor: pointer; white-space: nowrap; }
 .uw-wf-act-btn:hover:not(:disabled) { border-color: #94a3b8; }
 .uw-wf-act-parallel { border-color: #38bdf866; background: #0c2338; color: #7dd3fc; }
