@@ -12,7 +12,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync,
-  openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync,
+  openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync, rmSync, statSync,
   unlinkSync, writeFileSync,
 } from "node:fs";
 import path from "node:path";
@@ -109,9 +109,43 @@ export function isForbiddenDeliverablePath(relPosix) {
   return false;
 }
 
-function scanTree(rootDir) {
+// Streams both files and compares bytes; never loads an oversize file whole.
+function sameRegularFileContent(leftPath, rightPath, expectedBytes) {
+  let rightInfo;
+  try { rightInfo = lstatSync(rightPath); }
+  catch { return false; }
+  if (!rightInfo.isFile() || rightInfo.isSymbolicLink() || rightInfo.size !== expectedBytes) return false;
+  let leftFd;
+  let rightFd;
+  try {
+    leftFd = openSync(leftPath, constants.O_RDONLY | NOFOLLOW);
+    rightFd = openSync(rightPath, constants.O_RDONLY | NOFOLLOW);
+    const leftBuf = Buffer.allocUnsafe(1024 * 1024);
+    const rightBuf = Buffer.allocUnsafe(1024 * 1024);
+    for (;;) {
+      const leftRead = readSync(leftFd, leftBuf, 0, leftBuf.length, null);
+      const rightRead = readSync(rightFd, rightBuf, 0, rightBuf.length, null);
+      if (leftRead !== rightRead) return false;
+      if (leftRead === 0) return true;
+      if (!leftBuf.subarray(0, leftRead).equals(rightBuf.subarray(0, rightRead))) return false;
+    }
+  } catch {
+    return false;
+  } finally {
+    if (leftFd != null) closeSync(leftFd);
+    if (rightFd != null) closeSync(rightFd);
+  }
+}
+
+/**
+ * Scans the isolated worktree. Oversize files are only reported when they
+ * differ from the same path in referenceRoot (the main project): an untouched
+ * large asset is not a draft change and must not block B4.
+ */
+function scanTree(rootDir, { referenceRoot = null } = {}) {
   const files = new Map();
   const forbiddenPaths = [];
+  const oversizePaths = [];
   let count = 0;
 
   function walk(currentDir, relPrefix) {
@@ -141,7 +175,10 @@ function scanTree(rootDir) {
           continue;
         }
         if (info.size > MAX_FILE_BYTES) {
-          forbiddenPaths.push(relPosix);
+          const referencePath = referenceRoot ? path.join(referenceRoot, ...relPosix.split("/")) : null;
+          if (!referencePath || !sameRegularFileContent(fullPath, referencePath, info.size)) {
+            oversizePaths.push(relPosix);
+          }
           continue;
         }
         const buf = readFileSync(fullPath);
@@ -161,7 +198,7 @@ function scanTree(rootDir) {
   }
 
   walk(rootDir, "");
-  return { files, forbiddenPaths };
+  return { files, forbiddenPaths, oversizePaths };
 }
 
 function diffAgainstBaseline(baselineMap, worktreeScan) {
@@ -386,6 +423,7 @@ export function createAgentAcceptanceService({
       artifactsDigest: null,
       changedFiles: [],
       forbiddenPaths: [],
+      oversizePaths: [],
       verification: null,
       decision: null,
       playbook: null,
@@ -414,18 +452,21 @@ export function createAgentAcceptanceService({
     if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) {
       return { errorReason: "worktree_outside_project", changedFiles: [], forbiddenPaths: [], artifactsDigest: null };
     }
-    const worktreeScan = scanTree(resolvedWorktree);
+    const worktreeScan = scanTree(resolvedWorktree, { referenceRoot: realRoot });
     const changedFiles = diffAgainstBaseline(trustedExec.baselineFiles, worktreeScan);
     const artifactsDigest = hashJson({
       handoffDigest: trustedExec.handoffDigest,
       files: changedFiles.map(({ path: p, changeType, sha256, bytes }) => ({ path: p, changeType, sha256, bytes })),
       forbiddenPaths: worktreeScan.forbiddenPaths,
+      // Only present when non-empty, so digests of ordinary drafts stay stable.
+      ...(worktreeScan.oversizePaths.length > 0 ? { oversizePaths: worktreeScan.oversizePaths } : {}),
     }, "meta-kim-agent-b4-artifacts-v1");
     return {
       resolvedWorktree,
       worktreeScan,
       changedFiles,
       forbiddenPaths: worktreeScan.forbiddenPaths,
+      oversizePaths: worktreeScan.oversizePaths,
       artifactsDigest,
       errorReason: null,
     };
@@ -560,6 +601,20 @@ export function createAgentAcceptanceService({
         nextAction: "隔离工作区触碰了受保护文件（如密钥或治理目录），已被拦截，禁止合入主项目。",
       });
     }
+    if (wt.oversizePaths.length > 0) {
+      return baseResponse(idempotencyKey, {
+        status: "blocked",
+        reason: "worktree_changed_file_too_large",
+        b3Status: execReceipt.status,
+        handoffDigest: trustedExec.handoffDigest,
+        artifactsDigest: wt.artifactsDigest,
+        changedFiles: wt.changedFiles,
+        oversizePaths: wt.oversizePaths,
+        matchedPlaybooks,
+        reworkLessons: ledger.reworkLessons,
+        nextAction: `草稿新增或改动的文件超过 ${MAX_FILE_BYTES / 1024 / 1024} MB 上限（${wt.oversizePaths.join(", ")}），不能自动核验合入；请缩小该文件或退回模块重做。`,
+      });
+    }
 
     const verification = ledger.verifications[wt.artifactsDigest] ?? null;
     const status = !verification
@@ -609,6 +664,17 @@ export function createAgentAcceptanceService({
         artifactsDigest: wt.artifactsDigest,
         changedFiles: wt.changedFiles,
         forbiddenPaths: wt.forbiddenPaths,
+      });
+    }
+    if (wt.oversizePaths.length > 0) {
+      return baseResponse(idempotencyKey, {
+        status: "blocked",
+        reason: "worktree_changed_file_too_large",
+        b3Status: execReceipt.status,
+        handoffDigest: trustedExec.handoffDigest,
+        artifactsDigest: wt.artifactsDigest,
+        changedFiles: wt.changedFiles,
+        oversizePaths: wt.oversizePaths,
       });
     }
 
@@ -855,6 +921,9 @@ export function createAgentAcceptanceService({
     }
 
     const wt = buildWorktreeSnapshot(trustedExec);
+    if (wt.oversizePaths?.length > 0) {
+      throw agentWorkflowConflict("agent_b4_changed_file_too_large");
+    }
     if (wt.errorReason || wt.forbiddenPaths.length > 0 || wt.artifactsDigest !== input.artifactsDigest) {
       throw agentWorkflowConflict("agent_b4_artifacts_changed_or_blocked");
     }
