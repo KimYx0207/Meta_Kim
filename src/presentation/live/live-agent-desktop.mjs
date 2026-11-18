@@ -12,7 +12,7 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
   execution = { snapshot: null, error: null, pendingKey: null, busy: false, loading: false },
   acceptance = { snapshot: null, error: null, pendingKey: null, busy: false, loading: false },
   translateUi = null,
-
+  createWorkflowCanvas = null,
   copy, buildGraph, createGraph, callbacks }) {
   const doc = root.ownerDocument;
   const find = (name) => root.querySelector(`[data-uw-${name}]`);
@@ -364,6 +364,9 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
             shortSummary: clean(item.objective, 40),
             summary: item.objective,
             status: resolveItemState(item.approval?.state === "approved"),
+            hasUiPage: Boolean(item.hasUiPage),
+            uiMockup: item.uiMockup || null,
+            nodeKind: item.nodeKind || "process",
             dependsOn: item.dependencies || [],
           })),
         },
@@ -417,6 +420,11 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
           layer: item.layer,
           layerShort: item.layerShort,
           layerRank: item.layerRank,
+          flowColumn: item.flowColumn,
+          nodeKind: item.nodeKind,
+          hasUiPage: Boolean(item.hasUiPage),
+          uiMockup: item.uiMockup || null,
+          subflow: item.subflow || null,
           directory: item.directory,
           fileCount: item.fileCount,
           dependsOn: item.dependencies || [],
@@ -437,7 +445,7 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
     receipt: find("agent-status")?.textContent, preview: agent.pending?.resultPreview,
     decision: agent.pending?.decision, designVersion: design.snapshot?.version,
     designStatus: design.snapshot?.status, systemApproval: design.snapshot?.system?.approval?.state,
-    moduleApprovals: (design.snapshot?.modules || []).map(item => `${item.id}:${item.approval?.state}`),
+    moduleApprovals: (design.snapshot?.modules || []).map(item => `${item.id}:${item.approval?.state}:${item.uiMockup?.status}:${item.uiMockup?.version}`),
     draftStatus: nativeDraft.snapshot?.status, handoffStatus: handoff.snapshot?.status,
     executionStatus: execution.snapshot?.status, executionSession: execution.snapshot?.nativeSessionId,
     executionError: execution.error, executionPending: execution.pendingKey?.key,
@@ -698,16 +706,28 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
         const key = `${saved.version}:${next.kind}:${next.id}`;
         box.append(reviewDetails(next.record, next.kind, next.id, saved.version));
         const outstanding = designNotes(next.kind, next.id).length;
+        const mockupPending = next.kind === "module" && next.record.hasUiPage === true && next.record.uiMockup?.status !== "confirmed";
         if (outstanding) box.append(el("p", "uw-chat-options-hint", `当前节点有 ${outstanding} 条待修改意见。点击右侧节点，直接在唯一输入框给出具体字段的新内容。`));
+        if (mockupPending) box.append(el("p", "uw-chat-options-hint", "⏸ 此模块涉及前端页面：必须先确认「页面效果图」后才能批准设计进入开发。"));
         const approve = makeButton(`确认「${next.record.title || "系统设计"}」`, () => {
           callbacks.approveNode(next.kind, next.id);
         }, "uw-chat-action");
-        approve.disabled = !reviewedNodes.has(key) || Boolean(outstanding);
-        approve.title = outstanding ? "待修改意见尚未解决" : !reviewedNodes.has(key) ? "请先展开完整设计后确认" : "已审阅，可确认";
+        approve.disabled = !reviewedNodes.has(key) || Boolean(outstanding) || mockupPending;
+        approve.title = outstanding ? "待修改意见尚未解决"
+          : mockupPending ? "请先确认该页面模块的效果图"
+          : !reviewedNodes.has(key) ? "请先展开完整设计后确认" : "已审阅，可确认";
         const actionRow = el("div", "uw-chat-action-group");
         actionRow.append(approve);
+        if (mockupPending && typeof callbacks.confirmNodeMockup === "function") {
+          const confirmMockBtn = makeButton("✓ 确认该模块页面效果图", () => {
+            callbacks.confirmNodeMockup(next.id);
+          }, "uw-chat-secondary");
+          confirmMockBtn.disabled = design.busy;
+          actionRow.append(confirmMockBtn);
+        }
+        const anyMockupUnconfirmed = (saved.modules || []).some(m => m.hasUiPage === true && m.uiMockup?.status !== "confirmed");
         const totalPendingNotes = (saved.pendingReviewNotes || []).length;
-        if (totalPendingNotes === 0 && typeof callbacks.approveAllAndPrepare === "function") {
+        if (totalPendingNotes === 0 && !anyMockupUnconfirmed && typeof callbacks.approveAllAndPrepare === "function") {
           const fastTrack = makeButton("一键确认全部设计并自动封存", () => {
             callbacks.approveAllAndPrepare();
           }, "uw-chat-secondary uw-chat-fasttrack");
@@ -1617,18 +1637,40 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
       return shell;
     }
 
-    const graph = buildGraph(blueprint.design, { focusId, depth: knowledgeDepth, limit: knowledgeLimit });
-    nodeCount = graph.nodes.length;
-    shell.append(createGraph({ doc, graph, copy, focusId, depth: knowledgeDepth,
-      onSelect: node => {
-        if (node.kind === "architecture") {
-          selectDesktopAnnotationNode({ id: node.sourceId || node.id, title: node.title, kind: "architecture", layer: "system" });
-        } else {
-          pickModule(node.sourceId || node.id, node.title);
-        }
-      },
-      onDepthChange: value => { knowledgeDepth = value; lastCanvasSignature = ""; render(); },
-      onExpand: () => { knowledgeLimit = Math.min(2000, knowledgeLimit + 40); lastCanvasSignature = ""; render(); } }));
+    if (typeof createWorkflowCanvas === "function") {
+      const wfSource = blueprint.kind === "project_architecture_baseline" ? state.prdWorkflowCanvas : null;
+      nodeCount = wfSource?.nodes?.filter(n => n.kind !== "terminal")?.length || (blueprint.design?.modules?.length || 0);
+      shell.append(createWorkflowCanvas({
+        doc,
+        workflow: wfSource,
+        blueprint,
+        selectedNodeId: focusId,
+        busy: Boolean(state.prdWorkflowBusy || design.busy),
+        onSelectNode: node => {
+          if (node.kind === "architecture") {
+            selectDesktopAnnotationNode({ id: node.sourceId || node.id, title: node.title, kind: "architecture", layer: "system" });
+          } else {
+            pickModule(node.sourceId || node.id, node.title);
+          }
+        },
+        onMutateWorkflow: typeof callbacks.mutatePrdWorkflow === "function"
+          ? (mutation) => callbacks.mutatePrdWorkflow(mutation, blueprint)
+          : null,
+      }));
+    } else {
+      const graph = buildGraph(blueprint.design, { focusId, depth: knowledgeDepth, limit: knowledgeLimit });
+      nodeCount = graph.nodes.length;
+      shell.append(createGraph({ doc, graph, copy, focusId, depth: knowledgeDepth,
+        onSelect: node => {
+          if (node.kind === "architecture") {
+            selectDesktopAnnotationNode({ id: node.sourceId || node.id, title: node.title, kind: "architecture", layer: "system" });
+          } else {
+            pickModule(node.sourceId || node.id, node.title);
+          }
+        },
+        onDepthChange: value => { knowledgeDepth = value; lastCanvasSignature = ""; render(); },
+        onExpand: () => { knowledgeLimit = Math.min(2000, knowledgeLimit + 40); lastCanvasSignature = ""; render(); } }));
+    }
 
     const specInspector = el("div", "uw-prd-spec-inspector");
     if (focusId) {
@@ -2442,6 +2484,9 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
         capabilityTruth: task.source.capabilityTruth, task: task.source.task })),
       stages: (state.workspace?.stages || []).map(stage => `${stage.id}:${stage.status}`),
       graphData: blueprint?.design,
+      prdWfRev: state.prdWorkflowCanvas?.revision || 0,
+      prdWfBusy: Boolean(state.prdWorkflowBusy),
+      moduleMockups: (design.snapshot?.modules || []).map(m => `${m.id}:${m.uiMockup?.status}:${m.uiMockup?.version}`),
       archModules: state.projectArchitecturePrd?.modules?.length || 0 });
     if (signature === lastCanvasSignature) return;
     lastCanvasSignature = signature;

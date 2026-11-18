@@ -25,6 +25,7 @@ import { createAgentHandoffStore } from "./agent-handoff-store.mjs";
 import { createAgentDesignDraftStore } from "./agent-design-draft-store.mjs";
 import { normalizeDesign } from "../../domain/runtime/agent-design-contract.mjs";
 import { discoverProjectArchitecturePrd } from "./project-architecture-prd-service.mjs";
+import { getOrBuildPrdWorkflowCanvas, mutatePrdWorkflowCanvas } from "./prd-workflow-canvas-service.mjs";
 
 const PROFILE_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/u;
 const MAX_RECORD_BYTES = 64 * 1024;
@@ -707,6 +708,16 @@ export function createAgentWorkflowService({ projectRoot, agentStartService, pro
   const getArchitecturePrd = (opts = {}, ...rest) => typeof agentStartService.getArchitecturePrd === "function"
     ? agentStartService.getArchitecturePrd(opts, ...rest)
     : Promise.resolve(discoverProjectArchitecturePrd({ projectRoot: opts?.targetProjectRoot || realRoot }));
+  const getPrdWorkflow = (opts = {}) => Promise.resolve(getOrBuildPrdWorkflowCanvas({
+    projectRoot: opts?.targetProjectRoot || realRoot,
+    profile,
+  }));
+  const mutatePrdWorkflow = (opts = {}) => mutatePrdWorkflowCanvas({
+    projectRoot: opts?.targetProjectRoot || realRoot,
+    projectId: opts?.projectId || "",
+    profile,
+    mutation: opts?.mutation || {},
+  });
   const getRepositoryFacts = (...args) => typeof agentStartService.getRepositoryFacts === "function"
     ? agentStartService.getRepositoryFacts(...args)
     : Promise.resolve(null);
@@ -719,6 +730,7 @@ export function createAgentWorkflowService({ projectRoot, agentStartService, pro
 
   return Object.freeze({
     getHosts, getProfessionalDirectory, getNativeDirectory, getArchitecturePrd,
+    getPrdWorkflow, mutatePrdWorkflow,
     getRepositoryFacts, getSessionBindings, bindSession,
     start, inspect, recordDecision, inspectDesign, recordDesign,
     inspectDesignDraft, startDesignDraft, inspectHandoff, prepareHandoff, close,

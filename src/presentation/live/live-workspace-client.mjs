@@ -1,6 +1,7 @@
 import { LIVE_WORKSPACE_MESSAGES, serializeLiveWorkspaceModel, workspaceArtifactItems, workspaceMaterialIdentity, workspaceMaterialMatches, workspaceMaterialReady, workspaceCommandMessage, buildLivePrdGraph } from "./live-workspace-model.mjs";
 import { createLiveWorkspaceRenderer, projectLiveUserPhases } from "./live-workspace-renderer.mjs";
 import { createPrdKnowledgeGraph } from "./live-prd-knowledge-graph.mjs";
+import { createDynamicPrdWorkflowCanvas } from "./live-prd-workflow-canvas.mjs";
 import { createUnifiedAgentDesktop } from "./live-agent-desktop.mjs";
 import { serializeLiveAgentCopy, translateAgentUi } from "./live-agent-copy.mjs";
 
@@ -264,8 +265,9 @@ export function createLiveWorkspaceController(options) {
     const reqProj = targetProj;
     architectureRead = (async () => {
       try {
-        const [arch, repoFacts, bindings] = await Promise.all([
+        const [arch, wfCanvas, repoFacts, bindings] = await Promise.all([
           request("/api/agent/architecture", { selection: {}, query: reqProj ? { projectId: reqProj } : {}, runScoped: false }).catch(() => null),
+          request("/api/agent/prd-workflow", { selection: {}, query: reqProj ? { projectId: reqProj } : {}, runScoped: false }).catch(() => null),
           request("/api/agent/repository", { selection: {}, query: reqProj ? { projectId: reqProj } : {}, runScoped: false }).catch(() => null),
           request("/api/agent/bindings", { selection: {}, query: reqProj ? { projectId: reqProj } : {}, runScoped: false }).catch(() => null),
         ]);
@@ -273,6 +275,9 @@ export function createLiveWorkspaceController(options) {
         if (arch?.schemaVersion === "meta-kim-project-architecture-prd-v1"
           && arch?.system && Array.isArray(arch?.modules)) {
           state.projectArchitecturePrd = arch;
+        }
+        if (wfCanvas?.schemaVersion === "meta-kim-prd-workflow-canvas-v1" && Array.isArray(wfCanvas.nodes)) {
+          state.prdWorkflowCanvas = wfCanvas;
         }
         if (repoFacts?.schemaVersion === "meta-kim-agent-repository-facts-v1") {
           state.repositoryFacts = repoFacts;
@@ -2104,7 +2109,7 @@ export function createLiveWorkspaceController(options) {
   desktop = agentEntryEnabled && typeof createUnifiedAgentDesktop === "function" ? createUnifiedAgentDesktop({
     root, state, agent, design, nativeDraft, handoff, execution, acceptance, copy,
     translateUi: (value) => translateAgentUi(value, state.language || "zh"),
-
+    createWorkflowCanvas: createDynamicPrdWorkflowCanvas,
     buildGraph: buildLivePrdGraph, createGraph: createPrdKnowledgeGraph,
     callbacks: {
       parseStrategies: parseNativeStrategyOptions,
@@ -2195,6 +2200,89 @@ export function createLiveWorkspaceController(options) {
       reconcileDraft() { void loadNativeDraft(); },
       approveNode(kind, id) {
         void submitAgentDesign("approve", { target: kind === "system" ? { kind } : { kind, moduleId: id } });
+      },
+      confirmNodeMockup(moduleId) {
+        void submitAgentDesign("confirm_mockup", { moduleId });
+      },
+      async mutatePrdWorkflow(mutation, activeBlueprint) {
+        if (!mutation || !state.canWrite || state.prdWorkflowBusy) return false;
+        if (activeBlueprint?.kind === "agent_saved_design" && design.snapshot?.system) {
+          if (mutation.action === "confirm_mockup") {
+            return submitAgentDesign("confirm_mockup", { moduleId: mutation.nodeId });
+          }
+          if (mutation.action === "revise_mockup") {
+            const targetMod = design.snapshot.modules.find((m) => m.id === mutation.nodeId);
+            if (!targetMod) return false;
+            const nextVer = (targetMod.uiMockup?.version || 1) + 1;
+            return submitAgentDesign("revise_mockup", {
+              moduleId: mutation.nodeId,
+              uiMockup: {
+                status: "pending",
+                version: nextVer,
+                mode: "wireframe_fallback",
+                variant: targetMod.uiMockup?.variant || "workbench",
+                imageUrl: null,
+                prompt: null,
+                lastFeedback: String(mutation.feedback || "界面结构优化").slice(0, 600),
+              },
+            });
+          }
+          if (mutation.action === "update_node") {
+            const targetMod = design.snapshot.modules.find((m) => m.id === mutation.nodeId);
+            if (!targetMod) return false;
+            const updatedMod = copyDesign(targetMod);
+            delete updatedMod.approval;
+            if (mutation.title) updatedMod.title = mutation.title;
+            if (mutation.objective) updatedMod.objective = mutation.objective;
+            if (typeof mutation.hasUiPage === "boolean") updatedMod.hasUiPage = mutation.hasUiPage;
+            return submitAgentDesign("revise_module", { module: updatedMod });
+          }
+          if (mutation.action === "delete_node") {
+            return submitAgentDesign("remove_module", { moduleId: mutation.nodeId });
+          }
+          if (mutation.action === "add_parallel" || mutation.action === "insert_on_edge") {
+            const newId = `mod-${(win.crypto?.randomUUID?.() || String(Date.now())).slice(0, 8)}`.toLowerCase();
+            const hasUiPage = mutation.hasUiPage !== false;
+            const title = mutation.title || (hasUiPage ? "新增页面模块" : "新增并行模块");
+            const firstDep = design.snapshot.modules[0]?.id ? [design.snapshot.modules[0].id] : [];
+            return submitAgentDesign("add_module", {
+              module: {
+                id: newId,
+                title,
+                objective: `实时插入的${hasUiPage ? "前端页面" : "并行处理"}模块`,
+                inputContract: ["承接上游流转输入"],
+                outputContract: ["输出至下游模块"],
+                boundaries: [hasUiPage ? "须先确认页面效果图再执行" : "独立并发执行"],
+                acceptance: [`${title}交互与流转符合预期`],
+                dependencies: firstDep,
+                nodeKind: mutation.action === "add_parallel" ? "parallel" : "process",
+                hasUiPage,
+              },
+            });
+          }
+        }
+        state.prdWorkflowBusy = true;
+        desktop?.render();
+        try {
+          const updated = await request("/api/agent/prd-workflow", {
+            method: "POST",
+            selection: {},
+            runScoped: false,
+            body: {
+              ...(state.selection?.projectId && { projectId: state.selection.projectId }),
+              ...mutation,
+            },
+          });
+          if (updated?.schemaVersion === "meta-kim-prd-workflow-canvas-v1") {
+            state.prdWorkflowCanvas = updated;
+          }
+          return true;
+        } catch {
+          return false;
+        } finally {
+          state.prdWorkflowBusy = false;
+          desktop?.render();
+        }
       },
       approveAllAndPrepare() {
         void approveAllAndPrepareHandoff();
@@ -2553,5 +2641,5 @@ export function createLiveWorkspaceController(options) {
 }
 
 export function serializeLiveWorkspaceClient() {
-  return `${serializeLiveWorkspaceModel()}\n${serializeLiveAgentCopy()}\nconst LIVE_WORKSPACE_UI_POLICY = ${JSON.stringify(LIVE_WORKSPACE_UI_POLICY)};\n${createPrdKnowledgeGraph.toString()}\n${projectLiveUserPhases.toString()}\n${createLiveWorkspaceRenderer.toString()}\n${createUnifiedAgentDesktop.toString()}\n${createLiveWorkspaceController.toString()}`;
+  return `${serializeLiveWorkspaceModel()}\n${serializeLiveAgentCopy()}\nconst LIVE_WORKSPACE_UI_POLICY = ${JSON.stringify(LIVE_WORKSPACE_UI_POLICY)};\n${createPrdKnowledgeGraph.toString()}\n${createDynamicPrdWorkflowCanvas.toString()}\n${projectLiveUserPhases.toString()}\n${createLiveWorkspaceRenderer.toString()}\n${createUnifiedAgentDesktop.toString()}\n${createLiveWorkspaceController.toString()}`;
 }

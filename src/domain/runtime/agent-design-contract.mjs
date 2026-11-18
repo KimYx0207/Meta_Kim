@@ -34,6 +34,34 @@ function normalizeSystem(input) {
     ? { title, goal, architecture, techStack, acceptance } : null;
 }
 
+const NODE_KINDS = new Set(["process", "parallel", "condition"]);
+const MOCKUP_MODES = new Set(["model_image", "wireframe_fallback"]);
+
+function normalizeUiMockup(input, defaultPending = true) {
+  if (input == null) {
+    return {
+      status: defaultPending ? "pending" : "confirmed",
+      version: 1,
+      mode: "wireframe_fallback",
+      variant: "workbench",
+      imageUrl: null,
+      prompt: null,
+      lastFeedback: null,
+    };
+  }
+  if (typeof input !== "object" || Array.isArray(input)) return null;
+  const status = input.status === "confirmed" ? "confirmed" : input.status === "pending" || input.status == null ? "pending" : null;
+  const version = input.version == null ? 1 : (Number.isSafeInteger(input.version) && input.version >= 1 && input.version <= 999 ? input.version : null);
+  const mode = input.mode == null ? "wireframe_fallback" : (MOCKUP_MODES.has(input.mode) ? input.mode : null);
+  const variant = input.variant == null ? "workbench" : stringField(input.variant, 64);
+  const imageUrl = input.imageUrl == null ? null : stringField(input.imageUrl, 512);
+  const prompt = input.prompt == null ? null : stringField(input.prompt, 1_200);
+  const lastFeedback = input.lastFeedback == null ? null : stringField(input.lastFeedback, 1_200);
+  if (!status || !version || !mode || !variant) return null;
+  if (imageUrl && !/^\/api\/agent\/prd-mockup-image\?[A-Za-z0-9_=&%-]{4,460}$/u.test(imageUrl)) return null;
+  return { status, version, mode, variant, imageUrl, prompt, lastFeedback };
+}
+
 function normalizeModule(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)
     || typeof input.id !== "string" || !NODE_ID.test(input.id)) return null;
@@ -48,8 +76,30 @@ function normalizeModule(input) {
     || !Array.isArray(deps) || deps.length > 31
     || !deps.every((id) => typeof id === "string" && NODE_ID.test(id))
     || new Set(deps).size !== deps.length) return null;
-  return { id: input.id, title, objective, inputContract, outputContract,
-    boundaries, acceptance, dependencies: [...deps] };
+  const nodeKind = input.nodeKind == null ? undefined : (NODE_KINDS.has(input.nodeKind) ? input.nodeKind : null);
+  if (nodeKind === null) return null;
+  const hasUiPage = typeof input.hasUiPage === "boolean" ? input.hasUiPage : undefined;
+  let uiMockup;
+  if (hasUiPage === true || input.uiMockup !== undefined) {
+    uiMockup = normalizeUiMockup(input.uiMockup, true);
+    if (!uiMockup) return null;
+  }
+  const loopBackTo = input.loopBackTo == null ? undefined : (NODE_ID.test(input.loopBackTo) ? input.loopBackTo : null);
+  if (loopBackTo === null) return null;
+  return {
+    id: input.id,
+    title,
+    objective,
+    inputContract,
+    outputContract,
+    boundaries,
+    acceptance,
+    dependencies: [...deps],
+    ...(nodeKind && { nodeKind }),
+    ...(hasUiPage !== undefined && { hasUiPage }),
+    ...(uiMockup && { uiMockup }),
+    ...(loopBackTo && { loopBackTo }),
+  };
 }
 
 export function validateDesignDag(modules) {
@@ -92,7 +142,10 @@ export function validateDesignMutation(input) {
     || !Number.isSafeInteger(input.expectedVersion)
     || input.expectedVersion < 0 || input.expectedVersion > AGENT_DESIGN_MAX_VERSIONS) return null;
   const action = input.action;
-  if (!["submit", "revise_module", "revise_system", "approve", "approve_all", "revoke", "request_revision"].includes(action)) return null;
+  if (![
+    "submit", "revise_module", "revise_system", "add_module", "remove_module",
+    "confirm_mockup", "revise_mockup", "approve", "approve_all", "revoke", "request_revision",
+  ].includes(action)) return null;
   const base = {
     action, idempotencyKey: input.idempotencyKey, requestId: input.requestId,
     planDigest: input.planDigest, decisionKey: input.decisionKey,
@@ -113,6 +166,30 @@ export function validateDesignMutation(input) {
   if (action === "revise_module") {
     const module = normalizeModule(input.module);
     return module && input.expectedVersion > 0 ? { ...base, module } : null;
+  }
+  if (action === "add_module") {
+    const module = normalizeModule(input.module);
+    const rewire = input.rewireDownstreamIds == null ? []
+      : (Array.isArray(input.rewireDownstreamIds) && input.rewireDownstreamIds.length <= 31
+        && input.rewireDownstreamIds.every((id) => typeof id === "string" && NODE_ID.test(id))
+        ? [...new Set(input.rewireDownstreamIds)] : null);
+    const replaceUpstreamId = input.replaceUpstreamId == null ? null
+      : (typeof input.replaceUpstreamId === "string" && NODE_ID.test(input.replaceUpstreamId) ? input.replaceUpstreamId : undefined);
+    if (!module || rewire === null || replaceUpstreamId === undefined || input.expectedVersion < 1) return null;
+    return { ...base, module, rewireDownstreamIds: rewire, ...(replaceUpstreamId && { replaceUpstreamId }) };
+  }
+  if (action === "remove_module") {
+    const moduleId = typeof input.moduleId === "string" && NODE_ID.test(input.moduleId) ? input.moduleId : null;
+    return moduleId && input.expectedVersion >= 1 ? { ...base, moduleId } : null;
+  }
+  if (action === "confirm_mockup") {
+    const moduleId = typeof input.moduleId === "string" && NODE_ID.test(input.moduleId) ? input.moduleId : null;
+    return moduleId && input.expectedVersion >= 1 ? { ...base, moduleId } : null;
+  }
+  if (action === "revise_mockup") {
+    const moduleId = typeof input.moduleId === "string" && NODE_ID.test(input.moduleId) ? input.moduleId : null;
+    const uiMockup = normalizeUiMockup(input.uiMockup, true);
+    return moduleId && uiMockup && input.expectedVersion >= 1 ? { ...base, moduleId, uiMockup } : null;
   }
   if (action === "revise_system") {
     const system = normalizeSystem(input.system);
@@ -212,6 +289,73 @@ export function applyDesignMutation(prior, mutation, nextVersion, now) {
       dependent.approval = invalidate(dependent.approval, "upstream_changed");
       invalidatedModuleIds.push(id);
     }
+  } else if (mutation.action === "add_module") {
+    if (content.modules.length >= 32) throw agentWorkflowConflict("agent_design_module_limit");
+    if (byId.has(mutation.module.id)) throw agentWorkflowConflict("agent_design_module_already_exists");
+    const inserted = { ...mutation.module, approval: initialApproval() };
+    content.modules.push(inserted);
+    for (const targetId of mutation.rewireDownstreamIds || []) {
+      const targetMod = content.modules.find((m) => m.id === targetId);
+      if (!targetMod || targetMod.id === inserted.id) continue;
+      const nextDeps = new Set(targetMod.dependencies);
+      if (mutation.replaceUpstreamId) nextDeps.delete(mutation.replaceUpstreamId);
+      nextDeps.add(inserted.id);
+      targetMod.dependencies = [...nextDeps];
+    }
+    if (!validateDesignDag(content.modules)) throw agentWorkflowConflict("agent_design_dependency_cycle_or_missing");
+    changedNodeIds.push(inserted.id);
+    for (const id of downstream(inserted.id, content.modules)) {
+      const dependent = content.modules.find((module) => module.id === id);
+      dependent.approval = invalidate(dependent.approval, "upstream_changed");
+      invalidatedModuleIds.push(id);
+    }
+  } else if (mutation.action === "remove_module") {
+    if (content.modules.length <= 1) throw agentWorkflowConflict("agent_design_minimum_modules_required");
+    const target = byId.get(mutation.moduleId);
+    if (!target) throw agentWorkflowConflict("agent_design_module_not_found");
+    const affectedIds = downstream(mutation.moduleId, content.modules);
+    content.modules = content.modules.filter((m) => m.id !== mutation.moduleId);
+    for (const mod of content.modules) {
+      if (mod.dependencies.includes(mutation.moduleId)) {
+        const stitched = new Set(mod.dependencies.filter((d) => d !== mutation.moduleId));
+        for (const up of target.dependencies) {
+          if (up !== mod.id) stitched.add(up);
+        }
+        mod.dependencies = [...stitched];
+      }
+      if (mod.loopBackTo === mutation.moduleId) delete mod.loopBackTo;
+    }
+    if (!validateDesignDag(content.modules)) throw agentWorkflowConflict("agent_design_dependency_cycle_or_missing");
+    clearNodeNotes("module", mutation.moduleId);
+    changedNodeIds.push(mutation.moduleId);
+    for (const id of affectedIds) {
+      const dependent = content.modules.find((module) => module.id === id);
+      if (dependent) {
+        dependent.approval = invalidate(dependent.approval, "upstream_removed");
+        invalidatedModuleIds.push(id);
+      }
+    }
+  } else if (mutation.action === "confirm_mockup") {
+    const node = byId.get(mutation.moduleId);
+    if (!node) throw agentWorkflowConflict("agent_design_module_not_found");
+    node.hasUiPage = true;
+    node.uiMockup = {
+      ...(node.uiMockup || normalizeUiMockup(null, false)),
+      status: "confirmed",
+    };
+    changedNodeIds.push(mutation.moduleId);
+  } else if (mutation.action === "revise_mockup") {
+    const node = byId.get(mutation.moduleId);
+    if (!node) throw agentWorkflowConflict("agent_design_module_not_found");
+    node.hasUiPage = true;
+    node.uiMockup = { ...mutation.uiMockup, status: "pending" };
+    node.approval = changed(node.approval, "mockup_revised");
+    changedNodeIds.push(mutation.moduleId);
+    for (const id of downstream(mutation.moduleId, content.modules)) {
+      const dependent = content.modules.find((module) => module.id === id);
+      dependent.approval = invalidate(dependent.approval, "upstream_mockup_revised");
+      invalidatedModuleIds.push(id);
+    }
   } else if (mutation.action === "revise_system") {
     const { approval: ignored, ...before } = content.system;
     if (JSON.stringify(before) === JSON.stringify(mutation.system)) throw agentWorkflowConflict("agent_design_no_changes");
@@ -252,6 +396,9 @@ export function applyDesignMutation(prior, mutation, nextVersion, now) {
         throw agentWorkflowConflict("agent_design_unresolved_feedback");
       }
       if (kind === "module") {
+        if (node.hasUiPage === true && node.uiMockup?.status !== "confirmed") {
+          throw agentWorkflowConflict("agent_design_ui_mockup_not_confirmed");
+        }
         if (content.system.approval.state !== "approved"
           || node.dependencies.some((id) => byId.get(id)?.approval.state !== "approved")) {
           throw agentWorkflowConflict("agent_design_dependencies_not_approved");
@@ -276,6 +423,9 @@ export function applyDesignMutation(prior, mutation, nextVersion, now) {
     }
     if (!validateDesignDag(content.modules)) {
       throw agentWorkflowConflict("agent_design_dependency_cycle_or_missing");
+    }
+    if (content.modules.some((module) => module.hasUiPage === true && module.uiMockup?.status !== "confirmed")) {
+      throw agentWorkflowConflict("agent_design_ui_mockup_not_confirmed");
     }
     if (content.system.approval.state === "approved"
       && content.modules.every((module) => module.approval.state === "approved")) {

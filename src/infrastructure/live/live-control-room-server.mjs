@@ -29,6 +29,11 @@ import { renderLiveControlRoomPage } from "../../presentation/live/live-control-
 import { createLiveNativeBindings } from "./live-native-bindings.mjs";
 import { createLiveWorkspaceService } from "../../application/live/live-workspace-service.mjs";
 import { loadLiveCapabilityCatalog } from "../../application/live/live-capability-catalog.mjs";
+import {
+  getOrBuildPrdWorkflowCanvas,
+  getPrdMockupImage,
+  mutatePrdWorkflowCanvas,
+} from "../../application/agent/prd-workflow-canvas-service.mjs";
 
 const LOOPBACK_HOST = "127.0.0.1";
 const DEFAULT_PORT = 0;
@@ -889,7 +894,38 @@ export function createLiveControlRoomServer(options = {}) {
       return;
     }
 
-    if (["/api/agent/architecture", "/api/agent/repository", "/api/agent/bindings", "/api/agent/capabilities", "/api/agent/hosts", "/api/agent/start", "/api/agent/requests", "/api/agent/decisions", "/api/agent/designs", "/api/agent/design-drafts", "/api/agent/handoff", "/api/agent/execution", "/api/agent/acceptance"].includes(parsed.pathname)) {
+    if (parsed.pathname === "/api/agent/prd-mockup-image") {
+      if (!agentEntryEnabled || !workspaceEnabled) {
+        jsonResponse(response, 403, safeError("agent_entry_not_enabled")); return;
+      }
+      if (request.method !== "GET") {
+        response.setHeader("allow", "GET");
+        jsonResponse(response, 405, safeError("method_not_allowed")); return;
+      }
+      const hasToken = request.headers[WORKSPACE_HEADER] === workspaceToken;
+      const isSameOriginImage = requestHasLocalAuthority(request, server)
+        && request.headers["sec-fetch-site"] === "same-origin";
+      if (!hasToken && !isSameOriginImage) {
+        jsonResponse(response, 403, safeError("workspace_token_required")); return;
+      }
+      const resolveImgProjectRoot = async (requestedId) => {
+        if (!requestedId || requestedId === defaultBoundProjectId) return options.projectRoot || null;
+        if (!hubCatalog || typeof hubCatalog.resolveProject !== "function") return options.projectRoot || null;
+        const enrolled = await hubCatalog.resolveProject(requestedId);
+        return enrolled?.repoRoot || null;
+      };
+      const targetProjectRoot = await resolveImgProjectRoot(parsed.searchParams.get("projectId"));
+      const imageId = parsed.searchParams.get("imageId");
+      const img = targetProjectRoot ? getPrdMockupImage({ projectRoot: targetProjectRoot, profile: hubProfile, imageId }) : null;
+      if (!img) {
+        jsonResponse(response, 404, safeError("prd_mockup_image_not_found")); return;
+      }
+      response.setHeader("cross-origin-resource-policy", "same-origin");
+      binaryResponse(response, 200, img.bytes, img.contentType);
+      return;
+    }
+
+    if (["/api/agent/architecture", "/api/agent/prd-workflow", "/api/agent/repository", "/api/agent/bindings", "/api/agent/capabilities", "/api/agent/hosts", "/api/agent/start", "/api/agent/requests", "/api/agent/decisions", "/api/agent/designs", "/api/agent/design-drafts", "/api/agent/handoff", "/api/agent/execution", "/api/agent/acceptance"].includes(parsed.pathname)) {
 
       if (!agentEntryEnabled) {
         jsonResponse(response, 403, safeError("agent_entry_not_enabled")); return;
@@ -905,19 +941,21 @@ export function createLiveControlRoomServer(options = {}) {
       const executionRequest = parsed.pathname === "/api/agent/execution";
       const acceptanceRequest = parsed.pathname === "/api/agent/acceptance";
       const bindingsRequest = parsed.pathname === "/api/agent/bindings";
+      const workflowRequest = parsed.pathname === "/api/agent/prd-workflow";
       const designWrite = designRequest && request.method === "POST";
       const draftWrite = draftRequest && request.method === "POST";
       const handoffWrite = handoffRequest && request.method === "POST";
       const executionWrite = executionRequest && request.method === "POST";
       const acceptanceWrite = acceptanceRequest && request.method === "POST";
       const bindingsWrite = bindingsRequest && request.method === "POST";
-      const dualMethodRoute = designRequest || draftRequest || handoffRequest || executionRequest || acceptanceRequest || bindingsRequest;
+      const workflowWrite = workflowRequest && request.method === "POST";
+      const dualMethodRoute = designRequest || draftRequest || handoffRequest || executionRequest || acceptanceRequest || bindingsRequest || workflowRequest;
       const requiredMethod = dualMethodRoute ? "GET, POST" : startRequest || decisionRequest ? "POST" : "GET";
       if (dualMethodRoute ? !["GET", "POST"].includes(request.method) : request.method !== requiredMethod) {
         response.setHeader("allow", requiredMethod);
         jsonResponse(response, 405, safeError("method_not_allowed")); return;
       }
-      if ((startRequest || decisionRequest || designWrite || draftWrite || handoffWrite || executionWrite || acceptanceWrite || bindingsWrite) && (!requestHasSameOrigin(request, server)
+      if ((startRequest || decisionRequest || designWrite || draftWrite || handoffWrite || executionWrite || acceptanceWrite || bindingsWrite || workflowWrite) && (!requestHasSameOrigin(request, server)
 
         || !String(request.headers["content-type"] || "").toLowerCase().startsWith("application/json"))) {
         jsonResponse(response, 403, safeError(startRequest
@@ -927,7 +965,8 @@ export function createLiveControlRoomServer(options = {}) {
                 ? "agent_design_draft_same_origin_json_required" : handoffWrite
                   ? "agent_handoff_same_origin_json_required" : acceptanceWrite
                     ? "agent_acceptance_same_origin_json_required" : bindingsWrite
-                      ? "agent_bindings_same_origin_json_required" : "agent_execution_same_origin_json_required")); return;
+                      ? "agent_bindings_same_origin_json_required" : workflowWrite
+                        ? "agent_prd_workflow_same_origin_json_required" : "agent_execution_same_origin_json_required")); return;
 
       }
       const resolveTrustedAgentProjectRoot = async (requestedId) => {
@@ -937,7 +976,37 @@ export function createLiveControlRoomServer(options = {}) {
         return enrolled?.repoRoot || null;
       };
       try {
-        if (parsed.pathname === "/api/agent/architecture") {
+        if (workflowRequest) {
+          if (workflowWrite) {
+            const body = await readJsonBody(request, maxJsonBytes);
+            const targetProjectRoot = await resolveTrustedAgentProjectRoot(body?.projectId || null);
+            if (!targetProjectRoot) {
+              jsonResponse(response, 404, safeError("agent_project_not_enrolled")); return;
+            }
+            const updated = typeof agentStartService.mutatePrdWorkflow === "function"
+              ? await agentStartService.mutatePrdWorkflow({ targetProjectRoot, projectId: body?.projectId || "", mutation: body })
+              : await mutatePrdWorkflowCanvas({
+                  projectRoot: targetProjectRoot,
+                  projectId: body?.projectId || "",
+                  profile: hubProfile,
+                  mutation: body,
+                });
+            jsonResponse(response, 200, updated);
+          } else {
+            const requestedProjectId = parsed.searchParams.get("projectId");
+            const targetProjectRoot = await resolveTrustedAgentProjectRoot(requestedProjectId);
+            if (!targetProjectRoot) {
+              jsonResponse(response, 404, safeError("agent_project_not_enrolled")); return;
+            }
+            const wf = typeof agentStartService.getPrdWorkflow === "function"
+              ? await agentStartService.getPrdWorkflow({ targetProjectRoot })
+              : getOrBuildPrdWorkflowCanvas({ projectRoot: targetProjectRoot, profile: hubProfile });
+            if (!wf) {
+              jsonResponse(response, 404, safeError("agent_prd_workflow_not_available")); return;
+            }
+            jsonResponse(response, 200, wf);
+          }
+        } else if (parsed.pathname === "/api/agent/architecture") {
           const targetProjectRoot = await resolveTrustedAgentProjectRoot(parsed.searchParams.get("projectId"));
           if (!targetProjectRoot) {
             jsonResponse(response, 404, safeError("agent_project_not_enrolled")); return;

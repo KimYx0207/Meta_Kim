@@ -19,6 +19,7 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { validateDesignDag } from "../../domain/runtime/agent-design-contract.mjs";
+import { buildStructuredWireframeSpec, inferMockupVariant } from "./prd-mockup-generator-service.mjs";
 
 export const PROJECT_ARCHITECTURE_PRD_SCHEMA = "meta-kim-project-architecture-prd-v1";
 
@@ -178,6 +179,11 @@ const META_KIM_PRODUCT_BLUEPRINTS = [
     layer: "能力与规则底座",
     layerShort: "规则底座",
     layerRank: 0,
+    flowColumn: 1,
+    parallelGroup: "prep_lane",
+    nodeKind: "parallel",
+    hasUiPage: false,
+    mockupVariant: "workbench",
     objective: "定义产品内置的 9 类专业 AI 角色职责与标准工作流程，确保 AI 先想清楚需求、查清事实、给出方案，再按规矩动手执行。",
     features: [
       "角色专职分工：区分总控接待、调研取证、方案设计、动手实现、质量审查与最终验收角色，各司其职不越界",
@@ -198,6 +204,11 @@ const META_KIM_PRODUCT_BLUEPRINTS = [
     layer: "能力与规则底座",
     layerShort: "能力目录",
     layerRank: 0,
+    flowColumn: 1,
+    parallelGroup: "prep_lane",
+    nodeKind: "parallel",
+    hasUiPage: true,
+    mockupVariant: "catalog_grid",
     objective: "集中管理本机可用的 AI 客户端渠道（Claude Code、Codex、Gemini 等）、专业角色库、技能包（Skills）与扩展工具清单。",
     features: [
       "渠道就绪状态管理：识别哪些 AI 客户端已安装可用、哪些仅可只读观测、哪些需要登录或授权",
@@ -214,20 +225,25 @@ const META_KIM_PRODUCT_BLUEPRINTS = [
     dir: "src/domain",
     id: "domain-models",
     title: "关键节点人工拍板与防错规则",
-    shortSummary: "B1-B4 四道确认关口 · 改动自动联动提醒",
+    shortSummary: "B1-B4 四道确认关口 · 效果图确认门禁",
     layer: "核心业务与安全控制",
     layerShort: "安全门禁",
     layerRank: 1,
-    objective: "把控从「选方案 → 定设计 → 试跑执行 → 验收合入」四个人工拍板关口（B1–B4），防止 AI 跳过确认擅自行动或留下逻辑冲突。",
+    flowColumn: 2,
+    nodeKind: "condition",
+    loopBackTo: "presentation-workspace",
+    hasUiPage: false,
+    mockupVariant: "review_gate",
+    objective: "把控从「选方案 → 定设计/确认页面效果图 → 试跑执行 → 验收合入」四个人工拍板关口（B1–B4），防止 AI 跳过确认擅自行动或留下逻辑冲突。",
     features: [
-      "四道关键拍板门禁：B1 选定方向、B2 确认两级产品设计、B3 授权草稿试跑、B4 核对改动并拍板合入",
-      "上下游修改自动提醒：当某个前置功能模块被修改时，自动标记受影响的下游模块需要重新核对",
-      "防循环依赖检查：自动拦截互相卡死的功能依赖关系，保证模块推进顺序清晰可执行",
+      "页面效果图确认门禁：凡涉及前端页面的节点必须先确认页面效果图，否则拦截下游开发执行",
+      "上下游修改自动联动：当任意节点插入或更改时，实时标记受影响的下游节点待复核",
+      "防循环依赖检查：自动拦截互相卡死的功能依赖关系，保证动态工作流推进顺序清晰可执行",
     ],
-    inputContract: ["用户的方案选择理由、模块修改意见与确认操作"],
+    inputContract: ["用户的方案选择理由、页面效果图确认/反馈意见与节点插改操作"],
     outputContract: ["每个模块准确的确认/待改状态、可安全交接执行的封存清单"],
-    boundaries: ["有任何未解决的用户修改意见时，严禁放行进入自动改代码阶段"],
-    productAcceptance: ["用户提出的每一条模块修改意见都被持久记录，未改完前不会误点通过"],
+    boundaries: ["有任何未解决的修改意见或未确认的页面效果图时，严禁放行进入自动改代码阶段"],
+    productAcceptance: ["涉及页面的模块未确认效果图前无法误点通过，上游改动实时触发下游复核提示"],
     testHint: "tests/live",
   },
   {
@@ -238,16 +254,21 @@ const META_KIM_PRODUCT_BLUEPRINTS = [
     layer: "核心业务与安全控制",
     layerShort: "本地记录",
     layerRank: 1,
-    objective: "将用户的每一次对话决策、两级 PRD 设计版本、运行过程与验收结果安全保存在本机，支持随时翻查与跨会话接续。",
+    flowColumn: 1,
+    parallelGroup: "prep_lane",
+    nodeKind: "parallel",
+    hasUiPage: false,
+    mockupVariant: "workbench",
+    objective: "将用户的每一次对话决策、两级动态流程图设计版本、效果图与验收结果安全保存在本机，支持随时翻查与跨会话接续。",
     features: [
-      "多版本设计留痕：每次修改系统框架或子系统详情都会保留版本记录，方便前后对比",
-      "断线与重启恢复：刷新页面或重启客户端后自动找回当前正在推进的任务进度",
+      "多版本设计与效果图留痕：每次插改流程图节点或刷新效果图均持久保存，方便前后对比",
+      "断线与重启恢复：刷新页面或重启客户端后自动找回当前正在推进的画布与任务进度",
       "全本地隐私存储：所有项目资料与运行数据均存放在本机数据库，不上传第三方服务器",
     ],
-    inputContract: ["各阶段产生的方案回执、产品设计修订版与任务运行快照"],
+    inputContract: ["各阶段产生的方案回执、动态流程图变更与任务运行快照"],
     outputContract: ["按时间倒序可检索的历史记录列表、随时可恢复的工作现场"],
     boundaries: ["所有读写严格限制在本机受保护目录内，绝不触碰无关系统文件"],
-    productAcceptance: ["关闭窗口重新打开或切换项目再切回时，原有的设计版本和审批记录完整保留"],
+    productAcceptance: ["关闭窗口重新打开或切换项目再切回时，原有的流程图拓扑和确认记录完整保留"],
     testHint: "tests/live",
   },
   {
@@ -258,6 +279,11 @@ const META_KIM_PRODUCT_BLUEPRINTS = [
     layer: "协同调度与投影中心",
     layerShort: "双向协同",
     layerRank: 2,
+    flowColumn: 3,
+    parallelGroup: "exec_lane",
+    nodeKind: "parallel",
+    hasUiPage: true,
+    mockupVariant: "binding_hub",
     objective: "连接用户的多个本地代码仓库与各类外部 AI 客户端——既支持从本工作台选渠道发起任务，也支持把终端/IDE 里启动的 AI 会话实时接入观测。",
     features: [
       "双向 Agent 绑定：正向可在输入框底部选定渠道调起 AI；反向可扫描并一键接入外部正在运行的 Claude Code / Codex 会话",
@@ -265,7 +291,7 @@ const META_KIM_PRODUCT_BLUEPRINTS = [
       "隔离草稿核验与经验沉淀：自动比对试跑产生的文件变更并执行安全体检，验收通过后沉淀为可复用经验方法卡",
     ],
     inputContract: ["用户在对话框发送的目标、选择的 AI 渠道、或点击切换的目标仓库与外部会话"],
-    outputContract: ["候选方案对比结果、目标仓库的产品设计 PRD、隔离区变更体检单与经验方法卡"],
+    outputContract: ["候选方案对比结果、目标仓库的动态流程图 PRD、隔离区变更体检单与经验方法卡"],
     boundaries: ["切换浏览其他已登记仓库时保持只读安全观测，绝不跨仓库误改代码"],
     productAcceptance: ["用户可在底部直接选渠道发消息，也可在「双向绑定」和「仓库」页一键接入外部会话或切换项目"],
     testHint: "tests/live",
@@ -274,20 +300,25 @@ const META_KIM_PRODUCT_BLUEPRINTS = [
     dir: "src/application/live",
     id: "app-live-projection",
     title: "两级产品设计图谱与进度汇总引擎",
-    shortSummary: "一级系统框架 + 二级系统详情 + 实时完成状态",
+    shortSummary: "无限画布动态流 + 二级下钻 + 页面效果图预览",
     layer: "协同调度与投影中心",
     layerShort: "PRD 与进度",
     layerRank: 2,
-    objective: "把项目全貌和任务进展转化为普通人一目了然的「一级系统框架 + 二级系统详情」产品设计书与实时进度状态。",
+    flowColumn: 3,
+    parallelGroup: "exec_lane",
+    nodeKind: "parallel",
+    hasUiPage: true,
+    mockupVariant: "flowchart_studio",
+    objective: "把项目全貌和任务进展转化为 LangGraph 式无限画布动态流程图：一级看系统并行流与路由，二级下钻看模块内部子流与页面效果图。",
     features: [
-      "两级产品设计组织：一级展示系统整体定位、用户流程与板块划分；二级展示每个子系统的功能详情、交互与验收清单",
-      "模块级完成状态追踪：在每个一级与二级节点上直观标注「已完成 / 进行中 / 待确认 / 待开始」及整体完成比例",
+      "无限画布动态工作流：支持拖拽平移、滚轮缩放、缩略小地图、多路并行泳道、条件路由与人工实时插改节点",
+      "页面效果图模型生成与回退：优先尝试图像模型生成效果图，无凭据自动回退为组件级可交互效果图供人工确认",
       "Subagent 执行关系还原：准确汇总主 Agent 与各派发 Subagent 的上下级分工、耗时与实际产出证据",
     ],
-    inputContract: ["项目功能模块结构、用户的审批修订状态与实时运行事件流"],
-    outputContract: ["带完成状态的一二级产品设计图谱、顶部全局进度状态与完整运行拓扑数据"],
-    boundaries: ["实事求是反映真实完成度，绝不把尚未执行的计划虚标为已完成"],
-    productAcceptance: ["打开右侧画布即可看清系统有哪些模块、哪些已完成、哪些待确认，点击即可查看产品详情"],
+    inputContract: ["项目功能模块结构、人工实时插改操作、页面效果图确认与实时运行事件流"],
+    outputContract: ["带完成状态与效果图门禁的两级动态流程图、顶部全局进度状态与完整运行拓扑数据"],
+    boundaries: ["实事求是反映真实完成度与生图来源，绝不把尚未执行的计划虚标为已完成"],
+    productAcceptance: ["在无限画布插入或修改任意节点时拓扑实时反应，页面节点可直接预览并确认效果图"],
     testHint: "tests/live",
   },
   {
@@ -298,9 +329,14 @@ const META_KIM_PRODUCT_BLUEPRINTS = [
     layer: "协同调度与投影中心",
     layerShort: "实时连接",
     layerRank: 3,
-    objective: "负责工作台界面与后台服务之间的实时状态同步，确保外部 Agent 每跑一步，界面上的进度栏与运行图就立即自动刷新。",
+    flowColumn: 3,
+    parallelGroup: "exec_lane",
+    nodeKind: "parallel",
+    hasUiPage: false,
+    mockupVariant: "workbench",
+    objective: "负责工作台界面与后台服务之间的实时状态同步，确保外部 Agent 每跑一步或人工插改画布时，界面立即实时同步。",
     features: [
-      "实时流式自动刷新：无需手动点刷新，任务状态、Subagent 进展与核验结果实时推送上屏",
+      "实时流式自动刷新：无需手动点刷新，任务状态、画布变更、Subagent 进展与核验结果实时推送上屏",
       "后台标签页智能省电：窗口切到后台自动暂停高频连接，切回前台立即自动补齐最新进度",
       "本机专属访问锁：仅允许用户自己的电脑本机连接访问，阻断任何外部网页跨域窥探或篡改",
     ],
@@ -314,20 +350,24 @@ const META_KIM_PRODUCT_BLUEPRINTS = [
     dir: "src/presentation",
     id: "presentation-workspace",
     title: "一体化对话决策与产品画布工作台",
-    shortSummary: "顶栏单行进度 · 左聊右看 · 自由拖拽缩放",
+    shortSummary: "顶栏单行进度 · 左聊右画布 · 效果图确认",
     layer: "用户界面与客户端体验",
     layerShort: "工作台界面",
     layerRank: 4,
-    objective: "为用户提供清爽直观的一体化操作界面：顶部一行看全局执行进度并直达完整运行图，左侧专注对话拍板，右侧查看两级产品设计 PRD 与完成状态。",
+    flowColumn: 0,
+    nodeKind: "process",
+    hasUiPage: true,
+    mockupVariant: "workbench",
+    objective: "为用户提供清爽直观的一体化主入口界面：顶部一行看全局执行进度并直达完整运行图，左侧专注对话拍板，右侧在无限画布审阅动态流程图与页面效果图。",
     features: [
       "Logo 下方顶部单行进度栏：一行展示核心进展，点击即可直接打开含 Subagents 拓扑的「完整运行图」",
-      "左栏对话 + 右栏产品设计 PRD：左侧支持选渠道、切仓库、双向绑定与节点圈选反馈；右侧展示一二级产品设计图谱与详情规格",
+      "左栏对话 + 右栏无限画布 PRD：支持实时插入并行分支/串联节点、下钻二级子流，并对页面节点确认效果图",
       "全自由窗口布局与四语切换：侧边栏与分栏可自由拖拽宽窄、画布支持最大化/最小化/滚轮缩放，内置中英日韩四语切换",
     ],
-    inputContract: ["用户的点击、拖拽、缩放、语言切换与文字输入操作"],
-    outputContract: ["零重复信息、排版呼吸感充足的可交互产品界面与视觉反馈"],
-    boundaries: ["界面文案面向普通用户通俗易懂，不堆砌难懂的底层代码术语或重复口号"],
-    productAcceptance: ["普通用户无需培训即可看懂顶部进度、左侧对话渠道与右侧一二级产品设计完成情况"],
+    inputContract: ["用户的点击、拖拽、缩放、插改节点、效果图确认与文字输入操作"],
+    outputContract: ["零重复信息、实时响应拓扑变化的可交互产品界面与视觉反馈"],
+    boundaries: ["界面文案面向普通用户通俗易懂，所有涉及页面的改动必须先有效果图确认"],
+    productAcceptance: ["普通用户打开即可看懂系统总流程图、自由插改节点并直接在侧栏确认页面效果图"],
     testHint: "tests/live",
   },
   {
@@ -338,6 +378,10 @@ const META_KIM_PRODUCT_BLUEPRINTS = [
     layer: "用户界面与客户端体验",
     layerShort: "桌面客户端",
     layerRank: 5,
+    flowColumn: 4,
+    nodeKind: "process",
+    hasUiPage: true,
+    mockupVariant: "desktop_shell",
     objective: "将整个工作台封装为独立的 Windows / 桌面端原生应用程序，告别浏览器地址栏与手工启动命令，提供正式产品级体验。",
     features: [
       "一键启动自动守护：双击桌面图标自动在后台拉起本地服务并打开主窗口，无黑框闪烁",
@@ -351,6 +395,83 @@ const META_KIM_PRODUCT_BLUEPRINTS = [
     testHint: "desktop/src-tauri",
   },
 ];
+
+export function buildDefaultSubflowForModule(mod) {
+  const feats = Array.isArray(mod.features) && mod.features.length
+    ? mod.features.map((f) => String(f || "").split(/[：:]/u)[0].trim().slice(0, 22))
+    : [`${mod.title}主交互`, "参数与规则处理", "结果校验反馈"];
+  const step1 = feats[0] || `${mod.title}输入处理`;
+  const step2a = feats[1] || "核心业务并发处理";
+  const step2b = feats[2] || "状态同步与边界防护";
+  const modStatus = mod.status || "completed";
+  const hasPage = Boolean(mod.hasUiPage);
+  const mockupStatus = mod.uiMockup?.status || (modStatus === "completed" ? "confirmed" : "pending");
+  return {
+    title: `${mod.title} · 二级动态子工作流`,
+    nodes: [
+      { id: `${mod.id}__in`, kind: "terminal", title: "上游输入接入", status: modStatus },
+      {
+        id: `${mod.id}__s1`,
+        kind: "process",
+        code: "2.1",
+        title: step1,
+        status: modStatus,
+        hasUiPage: hasPage,
+        mockupStatus: hasPage ? mockupStatus : "none",
+        summary: (mod.inputContract || [])[0] || mod.objective || "",
+      },
+      {
+        id: `${mod.id}__s2a`,
+        kind: "parallel",
+        code: "2.2A · 并行",
+        title: step2a,
+        status: modStatus,
+        hasUiPage: false,
+        mockupStatus: "none",
+        summary: (mod.features || [])[1] || mod.objective || "",
+      },
+      {
+        id: `${mod.id}__s2b`,
+        kind: "parallel",
+        code: "2.2B · 并行",
+        title: step2b,
+        status: modStatus,
+        hasUiPage: hasPage,
+        mockupStatus: hasPage ? mockupStatus : "none",
+        summary: (mod.features || [])[2] || (mod.boundaries || [])[0] || "",
+      },
+      {
+        id: `${mod.id}__gate`,
+        kind: "condition",
+        code: "校验路由",
+        title: "验收与边界合规？",
+        status: modStatus,
+        hasUiPage: false,
+        mockupStatus: "none",
+        summary: (mod.acceptance || [])[0] || "不满足条件自动回退修正",
+      },
+      { id: `${mod.id}__out`, kind: "terminal", title: "输出至下游模块", status: modStatus },
+    ],
+    edges: [
+      { id: `${mod.id}__e1`, from: `${mod.id}__in`, to: `${mod.id}__s1`, label: "", kind: "normal" },
+      { id: `${mod.id}__e2`, from: `${mod.id}__s1`, to: `${mod.id}__s2a`, label: "并行 A", kind: "parallel" },
+      { id: `${mod.id}__e3`, from: `${mod.id}__s1`, to: `${mod.id}__s2b`, label: "并行 B", kind: "parallel" },
+      { id: `${mod.id}__e4`, from: `${mod.id}__s2a`, to: `${mod.id}__gate`, label: "汇聚", kind: "normal" },
+      { id: `${mod.id}__e5`, from: `${mod.id}__s2b`, to: `${mod.id}__gate`, label: "汇聚", kind: "normal" },
+      { id: `${mod.id}__e6`, from: `${mod.id}__gate`, to: `${mod.id}__out`, label: "通过", kind: "normal" },
+      { id: `${mod.id}__e7`, from: `${mod.id}__gate`, to: `${mod.id}__s1`, label: "异常回退", kind: "loop" },
+    ],
+  };
+}
+
+function inferHasUiPage(candidate, relDir) {
+  if (typeof candidate.hasUiPage === "boolean") return candidate.hasUiPage;
+  const lower = `${relDir} ${candidate.title || ""} ${candidate.layer || ""}`.toLowerCase();
+  if (/(?:presentation|ui|web|frontend|client|views|components|pages|renderer|studio|desktop|tauri|electron|界面|工作台|画布|窗口)/u.test(lower)) {
+    return true;
+  }
+  return false;
+}
 
 function inferProductDomainForGenericDir(relDir, rawName) {
   const lower = `${relDir}/${rawName}`.toLowerCase();
@@ -702,6 +823,14 @@ export function discoverProjectArchitecturePrd({ projectRoot } = {}) {
       hasModuleVerified ? "已具备配套自动化校验保障核心功能稳定可用" : "待补充完整端到端验收测试确认边界情况",
     ];
 
+    const hasUiPage = inferHasUiPage(candidate, relDir);
+    const mockupVariant = inferMockupVariant({
+      nodeId: id,
+      title: candidate.title,
+      objective,
+      explicitVariant: candidate.mockupVariant || "",
+    });
+
     enriched.push({
       id,
       title: scrubText(candidate.title, 120),
@@ -710,6 +839,12 @@ export function discoverProjectArchitecturePrd({ projectRoot } = {}) {
       layer: candidate.layer || "核心产品功能",
       layerShort: candidate.layerShort || "核心功能",
       layerRank: Number.isInteger(candidate.layerRank) ? candidate.layerRank : 2,
+      flowColumn: Number.isInteger(candidate.flowColumn) ? candidate.flowColumn : null,
+      parallelGroup: candidate.parallelGroup || null,
+      nodeKind: candidate.nodeKind || "process",
+      loopBackTo: candidate.loopBackTo || null,
+      hasUiPage,
+      mockupVariant,
       directory: relDir,
       fileCount: files.length,
       entrypoints: entryFiles,
@@ -733,6 +868,12 @@ export function discoverProjectArchitecturePrd({ projectRoot } = {}) {
       layer: "核心产品功能",
       layerShort: "核心功能",
       layerRank: 1,
+      flowColumn: 0,
+      parallelGroup: null,
+      nodeKind: "process",
+      loopBackTo: null,
+      hasUiPage: true,
+      mockupVariant: "workbench",
       directory: ".",
       fileCount: 1,
       entrypoints: [],
@@ -795,25 +936,54 @@ export function discoverProjectArchitecturePrd({ projectRoot } = {}) {
   enforceAcyclicDependencies(enriched);
   enriched.sort((a, b) => a.layerRank - b.layerRank || a.dependencies.length - b.dependencies.length);
 
-  const modules = enriched.map((mod) => ({
-    id: mod.id,
-    title: mod.title,
-    shortSummary: mod.shortSummary,
-    status: mod.status,
-    layer: mod.layer,
-    layerShort: mod.layerShort,
-    layerRank: mod.layerRank,
-    directory: mod.directory,
-    fileCount: mod.fileCount,
-    entrypoints: mod.entrypoints,
-    objective: mod.objective,
-    features: mod.features,
-    inputContract: mod.inputContract,
-    outputContract: mod.outputContract,
-    boundaries: mod.baseBoundaries.slice(0, 6),
-    acceptance: mod.acceptance,
-    dependencies: mod.dependencies,
-  }));
+  const modules = enriched.map((mod) => {
+    const uiMockup = mod.hasUiPage
+      ? {
+          status: mod.status === "completed" ? "confirmed" : "pending",
+          version: 1,
+          mode: "wireframe_fallback",
+          variant: mod.mockupVariant || "workbench",
+          imageUrl: null,
+          fallbackReason: "默认载入结构化页面效果图预览（可点击重新尝试模型生图或输入意见实时改版）",
+          wireframeSpec: buildStructuredWireframeSpec({
+            title: mod.title,
+            objective: mod.objective,
+            features: mod.features,
+            version: 1,
+            variant: mod.mockupVariant || "workbench",
+          }),
+        }
+      : null;
+    const baseRecord = {
+      id: mod.id,
+      title: mod.title,
+      shortSummary: mod.shortSummary,
+      status: mod.status,
+      layer: mod.layer,
+      layerShort: mod.layerShort,
+      layerRank: mod.layerRank,
+      flowColumn: mod.flowColumn,
+      parallelGroup: mod.parallelGroup,
+      nodeKind: mod.nodeKind || "process",
+      loopBackTo: mod.loopBackTo || null,
+      hasUiPage: Boolean(mod.hasUiPage),
+      ...(uiMockup && { uiMockup }),
+      directory: mod.directory,
+      fileCount: mod.fileCount,
+      entrypoints: mod.entrypoints,
+      objective: mod.objective,
+      features: mod.features,
+      inputContract: mod.inputContract,
+      outputContract: mod.outputContract,
+      boundaries: mod.baseBoundaries.slice(0, 6),
+      acceptance: mod.acceptance,
+      dependencies: mod.dependencies,
+    };
+    return {
+      ...baseRecord,
+      subflow: buildDefaultSubflowForModule(baseRecord),
+    };
+  });
 
   const completedCount = modules.filter((m) => m.status === "completed").length;
   const partialCount = modules.filter((m) => m.status === "partial").length;
