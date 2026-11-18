@@ -227,10 +227,43 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  desktop-check:
+    name: Desktop client cargo check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # Compile with the exact rust-version declared by the desktop crate, so
+      # an MSRV that cannot resolve Cargo.lock fails here instead of on a user
+      # machine. String-matching main.rs in live tests is not a compile check.
+      - name: Install the declared desktop Rust toolchain
+        id: desktop-toolchain
+        run: |
+          msrv="$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' desktop/src-tauri/Cargo.toml)"
+          test -n "$msrv"
+          rustup toolchain install "$msrv" --profile minimal --no-self-update
+          echo "msrv=$msrv" >> "$GITHUB_OUTPUT"
+      - name: Install Tauri Linux system libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev
+      - name: Check the desktop client with the locked dependency graph
+        run: cargo +${{ steps.desktop-toolchain.outputs.msrv }} check --locked --manifest-path desktop/src-tauri/Cargo.toml
+
   package-candidate:
     name: Package candidate
     if: github.event_name != 'pull_request'
-    needs: [behavior-regression, setup-platform, planning-continuity, global-sync-policy, installer-regression, dependency-calculation, dsh-native]
+    needs: [behavior-regression, setup-platform, planning-continuity, global-sync-policy, installer-regression, dependency-calculation, dsh-native, desktop-check]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

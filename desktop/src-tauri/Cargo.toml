@@ -5,7 +5,10 @@ description = "Meta_Kim Standalone Native Desktop Client"
 authors = ["Meta_Kim Contributors"]
 license = "MIT"
 edition = "2021"
-rust-version = "1.77.2"
+# Cargo.lock pins crates (for example block-buffer 0.12) that need the
+# edition2024 Cargo feature, so 1.85 is the lowest toolchain that can resolve it.
+# CI checks the desktop crate with exactly this declared toolchain.
+rust-version = "1.85"
 default-run = "meta-kim-desktop"
 
 [build-dependencies]
