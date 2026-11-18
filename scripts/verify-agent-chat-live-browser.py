@@ -135,7 +135,8 @@ def main() -> None:
                 expect(composer).to_be_visible()
                 expect(live).to_be_visible()
                 expect(page.locator('[data-uw-live-mode="flow"]')).to_have_attribute("aria-selected", "true")
-                capture("01-chat-and-live-initial.png", "Single input with adjacent live process")
+                expect(page.locator(".uw-cockpit-pillar")).to_have_count(5)
+                capture("01-chat-and-live-initial.png", "Single input with adjacent live process and 5-pillar cockpit")
                 evidence["checks"].append("Single visible composer, real adjacent Live, no horizontal overflow")
 
                 # Native client cards use real DOM from the current source, but
@@ -153,7 +154,7 @@ def main() -> None:
                 expect(native_hosts.nth(1)).to_contain_text("Codex")
                 native_hosts.first.locator("summary").click()
                 expect(native_hosts.first.locator(".uw-native-host-access")).to_contain_text("接入方式")
-                expect(native_section).to_contain_text("服务运行环境")
+                expect(native_section).to_contain_text("当前服务端宿主")
                 capture("01b-service-host-inventory-fixture.png",
                         "Current-source native host cards from simulated fixture data; not real client installation")
                 evidence["checks"].append(

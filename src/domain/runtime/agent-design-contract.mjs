@@ -92,7 +92,7 @@ export function validateDesignMutation(input) {
     || !Number.isSafeInteger(input.expectedVersion)
     || input.expectedVersion < 0 || input.expectedVersion > AGENT_DESIGN_MAX_VERSIONS) return null;
   const action = input.action;
-  if (!["submit", "revise_module", "revise_system", "approve", "revoke", "request_revision"].includes(action)) return null;
+  if (!["submit", "revise_module", "revise_system", "approve", "approve_all", "revoke", "request_revision"].includes(action)) return null;
   const base = {
     action, idempotencyKey: input.idempotencyKey, requestId: input.requestId,
     planDigest: input.planDigest, decisionKey: input.decisionKey,
@@ -106,6 +106,9 @@ export function validateDesignMutation(input) {
       ...base, design,
       ...(input.sourceDraftDigest && { sourceDraftDigest: input.sourceDraftDigest }),
     } : null;
+  }
+  if (action === "approve_all") {
+    return input.expectedVersion >= 1 && input.target == null ? base : null;
   }
   if (action === "revise_module") {
     const module = normalizeModule(input.module);
@@ -267,6 +270,27 @@ export function applyDesignMutation(prior, mutation, nextVersion, now) {
       }
     }
     changedNodeIds.push(kind === "system" ? "system" : moduleId);
+  } else if (mutation.action === "approve_all") {
+    if ((content.pendingReviewNotes?.length || 0) > 0) {
+      throw agentWorkflowConflict("agent_design_unresolved_feedback");
+    }
+    if (!validateDesignDag(content.modules)) {
+      throw agentWorkflowConflict("agent_design_dependency_cycle_or_missing");
+    }
+    if (content.system.approval.state === "approved"
+      && content.modules.every((module) => module.approval.state === "approved")) {
+      throw agentWorkflowConflict("agent_design_already_approved");
+    }
+    if (content.system.approval.state !== "approved") {
+      content.system.approval = { state: "approved", version: nextVersion, at: now, reason: null };
+      changedNodeIds.push("system");
+    }
+    for (const module of content.modules) {
+      if (module.approval.state !== "approved") {
+        module.approval = { state: "approved", version: nextVersion, at: now, reason: null };
+        changedNodeIds.push(module.id);
+      }
+    }
   }
   return { content, changedNodeIds, invalidatedModuleIds,
     ...(reviewNote && { reviewNote }), resolvedReviewNoteIds, status: statusOf(content) };

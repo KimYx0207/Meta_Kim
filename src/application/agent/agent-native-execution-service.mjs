@@ -9,7 +9,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync,
-  openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync,
+  openSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync,
 } from "node:fs";
 import path from "node:path";
 import { probeRuntimeCli } from "../../../scripts/runtime-cli-probe.mjs";
@@ -25,7 +25,72 @@ const VERSION = "2.1.259";
 const SCHEMA = "meta-kim-agent-b3-native-execution-v1";
 const MAX_RECORD = 96 * 1024;
 const MAX_ORDER = 768 * 1024;
+const MAX_BASELINE = 2 * 1024 * 1024;
+const MAX_BASELINE_FILES = 2_500;
+const MAX_HASHED_FILE_BYTES = 2 * 1024 * 1024;
 const NOFOLLOW = constants.O_NOFOLLOW ?? 0;
+const IGNORED_SCAN_DIRS = new Set([
+  ".git", ".meta-kim", "node_modules", ".claude-worktrees",
+]);
+
+function snapshotProjectBaseline(root) {
+  const files = {};
+  let count = 0;
+  function walk(currentDir, relPrefix) {
+    if (count >= MAX_BASELINE_FILES) return;
+    let entries = [];
+    try { entries = readdirSync(currentDir, { withFileTypes: true }); }
+    catch { return; }
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      if (count >= MAX_BASELINE_FILES) break;
+      const relPosix = relPrefix ? `${relPrefix}/${entry.name}` : entry.name;
+      if (IGNORED_SCAN_DIRS.has(entry.name) || relPosix === ".claude/worktrees"
+        || relPosix.startsWith(".claude/worktrees/")) continue;
+      const fullPath = path.join(currentDir, entry.name);
+      let info;
+      try { info = lstatSync(fullPath); }
+      catch { continue; }
+      if (info.isSymbolicLink()) continue;
+      if (info.isDirectory()) {
+        walk(fullPath, relPosix);
+      } else if (info.isFile() && info.size <= MAX_HASHED_FILE_BYTES) {
+        try {
+          const data = readFileSync(fullPath);
+          files[relPosix] = {
+            sha256: createHash("sha256").update(data).digest("hex"),
+            bytes: info.size,
+          };
+          count += 1;
+        } catch { /* skip unreadable transient file */ }
+      }
+    }
+  }
+  walk(root, "");
+  return files;
+}
+
+function baselinePath(directory, key) {
+  if (!AGENT_WORKFLOW_KEY_PATTERN.test(key ?? "")) return null;
+  return path.join(directory, "baseline-" + key + ".json");
+}
+
+function readBaseline(directory, key, projectFingerprint, handoffDigest) {
+  const target = baselinePath(directory, key);
+  if (!target || !existsSync(target)) return null;
+  let fd;
+  try {
+    if (lstatSync(target).isSymbolicLink()) return null;
+    fd = openSync(target, constants.O_RDONLY | NOFOLLOW);
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.nlink !== 1 || stat.size < 1 || stat.size > MAX_BASELINE) return null;
+    const parsed = JSON.parse(readFileSync(fd, "utf8"));
+    if (parsed?.projectFingerprint !== projectFingerprint || parsed?.handoffDigest !== handoffDigest
+      || !parsed.files || typeof parsed.files !== "object" || Array.isArray(parsed.files)) return null;
+    return parsed.files;
+  } catch { return null; }
+  finally { if (fd != null) closeSync(fd); }
+}
 
 function hash(value, purpose) {
   return createHash("sha256").update(purpose).update("\u0000").update(JSON.stringify(value)).digest("hex");
@@ -241,16 +306,28 @@ export function createAgentNativeExecutionService({
           if (Array.isArray(parsed)) entries = parsed;
         } catch { /* unknown official CLI format */ }
       }
-      lastListing = { at: now, entries };
+      if (Array.isArray(entries)) {
+        lastListing = { at: now, entries };
+      } else {
+        lastListing = null;
+      }
     }
-    const match = lastListing.entries?.find(entry => entry?.id === row.nativeSessionId
+    const match = lastListing?.entries?.find(entry => entry?.id === row.nativeSessionId
       && entry.kind === "background" && withinProject(realRoot, entry.cwd)
       && entry.name === "meta-" + row.idempotencyKey.slice(0, 20)
       && Number.isFinite(entry.startedAt) && entry.startedAt >= Date.parse(row.authorizedAt) - 30_000);
     if (!match || !["working", "blocked", "done", "failed", "stopped"].includes(match.state)) {
-      return { nativeState: null, observation: "not_confirmed" };
+      return { nativeState: null, observation: "not_confirmed", nativeWorktreePath: null };
     }
-    return { nativeState: match.state, observation: "claude_agents_json_project_bound" };
+    const candidateWorktree = typeof match.worktreePath === "string" && withinProject(realRoot, match.worktreePath)
+      ? path.resolve(match.worktreePath)
+      : typeof match.cwd === "string" && withinProject(realRoot, match.cwd) && path.resolve(match.cwd) !== realRoot
+        ? path.resolve(match.cwd) : null;
+    return {
+      nativeState: match.state,
+      observation: "claude_agents_json_project_bound",
+      nativeWorktreePath: candidateWorktree,
+    };
   }
 
   async function inspect({ idempotencyKey } = {}) {
@@ -268,9 +345,16 @@ export function createAgentNativeExecutionService({
       return response(row, { reason: "approved_handoff_changed_after_b3" });
     }
     const observed = await observe(row);
-    if (observed.nativeState && observed.nativeState !== row.nativeState) {
-      replaceReceipt(directory, { ...row, nativeState: observed.nativeState,
-        lastNativeObservationAt: new Date().toISOString() });
+    const nextWorktree = observed.nativeWorktreePath ?? row.nativeWorktreePath ?? null;
+    if ((observed.nativeState && observed.nativeState !== row.nativeState)
+      || (nextWorktree && nextWorktree !== row.nativeWorktreePath)) {
+      const updated = replaceReceipt(directory, {
+        ...row,
+        ...(observed.nativeState && { nativeState: observed.nativeState }),
+        ...(nextWorktree && { nativeWorktreePath: nextWorktree }),
+        lastNativeObservationAt: new Date().toISOString(),
+      });
+      return response(updated, observed);
     }
     return response(row, observed);
   }
@@ -332,6 +416,18 @@ export function createAgentNativeExecutionService({
     try {
       writeExclusive(path.join(directory, "work-" + idempotencyKey + ".json"),
         JSON.stringify({ ...order, orderDigest }), MAX_ORDER);
+      const baselineRecord = JSON.stringify({
+        schemaVersion: "meta-kim-agent-b3-baseline-v1",
+        projectFingerprint: fingerprint,
+        idempotencyKey,
+        handoffDigest,
+        capturedAt: now,
+        files: snapshotProjectBaseline(realRoot),
+      });
+      if (Buffer.byteLength(baselineRecord, "utf8") <= MAX_BASELINE) {
+        const bPath = baselinePath(directory, idempotencyKey);
+        if (bPath && !existsSync(bPath)) writeExclusive(bPath, baselineRecord, MAX_BASELINE);
+      }
       const current = await preflight(idempotencyKey);
       if (current.reason || current.prepared.handoffDigest !== handoffDigest) {
         replaceReceipt(directory, { ...row, launchStatus: "blocked", launchReason: "handoff_changed_before_launch" });
@@ -371,5 +467,76 @@ export function createAgentNativeExecutionService({
     }
   }
 
-  return Object.freeze({ inspect, authorizeAndLaunch });
+  function listActiveKeys() {
+    let entries = [];
+    try { entries = readdirSync(directory); }
+    catch { return []; }
+    const keys = [];
+    for (const name of entries) {
+      const match = /^b3-([A-Za-z0-9_-]{8,96})\.json$/u.exec(name);
+      if (!match) continue;
+      try {
+        const row = readReceipt(directory, match[1], fingerprint);
+        if (row) keys.push(match[1]);
+      } catch { /* skip unreadable receipt */ }
+    }
+    return keys.sort();
+  }
+
+  function getTrustedExecutionState({ idempotencyKey } = {}) {
+    if (!AGENT_WORKFLOW_KEY_PATTERN.test(idempotencyKey ?? "")) return null;
+    let row;
+    try { row = readReceipt(directory, idempotencyKey, fingerprint); }
+    catch { return null; }
+    if (!row || !workOrderIntegrity(directory, row)) return null;
+    return Object.freeze({
+      idempotencyKey: row.idempotencyKey,
+      handoffDigest: row.handoffDigest,
+      orderDigest: row.orderDigest,
+      approvalKey: row.approvalKey,
+      nativeSessionId: row.nativeSessionId ?? null,
+      nativeState: row.nativeState ?? null,
+      nativeWorktreePath: row.nativeWorktreePath ?? null,
+      authorizedAt: row.authorizedAt,
+      launchedAt: row.launchedAt ?? null,
+      baselineFiles: readBaseline(directory, idempotencyKey, fingerprint, row.handoffDigest),
+    });
+  }
+
+  function archiveCompletedForRework({ idempotencyKey, expectedHandoffDigest } = {}) {
+    if (!AGENT_WORKFLOW_KEY_PATTERN.test(idempotencyKey ?? "") || !DIGEST.test(expectedHandoffDigest ?? "")) {
+      return false;
+    }
+    const row = readReceipt(directory, idempotencyKey, fingerprint);
+    if (!row || row.handoffDigest !== expectedHandoffDigest
+      || !["done", "failed", "stopped"].includes(row.nativeState)) {
+      return false;
+    }
+    const historyDir = path.join(directory, "history");
+    try { mkdirSync(historyDir, { mode: 0o700 }); }
+    catch (error) { if (error.code !== "EEXIST") throw error; }
+    const info = lstatSync(historyDir);
+    if (!info.isDirectory() || info.isSymbolicLink()) throw new TypeError("Unsafe B3 history directory");
+    const suffix = `${idempotencyKey}-${expectedHandoffDigest.slice(0, 12)}-${Date.now()}`;
+    const pairs = [
+      [receiptPath(directory, idempotencyKey), path.join(historyDir, `b3-${suffix}.json`)],
+      [path.join(directory, `work-${idempotencyKey}.json`), path.join(historyDir, `work-${suffix}.json`)],
+      [baselinePath(directory, idempotencyKey), path.join(historyDir, `baseline-${suffix}.json`)],
+    ];
+    for (const [src, dest] of pairs) {
+      if (src && existsSync(src) && !lstatSync(src).isSymbolicLink()) {
+        renameSync(src, dest);
+      }
+    }
+    lastListing = null;
+    return true;
+  }
+
+  return Object.freeze({
+    inspect,
+    authorizeAndLaunch,
+    listActiveKeys,
+    getTrustedExecutionState,
+    archiveCompletedForRework,
+  });
 }

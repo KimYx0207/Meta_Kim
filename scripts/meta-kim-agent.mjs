@@ -18,6 +18,7 @@ import { createAgentStartService } from "../src/application/agent/agent-start-se
 import { createAgentWorkflowService } from "../src/application/agent/agent-workflow-service.mjs";
 import { createAgentExecutionBridge } from "../src/application/agent/agent-execution-bridge.mjs";
 import { createAgentNativeExecutionService } from "../src/application/agent/agent-native-execution-service.mjs";
+import { createAgentAcceptanceService } from "../src/application/agent/agent-acceptance-service.mjs";
 
 export function parseAgentArgs(args) {
   const parsed = { open: true, port: 0, json: false, help: false, projectRoot: null };
@@ -123,11 +124,15 @@ export async function main(args = process.argv.slice(2), environment = process.e
   const agentNativeExecutionService = createAgentNativeExecutionService({
     projectRoot, profile: "default", workflowService: agentStartService, executionBridge, environment,
   });
+  const agentAcceptanceService = createAgentAcceptanceService({
+    projectRoot, profile: "default", workflowService: agentStartService,
+    nativeExecutionService: agentNativeExecutionService,
+  });
   const controller = createLiveControlRoomServer({
     projectRoot, port: options.port, globalHub: false, workspaceEnabled: true,
     // This opt-in path is separate from the global read-only Live Hub.
     enableControl: false, enableAgentStart: true, agentStartService,
-    agentNativeExecutionService,
+    agentNativeExecutionService, agentAcceptanceService,
   });
   const address = await controller.start();
   let closing = false;

@@ -38,7 +38,7 @@ test("B2 native draft reuses Claude's reviewed plan-only launch, chosen B1 plan,
   assert.deepEqual(calls[0].args.slice(2, 6), ["--permission-mode", "plan", "--permission-prompts", "none"]);
   assert.ok(calls[0].args.includes("--no-chrome"));
   assert.ok(calls[0].args.includes("--output-format"));
-  assert.equal(calls[0].options.cwd, projectRoot.replace(/\/$/u, ""));
+  assert.equal(calls[0].options.cwd, projectRoot.replace(/[\\/]$/u, ""));
   assert.match(calls[0].options.input, /originalUserGoal/u);
   assert.match(calls[0].options.input, /selectedStrategy/u);
   assert.match(calls[0].options.input, /Sensitive publishing requires review/u);

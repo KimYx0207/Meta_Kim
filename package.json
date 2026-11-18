@@ -282,6 +282,7 @@
     "src/application/agent/agent-handoff-store.mjs",
     "src/application/agent/agent-execution-bridge.mjs",
     "src/application/agent/agent-native-execution-service.mjs",
+    "src/application/agent/agent-acceptance-service.mjs",
     "src/application/agent/native-host-inventory.mjs",
     "src/application/governance/task-design-dispatch.mjs",
     "src/application/runtime/operating-system.mjs",

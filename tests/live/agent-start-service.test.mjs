@@ -103,6 +103,7 @@ test("only reviewed Claude plan mode launches, using stdin and fixed local CWD",
   const gate = deferred();
   const invocations = [];
   const service = createAgentStartService({ projectRoot, enabled: true,
+    environment: { META_KIM_KIM_SERVICE_ROOT: path.join(projectRoot, ".isolated-no-kim-service"), HOME: "" },
     probe: () => detection(),
     launch: (command, args, options) => { invocations.push({ command, args, options }); return gate.promise; } });
   const goal = `Research options; $(touch /tmp/pwned); AUTH_TOKEN=supersecret;\nDo not do edits.`;

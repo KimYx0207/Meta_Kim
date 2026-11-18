@@ -98,6 +98,7 @@ export function createLiveWorkspaceController(options) {
     editorVisible: false, manualOverride: false, sourceApplied: false };
   const handoff = { loading: false, busy: false, snapshot: null, error: null, pendingKey: null };
   const execution = { loading: false, busy: false, snapshot: null, error: null, pendingKey: null };
+  const acceptance = { loading: false, busy: false, snapshot: null, error: null, pendingKey: null };
 
   let desktop = null;
   function saveAgent() {
@@ -425,11 +426,17 @@ export function createLiveWorkspaceController(options) {
     if (agentExecutionRecords) agentExecutionRecords.textContent = hasSelectedRun
       ? "查看已选 Run 的记录" : "选择正式 Run 查看记录";
     if (agentAcceptanceStatus) {
-      agentAcceptanceStatus.textContent = native?.status === "ready_for_review"
-        ? "原生任务已结束。需先核验隔离工作区的真实改动、测试及正式 Run，才可以人工验收。"
-        : "本任务尚无已核验的运行产物或 B4 最终验收结果，不能标记完成。";
+      const b4 = acceptance.snapshot;
+      agentAcceptanceStatus.textContent = b4?.status === "accepted_and_integrated"
+        ? "B4 最终验收已通过，隔离区验证产物已合入主项目并沉淀方法卡。"
+        : b4?.status === "awaiting_human_b4"
+          ? `隔离区产物已通过自动核验（${b4.changedFiles?.length || 0} 个文件），等待你确认 B4 合入或指定模块退回。`
+          : native?.status === "ready_for_review"
+            ? "原生任务已结束。需先核验隔离工作区的真实改动、测试及正式 Run，才可以人工验收。"
+            : "本任务尚无已核验的运行产物或 B4 最终验收结果，不能标记完成。";
 
-      agentAcceptanceStatus.dataset.state = "waiting";
+      agentAcceptanceStatus.dataset.state = b4?.status === "accepted_and_integrated" ? "prepared"
+        : b4?.status === "awaiting_human_b4" ? "eligible" : "waiting";
     }
     if (agentAcceptanceEvidence) {
       agentAcceptanceEvidence.replaceChildren();
@@ -590,7 +597,103 @@ export function createLiveWorkspaceController(options) {
         : "交接已封存；没有授权任何写入、发布、付费操作，原生执行入口暂无法核对。";
     } finally {
       execution.loading = false; renderAgentFollowthrough(); desktop?.render();
+      if (execution.snapshot?.status === "ready_for_review") void loadAgentAcceptance();
     }
+  }
+  function validAcceptanceSnapshot(payload) {
+    return payload?.schemaVersion === "meta-kim-agent-b4-acceptance-v1"
+      && ["not_ready", "waiting_b3", "pending_verification", "awaiting_human_b4",
+        "verification_failed", "accepted_and_integrated", "rework_requested",
+        "rolled_back", "blocked"].includes(payload.status);
+  }
+  async function loadAgentAcceptance() {
+    const basis = designBasis();
+    if (!basis || acceptance.loading || acceptance.busy || disposed) return;
+    acceptance.loading = true;
+    desktop?.render();
+    try {
+      const payload = await request("/api/agent/acceptance", {
+        selection: {}, query: { idempotencyKey: basis.idempotencyKey },
+      });
+      if (disposed || designBasis()?.idempotencyKey !== basis.idempotencyKey) return;
+      if (!validAcceptanceSnapshot(payload)) throw new Error("B4 acceptance schema mismatch");
+      acceptance.snapshot = payload;
+      acceptance.error = null;
+    } catch {
+      if (!disposed) acceptance.error = "暂时无法核对 B4 产物与核验状态，请检查本地服务连接。";
+    } finally {
+      acceptance.loading = false; renderAgentFollowthrough(); desktop?.render();
+    }
+  }
+  async function verifyAgentAcceptance() {
+    const basis = designBasis();
+    if (!basis || acceptance.busy || acceptance.loading || disposed || !state.canWrite) return false;
+    acceptance.busy = true; acceptance.error = null; desktop?.render();
+    try {
+      const payload = await request("/api/agent/acceptance", {
+        method: "POST", selection: {}, body: { idempotencyKey: basis.idempotencyKey, action: "verify" },
+      });
+      if (disposed || designBasis()?.idempotencyKey !== basis.idempotencyKey) return false;
+      if (!validAcceptanceSnapshot(payload)) throw new Error("B4 verify receipt invalid");
+      acceptance.snapshot = payload;
+      return true;
+    } catch (error) {
+      if (!disposed) acceptance.error = "产物核验请求失败：" + (error.message || "请检查隔离工作区状态。");
+      return false;
+    } finally {
+      acceptance.busy = false; renderAgentFollowthrough(); desktop?.render();
+    }
+  }
+  async function decideAgentAcceptance(action, extra = {}) {
+    const basis = designBasis();
+    const snap = acceptance.snapshot;
+    if (!basis || !snap?.handoffDigest || acceptance.busy || acceptance.loading || disposed || !state.canWrite) return false;
+    const decisionKey = win.crypto?.randomUUID?.();
+    if (!decisionKey) { acceptance.error = "当前浏览器无法生成安全确认号。"; desktop?.render(); return false; }
+    acceptance.busy = true; acceptance.error = null; desktop?.render();
+    try {
+      const payload = await request("/api/agent/acceptance", {
+        method: "POST", selection: {},
+        body: {
+          idempotencyKey: basis.idempotencyKey,
+          decisionKey,
+          handoffDigest: snap.handoffDigest,
+          ...(snap.artifactsDigest && { artifactsDigest: snap.artifactsDigest }),
+          action,
+          ...extra,
+        },
+      });
+      if (disposed || designBasis()?.idempotencyKey !== basis.idempotencyKey) return false;
+      if (!validAcceptanceSnapshot(payload)) throw new Error("B4 decision receipt invalid");
+      acceptance.snapshot = payload;
+      if (payload.status === "blocked") {
+        acceptance.error = payload.nextAction || "合入被安全门禁拦截，请先处理冲突或核验问题。";
+        return false;
+      }
+      if (payload.status === "rework_requested") {
+        handoff.snapshot = null; handoff.pendingKey = null;
+        execution.snapshot = null; execution.pendingKey = null;
+        saveAgent();
+        await loadAgentDesign();
+      }
+      return true;
+    } catch (error) {
+      if (!disposed) acceptance.error = "B4 决策未能写入：" + (error.message || "请先刷新核对当前状态。");
+      return false;
+    } finally {
+      acceptance.busy = false; renderAgentFollowthrough(); desktop?.render();
+    }
+  }
+  async function approveAllAndPrepareHandoff() {
+    if (!design.snapshot || design.snapshot.status === "approved"
+      || (design.snapshot.pendingReviewNotes?.length || 0) > 0) return false;
+    const ok = await submitAgentDesign("approve_all", {});
+    if (!ok || design.snapshot?.status !== "approved" || design.snapshot?.reviewComplete !== true) return false;
+    await loadAgentHandoff();
+    if (handoff.snapshot?.status === "eligible") {
+      await prepareAgentHandoff();
+    }
+    return true;
   }
   async function submitAgentExecution() {
     const basis = designBasis();
@@ -1084,6 +1187,7 @@ export function createLiveWorkspaceController(options) {
         nativeDraft.autoAttempted = false; nativeDraft.editorVisible = false; nativeDraft.manualOverride = false; nativeDraft.sourceApplied = false;
         handoff.snapshot = null; handoff.error = null; handoff.pendingKey = null;
         execution.snapshot = null; execution.error = null; execution.pendingKey = null;
+        acceptance.snapshot = null; acceptance.error = null; acceptance.pendingKey = null;
 
         agent.scopeMismatch = true;
         if (agentResult) agentResult.hidden = true;
@@ -1722,7 +1826,7 @@ export function createLiveWorkspaceController(options) {
   };
   const renderer = createLiveWorkspaceRenderer({ app, root, state, copy, actions, taskOutputs: options.taskOutputs });
   desktop = agentEntryEnabled && typeof createUnifiedAgentDesktop === "function" ? createUnifiedAgentDesktop({
-    root, state, agent, design, nativeDraft, handoff, execution, copy,
+    root, state, agent, design, nativeDraft, handoff, execution, acceptance, copy,
 
     buildGraph: buildLivePrdGraph, createGraph: createPrdKnowledgeGraph,
     callbacks: {
@@ -1777,6 +1881,9 @@ export function createLiveWorkspaceController(options) {
       approveNode(kind, id) {
         void submitAgentDesign("approve", { target: kind === "system" ? { kind } : { kind, moduleId: id } });
       },
+      approveAllAndPrepare() {
+        void approveAllAndPrepareHandoff();
+      },
       requestRevision(kind, id, feedback) {
         return submitAgentDesign("request_revision", {
           target: kind === "system" ? { kind } : { kind, moduleId: id }, feedback,
@@ -1811,6 +1918,12 @@ export function createLiveWorkspaceController(options) {
       reconcileHandoff() { void loadAgentHandoff(); },
       authorizeExecution() { void submitAgentExecution(); },
       inspectExecution() { void loadAgentExecution(); },
+      verifyDeliverables() { void verifyAgentAcceptance(); },
+      acceptDeliverables(summary) { void decideAgentAcceptance("accept", { summary }); },
+      requestDeliverableRework(moduleId, feedback) {
+        return decideAgentAcceptance("request_rework", { moduleId, feedback });
+      },
+      rollbackDeliverables() { void decideAgentAcceptance("rollback"); },
 
     },
   }) : null;
@@ -1876,6 +1989,7 @@ export function createLiveWorkspaceController(options) {
     nativeDraft.autoAttempted = false; nativeDraft.editorVisible = false; nativeDraft.manualOverride = false; nativeDraft.sourceApplied = false;
     handoff.snapshot = null; handoff.error = null; handoff.pendingKey = null;
     execution.snapshot = null; execution.error = null; execution.pendingKey = null;
+    acceptance.snapshot = null; acceptance.error = null; acceptance.pendingKey = null;
 
     if (agentFeedback) agentFeedback.value = "";
     if (agentStrategy) agentStrategy.value = "";
@@ -1928,6 +2042,9 @@ export function createLiveWorkspaceController(options) {
     if (!disposed && doc.visibilityState === "visible" && handoff.snapshot?.status === "prepared"
       && execution.snapshot && ["unconfirmed", "running", "waiting_input", "in_doubt"].includes(execution.snapshot.status)
       && !execution.loading && !execution.busy) void loadAgentExecution();
+    if (!disposed && doc.visibilityState === "visible" && execution.snapshot?.status === "ready_for_review"
+      && (!acceptance.snapshot || ["pending_verification", "waiting_b3"].includes(acceptance.snapshot.status))
+      && !acceptance.loading && !acceptance.busy) void loadAgentAcceptance();
 
   }, policy.agentReceiptPollMs) : null;
   renderer.render();

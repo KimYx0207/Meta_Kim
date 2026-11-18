@@ -567,6 +567,11 @@ export function createLiveControlRoomServer(options = {}) {
     && typeof options.agentNativeExecutionService?.inspect === "function"
     && typeof options.agentNativeExecutionService?.authorizeAndLaunch === "function"
     ? options.agentNativeExecutionService : null;
+  const agentAcceptanceService = agentEntryEnabled
+    && typeof options.agentAcceptanceService?.inspect === "function"
+    && typeof options.agentAcceptanceService?.verifyArtifacts === "function"
+    && typeof options.agentAcceptanceService?.decide === "function"
+    ? options.agentAcceptanceService : null;
   const workspaceServices = new Map();
   const exposure = controlExposure(options, enableControl);
   const controlToken = enableControl
@@ -584,6 +589,7 @@ export function createLiveControlRoomServer(options = {}) {
   let closed = false;
   let heartbeat = null;
   let observer = null;
+  let agentWatcher = null;
   let observerBusy = false;
   const pollIntervalMs = Number.isInteger(options.pollIntervalMs) && options.pollIntervalMs >= 10
     ? options.pollIntervalMs
@@ -591,6 +597,11 @@ export function createLiveControlRoomServer(options = {}) {
   const heartbeatIntervalMs = Number.isInteger(options.heartbeatIntervalMs) && options.heartbeatIntervalMs >= 10
     ? options.heartbeatIntervalMs
     : 25_000;
+  const agentWatchIntervalMs = options.agentWatchIntervalMs === 0
+    ? 0
+    : Number.isInteger(options.agentWatchIntervalMs) && options.agentWatchIntervalMs >= 50
+      ? options.agentWatchIntervalMs
+      : 4_000;
 
   const stopObserverWhenIdle = () => {
     if (clients.size > 0 || !observer) return;
@@ -845,7 +856,7 @@ export function createLiveControlRoomServer(options = {}) {
       return;
     }
 
-    if (["/api/agent/capabilities", "/api/agent/hosts", "/api/agent/start", "/api/agent/requests", "/api/agent/decisions", "/api/agent/designs", "/api/agent/design-drafts", "/api/agent/handoff", "/api/agent/execution"].includes(parsed.pathname)) {
+    if (["/api/agent/capabilities", "/api/agent/hosts", "/api/agent/start", "/api/agent/requests", "/api/agent/decisions", "/api/agent/designs", "/api/agent/design-drafts", "/api/agent/handoff", "/api/agent/execution", "/api/agent/acceptance"].includes(parsed.pathname)) {
 
       if (!agentEntryEnabled) {
         jsonResponse(response, 403, safeError("agent_entry_not_enabled")); return;
@@ -859,16 +870,18 @@ export function createLiveControlRoomServer(options = {}) {
       const draftRequest = parsed.pathname === "/api/agent/design-drafts";
       const handoffRequest = parsed.pathname === "/api/agent/handoff";
       const executionRequest = parsed.pathname === "/api/agent/execution";
+      const acceptanceRequest = parsed.pathname === "/api/agent/acceptance";
       const designWrite = designRequest && request.method === "POST";
       const draftWrite = draftRequest && request.method === "POST";
       const handoffWrite = handoffRequest && request.method === "POST";
       const executionWrite = executionRequest && request.method === "POST";
-      const requiredMethod = designRequest || draftRequest || handoffRequest || executionRequest ? "GET, POST" : startRequest || decisionRequest ? "POST" : "GET";
-      if (designRequest || draftRequest || handoffRequest || executionRequest ? !["GET", "POST"].includes(request.method) : request.method !== requiredMethod) {
+      const acceptanceWrite = acceptanceRequest && request.method === "POST";
+      const requiredMethod = designRequest || draftRequest || handoffRequest || executionRequest || acceptanceRequest ? "GET, POST" : startRequest || decisionRequest ? "POST" : "GET";
+      if (designRequest || draftRequest || handoffRequest || executionRequest || acceptanceRequest ? !["GET", "POST"].includes(request.method) : request.method !== requiredMethod) {
         response.setHeader("allow", requiredMethod);
         jsonResponse(response, 405, safeError("method_not_allowed")); return;
       }
-      if ((startRequest || decisionRequest || designWrite || draftWrite || handoffWrite || executionWrite) && (!requestHasSameOrigin(request, server)
+      if ((startRequest || decisionRequest || designWrite || draftWrite || handoffWrite || executionWrite || acceptanceWrite) && (!requestHasSameOrigin(request, server)
 
         || !String(request.headers["content-type"] || "").toLowerCase().startsWith("application/json"))) {
         jsonResponse(response, 403, safeError(startRequest
@@ -876,7 +889,8 @@ export function createLiveControlRoomServer(options = {}) {
             ? "agent_decision_same_origin_json_required" : designWrite
               ? "agent_design_same_origin_json_required" : draftWrite
                 ? "agent_design_draft_same_origin_json_required" : handoffWrite
-                  ? "agent_handoff_same_origin_json_required" : "agent_execution_same_origin_json_required")); return;
+                  ? "agent_handoff_same_origin_json_required" : acceptanceWrite
+                    ? "agent_acceptance_same_origin_json_required" : "agent_execution_same_origin_json_required")); return;
 
       }
       try {
@@ -978,6 +992,39 @@ export function createLiveControlRoomServer(options = {}) {
             jsonResponse(response, 200, await agentNativeExecutionService.authorizeAndLaunch(body));
           } else {
             jsonResponse(response, 200, await agentNativeExecutionService.inspect({
+              idempotencyKey: parsed.searchParams.get("idempotencyKey"),
+            }));
+          }
+
+        } else if (acceptanceRequest) {
+          if (!agentAcceptanceService) {
+            jsonResponse(response, 409, safeError("agent_acceptance_not_available")); return;
+          }
+          if (acceptanceWrite) {
+            const body = await readJsonBody(request, maxJsonBytes);
+            if (body?.projectId || body?.projectRoot) {
+              jsonResponse(response, 409, safeError("agent_project_selection_not_bound")); return;
+            }
+            if (body?.action === "verify") {
+              jsonResponse(response, 200, await agentAcceptanceService.verifyArtifacts({
+                idempotencyKey: body.idempotencyKey,
+              }));
+            } else {
+              jsonResponse(response, 200, await agentAcceptanceService.decide(body));
+            }
+          } else if (parsed.searchParams.get("mode") === "playbooks") {
+            const goal = parsed.searchParams.get("goal");
+            const playbooks = goal && typeof agentAcceptanceService.matchPlaybooks === "function"
+              ? agentAcceptanceService.matchPlaybooks({
+                goal,
+                techStack: parsed.searchParams.get("techStack") || "",
+              })
+              : typeof agentAcceptanceService.listPlaybooks === "function"
+                ? agentAcceptanceService.listPlaybooks()
+                : [];
+            jsonResponse(response, 200, { schemaVersion: "meta-kim-verified-playbooks-list-v1", playbooks });
+          } else {
+            jsonResponse(response, 200, await agentAcceptanceService.inspect({
               idempotencyKey: parsed.searchParams.get("idempotencyKey"),
             }));
           }
@@ -1382,6 +1429,12 @@ export function createLiveControlRoomServer(options = {}) {
       }
     }, heartbeatIntervalMs);
     heartbeat.unref?.();
+    if (agentAcceptanceService && typeof agentAcceptanceService.reconcileActive === "function" && agentWatchIntervalMs > 0) {
+      agentWatcher = setInterval(() => {
+        if (!closed) void agentAcceptanceService.reconcileActive().catch(() => {});
+      }, agentWatchIntervalMs);
+      agentWatcher.unref?.();
+    }
     return listening;
   };
 
@@ -1392,6 +1445,8 @@ export function createLiveControlRoomServer(options = {}) {
     heartbeat = null;
     if (observer) clearInterval(observer);
     observer = null;
+    if (agentWatcher) clearInterval(agentWatcher);
+    agentWatcher = null;
     for (const client of clients.keys()) {
       try {
         client.end();

@@ -10,6 +10,7 @@
  */
 export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDraft, handoff,
   execution = { snapshot: null, error: null, pendingKey: null, busy: false, loading: false },
+  acceptance = { snapshot: null, error: null, pendingKey: null, busy: false, loading: false },
 
   copy, buildGraph, createGraph, callbacks }) {
   const doc = root.ownerDocument;
@@ -45,6 +46,8 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
   let selection = null;
   let selectedStrategy = null;
   let reviewedNodes = new Set();
+  let reworkModuleChoice = "";
+  let reworkFeedbackDraft = "";
   let localNotice = "";
   let lastThreadSignature = "";
   let lastAnnouncement = "";
@@ -281,11 +284,14 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
     draftStatus: nativeDraft.snapshot?.status, handoffStatus: handoff.snapshot?.status,
     executionStatus: execution.snapshot?.status, executionSession: execution.snapshot?.nativeSessionId,
     executionError: execution.error, executionPending: execution.pendingKey?.key,
+    acceptanceStatus: acceptance.snapshot?.status, acceptanceDigest: acceptance.snapshot?.artifactsDigest,
+    acceptanceFiles: acceptance.snapshot?.changedFiles?.length, acceptanceError: acceptance.error,
+    acceptancePlaybooks: acceptance.snapshot?.matchedPlaybooks?.length,
 
     designError: design.error, handoffError: handoff.error, draftError: nativeDraft.error,
     reviewNotes: (design.snapshot?.pendingReviewNotes || []).map(note => `${note.noteId}:${note.target?.kind}:${note.target?.moduleId}`),
     reviewHistory: design.snapshot?.history?.length, pendingMutation: design.pendingMutation?.mutationKey,
-    decisionPending: agent.decisionPending?.key, busy: [agent.busy, agent.decisionBusy, design.busy, nativeDraft.busy, handoff.busy],
+    decisionPending: agent.decisionPending?.key, busy: [agent.busy, agent.decisionBusy, design.busy, nativeDraft.busy, handoff.busy, execution.busy, acceptance.busy],
     selection: selection?.id, selectedStrategy, reviewedNodes: [...reviewedNodes], localNotice,
   });
 
@@ -356,6 +362,150 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
     });
     return details;
   }
+  function drawAcceptanceCard(host) {
+    const snap = acceptance.snapshot;
+    const currentExec = execution.snapshot?.handoffDigest === handoff.snapshot?.handoffDigest ? execution.snapshot : null;
+    if (!snap && currentExec?.status !== "ready_for_review") return;
+    const card = el("div", "uw-b4-card");
+    card.dataset.state = safeStatus(snap?.status || "pending_verification");
+    card.append(el("div", "uw-chat-inline-heading", "成果核验与改进 · B4 最终验收"));
+    if (acceptance.error) card.append(el("p", "uw-chat-error", acceptance.error));
+    const summaryText = snap?.nextAction
+      || (currentExec?.status === "ready_for_review"
+        ? "隔离工作区任务已完成，正在自动读取变更清单与核验状态…"
+        : "等待隔离工作区执行完成后进入核验。");
+    card.append(el("p", "uw-b4-summary", summaryText));
+
+    const files = Array.isArray(snap?.changedFiles) ? snap.changedFiles : [];
+    if (files.length) {
+      const fileList = el("div", "uw-b4-files");
+      const changeLabels = { added: "新增", modified: "修改", deleted: "删除" };
+      for (const item of files.slice(0, 16)) {
+        const row = el("div", "uw-b4-file-row");
+        const tag = el("span", "uw-b4-file-tag", changeLabels[item.changeType] || "变更");
+        tag.dataset.change = item.changeType || "modified";
+        row.append(tag, el("code", "uw-b4-file-path", clean(item.path, 160)),
+          el("small", "uw-b4-file-size", item.changeType === "deleted" ? "已移除" : `${item.bytes || 0} B`));
+        fileList.append(row);
+      }
+      card.append(fileList);
+    }
+
+    const checks = Array.isArray(snap?.verification?.checks) ? snap.verification.checks : [];
+    if (checks.length) {
+      const checkBox = el("div", "uw-b4-checks");
+      for (const chk of checks) {
+        const row = el("div", "uw-b4-check-row");
+        row.dataset.passed = String(chk.passed === true);
+        row.append(el("span", "uw-b4-check-icon", chk.passed ? "✓" : "✕"),
+          el("strong", "", clean(chk.label, 80)),
+          el("small", "", clean(chk.detail, 200)));
+        checkBox.append(row);
+      }
+      card.append(checkBox);
+    }
+
+    const actions = el("div", "uw-b4-actions");
+    if ((!snap || snap.status === "pending_verification") && typeof callbacks.verifyDeliverables === "function") {
+      const verifyBtn = makeButton("立即核验隔离区产物", () => callbacks.verifyDeliverables(), "uw-chat-action");
+      verifyBtn.disabled = acceptance.busy || acceptance.loading;
+      actions.append(verifyBtn);
+    }
+    if (snap?.status === "awaiting_human_b4" && typeof callbacks.acceptDeliverables === "function") {
+      const acceptBtn = makeButton("通过 B4 验收并合入主项目", () =>
+        callbacks.acceptDeliverables("人工确认核验通过并合入主项目"), "uw-chat-action");
+      acceptBtn.disabled = acceptance.busy || acceptance.loading;
+      actions.append(acceptBtn);
+    }
+    if (snap?.status === "accepted_and_integrated") {
+      const badge = el("div", "uw-b4-accepted-banner", "✓ 隔离区产物已安全合入主项目，并自动沉淀为经验方法卡");
+      card.append(badge);
+      if (typeof callbacks.rollbackDeliverables === "function") {
+        const rb = makeButton("回滚本次合入", () => callbacks.rollbackDeliverables(), "uw-chat-secondary");
+        rb.disabled = acceptance.busy || acceptance.loading;
+        actions.append(rb);
+      }
+    }
+    if (actions.children?.length || actions.childNodes?.length) card.append(actions);
+
+    if (["awaiting_human_b4", "verification_failed", "blocked"].includes(snap?.status)
+      && typeof callbacks.requestDeliverableRework === "function" && savedDesign()) {
+      const reworkBar = el("div", "uw-b4-rework-bar");
+      const select = el("select", "uw-b4-rework-select");
+      select.setAttribute("aria-label", "选择退回重做的模块");
+      const modules = design.snapshot?.modules || [];
+      if (!reworkModuleChoice && modules[0]?.id) reworkModuleChoice = modules[0].id;
+      for (const mod of modules) {
+        const opt = el("option", "", `${mod.title || mod.id}`);
+        opt.value = mod.id;
+        if (mod.id === reworkModuleChoice) opt.selected = true;
+        select.append(opt);
+      }
+      const sysOpt = el("option", "", "系统整体架构（system）");
+      sysOpt.value = "system";
+      if (reworkModuleChoice === "system") sysOpt.selected = true;
+      select.append(sysOpt);
+      select.addEventListener("change", () => { reworkModuleChoice = select.value; });
+
+      const reasonInput = el("input", "uw-b4-rework-input");
+      reasonInput.type = "text";
+      reasonInput.placeholder = "填写退回该模块重做的具体问题…";
+      reasonInput.value = reworkFeedbackDraft;
+      reasonInput.addEventListener("input", () => { reworkFeedbackDraft = reasonInput.value; });
+
+      const reworkBtn = makeButton("退回所选模块重做", () => {
+        const targetMod = select.value || reworkModuleChoice || modules[0]?.id || "system";
+        const reason = reasonInput.value.trim() || reworkFeedbackDraft.trim();
+        if (!reason) {
+          localNotice = "请先填写退回重做的具体原因，再点击退回。";
+          render();
+          return;
+        }
+        reworkFeedbackDraft = "";
+        callbacks.requestDeliverableRework(targetMod, reason);
+      }, "uw-chat-secondary");
+      reworkBtn.disabled = acceptance.busy || acceptance.loading;
+      reworkBar.append(select, reasonInput, reworkBtn);
+      card.append(reworkBar);
+    }
+
+    const activePlaybook = snap?.playbook;
+    const matched = Array.isArray(snap?.matchedPlaybooks) ? snap.matchedPlaybooks : [];
+    const lessons = Array.isArray(snap?.reworkLessons) ? snap.reworkLessons : [];
+    if (activePlaybook || matched.length || lessons.length) {
+      const improve = el("div", "uw-playbook-section");
+      improve.append(el("div", "uw-chat-inline-heading", "经验沉淀与跨项目复用门禁"));
+      if (lessons.length) {
+        improve.append(el("p", "uw-playbook-lessons", `本轮改进记录：${lessons.join("；")}`));
+      }
+      const cardsToShow = activePlaybook
+        ? [{ ...activePlaybook, applicability: "sedimented", matchReasons: ["本轮验收新沉淀方法卡"], mismatchReasons: [] },
+          ...matched.filter(item => item.playbookId !== activePlaybook.playbookId)]
+        : matched;
+      for (const pb of cardsToShow.slice(0, 4)) {
+        const pbCard = el("div", "uw-playbook-card");
+        pbCard.dataset.applicability = pb.applicability || "review_required";
+        const statusLabel = pb.applicability === "sedimented" ? "新沉淀 · 可跨店复用"
+          : pb.applicability === "compatible" ? "适用性核验通过 · 可复用"
+            : pb.applicability === "incompatible_context" ? "场景不匹配 · 已拦截套用"
+              : "待核对适用条件";
+        const top = el("div", "uw-playbook-card-top");
+        top.append(el("strong", "", clean(pb.title, 100)), el("span", "uw-playbook-badge", statusLabel));
+        pbCard.append(top);
+        const reasons = pb.applicability === "incompatible_context" ? pb.mismatchReasons : pb.matchReasons;
+        if (Array.isArray(reasons) && reasons.length) {
+          pbCard.append(el("small", "", reasons.join(" · ")));
+        }
+        if (Array.isArray(pb.reworkLessons) && pb.reworkLessons.length) {
+          pbCard.append(el("small", "uw-playbook-lesson-item", `历史避坑经验：${pb.reworkLessons.join("；")}`));
+        }
+        improve.append(pbCard);
+      }
+      card.append(improve);
+    }
+    host.append(card);
+  }
+
   function drawDesignCard(host) {
     if (!adopted()) return;
     const saved = design.snapshot;
@@ -393,7 +543,18 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
         }, "uw-chat-action");
         approve.disabled = !reviewedNodes.has(key) || Boolean(outstanding);
         approve.title = outstanding ? "待修改意见尚未解决" : !reviewedNodes.has(key) ? "请先展开完整设计后确认" : "已审阅，可确认";
-        box.append(approve);
+        const actionRow = el("div", "uw-chat-action-group");
+        actionRow.append(approve);
+        const totalPendingNotes = (saved.pendingReviewNotes || []).length;
+        if (totalPendingNotes === 0 && typeof callbacks.approveAllAndPrepare === "function") {
+          const fastTrack = makeButton("一键确认全部设计并自动封存", () => {
+            callbacks.approveAllAndPrepare();
+          }, "uw-chat-secondary uw-chat-fasttrack");
+          fastTrack.disabled = design.busy || handoff.busy;
+          fastTrack.title = "无未决修改意见时，一次原子确认系统与全部模块并封存交接材料";
+          actionRow.append(fastTrack);
+        }
+        box.append(actionRow);
       }
       if (saved.status === "approved") {
         box.append(el("p", "uw-chat-options-hint", "设计已逐项确认；正式执行仍需要独立授权和可核对的真实 Run。"));
@@ -426,8 +587,11 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
           } else {
             box.append(el("p", "uw-chat-options-hint", "正在确认本地受限执行入口；尚未授权任何副作用。"));
           }
+          drawAcceptanceCard(box);
 
         } else box.append(el("p", "uw-chat-options-hint", handoff.error || "正在核对交接资格；设计已完成不代表代码已执行。"));
+      } else if (acceptance.snapshot?.status === "rework_requested") {
+        drawAcceptanceCard(box);
       }
     } else box.append(el("p", "", "正在检查设计草稿。生成后可在右侧查看模块关系。"));
     if (design.error) box.append(el("p", "uw-chat-error", design.error));
@@ -531,12 +695,91 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
           ? "B3 原生任务 " + execution.snapshot.status + " · 正式 Run 待验"
           : handoff.snapshot?.status === "prepared" ? "交接已封存 · B3 权限待确认" : "先批准交接，再授权 B3",
         status: ["running", "waiting_input"].includes(execution.snapshot?.status) ? "running"
-          : execution.snapshot?.status === "ready_for_review" ? "partial"
+          : execution.snapshot?.status === "ready_for_review"
+            ? (acceptance.snapshot?.status === "accepted_and_integrated" ? "completed" : "partial")
             : handoff.snapshot?.status === "prepared" ? "waiting_human" : "planned" },
 
-      { id: "acceptance", title: "最终验收", summary: "可复核成果与 B4 交付", status: "planned" },
+      { id: "acceptance", title: "最终验收",
+        summary: acceptance.snapshot?.status === "accepted_and_integrated"
+          ? "B4 验收通过 · 产物已合入主项目并沉淀方法卡"
+          : acceptance.snapshot?.status === "awaiting_human_b4"
+            ? `自动核验通过（${acceptance.snapshot.changedFiles?.length || 0} 个文件）· 等待你确认合入或退回`
+            : acceptance.snapshot?.status === "pending_verification"
+              ? "后台正在比对隔离工作区产物并执行核验"
+              : ["verification_failed", "blocked"].includes(acceptance.snapshot?.status)
+                ? "核验未通过或存在主仓冲突 · 请退回模块修复"
+                : acceptance.snapshot?.status === "rework_requested"
+                  ? "已退回指定模块重做 · 修订确认后可重新执行"
+                  : "可复核成果与 B4 交付",
+        status: acceptance.snapshot?.status === "accepted_and_integrated" ? "completed"
+          : ["awaiting_human_b4", "rework_requested"].includes(acceptance.snapshot?.status) ? "waiting_human"
+            : acceptance.snapshot?.status === "pending_verification" ? "running"
+              : ["verification_failed", "blocked"].includes(acceptance.snapshot?.status) ? "blocked" : "planned" },
     ];
   };
+  function renderCockpitStrip(stages) {
+    const strip = el("div", "uw-cockpit-pillars");
+    strip.setAttribute("data-uw-cockpit-pillars", "true");
+    const completedCount = stages.filter(s => s.status === "completed").length;
+    const activeTasks = runTasks().filter(t => taskVisualState(t) === "running");
+    const goalText = agent.pending?.goal ? clean(agent.pending.goal, 44) : "在左侧输入一句话目标";
+    const goalSub = agent.pending ? `已完成 ${completedCount}/${stages.length} 步` : "自动串联研究、设计、执行与验收";
+
+    const execStatus = activeTasks.length ? `${activeTasks.length} 个 Agent 正在工作`
+      : execution.snapshot?.status === "running" ? `Claude 草稿执行中 · ${execution.snapshot.nativeSessionId || ""}`
+        : execution.snapshot?.status === "ready_for_review" ? "隔离草稿已跑完 · 已移交核验"
+          : agent.status === "running" ? "正在研究候选方案"
+            : agent.pending ? "阶段就绪 · 按授权推进" : "空闲待命";
+
+    const b4 = acceptance.snapshot;
+    const fileCount = b4?.changedFiles?.length || 0;
+    const resultText = b4?.status === "accepted_and_integrated" ? `已合入主仓 · ${fileCount} 个文件`
+      : b4?.status === "awaiting_human_b4" ? `核验通过 · ${fileCount} 个变更待合入`
+        : ["verification_failed", "blocked"].includes(b4?.status) ? "核验发现问题 · 已阻断合入"
+          : fileCount > 0 ? `检测到 ${fileCount} 个草稿文件` : "尚无已核验交付物";
+
+    const gateText = pendingChoice() ? "待拍板 B1 · 选择方案"
+      : adopted() && design.snapshot?.status && design.snapshot.status !== "approved" ? "待拍板 B2 · 确认设计"
+        : handoff.snapshot?.status === "prepared" && execution.snapshot?.status === "ready_to_authorize" ? "待拍板 B3 · 授权草稿执行"
+          : b4?.status === "awaiting_human_b4" ? "待拍板 B4 · 确认合入或退回"
+            : "当前无需人工拍板";
+    const gateActive = gateText.startsWith("待拍板");
+
+    const pbCount = (b4?.playbook ? 1 : 0) + (b4?.matchedPlaybooks?.filter(p => p.applicability === "compatible")?.length || 0);
+    const lessonCount = b4?.reworkLessons?.length || (design.snapshot?.pendingReviewNotes?.length || 0);
+    const improveText = b4?.playbook ? "已沉淀新方法卡 · 可跨店复用"
+      : pbCount > 0 ? `匹配 ${pbCount} 张可复用方法卡`
+        : lessonCount > 0 ? `已记录 ${lessonCount} 条改进约束`
+          : "验收后自动沉淀有效方法";
+
+    const items = [
+      { key: "goal", label: "目标", main: goalText, sub: goalSub, state: agent.pending ? "active" : "idle",
+        onClick: () => selectDesktopAnnotationNode({ id: "goal", title: "理解目标", kind: "stage" }) },
+      { key: "execution", label: "执行", main: execStatus, sub: "真实回执驱动 · 拒绝假完成",
+        state: execution.snapshot?.status === "running" || agent.status === "running" ? "running" : "idle",
+        onClick: () => { if (runTasks().length) { mode = "agents"; render(); } else selectDesktopAnnotationNode({ id: "execution", title: "交接与执行", kind: "stage" }); } },
+      { key: "result", label: "结果", main: resultText, sub: b4?.verification?.passed ? "语法与契约已校验" : "核验通过才允许合入",
+        state: b4?.status === "accepted_and_integrated" ? "completed" : ["verification_failed", "blocked"].includes(b4?.status) ? "blocked" : "idle",
+        onClick: () => selectDesktopAnnotationNode({ id: "acceptance", title: "最终验收", kind: "stage" }) },
+      { key: "decision", label: "决策", main: gateText, sub: gateActive ? "仅关键节点打扰你" : "常规步骤自动衔接",
+        state: gateActive ? "waiting_human" : "completed",
+        onClick: () => selectDesktopAnnotationNode({ id: b4?.status === "awaiting_human_b4" ? "acceptance" : adopted() ? "design" : "decision", title: gateText, kind: "stage" }) },
+      { key: "improve", label: "改进", main: improveText, sub: "跨项目复用前先核对适用条件",
+        state: pbCount > 0 || b4?.playbook ? "completed" : "idle",
+        onClick: () => selectDesktopAnnotationNode({ id: "acceptance", title: "最终验收", kind: "stage" }) },
+    ];
+
+    for (const item of items) {
+      const card = makeButton("", item.onClick, "uw-cockpit-pillar");
+      card.dataset.pillar = item.key;
+      card.dataset.state = item.state;
+      card.append(el("span", "uw-cockpit-pillar-kicker", item.label),
+        el("strong", "uw-cockpit-pillar-main", item.main),
+        el("small", "uw-cockpit-pillar-sub", item.sub));
+      strip.append(card);
+    }
+    return strip;
+  }
   function selectDesktopAnnotationNode(node) {
     selection = { id: clean(node.id, 140), title: clean(node.title, 140), kind: node.kind || "stage", layer: node.layer || mode };
     localNotice = "";
@@ -547,6 +790,7 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
     const list = flowStages();
     nodeCount = list.length;
     const shell = el("div", "uw-agent-flow");
+    shell.append(renderCockpitStrip(list));
     shell.append(el("div", "uw-live-view-kicker", isCurrentRun() ? "正式 Run · 已核对身份" : "当前研究与人工设计 · 尚非正式 Run"));
     const nodes = el("ol", "uw-agent-flow-nodes");
     for (const [index, stage] of list.entries()) {
@@ -564,6 +808,10 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
       nodes.append(row);
     }
     shell.append(nodes);
+    if (selection?.kind === "stage" && selection.id === "acceptance"
+      && (acceptance.snapshot || execution.snapshot?.status === "ready_for_review")) {
+      drawAcceptanceCard(shell);
+    }
     return shell;
   }
   function renderKnowledge() {
@@ -1131,6 +1379,9 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
       nativeDraftStatus: nativeDraft.snapshot?.status, designVersion: design.snapshot?.version,
       pendingReviewNotes: design.snapshot?.pendingReviewNotes, hosts: agent.hosts,
       workspaceRevision: state.workspace?.revision, runId: isCurrentRun() ? state.selection?.runId : null,
+      executionStatus: execution.snapshot?.status, executionSession: execution.snapshot?.nativeSessionId,
+      acceptanceStatus: acceptance.snapshot?.status, acceptanceDigest: acceptance.snapshot?.artifactsDigest,
+      acceptanceFiles: acceptance.snapshot?.changedFiles?.length,
       tasks: runTasks().map(task => ({ id: task.id, status: task.status, summary: task.source.summary,
         ownerReport: task.source.ownerReport, nativeReturnEvidence: task.source.nativeReturnEvidence,
         capabilityTruth: task.source.capabilityTruth, task: task.source.task })),
@@ -1202,6 +1453,14 @@ export function createUnifiedAgentDesktop({ root, state, agent, design, nativeDr
           if (message.length > 2000) return explain("节点返工意见最多 2000 字，请精简后再提交。");
           accepted = await callbacks.requestRevision(kind, id, message);
         }
+      } else if (selection.kind === "stage" && selection.id === "acceptance"
+        && ["awaiting_human_b4", "verification_failed", "blocked"].includes(acceptance.snapshot?.status)
+        && typeof callbacks.requestDeliverableRework === "function") {
+        const parsedRework = /^([a-z][a-z0-9_-]{1,31}|system)\s*[:：|｜]\s*([\s\S]{1,2000})$/u.exec(message);
+        const modId = parsedRework ? parsedRework[1] : (design.snapshot?.modules?.[0]?.id || "system");
+        const reason = parsedRework ? parsedRework[2].trim() : message;
+        if (!reason || reason.length > 2000) return explain("B4 返工意见请控制在 2000 字以内。");
+        accepted = await callbacks.requestDeliverableRework(modId, reason);
       } else return explain("这个节点当前仅能查看。要修改 PRD 节点，请先保存 B2 设计，再圈选系统或模块提出意见。正式 Run 的节点反馈需要对应的受控执行接口。");
       if (accepted !== true) return explain("修改尚未被确认。请核对原回执或先解决正在处理的请求；你的文字已保留。");
       selection = null;
