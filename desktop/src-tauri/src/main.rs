@@ -5,7 +5,7 @@ use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -31,9 +31,16 @@ struct BackendSupervisor {
     project_root: Mutex<PathBuf>,
     repo_root: PathBuf,
     quitting: AtomicBool,
+    /// Incremented on every connect request. Only the newest generation may
+    /// own the backend child, navigate the window or show a boot error.
+    generation: AtomicU64,
 }
 
 impl BackendSupervisor {
+    fn is_current(&self, generation: u64) -> bool {
+        self.generation.load(Ordering::SeqCst) == generation
+    }
+
     fn stop_child(&self) {
         if let Ok(mut guard) = self.child.lock() {
             if let Some(mut proc) = guard.take() {
@@ -169,14 +176,31 @@ fn navigate_main_window(app: &AppHandle, url: &str, project: &Path) {
     }
 }
 
+/// Shows a boot error only if this connect attempt is still the newest one,
+/// so a superseded attempt can never cover the result of a later reconnect.
+fn show_boot_error_if_current(
+    app: &AppHandle,
+    state: &BackendSupervisor,
+    generation: u64,
+    message: &str,
+) {
+    if state.is_current(generation) && !state.quitting.load(Ordering::SeqCst) {
+        show_boot_error(app, message);
+    }
+}
+
 fn spawn_and_connect(app: AppHandle, state: Arc<BackendSupervisor>, project_dir: PathBuf) {
+    // Taken on the caller's thread so generations follow click order.
+    let generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
     thread::spawn(move || {
         state.stop_child();
         let entry = state.repo_root.join("scripts").join("meta-kim-agent.mjs");
         if !entry.is_file() {
-            show_boot_error(
+            show_boot_error_if_current(
                 &app,
-                "未找到 Meta_Kim 启动脚本（scripts/meta-kim-agent.mjs）。请将客户端置于 Meta_Kim 目录内或配置 META_KIM_REPO_ROOT。",
+                &state,
+                generation,
+                "未找到 Meta_Kim 启动脚本（scripts/meta-kim-agent.mjs）。桌面客户端需要在完整的 Meta_Kim 仓库检出中运行：请把客户端放在 Meta_Kim 目录内，或设置 META_KIM_REPO_ROOT 指向该检出。",
             );
             return;
         }
@@ -203,9 +227,15 @@ fn spawn_and_connect(app: AppHandle, state: Arc<BackendSupervisor>, project_dir:
         let mut child = match cmd.spawn() {
             Ok(proc) => proc,
             Err(err) => {
-                show_boot_error(
+                show_boot_error_if_current(
                     &app,
-                    &format!("无法启动本机 Node.js 运行时（{}）。请确认系统已安装 Node.js >= 20。", err),
+                    &state,
+                    generation,
+                    &format!(
+                        "无法启动本机 Node.js 运行时（{}）。请确认系统已安装 Node.js {}。",
+                        err,
+                        env!("META_KIM_NODE_ENGINE")
+                    ),
                 );
                 return;
             }
@@ -215,13 +245,32 @@ fn spawn_and_connect(app: AppHandle, state: Arc<BackendSupervisor>, project_dir:
             Some(s) => s,
             None => {
                 let _ = child.kill();
-                show_boot_error(&app, "本机治理服务未返回标准输出管道。");
+                let _ = child.wait();
+                show_boot_error_if_current(
+                    &app,
+                    &state,
+                    generation,
+                    "本机治理服务未返回标准输出管道。",
+                );
                 return;
             }
         };
 
-        if let Ok(mut guard) = state.child.lock() {
-            *guard = Some(child);
+        // Claim the child slot under the lock. A superseded attempt stops its
+        // own backend instead of replacing (or racing with) the newer one.
+        match state.child.lock() {
+            Ok(mut guard) if state.is_current(generation) => {
+                if let Some(mut previous) = guard.take() {
+                    let _ = previous.kill();
+                    let _ = previous.wait();
+                }
+                *guard = Some(child);
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return;
+            }
         }
         if let Ok(mut proj_guard) = state.project_root.lock() {
             *proj_guard = project_dir.clone();
@@ -234,6 +283,9 @@ fn spawn_and_connect(app: AppHandle, state: Arc<BackendSupervisor>, project_dir:
             let trimmed = line.trim();
             if !trimmed.starts_with('{') {
                 continue;
+            }
+            if !state.is_current(generation) {
+                return;
             }
             if let Ok(receipt) = serde_json::from_str::<AgentLaunchReceipt>(trimmed) {
                 if let Some(url) = receipt.url {
@@ -249,9 +301,11 @@ fn spawn_and_connect(app: AppHandle, state: Arc<BackendSupervisor>, project_dir:
             }
         }
 
-        if !launched && !state.quitting.load(Ordering::SeqCst) {
-            show_boot_error(
+        if !launched {
+            show_boot_error_if_current(
                 &app,
+                &state,
+                generation,
                 "本机治理引擎未能建立 127.0.0.1 回环端口，请确认所选文件夹有效且未被权限策略拦截。",
             );
         }
@@ -289,6 +343,7 @@ fn main() {
         project_root: Mutex::new(initial_project.clone()),
         repo_root,
         quitting: AtomicBool::new(false),
+        generation: AtomicU64::new(0),
     });
 
     let supervisor_setup = Arc::clone(&supervisor);

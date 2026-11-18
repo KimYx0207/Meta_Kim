@@ -1,7 +1,7 @@
 [package]
 name = "meta-kim-desktop"
 version = "1.0.0"
-description = "Meta_Kim Standalone Native Desktop Client"
+description = "Meta_Kim desktop shell; runs beside a full Meta_Kim source checkout"
 authors = ["Meta_Kim Contributors"]
 license = "MIT"
 edition = "2021"
