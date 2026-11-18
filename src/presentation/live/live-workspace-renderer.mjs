@@ -141,9 +141,9 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
     root.dataset.workspaceRevision = state.workspace?.revision == null ? "" : String(state.workspace.revision);
     const boundProject = !snapshot?.run && !state.project && state.agentServerProjectLabel;
     const title = snapshot?.run?.title || state.project?.displayName || (boundProject
-      ? `本地项目 ${boundProject} · 尚未开始正式运行` : copy("projectEmpty"));
+      ? copy("boundProjectIdle").replace("{project}", boundProject) : copy("projectEmpty"));
     const subtitle = snapshot?.run?.task || nextActionSummary(workspaceActions()[0]?.action) || (boundProject
-      ? "上方可先做研究与设计；正式 Run 需要真实运行记录。" : state.workspace ? copy("noReviews") : copy("chooseRun"));
+      ? copy("boundProjectHint") : state.workspace ? copy("noReviews") : copy("chooseRun"));
     text("title", title);
     text("project-label", state.project?.displayName || (boundProject ? boundProject : copy("workspace")));
     text("next", subtitle);
@@ -174,20 +174,25 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
     nav.setAttribute("aria-label", copy("workspace"));
     nav.querySelector("[data-uw-nav-heading-text]").textContent = copy("workspace");
     const researchingWithoutRun = root.dataset.agentEntryEnabled === "true" && !state.snapshot?.run;
-    nav.querySelector("[data-uw-module-heading]").textContent = researchingWithoutRun ? "正式运行模块" : copy("modules");
+    const moduleHeadingEl = nav.querySelector("[data-uw-module-heading]");
+    moduleHeadingEl.textContent = researchingWithoutRun ? copy("formalRunModules") : copy("modules");
     nav.querySelector("[data-uw-nav-footer]").textContent = copy("footer");
     nav.querySelector("[data-uw-project-switch]").setAttribute("aria-label", copy("chooseRun"));
     nav.querySelector("[data-uw-nav-close]").setAttribute("aria-label", copy("closeNavigation"));
     app.querySelector("[data-uw-nav-open]")?.setAttribute("aria-label", copy("openNavigation"));
     const projectName = nav.querySelector("[data-uw-project-name]");
-    if (projectName) { projectName.textContent = state.project?.displayName || copy("project"); projectName.title = projectName.textContent; }
+    if (projectName) { projectName.textContent = state.project?.displayName || state.agentServerProjectLabel || copy("project"); projectName.title = projectName.textContent; }
     const runName = nav.querySelector("[data-uw-run-name]");
     if (runName) { runName.textContent = state.snapshot?.run?.title || copy("chooseRun"); runName.title = runName.textContent; }
     nav.querySelectorAll("[data-uw-label]").forEach((node) => { node.textContent = copy(node.dataset.uwLabel); });
     nav.querySelectorAll("[data-uw-view]").forEach((node) => node.setAttribute("aria-current", (state.externalView || state.view) === node.dataset.uwView ? "page" : "false"));
     const modules = state.workspace?.design?.modules || [];
-    nav.querySelector("[data-uw-module-count]").textContent = String(state.workspace?.design?.totalModules ?? modules.length);
+    const totalModuleCount = state.workspace?.design?.totalModules ?? modules.length;
+    nav.querySelector("[data-uw-module-count]").textContent = String(totalModuleCount);
+    const hideEmptyAgentModules = root.dataset.agentEntryEnabled === "true" && state.view === "work" && totalModuleCount === 0;
+    if (moduleHeadingEl.parentElement) moduleHeadingEl.parentElement.hidden = hideEmptyAgentModules;
     const host = nav.querySelector("[data-uw-modules]");
+    if (host) host.hidden = hideEmptyAgentModules;
     const selectedFocus = doc.activeElement?.dataset?.liveWorkspaceModule;
     const searchFocused = doc.activeElement?.className === "uw-structure-search";
     const searchCaret = searchFocused ? [doc.activeElement.selectionStart, doc.activeElement.selectionEnd] : null;
@@ -220,7 +225,7 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
     search.addEventListener("input", () => { state.moduleSearch = search.value; filterModules(); });
     if (modules.length) host.append(search);
     if (!modules.length) children.append(e("p", "uw-nav-empty", researchingWithoutRun
-      ? "正式 Run 尚未生成模块。已采纳的设计模块请到上方 B2 审阅。" : copy("noModules")));
+      ? copy("formalRunModulesEmpty") : copy("noModules")));
     for (const module of modules) {
       const item = e("button"); item.type = "button";
       item.dataset.liveWorkspaceModule = module.id;

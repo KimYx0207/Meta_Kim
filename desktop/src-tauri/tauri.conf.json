@@ -1,0 +1,39 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Meta_Kim",
+  "version": "1.0.0",
+  "identifier": "com.kim.metakim.desktop",
+  "build": {
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Meta_Kim · 智能体治理与工作台",
+        "width": 1480,
+        "height": 920,
+        "minWidth": 390,
+        "minHeight": 640,
+        "resizable": true,
+        "maximizable": true,
+        "minimizable": true,
+        "center": true,
+        "focus": true,
+        "backgroundColor": "#07090e"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' http://127.0.0.1:* ws://127.0.0.1:* data: blob: 'unsafe-inline'; img-src 'self' http://127.0.0.1:* data: blob:; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:*"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "../../src/presentation/live/assets/meta-kim-k-mark.png",
+      "../../src/presentation/live/assets/meta-kim-live.ico"
+    ]
+  }
+}

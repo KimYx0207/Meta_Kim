@@ -834,6 +834,17 @@ export function createLiveControlRoomServer(options = {}) {
       return;
     }
 
+    if (parsed.pathname === "/favicon.ico") {
+      const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#101520"/><path d="M9 7v18M21 7 11 17l11 8" stroke="#e5c687" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>';
+      securityHeaders(response);
+      response.statusCode = 200;
+      response.setHeader("content-type", "image/svg+xml; charset=utf-8");
+      response.setHeader("cache-control", "public, max-age=86400");
+      response.setHeader("content-length", Buffer.byteLength(svg));
+      response.end(svg);
+      return;
+    }
+
     if (parsed.pathname === "/api/health") {
       if (request.method !== "GET") {
         response.setHeader("allow", "GET");

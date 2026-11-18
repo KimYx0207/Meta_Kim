@@ -2,6 +2,7 @@ import { LIVE_WORKSPACE_MESSAGES, serializeLiveWorkspaceModel, workspaceArtifact
 import { createLiveWorkspaceRenderer, projectLiveUserPhases } from "./live-workspace-renderer.mjs";
 import { createPrdKnowledgeGraph } from "./live-prd-knowledge-graph.mjs";
 import { createUnifiedAgentDesktop } from "./live-agent-desktop.mjs";
+import { serializeLiveAgentCopy, translateAgentUi } from "./live-agent-copy.mjs";
 
 export const LIVE_WORKSPACE_UI_POLICY = Object.freeze({ pageSize: 50, refreshMs: 15000, requestTimeoutMs: 12000, refreshCoalesceMs: 1500, agentReceiptPollMs: 2500 });
 
@@ -1542,7 +1543,37 @@ export function createLiveWorkspaceController(options) {
     app.querySelector("[data-uw-navigation]")?.setAttribute("data-open", "false");
     app.querySelector("[data-uw-nav-open]")?.setAttribute("aria-expanded", "false");
   }
+  function dockLiveRunView(docked) {
+    const runPanel = app.querySelector("[data-live-run-view]");
+    const inspectorPanel = app.querySelector("[data-live-inspector]");
+    const slot = root.querySelector("[data-uw-docked-run-slot]");
+    const wsGrid = app.querySelector(".workspace-grid");
+    if (!runPanel || !wsGrid) return;
+    if (docked && slot) {
+      if (app.dataset) app.dataset.dockedLiveRun = "true";
+      root.dataset.dockedLiveRun = "true";
+      if (runPanel.parentElement !== slot) slot.append(runPanel);
+      if (inspectorPanel && inspectorPanel.parentElement !== slot) slot.append(inspectorPanel);
+      runPanel.hidden = false;
+      slot.hidden = false;
+      const syncRunCamera = () => {
+        options.refreshLiveRunGraph?.();
+        win?.dispatchEvent?.(new win.Event("resize"));
+      };
+      if (win?.requestAnimationFrame) win.requestAnimationFrame(syncRunCamera);
+      else syncRunCamera();
+    } else {
+      if (app.dataset) delete app.dataset.dockedLiveRun;
+      delete root.dataset.dockedLiveRun;
+      if (runPanel.parentElement === slot) wsGrid.append(runPanel);
+      if (inspectorPanel && inspectorPanel.parentElement === slot) wsGrid.append(inspectorPanel);
+      if (slot) slot.hidden = true;
+      const onFullRun = state.externalView === "graph";
+      runPanel.hidden = !onFullRun;
+    }
+  }
   function setView(view, { updateUrl = true } = {}) {
+    if (view !== "work" || ["graph", "repository"].includes(view)) dockLiveRunView(false);
     if (["graph", "repository"].includes(view)) { state.externalView = view; options.showLegacyView(view === "graph" ? "run" : "repository"); }
     else {
       state.externalView = null; state.view = ["work", "prd", "records"].includes(view) ? view : "work";
@@ -1827,6 +1858,7 @@ export function createLiveWorkspaceController(options) {
   const renderer = createLiveWorkspaceRenderer({ app, root, state, copy, actions, taskOutputs: options.taskOutputs });
   desktop = agentEntryEnabled && typeof createUnifiedAgentDesktop === "function" ? createUnifiedAgentDesktop({
     root, state, agent, design, nativeDraft, handoff, execution, acceptance, copy,
+    translateUi: (value) => translateAgentUi(value, state.language || "zh"),
 
     buildGraph: buildLivePrdGraph, createGraph: createPrdKnowledgeGraph,
     callbacks: {
@@ -1924,7 +1956,7 @@ export function createLiveWorkspaceController(options) {
         return decideAgentAcceptance("request_rework", { moduleId, feedback });
       },
       rollbackDeliverables() { void decideAgentAcceptance("rollback"); },
-
+      dockLiveRunView,
     },
   }) : null;
   // Keep the single composer and Live diagrams in sync with real governed
@@ -2006,6 +2038,99 @@ export function createLiveWorkspaceController(options) {
   app.querySelector("[data-uw-project-switch]")?.addEventListener("click", options.openProjects);
   app.querySelector("[data-uw-nav-open]")?.addEventListener("click", () => { app.querySelector("[data-uw-navigation]")?.setAttribute("data-open", "true"); app.querySelector("[data-uw-nav-open]")?.setAttribute("aria-expanded", "true"); app.querySelector("[data-uw-nav-close]")?.focus(); });
   app.querySelector("[data-uw-nav-close]")?.addEventListener("click", () => { closeNavigation(); app.querySelector("[data-uw-nav-open]")?.focus(); });
+
+  const navCollapseBtn = app.querySelector("[data-uw-nav-collapse]");
+  const navExpandBtn = root.querySelector("[data-uw-nav-expand]");
+  const setNavCollapsed = (collapsed) => {
+    if (app.dataset) app.dataset.navCollapsed = String(Boolean(collapsed));
+    if (navExpandBtn) navExpandBtn.hidden = !collapsed;
+    if (win?.requestAnimationFrame) win.requestAnimationFrame(() => win.dispatchEvent?.(new win.Event("resize")));
+  };
+  navCollapseBtn?.addEventListener("click", () => setNavCollapsed(app.dataset?.navCollapsed !== "true"));
+  navExpandBtn?.addEventListener("click", () => setNavCollapsed(false));
+
+  const navResizer = app.querySelector("[data-uw-nav-resizer]");
+  let navDrag = null;
+  navResizer?.addEventListener("pointerdown", (event) => {
+    if (typeof event.button === "number" && event.button !== 0) return;
+    event.preventDefault();
+    const navBox = app.querySelector("[data-uw-navigation]")?.getBoundingClientRect?.();
+    navDrag = { pointerId: event.pointerId, startX: event.clientX, baseW: navBox?.width || 224 };
+    navResizer.dataset.dragging = "true";
+    navResizer.setPointerCapture?.(event.pointerId);
+  });
+  navResizer?.addEventListener("pointermove", (event) => {
+    if (!navDrag || event.pointerId !== navDrag.pointerId) return;
+    const nextW = Math.round(Math.min(400, Math.max(176, navDrag.baseW + (event.clientX - navDrag.startX))));
+    app.style?.setProperty?.("--uw-nav-width", `${nextW}px`);
+    win?.dispatchEvent?.(new win.Event("resize"));
+  });
+  const finishNavDrag = (event) => {
+    if (!navDrag) return;
+    delete navResizer.dataset.dragging;
+    navResizer.releasePointerCapture?.(event?.pointerId);
+    navDrag = null;
+  };
+  navResizer?.addEventListener("pointerup", finishNavDrag);
+  navResizer?.addEventListener("pointercancel", finishNavDrag);
+  navResizer?.addEventListener("dblclick", () => {
+    app.style?.removeProperty?.("--uw-nav-width");
+    win?.dispatchEvent?.(new win.Event("resize"));
+  });
+
+  const chatMaxBtn = root.querySelector('[data-uw-pane-toggle="chat-max"]');
+  const liveMaxBtn = root.querySelector('[data-uw-pane-toggle="live-max"]');
+  const liveMinBtn = root.querySelector('[data-uw-pane-toggle="live-min"]');
+  const restoreLiveBtn = root.querySelector("[data-uw-pane-restore-live]");
+  const restoreChatBtn = root.querySelector("[data-uw-pane-restore-chat]");
+  const setPaneLayout = (layout) => {
+    const next = ["split", "chat-max", "live-max"].includes(layout) ? layout : "split";
+    root.dataset.paneLayout = next;
+    if (restoreLiveBtn) restoreLiveBtn.hidden = next !== "chat-max";
+    if (restoreChatBtn) restoreChatBtn.hidden = next !== "live-max";
+    chatMaxBtn?.setAttribute("aria-pressed", String(next === "chat-max"));
+    liveMaxBtn?.setAttribute("aria-pressed", String(next === "live-max"));
+    if (win?.requestAnimationFrame) win.requestAnimationFrame(() => win.dispatchEvent?.(new win.Event("resize")));
+  };
+  chatMaxBtn?.addEventListener("click", () => setPaneLayout(root.dataset.paneLayout === "chat-max" ? "split" : "chat-max"));
+  liveMaxBtn?.addEventListener("click", () => setPaneLayout(root.dataset.paneLayout === "live-max" ? "split" : "live-max"));
+  liveMinBtn?.addEventListener("click", () => setPaneLayout("chat-max"));
+  restoreLiveBtn?.addEventListener("click", () => setPaneLayout("split"));
+  restoreChatBtn?.addEventListener("click", () => setPaneLayout("split"));
+
+  const splitResizer = root.querySelector("[data-uw-split-resizer]");
+  let splitDrag = null;
+  splitResizer?.addEventListener("pointerdown", (event) => {
+    if (typeof event.button === "number" && event.button !== 0) return;
+    event.preventDefault();
+    const wsRect = root.getBoundingClientRect?.();
+    const chatRect = root.querySelector("[data-uw-agent-entry]")?.getBoundingClientRect?.();
+    if (!wsRect || !wsRect.width) return;
+    if (root.dataset.paneLayout !== "split") setPaneLayout("split");
+    splitDrag = { pointerId: event.pointerId, startX: event.clientX, wsWidth: wsRect.width, baseChatW: chatRect?.width || wsRect.width * 0.43 };
+    splitResizer.dataset.dragging = "true";
+    splitResizer.setPointerCapture?.(event.pointerId);
+  });
+  splitResizer?.addEventListener("pointermove", (event) => {
+    if (!splitDrag || event.pointerId !== splitDrag.pointerId) return;
+    const nextChatW = splitDrag.baseChatW + (event.clientX - splitDrag.startX);
+    const pct = Math.min(72, Math.max(26, (nextChatW / splitDrag.wsWidth) * 100));
+    root.style?.setProperty?.("--uw-chat-share", `${pct.toFixed(2)}%`);
+    win?.dispatchEvent?.(new win.Event("resize"));
+  });
+  const finishSplitDrag = (event) => {
+    if (!splitDrag) return;
+    delete splitResizer.dataset.dragging;
+    splitResizer.releasePointerCapture?.(event?.pointerId);
+    splitDrag = null;
+  };
+  splitResizer?.addEventListener("pointerup", finishSplitDrag);
+  splitResizer?.addEventListener("pointercancel", finishSplitDrag);
+  splitResizer?.addEventListener("dblclick", () => {
+    root.style?.removeProperty?.("--uw-chat-share");
+    win?.dispatchEvent?.(new win.Event("resize"));
+  });
+
   root.querySelector("[data-uw-refresh]")?.addEventListener("click", () => {
     state.notice = "";
     // Explicit refresh re-reads the pages already opened by this user. Polling
@@ -2015,6 +2140,19 @@ export function createLiveWorkspaceController(options) {
   renderer.detailCloseButton?.addEventListener("click", closeDetail);
   const onKey = (event) => {
     if (event.key !== "Escape") return;
+    const maximizedGraph = root.querySelector('[data-maximized="true"]');
+    if (maximizedGraph) {
+      event.preventDefault();
+      maximizedGraph.dataset.maximized = "false";
+      const toggle = maximizedGraph.querySelector("[data-uw-kg-maximize]");
+      if (toggle) { toggle.setAttribute("aria-pressed", "false"); toggle.textContent = translateAgentUi("最大化", state.language || "zh"); }
+      return;
+    }
+    if (root.dataset.paneLayout && root.dataset.paneLayout !== "split") {
+      event.preventDefault();
+      setPaneLayout("split");
+      return;
+    }
     if (state.detail && !state.externalView) { event.preventDefault(); closeDetail(); }
     else if (app.querySelector('[data-uw-navigation][data-open="true"]')) { event.preventDefault(); closeNavigation(); app.querySelector("[data-uw-nav-open]")?.focus(); }
   };
@@ -2028,7 +2166,7 @@ export function createLiveWorkspaceController(options) {
   state.prdDepth = requestedDepth === "all" ? "all" : ["1", "2", "3"].includes(requestedDepth) ? Number(requestedDepth) : 2;
   state.selectedModuleId = initial.searchParams.get("moduleId");
   const interval = win.setInterval(() => {
-    if (doc.visibilityState === "visible" && !state.externalView) void refresh({ force: true });
+    if (doc.visibilityState === "visible" && !state.externalView && state.error !== 413) void refresh({ force: true });
     if (doc.visibilityState === "visible") void loadAgentCapabilities();
   }, policy.refreshMs);
   // The intake is a real native request, so reflect its status without making
@@ -2090,5 +2228,5 @@ export function createLiveWorkspaceController(options) {
 }
 
 export function serializeLiveWorkspaceClient() {
-  return `${serializeLiveWorkspaceModel()}\nconst LIVE_WORKSPACE_UI_POLICY = ${JSON.stringify(LIVE_WORKSPACE_UI_POLICY)};\n${createPrdKnowledgeGraph.toString()}\n${projectLiveUserPhases.toString()}\n${createLiveWorkspaceRenderer.toString()}\n${createUnifiedAgentDesktop.toString()}\n${createLiveWorkspaceController.toString()}`;
+  return `${serializeLiveWorkspaceModel()}\n${serializeLiveAgentCopy()}\nconst LIVE_WORKSPACE_UI_POLICY = ${JSON.stringify(LIVE_WORKSPACE_UI_POLICY)};\n${createPrdKnowledgeGraph.toString()}\n${projectLiveUserPhases.toString()}\n${createLiveWorkspaceRenderer.toString()}\n${createUnifiedAgentDesktop.toString()}\n${createLiveWorkspaceController.toString()}`;
 }

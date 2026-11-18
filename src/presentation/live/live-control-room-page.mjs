@@ -471,7 +471,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     "Streaming": "实时连接中",
     "Reconnecting": "正在重新连接",
     "Polling snapshot": "正在轮询运行快照",
-    "Paused while hidden": "标签页隐藏，已暂停连接",
+    "Paused while hidden": "后台省电待命",
     "Catching up after pause": "正在补齐暂停期间的进度",
     "The snapshot request timed out. Other open control room tabs hold this origin's connections. Close one, or wait for them to release.": "快照请求超时。其他已打开的控制室标签页占用了本源的连接，关掉一个，或等它们释放。",
     "Snapshot loaded": "已载入快照",
@@ -3371,18 +3371,19 @@ const CLIENT_SCRIPT = String.raw`(() => {
       if (selected && focus) tab.focus();
     });
     const graphPanel = app.querySelector("[data-live-run-view]");
+    const isDockedInAgent = currentWorkView === "workspace" && app.dataset?.dockedLiveRun === "true";
     if (repositoryView) repositoryView.hidden = currentWorkView !== "repository";
     if (workspaceView) workspaceView.hidden = currentWorkView !== "workspace";
-    if (graphPanel) graphPanel.hidden = currentWorkView !== "run";
-    workspace?.setAttribute("data-work-view", currentWorkView);
+    if (graphPanel) graphPanel.hidden = currentWorkView !== "run" && !isDockedInAgent;
+    workspace?.setAttribute("data-work-view", isDockedInAgent ? "run" : currentWorkView);
     if (app.dataset) app.dataset.workView = currentWorkView;
     if (typeof liveWorkspaceController !== "undefined") liveWorkspaceController?.show(currentWorkView);
-    if (currentWorkView !== "run") setInspectorOpen(false);
+    if (currentWorkView !== "run" && !isDockedInAgent) setInspectorOpen(false);
     if (persist) {
       persistStoredChoice(WORK_VIEW_STORAGE_KEY, currentWorkView);
       app.querySelector(".work-view-menu")?.removeAttribute("open");
     }
-    if (currentWorkView === "run" && currentSnapshot) {
+    if ((currentWorkView === "run" || isDockedInAgent) && currentSnapshot) {
       const refreshCamera = () => {
         if (graphState.renderPending) renderGraph(currentSnapshot);
         reconcileCamera();
@@ -6929,6 +6930,15 @@ const CLIENT_SCRIPT = String.raw`(() => {
     openGraph: (nodeId) => {
       setWorkView("run", { persist: false });
       if (nodeId) { selectedNodeId = nodeId; updateSelectedNodeVisuals(); setInspectorOpen(true); }
+    },
+    refreshLiveRunGraph: () => {
+      if (currentSnapshot) {
+        renderStageRail(currentSnapshot);
+        renderGraph(currentSnapshot);
+        fitGraph();
+      }
+      applyStageRailBudget();
+      renderReplayTicks();
     },
     taskOutputs: appendLiveDeliverables,
   });

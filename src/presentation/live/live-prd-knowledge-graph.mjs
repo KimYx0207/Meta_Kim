@@ -24,6 +24,7 @@ export function createPrdKnowledgeGraph({ doc, graph, copy, focusId = null, dept
   heading.append(el("span", "uw-knowledge-kicker", copy(focusId ? "prdSecondLayer" : "prdFirstLayer")),
     el("h3", "", copy(focusId ? "moduleRelations" : "systemRelations")));
   header.append(heading);
+  const headerControls = el("div", "uw-knowledge-controls");
   if (focusId) {
     const controls = el("div", "uw-knowledge-depth");
     controls.setAttribute("role", "group");
@@ -37,8 +38,35 @@ export function createPrdKnowledgeGraph({ doc, graph, copy, focusId = null, dept
       choice.addEventListener("click", () => onDepthChange(level));
       controls.append(choice);
     }
-    header.append(controls);
+    headerControls.append(controls);
   }
+  const cameraTools = el("div", "uw-knowledge-camera");
+  cameraTools.setAttribute("role", "group");
+  cameraTools.setAttribute("aria-label", copy("prdGraphTitle"));
+  const zoomOutBtn = el("button", "uw-knowledge-tool", "−");
+  zoomOutBtn.type = "button";
+  zoomOutBtn.dataset.uwKgZoom = "out";
+  zoomOutBtn.title = "缩小画布";
+  zoomOutBtn.setAttribute("aria-label", "缩小画布");
+  const zoomResetBtn = el("button", "uw-knowledge-tool uw-knowledge-scale", "100%");
+  zoomResetBtn.type = "button";
+  zoomResetBtn.dataset.uwKgZoom = "reset";
+  zoomResetBtn.title = "重置缩放与节点位置";
+  zoomResetBtn.setAttribute("aria-label", "重置缩放与节点位置");
+  const zoomInBtn = el("button", "uw-knowledge-tool", "+");
+  zoomInBtn.type = "button";
+  zoomInBtn.dataset.uwKgZoom = "in";
+  zoomInBtn.title = "放大画布";
+  zoomInBtn.setAttribute("aria-label", "放大画布");
+  const maxBtn = el("button", "uw-knowledge-tool", "最大化");
+  maxBtn.type = "button";
+  maxBtn.dataset.uwKgMaximize = "true";
+  maxBtn.setAttribute("aria-pressed", "false");
+  maxBtn.title = "最大化或还原图谱画布";
+  maxBtn.setAttribute("aria-label", "最大化或还原图谱画布");
+  cameraTools.append(zoomOutBtn, zoomResetBtn, zoomInBtn, maxBtn);
+  headerControls.append(cameraTools);
+  header.append(headerControls);
   root.append(header);
   const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
   const edges = Array.isArray(graph?.edges) ? graph.edges : [];
@@ -115,17 +143,22 @@ export function createPrdKnowledgeGraph({ doc, graph, copy, focusId = null, dept
   // The companion module index deliberately narrows the map on desktop;
   // let compact diagrams fit that column fully instead of clipping node cards.
   const readableFloor = width > 760 ? 760 : Math.min(width, focusId ? 480 : 360);
+  const initialPositions = new Map([...positions.entries()].map(([k, v]) => [k, { x: v.x, y: v.y }]));
+  let panX = 0, panY = 0, zoomScale = 1;
+  const baseStyle = `--uw-graph-content-width:${width}px;--uw-graph-readable-width:${readableFloor}px`;
   const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, width, height,
-    style: `--uw-graph-content-width:${width}px;--uw-graph-readable-width:${readableFloor}px`,
+    style: baseStyle,
     role: "group", "aria-label": copy("prdGraphTitle") });
-  const defs = svgEl("defs");
-  const arrow = svgEl("marker", { id: "uw-prd-edge-arrow", markerWidth: 9, markerHeight: 9, refX: 7, refY: 3.5, orient: "auto", markerUnits: "userSpaceOnUse" });
-  arrow.append(svgEl("path", { d: "M0 0L7 3.5L0 7", class: "uw-kg-arrow-head" }));
-  defs.append(arrow); svg.append(defs);
-  const activeNodeIds = new Set(nodes.filter(node => ["running", "active", "in_progress"].includes(workspaceStatusKey(node.status))).map(node => node.id));
-  for (const edge of edges) {
+  const syncSvgCamera = () => {
+    const hasTransform = panX !== 0 || panY !== 0 || zoomScale !== 1;
+    svg.setAttribute("style", hasTransform
+      ? `${baseStyle};transform:translate(${Math.round(panX)}px,${Math.round(panY)}px) scale(${zoomScale.toFixed(3)});transform-origin:center top`
+      : baseStyle);
+    zoomResetBtn.textContent = `${Math.round(zoomScale * 100)}%`;
+  };
+  const computeEdgePath = (edge) => {
     const start = positions.get(edge.from), end = positions.get(edge.to);
-    if (!start || !end) continue;
+    if (!start || !end) return "";
     const containment = edge.type === "containment";
     const isHorizontal = !containment && Math.abs(end.x - start.x) >= cardWidth + 6;
     const direction = end.x >= start.x ? 1 : -1;
@@ -134,16 +167,31 @@ export function createPrdKnowledgeGraph({ doc, graph, copy, focusId = null, dept
     const sy = containment ? start.y + cardHeight : isHorizontal ? start.y + cardHeight / 2 : start.y + (descending ? cardHeight : 0);
     const tx = containment ? end.x + cardWidth / 2 : isHorizontal ? end.x + (direction > 0 ? 0 : cardWidth) : end.x + cardWidth / 2;
     const ty = containment ? end.y : isHorizontal ? end.y + cardHeight / 2 : end.y + (descending ? 0 : cardHeight);
-    const d = containment ? `M${sx} ${sy} C${sx} ${sy + 34},${tx} ${ty - 34},${tx} ${ty}`
+    return containment ? `M${sx} ${sy} C${sx} ${sy + 34},${tx} ${ty - 34},${tx} ${ty}`
       : isHorizontal ? `M${sx} ${sy} C${sx + direction * 42} ${sy},${tx - direction * 42} ${ty},${tx} ${ty}`
       : `M${sx} ${sy} C${sx} ${sy + (descending ? 35 : -35)},${tx} ${ty + (descending ? -35 : 35)},${tx} ${ty}`;
+  };
+  const defs = svgEl("defs");
+  const arrow = svgEl("marker", { id: "uw-prd-edge-arrow", markerWidth: 9, markerHeight: 9, refX: 7, refY: 3.5, orient: "auto", markerUnits: "userSpaceOnUse" });
+  arrow.append(svgEl("path", { d: "M0 0L7 3.5L0 7", class: "uw-kg-arrow-head" }));
+  defs.append(arrow); svg.append(defs);
+  const activeNodeIds = new Set(nodes.filter(node => ["running", "active", "in_progress"].includes(workspaceStatusKey(node.status))).map(node => node.id));
+  const edgeRecords = [];
+  for (const edge of edges) {
+    const d = computeEdgePath(edge);
+    if (!d) continue;
+    const containment = edge.type === "containment";
     const path = svgEl("path", { d, class: `uw-kg-edge ${containment ? "contains" : "required"}` });
     if (!containment) path.setAttribute("marker-end", "url(#uw-prd-edge-arrow)");
     if (!containment && activeNodeIds.has(edge.to)) path.setAttribute("data-activity", "observed-running");
     path.append(svgEl("title"));
     path.lastChild.textContent = containment ? copy("includesModule") : copy("requiredDependency");
     svg.append(path);
+    edgeRecords.push({ edge, path });
   }
+  const nodeGroups = new Map();
+  let activeNodeDrag = null;
+  let suppressNextNodeClick = false;
   for (const node of nodes) {
     const point = positions.get(node.id);
     if (!point) continue;
@@ -166,10 +214,95 @@ export function createPrdKnowledgeGraph({ doc, graph, copy, focusId = null, dept
     const tooltip = svgEl("title");
     tooltip.textContent = [fullTitle, node.summary || "", copy(displayStatus)].filter(Boolean).join(" · ");
     group.append(kind, status, title, tooltip);
-    group.addEventListener("click", () => onSelect(node));
+    group.addEventListener("pointerdown", event => {
+      if (!event || (typeof event.button === "number" && event.button !== 0)) return;
+      event.stopPropagation?.();
+      const cur = positions.get(node.id) || { x: 0, y: 0 };
+      activeNodeDrag = { nodeId: node.id, group, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, origX: cur.x, origY: cur.y, moved: false };
+      group.setPointerCapture?.(event.pointerId);
+    });
+    group.addEventListener("pointermove", event => {
+      if (!activeNodeDrag || activeNodeDrag.nodeId !== node.id || event.pointerId !== activeNodeDrag.pointerId) return;
+      const dx = (event.clientX - activeNodeDrag.startX) / (zoomScale || 1);
+      const dy = (event.clientY - activeNodeDrag.startY) / (zoomScale || 1);
+      if (!activeNodeDrag.moved && Math.hypot(event.clientX - activeNodeDrag.startX, event.clientY - activeNodeDrag.startY) > 4) {
+        activeNodeDrag.moved = true;
+        group.dataset.dragging = "true";
+      }
+      if (!activeNodeDrag.moved) return;
+      const nx = Math.round(activeNodeDrag.origX + dx);
+      const ny = Math.round(activeNodeDrag.origY + dy);
+      positions.set(node.id, { x: nx, y: ny });
+      group.setAttribute("transform", `translate(${nx},${ny})`);
+      for (const rec of edgeRecords) {
+        if (rec.edge.from === node.id || rec.edge.to === node.id) rec.path.setAttribute("d", computeEdgePath(rec.edge));
+      }
+    });
+    const finishNodeDrag = event => {
+      if (!activeNodeDrag || activeNodeDrag.nodeId !== node.id) return;
+      if (activeNodeDrag.moved) suppressNextNodeClick = true;
+      delete group.dataset.dragging;
+      group.releasePointerCapture?.(event?.pointerId);
+      activeNodeDrag = null;
+    };
+    group.addEventListener("pointerup", finishNodeDrag);
+    group.addEventListener("pointercancel", finishNodeDrag);
+    group.addEventListener("click", event => {
+      if (suppressNextNodeClick) { suppressNextNodeClick = false; event?.preventDefault?.(); event?.stopPropagation?.(); return; }
+      onSelect(node);
+    });
     group.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect(node); } });
     svg.append(group);
+    nodeGroups.set(node.id, group);
   }
+  let canvasPan = null;
+  canvas.addEventListener("pointerdown", event => {
+    if (!event || (typeof event.button === "number" && event.button !== 0) || activeNodeDrag) return;
+    if (event.target?.closest?.(".uw-kg-node, button")) return;
+    canvasPan = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, baseX: panX, baseY: panY };
+    canvas.dataset.panning = "true";
+    canvas.setPointerCapture?.(event.pointerId);
+  });
+  canvas.addEventListener("pointermove", event => {
+    if (!canvasPan || event.pointerId !== canvasPan.pointerId) return;
+    panX = canvasPan.baseX + (event.clientX - canvasPan.startX);
+    panY = canvasPan.baseY + (event.clientY - canvasPan.startY);
+    syncSvgCamera();
+  });
+  const endCanvasPan = event => {
+    if (!canvasPan) return;
+    delete canvas.dataset.panning;
+    canvas.releasePointerCapture?.(event?.pointerId);
+    canvasPan = null;
+  };
+  canvas.addEventListener("pointerup", endCanvasPan);
+  canvas.addEventListener("pointercancel", endCanvasPan);
+  canvas.addEventListener("wheel", event => {
+    if (!event) return;
+    if (event.ctrlKey || event.metaKey || root.dataset.maximized === "true" || zoomScale !== 1) {
+      event.preventDefault?.();
+      const factor = event.deltaY < 0 ? 1.12 : 0.89;
+      zoomScale = Math.min(2.6, Math.max(0.45, zoomScale * factor));
+      syncSvgCamera();
+    }
+  }, { passive: false });
+  zoomInBtn.addEventListener("click", () => { zoomScale = Math.min(2.6, zoomScale * 1.18); syncSvgCamera(); });
+  zoomOutBtn.addEventListener("click", () => { zoomScale = Math.max(0.45, zoomScale / 1.18); syncSvgCamera(); });
+  zoomResetBtn.addEventListener("click", () => {
+    panX = 0; panY = 0; zoomScale = 1;
+    for (const [id, orig] of initialPositions.entries()) {
+      positions.set(id, { x: orig.x, y: orig.y });
+      nodeGroups.get(id)?.setAttribute("transform", `translate(${orig.x},${orig.y})`);
+    }
+    for (const rec of edgeRecords) rec.path.setAttribute("d", computeEdgePath(rec.edge));
+    syncSvgCamera();
+  });
+  maxBtn.addEventListener("click", () => {
+    const next = root.dataset.maximized !== "true";
+    root.dataset.maximized = String(next);
+    maxBtn.setAttribute("aria-pressed", String(next));
+    maxBtn.textContent = next ? "还原" : "最大化";
+  });
   canvas.append(svg);
   const legend = el("div", "uw-knowledge-legend");
   legend.append(el("span", "contains", copy("includesModule")), el("span", "required", copy("requiredDependency")));

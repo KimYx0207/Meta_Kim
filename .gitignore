@@ -82,6 +82,13 @@ findings.md
 # ========== Backup / Temporary ==========
 .backup/
 tmp/
+work/
+
+# ========== Standalone Desktop Client Build Artifacts ==========
+/desktop/src-tauri/target/
+/desktop/src-tauri/gen/
+/desktop/release/
+/desktop/dist/
 
 # ========== Terminal / Shell Cache Files ==========
 *.omp.cache
