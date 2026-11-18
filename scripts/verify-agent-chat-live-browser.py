@@ -134,9 +134,14 @@ def main() -> None:
                 live = page.locator("[data-uw-agent-live]")
                 expect(composer).to_be_visible()
                 expect(live).to_be_visible()
-                expect(page.locator('[data-uw-live-mode="flow"]')).to_have_attribute("aria-selected", "true")
-                expect(page.locator(".uw-cockpit-pillar")).to_have_count(5)
-                capture("01-chat-and-live-initial.png", "Single input with adjacent live process and 5-pillar cockpit")
+                expect(page.locator('[data-uw-live-mode="knowledge"]')).to_have_attribute("aria-selected", "true")
+                expect(page.locator("[data-uw-top-flow]")).to_be_visible()
+                expect(page.locator("[data-uw-top-flow] .uw-agent-flow-node")).to_have_count(6)
+                expect(page.locator(".uw-cockpit-pillar")).to_have_count(0)
+                expect(page.locator("[data-uw-chat-host]")).to_be_visible()
+                expect(page.locator("[data-uw-open-binding]")).to_be_visible()
+                expect(page.locator(".uw-prd-completion-banner")).to_be_visible(timeout=20_000)
+                capture("01-chat-and-live-initial.png", "Single input, top single-row pipeline ribbon below logo, and Product Design PRD with completion status")
                 evidence["checks"].append("Single visible composer, real adjacent Live, no horizontal overflow")
 
                 # Native client cards use real DOM from the current source, but
@@ -215,9 +220,8 @@ def main() -> None:
                 capture("07-b2-revised.png", "Scoped node feedback resolved with a versioned PRD edit")
                 evidence["checks"].append("A direct PRD field revision resolved the recorded note")
 
-                page.locator('[data-uw-live-mode="flow"]').click()
-                expect(page.locator(".uw-agent-flow-node")).to_have_count(6)
-                capture("08-flow-after-feedback.png", "Live process and status after a focused node edit")
+                expect(page.locator("[data-uw-top-flow] .uw-agent-flow-node")).to_have_count(6)
+                capture("08-flow-after-feedback.png", "Top progress ribbon and PRD status after a focused node edit")
 
                 for expected_name in ("跨境电商经营知识工作台（模拟草稿）", "数据接入与质量检查", "检索与经营分析"):
                     summary = card.locator(".uw-chat-review-details summary")
@@ -243,9 +247,13 @@ def main() -> None:
                 capture("10-static-handoff.png", "B3 immutable handoff, no simulated execution success")
                 evidence["checks"].append("Static handoff recorded; host execution and B4 remain unverified")
 
-                page.locator('[data-uw-live-mode="agents"]').click()
-                expect(page.locator('[data-uw-live-mode="agents"]')).to_have_attribute("aria-selected", "true")
-                capture("11-agent-relations.png", "Real agent telemetry or explicitly unproven empty state")
+                page.locator(".uw-top-flow-graph-btn").click()
+                expect(page.locator('[data-uw-live-mode="live-run"]')).to_have_attribute("aria-selected", "true")
+                expect(page.locator("[data-uw-docked-run-slot]")).to_be_visible()
+                restore_split = page.locator("[data-uw-pane-restore-chat]")
+                if restore_split.is_visible():
+                    restore_split.click()
+                capture("11-agent-relations.png", "Top progress ribbon opens Full Live Graph with Main Agent and Subagents")
 
                 page.set_viewport_size({"width": 390, "height": 844})
                 expect(composer).to_be_visible()

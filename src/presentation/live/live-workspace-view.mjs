@@ -24,12 +24,12 @@ export function renderLiveWorkspaceNavigation() {
   const nav = (id, label, icon) => `<button class="uw-nav-item" type="button" data-uw-view="${id}" data-live-workspace-nav="${id}" aria-current="${id === "work" ? "page" : "false"}">${liveWorkspaceIcon(icon)}<span data-uw-label="${id}">${label}</span><span class="uw-nav-count" data-uw-count="${id}" hidden></span></button>`;
   return `<aside class="uw-navigation" id="uw-navigation" data-uw-navigation aria-label="工作区导航">
     <div class="uw-nav-heading"><span data-uw-nav-heading-text>工作空间</span><div class="uw-nav-heading-actions"><button type="button" class="uw-icon-button uw-nav-collapse-btn" data-uw-nav-collapse title="收起侧边栏" aria-label="收起侧边栏">${liveWorkspaceIcon("sidebarLeft")}</button><button type="button" class="uw-icon-button uw-mobile-close" data-uw-nav-close aria-label="关闭导航">${liveWorkspaceIcon("close")}</button></div></div>
-    <button class="uw-project-switch" type="button" data-uw-project-switch aria-label="选择项目与运行"><span class="uw-project-avatar" aria-hidden="true">K</span><span class="uw-project-copy"><strong data-uw-project-name>选择项目</strong><small data-uw-run-name>查看真实运行记录</small></span>${liveWorkspaceIcon("chevron")}</button>
-    <nav class="uw-primary-nav" aria-label="主视图">${nav("work", "工作", "work")}${nav("prd", "PRD", "document")}${nav("records", "记录", "history")}${nav("graph", "运行图", "graph")}</nav>
+    <button class="uw-project-switch" type="button" data-uw-project-switch aria-label="选择仓库与运行"><span class="uw-project-avatar" aria-hidden="true">K</span><span class="uw-project-copy"><strong data-uw-project-name>选择仓库</strong><small data-uw-run-name>切换仓库与运行记录</small></span>${liveWorkspaceIcon("chevron")}</button>
+    <nav class="uw-primary-nav" aria-label="主视图">${nav("work", "工作", "work")}${nav("prd", "PRD", "document")}${nav("repository", "仓库", "layers")}${nav("records", "记录", "history")}${nav("graph", "运行图", "graph")}</nav>
     <section class="uw-agent-inventory" data-uw-agent-inventory aria-label="Agent 协作与能力清单"></section>
     <div class="uw-nav-section-heading"><span data-uw-module-heading>系统模块</span><span data-uw-module-count>—</span></div>
     <div class="uw-module-nav" data-uw-modules aria-label="全部系统模块"><p class="uw-nav-empty">模块拆分后会出现在这里</p></div>
-    <div class="uw-nav-footer"><button class="uw-nav-item" type="button" data-uw-view="repository">${liveWorkspaceIcon("layers")}<span data-uw-label="repository">项目资料</span></button><p data-uw-nav-footer>同一工作 · 持续接续</p></div>
+    <div class="uw-nav-footer"><p data-uw-nav-footer>同一工作 · 持续接续</p></div>
     <div class="uw-nav-resizer" data-uw-nav-resizer role="separator" aria-orientation="vertical" aria-label="拖拽调整侧边栏宽度" title="拖拽调整侧边栏宽度，双击重置"></div>
   </aside>`;
 }
@@ -47,19 +47,21 @@ export function renderLiveWorkspaceSurface() {
         <header class="uw-agent-chat-header">
           <div class="uw-agent-chat-identity"><button type="button" class="uw-icon-button uw-nav-expand-btn" data-uw-nav-expand hidden title="展开侧边栏" aria-label="展开侧边栏">${liveWorkspaceIcon("sidebarLeft")}</button><span class="uw-agent-chat-emblem" aria-hidden="true">K</span><div><strong>Meta_Kim</strong><span>Agent 对话 · 关键节点由你决定</span></div></div>
           <div class="uw-pane-header-right">
+            <button type="button" class="uw-binding-toggle-btn" data-uw-open-binding aria-expanded="false" title="正向调用或反向绑定外部 Agent 会话">双向绑定</button>
             <span class="uw-agent-chat-connection" data-uw-chat-connection>正在连接</span>
             <button type="button" class="uw-pane-restore-pill" data-uw-pane-restore-live hidden title="展开右侧 Live 画布" aria-label="展开右侧 Live 画布">展开画布</button>
             <button type="button" class="uw-icon-button uw-pane-btn" data-uw-pane-toggle="chat-max" title="最大化对话窗口" aria-label="最大化对话窗口">${liveWorkspaceIcon("maximize")}</button>
           </div>
         </header>
-        <div class="uw-agent-chat-scope"><span class="uw-agent-chat-scope-dot" aria-hidden="true"></span><span>当前项目</span><strong data-uw-chat-project>正在核对…</strong></div>
+        <div class="uw-agent-chat-scope"><span class="uw-agent-chat-scope-dot" aria-hidden="true"></span><span>当前仓库</span><strong data-uw-chat-project>正在核对…</strong><button type="button" class="uw-chat-repo-switch-btn" data-uw-chat-switch-repo title="切换本地已登记仓库或历史运行">切换仓库 ▾</button></div>
+        <section class="uw-binding-drawer" data-uw-binding-drawer hidden aria-label="双向 Agent 绑定与渠道中心"></section>
         <div class="uw-agent-chat-thread" data-uw-chat-thread role="log" aria-label="Agent 对话记录" aria-live="off"></div>
         <div class="uw-chat-announcement" data-uw-chat-announcement role="status" aria-live="polite" aria-atomic="true"></div>
         <div class="uw-agent-chat-target" data-uw-chat-target hidden><span data-uw-chat-target-text></span><button type="button" data-uw-chat-target-clear aria-label="取消关联节点">×</button></div>
         <form class="uw-agent-chat-composer" data-uw-chat-form autocomplete="off">
           <label class="uw-agent-chat-label" for="uw-chat-input">向 Meta_Kim 发送消息</label>
           <textarea id="uw-chat-input" data-uw-chat-input rows="2" maxlength="6000" placeholder="说说你想完成什么，或直接指出右侧节点的问题…"></textarea>
-          <div class="uw-agent-chat-composer-bottom"><span data-uw-chat-guidance>只需对话。研究与执行过程会同步显示在 Live。</span><button type="submit" data-uw-chat-send aria-label="发送消息" title="发送消息">${liveWorkspaceIcon("arrow")}</button></div>
+          <div class="uw-agent-chat-composer-bottom"><label class="uw-chat-channel-picker" for="uw-chat-host"><span class="uw-chat-channel-label">渠道</span><select id="uw-chat-host" class="uw-chat-host-select" data-uw-chat-host aria-label="选择 Agent 渠道"><option value="">检测渠道…</option></select></label><span data-uw-chat-guidance>Enter 发送，Shift+Enter 换行</span><button type="submit" data-uw-chat-send aria-label="发送消息" title="发送消息">${liveWorkspaceIcon("arrow")}</button></div>
         </form>
       </div>
       <div class="uw-agent-legacy" hidden>
@@ -137,10 +139,10 @@ export function renderLiveWorkspaceSurface() {
       </header>
       <div class="uw-agent-live-bar">
         <div class="uw-agent-live-modes" role="tablist" aria-label="Live 可视化视图">
-          <button type="button" id="uw-live-tab-flow" data-uw-live-mode="flow" role="tab" aria-controls="uw-live-content" aria-selected="true">执行流程</button>
-          <button type="button" id="uw-live-tab-knowledge" data-uw-live-mode="knowledge" role="tab" aria-controls="uw-live-content" aria-selected="false">知识图谱</button>
-          <button type="button" id="uw-live-tab-agents" data-uw-live-mode="agents" role="tab" aria-controls="uw-live-content" aria-selected="false">Agent 协作</button>
-          <button type="button" id="uw-live-tab-live-run" data-uw-live-mode="live-run" role="tab" aria-controls="uw-live-content" aria-selected="false">完整运行图</button>
+          <button type="button" class="uw-legacy-mode-tab" id="uw-live-tab-flow" data-uw-live-mode="flow" role="tab" aria-controls="uw-live-content" aria-selected="false">阶段进度</button>
+          <button type="button" id="uw-live-tab-knowledge" data-uw-live-mode="knowledge" role="tab" aria-controls="uw-live-content" aria-selected="true">产品设计 PRD</button>
+          <button type="button" class="uw-legacy-mode-tab" id="uw-live-tab-agents" data-uw-live-mode="agents" role="tab" aria-controls="uw-live-content" aria-selected="false">Agent 协作</button>
+          <button type="button" id="uw-live-tab-live-run" data-uw-live-mode="live-run" role="tab" aria-controls="uw-live-content" aria-selected="false">完整运行图 · Subagents</button>
         </div>
         <div class="uw-pane-window-controls" role="group" aria-label="画布窗口控制">
           <button type="button" class="uw-pane-restore-pill" data-uw-pane-restore-chat hidden title="还原左右分栏" aria-label="还原左右分栏">还原分栏</button>

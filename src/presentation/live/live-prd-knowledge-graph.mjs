@@ -258,15 +258,17 @@ export function createPrdKnowledgeGraph({ doc, graph, copy, focusId = null, dept
       : (node.layerShort ? `二级 · ${node.layerShort}` : copy("prdSecondLayer"));
     const status = svgEl("text", { x: cardWidth - 14, y: 20, "text-anchor": "end", class: "uw-kg-node-state" });
     status.textContent = copy(displayStatus);
-    const title = svgEl("text", { x: 14, y: node.directory ? 44 : 48, class: "uw-kg-node-title" });
+    const subCopy = node.kind === "architecture"
+      ? (node.progressNote || "")
+      : (node.shortSummary || "");
+    const title = svgEl("text", { x: 14, y: subCopy ? 44 : 48, class: "uw-kg-node-title" });
     const fullTitle = String(node.title || node.sourceId || node.id);
     title.textContent = Array.from(fullTitle).length > 14 ? Array.from(fullTitle).slice(0, 13).join("") + "…" : fullTitle;
     const tooltip = svgEl("title");
-    tooltip.textContent = [fullTitle, node.layer || "", node.directory || "", node.summary || "", copy(displayStatus)].filter(Boolean).join(" · ");
-    if (node.directory) {
+    tooltip.textContent = [fullTitle, node.layer || "", subCopy || node.summary || "", copy(displayStatus)].filter(Boolean).join(" · ");
+    if (subCopy) {
       const sub = svgEl("text", { x: 14, y: 63, class: "uw-kg-node-sub" });
-      const metaText = Number.isInteger(node.fileCount) ? `${node.directory} · ${node.fileCount}` : node.directory;
-      sub.textContent = Array.from(metaText).length > 25 ? Array.from(metaText).slice(0, 24).join("") + "…" : metaText;
+      sub.textContent = Array.from(subCopy).length > 18 ? Array.from(subCopy).slice(0, 17).join("") + "…" : subCopy;
       group.append(kind, status, title, sub, tooltip);
     } else {
       group.append(kind, status, title, tooltip);

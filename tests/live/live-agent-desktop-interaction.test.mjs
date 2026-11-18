@@ -165,15 +165,15 @@ test("knowledge graph renders strictly Two-Level System Design PRD and never ren
   env.tabs[1].click();
   assert.equal(byText(env.elements["live-viewport"], "客户端能力").length, 0, "Host capabilities must never appear as a PRD graph tab");
   assert.equal(byText(env.elements["live-viewport"], "Pi Coding Agent").length, 0, "Host names must never be drawn as PRD nodes");
-  for (const entry of ["Meta_Kim · 系统整体框架", "一级设计 PRD · 系统整体框架", "Canonical 治理真值核", "Agent B1-B4 编排引擎"]) {
+  for (const entry of ["Meta_Kim · 系统整体框架", "一级 PRD · 系统框架", "Canonical 治理真值核", "Agent B1-B4 编排引擎"]) {
     assert.ok(byText(env.elements["live-viewport"], entry).length, `PRD graph missing ${entry}`);
   }
   findButton(env.elements["live-viewport"], "Agent B1-B4 编排引擎").click();
-  for (const detail of ["二级设计 PRD · 模块组织", "模块职责与设计目标", "输入契约（Input Contract）", "输出契约（Output Contract）"]) {
+  for (const detail of ["二级 PRD · 系统详情", "功能定位与用户价值", "上游输入（用户操作 / 前置条件）", "下游产出（页面反馈 / 交付结果）"]) {
     assert.ok(byText(env.elements["live-viewport"], detail).length, `Level-2 module spec missing ${detail}`);
   }
-  findButton(env.elements["live-viewport"], "两级 PRD 规格书").click();
-  assert.ok(byText(env.elements["live-viewport"], "二级设计 PRD · 系统本身的设计组织").length);
+  findButton(env.elements["live-viewport"], "完整产品设计 PRD").click();
+  assert.ok(byText(env.elements["live-viewport"], "二级 PRD · 系统详情").length);
 });
 
 test("inventory search and category clicks open the spacious side flyout panel and inspect host capabilities in-place", () => {

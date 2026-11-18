@@ -275,13 +275,13 @@ test("Wave 2 Cockpit UI: renders 5-pillar strip, one-click B2 fast-track button,
     },
   });
 
-  // 1. Five-pillar cockpit strip exists on Flow view with的目标 / 执行 / 结果 / 决策 / 改进!
-  const pillars = viewport.querySelectorAll(".uw-cockpit-pillar");
-  assert.equal(pillars.length, 5);
-  const pillarLabels = pillars.map((p) => p.textContent);
-  for (const word of ["目标", "执行", "结果", "决策", "改进"]) {
-    assert.ok(pillarLabels.some((txt) => txt.includes(word)), `Missing pillar ${word}`);
-  }
+  // 1. Deduplicated Flow view renders a single 8-stage pipeline bar + 6-step milestone list with zero duplicate cockpit/DAG blocks!
+  assert.equal(viewport.querySelectorAll(".uw-cockpit-pillar").length, 0, "Duplicate 5-pillar strip must be removed from Flow view");
+  assert.equal(viewport.querySelectorAll(".uw-flow-dag-card").length, 0, "Duplicate nested DAG scrollbox must be removed from Flow view");
+  const eightStageChips = viewport.querySelectorAll(".uw-eight-stage-chip");
+  assert.equal(eightStageChips.length, 8);
+  const initialFlowNodes = viewport.querySelectorAll(".uw-agent-flow-node");
+  assert.equal(initialFlowNodes.length, 6);
 
   // 2. One-click B2 approve-all & handoff button appears when pendingReviewNotes is empty!
   const fastTrackBtn = thread.querySelectorAll("button").find((b) => b.textContent.includes("一键确认全部设计"));

@@ -168,15 +168,20 @@ export function buildLivePrdGraph(design, { focusId = null, depth = 2, limit = 4
 
   const nodes = [];
   const edges = [];
-  if (selectedModuleId === null && architecture) nodes.push({ id: architectureKey(architecture.id), sourceId: architecture.id,
-    title: label(architecture.title, architecture.id), status: architecture.status ?? null,
-    summary: label(architecture.summary, ""), kind: "architecture", depth: 0 });
+  if (selectedModuleId === null && architecture) {
+    const archNode = { id: architectureKey(architecture.id), sourceId: architecture.id,
+      title: label(architecture.title, architecture.id), status: architecture.status ?? null,
+      summary: label(architecture.summary, ""), kind: "architecture", depth: 0 };
+    if (present(architecture.progressNote)) archNode.progressNote = architecture.progressNote.trim();
+    nodes.push(archNode);
+  }
   for (const id of ordered) {
     if (!visibleIds.has(id)) continue;
     const row = modules.get(id);
     const nodeRecord = { id: moduleKey(id), sourceId: id, title: label(row.title, id), status: row.status ?? null,
       summary: label(row.summary, label(row.purpose, "")), kind: "module",
       depth: selectedModuleId === null ? 1 : relative.get(id) };
+    if (present(row.shortSummary)) nodeRecord.shortSummary = row.shortSummary.trim();
     if (present(row.layer)) nodeRecord.layer = row.layer.trim();
     if (present(row.layerShort)) nodeRecord.layerShort = row.layerShort.trim();
     if (Number.isInteger(row.layerRank)) nodeRecord.layerRank = row.layerRank;

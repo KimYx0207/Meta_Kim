@@ -11,7 +11,7 @@ import { buildNativeZcodeLiveSnapshot, buildNativeClaudeLiveSnapshot, nativeZcod
 export function createLiveNativeBindings(options = {}) {
   const readers = new Map();
   const snapshots = new Map();
-  const registryEnabled = options.globalHub === true && (!options.hubCatalog || options.homeDir);
+  const registryEnabled = (options.globalHub === true || options.enableProjectCatalog === true) && (!options.hubCatalog || options.homeDir);
   // A registry-backed daemon may not turn a launch hint into lasting authority:
   // removing enrollment must revoke even the binding supplied at startup.
   const startup = !registryEnabled && options.nativeCodex && typeof options.nativeCodex === "object" ? options.nativeCodex : null;

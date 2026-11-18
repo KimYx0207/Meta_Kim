@@ -43,6 +43,8 @@ export function createLiveWorkspaceController(options) {
   const agentHost = root.querySelector("[data-uw-agent-host]");
   const agentHostStatus = root.querySelector("[data-uw-agent-host-status]");
   const agentHostList = root.querySelector("[data-uw-agent-host-list]");
+  const chatHostSelect = root.querySelector("[data-uw-chat-host]");
+  const chatSwitchRepoBtn = root.querySelector("[data-uw-chat-switch-repo]");
   const agentSubmit = root.querySelector("[data-uw-agent-submit]");
   const agentStatus = root.querySelector("[data-uw-agent-status]");
   const agentRecovery = root.querySelector("[data-uw-agent-recovery]");
@@ -157,26 +159,138 @@ export function createLiveWorkspaceController(options) {
   }
   let architectureRead = null;
   let architectureLastRead = 0;
-  async function loadAgentArchitecture({ force = false } = {}) {
-    if (!agentEntryEnabled || !token || disposed || architectureRead
-      || (!force && Date.now() - architectureLastRead < 60_000)) return;
+  let architectureProjectId = "";
+  const isEphemeralProjectName = (name) => /^(?:\d{10,}-[a-f0-9-]{8,}|draft-[a-f0-9-]{8,}|tmp\.|L\d{2}-[A-Za-z0-9]{4,}|probe-|meta-kim-agent-project-|metakim-|mk-spine-|conv-binding-)/iu.test(String(name || ""));
+
+  function enhanceRepositorySurface() {
+    const repoView = app.querySelector("[data-live-repository-view]");
+    const factsHost = repoView?.querySelector("[data-live-repository-facts]");
+    const repoTitle = repoView?.querySelector("[data-live-repository-title]");
+    const repoBoundary = repoView?.querySelector("[data-live-repository-boundary]");
+    if (!repoView || !factsHost) return;
+    const facts = state.repositoryFacts;
+    const activeProj = state.project;
+    if (repoTitle && (activeProj?.displayName || facts?.projectName)) {
+      repoTitle.textContent = activeProj?.displayName || facts?.projectName;
+    }
+    if (repoBoundary && facts) {
+      repoBoundary.textContent = facts.isExecutionBoundRepo
+        ? "当前启动绑定仓库 · 支持对话研究、B1–B4 执行与双向会话接入"
+        : "已登记本地仓库 · 支持只读运行观测、两级架构 PRD 解析与外部会话接入";
+    }
+    let liveCard = repoView.querySelector("[data-uw-repo-live-panel]");
+    if (!liveCard) {
+      liveCard = doc.createElement("div");
+      liveCard.className = "uw-repo-live-panel";
+      liveCard.dataset.uwRepoLivePanel = "true";
+      factsHost.parentElement?.insertBefore(liveCard, factsHost);
+    }
+    liveCard.replaceChildren();
+    if (facts) {
+      const grid = doc.createElement("div");
+      grid.className = "uw-repo-facts-grid";
+      const rows = [
+        ["Git 分支", facts.branch || (facts.hasGit ? "detached" : "未初始化 Git")],
+        ["最新提交", facts.headCommit || "无提交记录"],
+        ["工作区状态", !facts.hasGit ? "非 Git 目录" : facts.worktree?.state === "clean" ? "干净（0 处未提交变更）"
+          : `${facts.worktree?.totalChanges || 0} 处变更（修改 ${facts.worktree?.modifiedCount || 0} · 暂存 ${facts.worktree?.stagedCount || 0} · 未跟踪 ${facts.worktree?.untrackedCount || 0}）`],
+        ["双向同步 Hook", facts.enrolledRuntimes?.length
+          ? facts.enrolledRuntimes.map((h) => `${h.label}${h.autoSync ? "（自动同步）" : ""}`).join(" · ")
+          : "尚未安装项目级 Hook"],
+      ];
+      for (const [k, v] of rows) {
+        const cell = doc.createElement("div");
+        cell.className = "uw-repo-fact-cell";
+        const labelEl = doc.createElement("span"); labelEl.textContent = k;
+        const valEl = doc.createElement("strong"); valEl.textContent = v;
+        cell.append(labelEl, valEl);
+        grid.append(cell);
+      }
+      liveCard.append(grid);
+      const emptyPlaceholder = factsHost.querySelector(".repository-empty");
+      emptyPlaceholder?.remove();
+    }
+    const allCatalog = typeof options.getCatalog === "function" ? (options.getCatalog() || []) : [];
+    if (allCatalog.length > 0) {
+      const primaryRepos = allCatalog.filter((p) => !isEphemeralProjectName(p.displayName));
+      const tempRepos = allCatalog.filter((p) => isEphemeralProjectName(p.displayName));
+      const switcher = doc.createElement("div");
+      switcher.className = "uw-repo-catalog-box";
+      const head = doc.createElement("div");
+      head.className = "uw-repo-catalog-head";
+      const titleEl = doc.createElement("strong");
+      titleEl.textContent = `切换已登记仓库（核心工程 ${primaryRepos.length} 个 · 共 ${allCatalog.length} 个）`;
+      head.append(titleEl);
+      switcher.append(head);
+      const makeRepoGrid = (list) => {
+        const g = doc.createElement("div");
+        g.className = "uw-repo-chip-grid";
+        for (const item of list) {
+          const btn = doc.createElement("button");
+          btn.type = "button";
+          btn.className = "uw-repo-chip";
+          btn.dataset.selected = String(item.projectId === state.selection?.projectId);
+          const nameSpan = doc.createElement("strong");
+          nameSpan.textContent = item.displayName || item.projectId;
+          const countSpan = doc.createElement("small");
+          countSpan.textContent = `${item.sessionCount || 0} 条运行`;
+          btn.append(nameSpan, countSpan);
+          btn.addEventListener("click", () => {
+            options.selectProjectRun?.(item.projectId, "");
+          });
+          g.append(btn);
+        }
+        return g;
+      };
+      switcher.append(makeRepoGrid(primaryRepos));
+      if (tempRepos.length > 0) {
+        const more = doc.createElement("details");
+        more.className = "uw-repo-temp-group";
+        const sum = doc.createElement("summary");
+        sum.textContent = `展开临时测试与沙盒目录（${tempRepos.length} 个）`;
+        more.append(sum, makeRepoGrid(tempRepos));
+        switcher.append(more);
+      }
+      liveCard.append(switcher);
+    }
+  }
+
+  async function loadAgentArchitecture({ force = false, projectId = state.selection?.projectId || "" } = {}) {
+    if (!agentEntryEnabled || !token || (!desktop && !app.querySelector("[data-live-repository-view]")) || disposed) return;
+    const targetProj = String(projectId || "");
+    if (architectureRead && architectureProjectId === targetProj) return;
+    if (!force && architectureProjectId === targetProj && Date.now() - architectureLastRead < 60_000) return;
+    architectureProjectId = targetProj;
+    const reqProj = targetProj;
     architectureRead = (async () => {
       try {
-        const arch = await request("/api/agent/architecture", { selection: {}, runScoped: false });
-        if (disposed) return;
+        const [arch, repoFacts, bindings] = await Promise.all([
+          request("/api/agent/architecture", { selection: {}, query: reqProj ? { projectId: reqProj } : {}, runScoped: false }).catch(() => null),
+          request("/api/agent/repository", { selection: {}, query: reqProj ? { projectId: reqProj } : {}, runScoped: false }).catch(() => null),
+          request("/api/agent/bindings", { selection: {}, query: reqProj ? { projectId: reqProj } : {}, runScoped: false }).catch(() => null),
+        ]);
+        if (disposed || architectureProjectId !== reqProj) return;
         if (arch?.schemaVersion === "meta-kim-project-architecture-prd-v1"
           && arch?.system && Array.isArray(arch?.modules)) {
           state.projectArchitecturePrd = arch;
-          architectureLastRead = Date.now();
         }
+        if (repoFacts?.schemaVersion === "meta-kim-agent-repository-facts-v1") {
+          state.repositoryFacts = repoFacts;
+          if (repoFacts.projectName) state.agentServerProjectLabel = repoFacts.projectName;
+        }
+        if (bindings?.schemaVersion === "meta-kim-agent-bindings-v1") {
+          state.sessionBindings = bindings;
+        }
+        architectureLastRead = Date.now();
       } catch (error) {
         if (disposed || error?.name === "AbortError") return;
         architectureLastRead = Date.now();
       }
+      enhanceRepositorySurface();
       renderer.render();
       desktop?.render();
     })();
-    try { await architectureRead; } finally { architectureRead = null; }
+    try { await architectureRead; } finally { if (architectureProjectId === reqProj) architectureRead = null; }
   }
   async function loadAgentCapabilities({ force = false } = {}) {
     if (!agentEntryEnabled || !token || disposed || capabilityCatalogRead
@@ -1270,6 +1384,7 @@ export function createLiveWorkspaceController(options) {
     const canLaunch = agentEntryEnabled && state.canWrite && agent.executionAllowed && !agent.loading && !agent.busy && !agent.pending
       && (launchableHosts().some((host) => host.id === agentHost?.value) || agentHost?.value === "auto" && autoHostAvailable());
     if (agentHost) agentHost.disabled = !agentEntryEnabled || !state.canWrite || !agent.executionAllowed || agent.loading || agent.busy || !launchableHosts().length;
+    if (chatHostSelect) chatHostSelect.disabled = Boolean(agentHost?.disabled);
     if (agentSubmit) {
       agentSubmit.disabled = !canLaunch || !agentGoal?.value?.trim();
       agentSubmit.setAttribute("aria-busy", agent.busy ? "true" : "false");
@@ -1278,28 +1393,43 @@ export function createLiveWorkspaceController(options) {
   }
   function populateAgentHosts() {
     if (!agentHost) return;
-    const previousHost = agentHost.value;
+    const previousHost = chatHostSelect?.value || agentHost.value;
     const entries = agent.hosts.filter((host) => host && typeof host.id === "string" && host.id && typeof host.label === "string");
     agentHost.textContent = "";
+    if (chatHostSelect) chatHostSelect.textContent = "";
+    const appendBothOptions = (val, label, disabled = false, titleText = "") => {
+      const opt1 = doc.createElement("option");
+      opt1.value = val; opt1.textContent = label; opt1.disabled = disabled;
+      if (titleText) opt1.title = titleText;
+      agentHost.appendChild(opt1);
+      if (chatHostSelect) {
+        const opt2 = doc.createElement("option");
+        opt2.value = val; opt2.textContent = label; opt2.disabled = disabled;
+        if (titleText) opt2.title = titleText;
+        chatHostSelect.appendChild(opt2);
+      }
+    };
     if (!entries.length) {
-      const option = doc.createElement("option"); option.value = ""; option.textContent = "没有可用客户端"; agentHost.appendChild(option);
+      appendBothOptions("", "没有可用渠道");
     } else {
+      const recHost = entries.find((h) => h.id === agent.recommendedHostId) || launchableHosts()[0];
       if (autoHostAvailable()) {
-        const option = doc.createElement("option"); option.value = "auto";
-        option.textContent = "自动选择可用客户端 · 只读研究"; agentHost.appendChild(option);
+        appendBothOptions("auto", recHost ? `自动优选（${recHost.label}）` : "自动选择可用客户端 · 只读研究");
       }
       for (const host of entries) {
-        const option = doc.createElement("option");
-        option.value = host.id;
         const supported = launchableHosts().includes(host);
-        option.textContent = host.label + (supported ? "" : " · 不可启动");
-        option.disabled = !supported;
-        if (host.reason) option.title = String(host.reason);
-        agentHost.appendChild(option);
+        appendBothOptions(
+          host.id,
+          host.label + (supported ? " · 就绪" : " · 不可直接启动"),
+          !supported,
+          host.reason ? String(host.reason) : "",
+        );
       }
       const usable = launchableHosts();
-      agentHost.value = (previousHost === "auto" && autoHostAvailable() || usable.some((item) => item.id === previousHost))
+      const nextValue = (previousHost === "auto" && autoHostAvailable() || usable.some((item) => item.id === previousHost))
         ? previousHost : autoHostAvailable() ? "auto" : usable[0]?.id || "";
+      agentHost.value = nextValue;
+      if (chatHostSelect) chatHostSelect.value = nextValue;
     }
     if (agentHostStatus && agentHostList) {
       agentHostList.textContent = "";
@@ -2005,7 +2135,45 @@ export function createLiveWorkspaceController(options) {
       reject() { void submitAgentDecision("reject"); },
       redetect() {
         agent.hostRetryCount = 0;
-        void Promise.all([loadAgentHosts(), loadAgentCapabilities({ force: true })]);
+        void Promise.all([
+          loadAgentHosts(),
+          loadAgentCapabilities({ force: true }),
+          loadAgentArchitecture({ force: true, projectId: state.selection?.projectId || "" }),
+        ]);
+      },
+      selectHostChannel(hostId) {
+        if (!agentHost || !hostId) return;
+        agentHost.value = hostId;
+        if (chatHostSelect) chatHostSelect.value = hostId;
+        updateAgentControls();
+        desktop?.render();
+      },
+      getSelectedHostChannel: () => chatHostSelect?.value || agentHost?.value || "auto",
+      openProjectPicker: () => options.openProjects?.(),
+      selectProjectRun: (projId, runId) => options.selectProjectRun?.(projId || state.selection?.projectId || "", runId || ""),
+      async bindExternalSession({ runtime, sessionId, turnId }) {
+        try {
+          const res = await request("/api/agent/bindings", {
+            method: "POST",
+            selection: {},
+            runScoped: false,
+            body: {
+              projectId: state.selection?.projectId || undefined,
+              runtime,
+              sessionId,
+              turnId,
+            },
+          });
+          if (res?.status === "bound" && res?.runId) {
+            await options.reloadCatalog?.();
+            options.selectProjectRun?.(res.projectId || state.selection?.projectId || "", res.runId);
+            void loadAgentArchitecture({ force: true, projectId: res.projectId || state.selection?.projectId || "" });
+            return { ok: true, runId: res.runId };
+          }
+          return { ok: false };
+        } catch {
+          return { ok: false };
+        }
       },
       verifyRequest() { void verifyAgentRequest(); },
       reconcileDecision() {
@@ -2162,6 +2330,17 @@ export function createLiveWorkspaceController(options) {
     renderAgentDesign();
     agentGoal?.focus();
   });
+  chatHostSelect?.addEventListener("change", () => {
+    if (agentHost) agentHost.value = chatHostSelect.value;
+    updateAgentControls();
+    desktop?.render();
+  });
+  agentHost?.addEventListener("change", () => {
+    if (chatHostSelect) chatHostSelect.value = agentHost.value;
+    updateAgentControls();
+    desktop?.render();
+  });
+  chatSwitchRepoBtn?.addEventListener("click", () => options.openProjects?.());
   app.querySelectorAll("[data-uw-view]").forEach((node) => node.addEventListener("click", () => setView(node.dataset.uwView)));
   app.querySelector("[data-uw-project-switch]")?.addEventListener("click", options.openProjects);
   app.querySelector("[data-uw-nav-open]")?.addEventListener("click", () => { app.querySelector("[data-uw-navigation]")?.setAttribute("data-open", "true"); app.querySelector("[data-uw-nav-open]")?.setAttribute("aria-expanded", "true"); app.querySelector("[data-uw-nav-close]")?.focus(); });
@@ -2342,8 +2521,10 @@ export function createLiveWorkspaceController(options) {
   return {
     initialView: state.externalView === "graph" ? "run" : state.externalView === "repository" ? "repository" : "workspace",
     update({ snapshot, project, selection, tasks, fallbackStages, origin }) {
+      const prevProjectId = state.selection?.projectId || "";
       const key = [selection.projectId || "", selection.runId || ""].join("\u001f");
       const changed = key !== state.selectionKey;
+      const projectChanged = (selection.projectId || "") !== prevProjectId;
       if (changed) {
         generation += 1; materialGeneration += 1;
         for (const controller of pendingControllers) controller.abort();
@@ -2353,15 +2534,18 @@ export function createLiveWorkspaceController(options) {
         try { const saved = JSON.parse(win.sessionStorage?.getItem(commandStorageKey()) || "null"); if (saved?.nonce && saved?.targetIdentity) state.command = { ...saved, busy: false }; } catch {}
       }
       state.snapshot = snapshot; state.project = project; state.selection = selection; state.tasks = tasks || []; state.fallbackStages = fallbackStages || []; state.origin = state.workspace?.source?.recordOrigin || origin;
+      if (project?.displayName) state.agentServerProjectLabel = project.displayName;
       state.language = options.language();
       syncDockedMetaCopy();
       syncRestoreChatLabel();
+      if (projectChanged) void loadAgentArchitecture({ force: true, projectId: selection.projectId || "" });
+      enhanceRepositorySurface();
       renderer.render();
       renderAgentFollowthrough();
       if (!state.externalView || changed) void refresh({ force: changed });
       ensureMaterial(); ensureRecords();
     },
-    show(view) { state.externalView = view === "run" ? "graph" : view === "repository" ? "repository" : null; renderer.render(); },
+    show(view) { state.externalView = view === "run" ? "graph" : view === "repository" ? "repository" : null; enhanceRepositorySurface(); renderer.render(); },
     dispose() { disposed = true; win.clearInterval(interval); if (agentInterval !== null) win.clearInterval(agentInterval);
       if (agent.hostRetryTimer) win.clearTimeout(agent.hostRetryTimer);
       doc.removeEventListener("keydown", onKey); for (const controller of pendingControllers) controller.abort(); },

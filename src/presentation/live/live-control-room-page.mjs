@@ -6205,6 +6205,15 @@ const CLIENT_SCRIPT = String.raw`(() => {
       return;
     }
     if (!selectedRunId) {
+      renderRepositoryView({ repository: {} });
+      liveWorkspaceController?.update({
+        snapshot: null,
+        project,
+        selection: { projectId: selectedProjectId, runId: "" },
+        tasks: [],
+        fallbackStages: [],
+        origin: "governed_run",
+      });
       showEmpty("This project has no governed runs yet. Start a Meta_Kim task and its session will appear here.");
       setHubStatus(project.displayName + " · waiting for its first governed run");
       return;
@@ -6930,6 +6939,12 @@ const CLIENT_SCRIPT = String.raw`(() => {
     language: () => currentLanguage,
     showLegacyView: (view) => setWorkView(view, { persist: false }),
     openProjects: () => setDialogOpen(sessionsDialog, true),
+    getCatalog: () => projectCatalog,
+    selectProjectRun: (projId, runId) => { void switchSelection(projId, runId || "", { updateUrl: true }); },
+    reloadCatalog: () => fetch(endpointForSelection("/api/projects", { includeRun: false }), { headers: { accept: "application/json" }, cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((cat) => (cat?.projects ? applyProjectCatalog(cat, { refresh: true }) : null))
+      .catch(() => null),
     openGraph: (nodeId) => {
       setWorkView("run", { persist: false });
       if (nodeId) { selectedNodeId = nodeId; updateSelectedNodeVisuals(); setInspectorOpen(true); }
@@ -7825,6 +7840,7 @@ export function renderLiveControlRoomPage({
       <details class="work-view-menu"><summary class="topbar-button" data-i18n-en="Other views" data-i18n-zh="其他视图">其他视图</summary><div class="work-view-switcher" role="group" aria-label="Views and help"><div class="work-view-tabs" role="tablist" aria-label="Optional work surface views"><button class="work-view-tab" id="work-view-run" type="button" role="tab" aria-controls="run-view" aria-selected="true" data-live-work-view="run" data-i18n-en="Flow map" data-i18n-zh="流程图">流程图</button><button class="work-view-tab" id="work-view-workspace" type="button" role="tab" aria-controls="workspace-view" aria-selected="false" tabindex="-1" data-live-work-view="workspace" data-i18n-en="Workspace" data-i18n-zh="工作台">工作台</button><button class="work-view-tab" id="work-view-repository" type="button" role="tab" aria-controls="repository-view" aria-selected="false" tabindex="-1" data-live-work-view="repository" data-i18n-en="Repository" data-i18n-zh="仓库">仓库</button></div><div class="work-view-utilities" role="group" aria-label="Help and session information"><button class="topbar-button" type="button" data-live-open-help data-i18n-en="Help" data-i18n-zh="使用帮助">使用帮助</button><button class="topbar-button" type="button" data-live-open-info data-i18n-en="Session info" data-i18n-zh="运行信息">运行信息</button></div></div></details>
       <div class="topbar-actions"><div class="connection" aria-live="polite"><span class="connection-dot" data-live-connection-dot aria-hidden="true"></span><span data-live-connection data-i18n-en="Connecting…" data-i18n-zh="正在连接…">正在连接…</span></div><button class="topbar-button" type="button" data-live-open-sessions data-i18n-en="Run records" data-i18n-zh="运行记录">运行记录</button><select class="topbar-button" data-live-language-select aria-label="Interface language"><option value="zh">中文</option><option value="en">English</option><option value="ja">日本語</option><option value="ko">한국어</option></select><button class="topbar-button" type="button" data-live-open-help aria-label="Help" title="Help">?</button><button class="topbar-button" type="button" data-live-open-info aria-label="Session info" title="Session info">i</button></div>
     </header>
+    <nav class="uw-top-flow-ribbon" data-uw-top-flow aria-label="全局执行进度"></nav>
     ${renderLiveWorkspaceNavigation()}
     <main class="main" id="live-main" tabindex="-1">
       <div class="sr-only" data-live-region aria-live="polite"></div>

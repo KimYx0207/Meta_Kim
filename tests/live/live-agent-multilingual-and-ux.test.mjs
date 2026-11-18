@@ -154,13 +154,53 @@ test("project architecture PRD baseline extracts Level-1 system framework and Le
   assert.equal(prd.recordOrigin, "repository_architecture_baseline");
   assert.equal(prd.approvalClaimed, false);
   assert.equal(prd.dagValid, true, "measured cross-module dependencies must form a valid acyclic DAG");
-  assert.ok(prd.system.title.includes("Meta_Kim"));
+  assert.equal(prd.system.title, "Meta_Kim · 系统框架");
+  assert.equal(prd.system.status, "completed");
+  assert.equal(prd.system.completedModuleCount, prd.modules.length);
   assert.ok(Array.isArray(prd.system.layers) && prd.system.layers.length >= 4);
   assert.ok(prd.modules.length >= 8, `expected >= 8 subsystems, got ${prd.modules.length}`);
   const serialized = JSON.stringify(prd);
   assert.doesNotMatch(serialized, /[A-Za-z]:\\\\/u, "must never leak raw Windows absolute paths");
   const presentation = prd.modules.find((m) => m.id === "presentation-workspace");
   assert.ok(presentation, "presentation-workspace subsystem must be discovered");
+  assert.ok(Array.isArray(presentation.features) && presentation.features.length >= 2);
   assert.ok(presentation.dependencies.includes("app-live-projection"),
     "presentation layer must reflect its real import dependency on app-live-projection");
+});
+
+test("repository facts, bidirectional agent session discovery, top flow ribbon, primary nav 仓库, and visible channel picker respect governance boundaries", async () => {
+  const {
+    inspectRepositoryFacts,
+    discoverBidirectionalAgentSessions,
+    AGENT_REPOSITORY_FACTS_SCHEMA,
+    AGENT_BINDINGS_SCHEMA,
+  } = await import("../../src/application/agent/agent-repository-and-binding-service.mjs");
+  const { renderLiveWorkspaceNavigation, renderLiveWorkspaceSurface } = await import("../../src/presentation/live/live-workspace-view.mjs");
+  const { renderLiveControlRoomPage } = await import("../../src/presentation/live/live-control-room-page.mjs");
+
+  const pageHtml = renderLiveControlRoomPage();
+  assert.match(pageHtml, /data-uw-top-flow/, "Single-row global execution progress bar must sit right below topbar");
+  const navHtml = renderLiveWorkspaceNavigation();
+  assert.match(navHtml, /data-uw-view="repository"[^>]*>.*仓库/s, "Repository view must sit in primary left navigation");
+  const surfaceHtml = renderLiveWorkspaceSurface();
+  assert.match(surfaceHtml, /data-uw-chat-host/, "Visible channel picker must be mounted in chat composer");
+  assert.match(surfaceHtml, /data-uw-open-binding/, "Bidirectional binding trigger must be mounted in chat header");
+  assert.match(surfaceHtml, /data-uw-chat-switch-repo/, "Repository switcher button must be mounted in chat scope bar");
+
+  const facts = inspectRepositoryFacts({ projectRoot: repoRoot, startupProjectRoot: repoRoot });
+  assert.equal(facts.schemaVersion, AGENT_REPOSITORY_FACTS_SCHEMA);
+  assert.equal(facts.projectName, "Meta_Kim");
+  assert.equal(facts.isExecutionBoundRepo, true);
+  assert.equal(facts.hasGit, true);
+  assert.ok(facts.branch, "Git branch must be measured");
+  assert.doesNotMatch(JSON.stringify(facts), /[A-Za-z]:\\\\/u, "Repository facts must not leak raw host paths");
+
+  const bindings = await discoverBidirectionalAgentSessions({ projectRoot: repoRoot, startupProjectRoot: repoRoot });
+  assert.equal(bindings.schemaVersion, AGENT_BINDINGS_SCHEMA);
+  assert.equal(bindings.projectName, "Meta_Kim");
+  assert.equal(bindings.bidirectionalModes.forwardCallFromApp, true);
+  assert.equal(bindings.bidirectionalModes.reverseAttachFromExternalAgent, true);
+  assert.ok(Array.isArray(bindings.enrolledRuntimes));
+  assert.ok(Array.isArray(bindings.externalSessions));
+  assert.doesNotMatch(JSON.stringify(bindings), /[A-Za-z]:\\\\/u, "Session binding discovery must not leak raw host paths");
 });

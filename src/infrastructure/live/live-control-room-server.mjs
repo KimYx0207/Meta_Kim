@@ -889,7 +889,7 @@ export function createLiveControlRoomServer(options = {}) {
       return;
     }
 
-    if (["/api/agent/architecture", "/api/agent/capabilities", "/api/agent/hosts", "/api/agent/start", "/api/agent/requests", "/api/agent/decisions", "/api/agent/designs", "/api/agent/design-drafts", "/api/agent/handoff", "/api/agent/execution", "/api/agent/acceptance"].includes(parsed.pathname)) {
+    if (["/api/agent/architecture", "/api/agent/repository", "/api/agent/bindings", "/api/agent/capabilities", "/api/agent/hosts", "/api/agent/start", "/api/agent/requests", "/api/agent/decisions", "/api/agent/designs", "/api/agent/design-drafts", "/api/agent/handoff", "/api/agent/execution", "/api/agent/acceptance"].includes(parsed.pathname)) {
 
       if (!agentEntryEnabled) {
         jsonResponse(response, 403, safeError("agent_entry_not_enabled")); return;
@@ -904,17 +904,20 @@ export function createLiveControlRoomServer(options = {}) {
       const handoffRequest = parsed.pathname === "/api/agent/handoff";
       const executionRequest = parsed.pathname === "/api/agent/execution";
       const acceptanceRequest = parsed.pathname === "/api/agent/acceptance";
+      const bindingsRequest = parsed.pathname === "/api/agent/bindings";
       const designWrite = designRequest && request.method === "POST";
       const draftWrite = draftRequest && request.method === "POST";
       const handoffWrite = handoffRequest && request.method === "POST";
       const executionWrite = executionRequest && request.method === "POST";
       const acceptanceWrite = acceptanceRequest && request.method === "POST";
-      const requiredMethod = designRequest || draftRequest || handoffRequest || executionRequest || acceptanceRequest ? "GET, POST" : startRequest || decisionRequest ? "POST" : "GET";
-      if (designRequest || draftRequest || handoffRequest || executionRequest || acceptanceRequest ? !["GET", "POST"].includes(request.method) : request.method !== requiredMethod) {
+      const bindingsWrite = bindingsRequest && request.method === "POST";
+      const dualMethodRoute = designRequest || draftRequest || handoffRequest || executionRequest || acceptanceRequest || bindingsRequest;
+      const requiredMethod = dualMethodRoute ? "GET, POST" : startRequest || decisionRequest ? "POST" : "GET";
+      if (dualMethodRoute ? !["GET", "POST"].includes(request.method) : request.method !== requiredMethod) {
         response.setHeader("allow", requiredMethod);
         jsonResponse(response, 405, safeError("method_not_allowed")); return;
       }
-      if ((startRequest || decisionRequest || designWrite || draftWrite || handoffWrite || executionWrite || acceptanceWrite) && (!requestHasSameOrigin(request, server)
+      if ((startRequest || decisionRequest || designWrite || draftWrite || handoffWrite || executionWrite || acceptanceWrite || bindingsWrite) && (!requestHasSameOrigin(request, server)
 
         || !String(request.headers["content-type"] || "").toLowerCase().startsWith("application/json"))) {
         jsonResponse(response, 403, safeError(startRequest
@@ -923,18 +926,72 @@ export function createLiveControlRoomServer(options = {}) {
               ? "agent_design_same_origin_json_required" : draftWrite
                 ? "agent_design_draft_same_origin_json_required" : handoffWrite
                   ? "agent_handoff_same_origin_json_required" : acceptanceWrite
-                    ? "agent_acceptance_same_origin_json_required" : "agent_execution_same_origin_json_required")); return;
+                    ? "agent_acceptance_same_origin_json_required" : bindingsWrite
+                      ? "agent_bindings_same_origin_json_required" : "agent_execution_same_origin_json_required")); return;
 
       }
+      const resolveTrustedAgentProjectRoot = async (requestedId) => {
+        if (!requestedId || requestedId === defaultBoundProjectId) return options.projectRoot || null;
+        if (!hubCatalog || typeof hubCatalog.resolveProject !== "function") return options.projectRoot || null;
+        const enrolled = await hubCatalog.resolveProject(requestedId);
+        return enrolled?.repoRoot || null;
+      };
       try {
         if (parsed.pathname === "/api/agent/architecture") {
+          const targetProjectRoot = await resolveTrustedAgentProjectRoot(parsed.searchParams.get("projectId"));
+          if (!targetProjectRoot) {
+            jsonResponse(response, 404, safeError("agent_project_not_enrolled")); return;
+          }
           const architecture = typeof agentStartService.getArchitecturePrd === "function"
-            ? await agentStartService.getArchitecturePrd()
+            ? await agentStartService.getArchitecturePrd({ targetProjectRoot })
             : null;
           if (!architecture) {
             jsonResponse(response, 404, safeError("agent_architecture_not_available")); return;
           }
           jsonResponse(response, 200, architecture);
+        } else if (parsed.pathname === "/api/agent/repository") {
+          const targetProjectRoot = await resolveTrustedAgentProjectRoot(parsed.searchParams.get("projectId"));
+          if (!targetProjectRoot || typeof agentStartService.getRepositoryFacts !== "function") {
+            jsonResponse(response, 404, safeError("agent_repository_not_available")); return;
+          }
+          const facts = await agentStartService.getRepositoryFacts({ targetProjectRoot });
+          if (!facts) {
+            jsonResponse(response, 404, safeError("agent_repository_not_available")); return;
+          }
+          jsonResponse(response, 200, facts);
+        } else if (bindingsRequest) {
+          if (bindingsWrite) {
+            if (typeof agentStartService.bindSession !== "function") {
+              jsonResponse(response, 409, safeError("agent_bindings_not_available")); return;
+            }
+            const body = await readJsonBody(request, maxJsonBytes);
+            const targetProjectRoot = await resolveTrustedAgentProjectRoot(body?.projectId || null);
+            if (!targetProjectRoot) {
+              jsonResponse(response, 404, safeError("agent_project_not_enrolled")); return;
+            }
+            const bound = await agentStartService.bindSession({
+              targetProjectRoot,
+              homeDir: options.homeDir,
+              runtime: body?.runtime,
+              sessionId: body?.sessionId,
+              turnId: body?.turnId,
+            });
+            if (bound?.status !== "bound") {
+              jsonResponse(response, 400, safeError(bound?.reason || "agent_binding_failed")); return;
+            }
+            hubCatalogCache = null;
+            jsonResponse(response, 200, bound);
+          } else {
+            const targetProjectRoot = await resolveTrustedAgentProjectRoot(parsed.searchParams.get("projectId"));
+            if (!targetProjectRoot || typeof agentStartService.getSessionBindings !== "function") {
+              jsonResponse(response, 404, safeError("agent_bindings_not_available")); return;
+            }
+            const bindings = await agentStartService.getSessionBindings({
+              targetProjectRoot,
+              homeDir: options.homeDir,
+            });
+            jsonResponse(response, 200, bindings || { externalSessions: [], enrolledRuntimes: [] });
+          }
         } else if (parsed.pathname === "/api/agent/capabilities") {
           // Registry inventory says what this installation declares. Only
           // observed Run nodes may claim execution, completion or results.

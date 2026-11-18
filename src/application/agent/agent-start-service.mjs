@@ -28,6 +28,11 @@ import {
 import { normalizeDesign } from "../../domain/runtime/agent-design-contract.mjs";
 import { discoverNativeHostInventory } from "./native-host-inventory.mjs";
 import { discoverProjectArchitecturePrd } from "./project-architecture-prd-service.mjs";
+import {
+  bindExternalAgentSession,
+  discoverBidirectionalAgentSessions,
+  inspectRepositoryFacts,
+} from "./agent-repository-and-binding-service.mjs";
 
 const MANIFEST_PATH = fileURLToPath(new URL("../../../config/agent-hosts.json", import.meta.url));
 const DEPENDENCY_REGISTRY_PATH = fileURLToPath(new URL(
@@ -512,13 +517,30 @@ export function createAgentStartService({
     return promise;
   }
 
-  async function getArchitecturePrd({ forceRefresh = false } = {}) {
-    if (!forceRefresh && architecturePrdCache && Date.now() - architecturePrdCache.at < probeTtlMs) {
+  async function getArchitecturePrd({ forceRefresh = false, targetProjectRoot = null } = {}) {
+    const inspectRoot = typeof targetProjectRoot === "string" && targetProjectRoot.trim() ? targetProjectRoot : root;
+    const isDefaultRoot = path.resolve(inspectRoot) === path.resolve(root);
+    if (!forceRefresh && isDefaultRoot && architecturePrdCache && Date.now() - architecturePrdCache.at < probeTtlMs) {
       return architecturePrdCache.value;
     }
-    const value = discoverProjectArchitecturePrd({ projectRoot: root });
-    architecturePrdCache = { at: Date.now(), value };
+    const value = discoverProjectArchitecturePrd({ projectRoot: inspectRoot });
+    if (isDefaultRoot) architecturePrdCache = { at: Date.now(), value };
     return value;
+  }
+
+  async function getRepositoryFacts({ targetProjectRoot = null } = {}) {
+    const inspectRoot = typeof targetProjectRoot === "string" && targetProjectRoot.trim() ? targetProjectRoot : root;
+    return inspectRepositoryFacts({ projectRoot: inspectRoot, startupProjectRoot: root });
+  }
+
+  async function getSessionBindings({ targetProjectRoot = null, homeDir = environment.META_KIM_LIVE_HOME } = {}) {
+    const inspectRoot = typeof targetProjectRoot === "string" && targetProjectRoot.trim() ? targetProjectRoot : root;
+    return discoverBidirectionalAgentSessions({ projectRoot: inspectRoot, homeDir: homeDir || undefined });
+  }
+
+  async function bindSession({ targetProjectRoot = null, homeDir = environment.META_KIM_LIVE_HOME, runtime, sessionId, turnId } = {}) {
+    const inspectRoot = typeof targetProjectRoot === "string" && targetProjectRoot.trim() ? targetProjectRoot : root;
+    return bindExternalAgentSession({ projectRoot: inspectRoot, homeDir: homeDir || undefined, runtime, sessionId, turnId });
   }
 
   async function prepareProfessionalReference(goal) {
@@ -860,6 +882,7 @@ export function createAgentStartService({
   }
 
   return Object.freeze({ getHosts, getProfessionalDirectory, getNativeDirectory, getArchitecturePrd,
+    getRepositoryFacts, getSessionBindings, bindSession,
     start, inspect, startDesignDraft, inspectDesignDraft, close,
     // Host-only: the verified Kim_Service method is never sent to the UI.
     getProfessionalReference: prepareProfessionalReference });

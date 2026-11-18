@@ -24,6 +24,7 @@ import { createAgentDesignStore } from "./agent-design-store.mjs";
 import { createAgentHandoffStore } from "./agent-handoff-store.mjs";
 import { createAgentDesignDraftStore } from "./agent-design-draft-store.mjs";
 import { normalizeDesign } from "../../domain/runtime/agent-design-contract.mjs";
+import { discoverProjectArchitecturePrd } from "./project-architecture-prd-service.mjs";
 
 const PROFILE_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/u;
 const MAX_RECORD_BYTES = 64 * 1024;
@@ -703,12 +704,22 @@ export function createAgentWorkflowService({ projectRoot, agentStartService, pro
   const getNativeDirectory = (...args) => typeof agentStartService.getNativeDirectory === "function"
     ? agentStartService.getNativeDirectory(...args)
     : Promise.resolve({ nativeHosts: [], nativeCapabilities: [] });
-  const getArchitecturePrd = (...args) => typeof agentStartService.getArchitecturePrd === "function"
-    ? agentStartService.getArchitecturePrd(...args)
+  const getArchitecturePrd = (opts = {}, ...rest) => typeof agentStartService.getArchitecturePrd === "function"
+    ? agentStartService.getArchitecturePrd(opts, ...rest)
+    : Promise.resolve(discoverProjectArchitecturePrd({ projectRoot: opts?.targetProjectRoot || realRoot }));
+  const getRepositoryFacts = (...args) => typeof agentStartService.getRepositoryFacts === "function"
+    ? agentStartService.getRepositoryFacts(...args)
     : Promise.resolve(null);
+  const getSessionBindings = (...args) => typeof agentStartService.getSessionBindings === "function"
+    ? agentStartService.getSessionBindings(...args)
+    : Promise.resolve(null);
+  const bindSession = (...args) => typeof agentStartService.bindSession === "function"
+    ? agentStartService.bindSession(...args)
+    : Promise.resolve({ status: "blocked", reason: "not_available" });
 
   return Object.freeze({
     getHosts, getProfessionalDirectory, getNativeDirectory, getArchitecturePrd,
+    getRepositoryFacts, getSessionBindings, bindSession,
     start, inspect, recordDecision, inspectDesign, recordDesign,
     inspectDesignDraft, startDesignDraft, inspectHandoff, prepareHandoff, close,
     getTrustedExecutionInput, getTrustedProfessionalMethod,
