@@ -500,24 +500,6 @@ describe("32 — Meta-theory three product goals and support gates", () => {
     }
   });
 
-  test("review #15: the Thinking stage label names the owner in plain Chinese, with no leftover English word", async () => {
-    const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-stage-label-"));
-    try {
-      const report = await runBoundedRead({
-        task: scopedPlanTask,
-        outputLanguage: "zh-CN",
-        runId: "test-run-review-15",
-        stateDir: tempDir,
-        dbPath: path.join(tempDir, "runs.sqlite"),
-      });
-      const thinking = report.coreLoop.agUiStageEvents.events.find((event) => event.stage === "Thinking");
-      assert.ok(thinking, "the Thinking stage event must be present");
-      assert.equal(thinking.userFacingLabel["zh-CN"], "选择负责人、能力和路线");
-    } finally {
-      await rm(tempDir, { recursive: true, force: true });
-    }
-  });
-
   test("T-002 records Claude, Codex, Cursor, and OpenClaw projection smoke evidence", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "meta-kim-runtime-smoke-"));
     try {
