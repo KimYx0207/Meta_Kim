@@ -7181,7 +7181,7 @@ button { color: inherit; }
 .work-surface-header { min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-roomy); padding: var(--sp-roomy) var(--sp-section); border-bottom: 1px solid var(--line); background: #101725; }
 .work-surface-header h2 { margin: 0; color: var(--text); font-size: var(--fs-view-title); }
 .work-surface-header p { max-width: 72ch; margin: var(--sp-cozy) 0 0; overflow-wrap: anywhere; color: var(--muted); font-size: var(--fs-entity-body); line-height: var(--lh-normal); font-family: var(--font-ui); }
-.surface-state { flex: 0 0 auto; padding: var(--sp-tight) var(--sp-snug); border: 1px solid #385275; border-radius: var(--radius-sm); color: var(--completion-bright); background: rgba(91,140,255,.08); font-size: var(--fs-entity-body); font-family: var(--font-ui); text-transform: none; }
+.surface-state { flex: 0 0 auto; border: 1px solid #385275; border-radius: var(--radius-sm); color: var(--completion-bright); background: rgba(91,140,255,.08); font-size: var(--fs-entity-body); font-family: var(--font-ui); text-transform: none; }
 .repository-view { display: grid; grid-template-rows: auto minmax(0, 1fr); }
 .repository-layout { display: grid; grid-template-columns: minmax(240px,.6fr) minmax(0,1.4fr); min-height: 0; overflow: auto; }
 .repository-layout:has(.repository-empty) { grid-template-columns: minmax(0,1fr); align-content: start; }
