@@ -7421,7 +7421,7 @@ button { color: inherit; }
   .graph-canvas[data-semantic-zoom="cell"] .node-card .node-wave-badge, .graph-canvas[data-semantic-zoom="cell"] .node-card .node-declared-chip { display: none; }
   .graph-canvas[data-semantic-zoom="cell"] .node-card .node-identity-row { display: block; flex: 1 0 auto; min-height: calc(var(--cell-title-fs) * 2.56); }
   .graph-canvas[data-semantic-zoom="cell"] .node-card .node-glyph, .graph-canvas[data-semantic-zoom="cell"] .node-card .node-summary { display: none; }
-  .graph-canvas[data-semantic-zoom="cell"] .node-card .node-title { position: static; display: -webkit-box; height: auto; padding: 0; color: var(--text); font-weight: var(--weight-semibold); font-size: var(--cell-title-fs); line-height: var(--lh-flat); font-family: inherit; }
+  .graph-canvas[data-semantic-zoom="cell"] .node-card .node-title { position: static; display: -webkit-box; height: auto; padding: 0 0 var(--sp-hairline); color: var(--text); font-weight: var(--weight-semibold); font-size: var(--cell-title-fs); line-height: var(--lh-flat); font-family: inherit; }
 .graph-canvas[data-layout-kind="dependency"][data-semantic-zoom="cell"] .node-card { height: var(--readable-cell-height) !important; min-height: var(--readable-cell-height) !important; }
 .graph-canvas[data-layout-kind="dependency"][data-semantic-zoom="cell"] .node-card .node-identity-row { flex: 1 1 auto; min-height: 0; }
 .graph-canvas[data-layout-kind="dependency"][data-semantic-zoom="cell"] .node-card .node-title { -webkit-line-clamp: 3; }
