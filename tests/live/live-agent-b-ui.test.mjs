@@ -81,11 +81,13 @@ test("user-facing five phases are a conservative projection of the original eigh
   assert.equal(projectLiveUserPhases([{ id: "meta-review", status: "running" }])[3].status, "running");
   const markup = renderLiveWorkspaceSurface();
   assert.match(markup, /data-uw-phases/);
-  assert.match(markup, /五步治理进度/);
+  // Review #1 moved the five phases and eight stages into one collapsed details
+  // block; the six-step ribbon is the only user progress.
+  assert.match(markup, /详情 · 所选 Run 的原始阶段记录/);
   assert.match(markup, /研究草稿 · 尚未进入正式 Run/);
   assert.match(markup, /上方研究草稿或采纳回执不会直接推进这里/);
   assert.match(markup, /href="#uw-user-flow"/);
-  assert.match(markup, /展开 Meta 治理八阶段/);
+  assert.match(markup, /<details class="uw-run-details">[\s\S]*data-uw-stages[\s\S]*<\/details>/);
   assert.match(markup, /data-uw-agent-decision-receipt/);
   assert.match(markup, /data-uw-agent-strategy/);
   assert.match(markup, /data-uw-agent-choice-reason/);

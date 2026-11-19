@@ -32,15 +32,17 @@ const byClass = (node, name) => walk(node, child => child.className?.split(" ").
 const byText = (node, fragment) => walk(node, child => String(child.textContent || "").includes(fragment));
 const findButton = (node, fragment) => byText(node, fragment).find(child => child.tagName === "BUTTON");
 
-function fixture() {
+function fixture({ ribbon = false } = {}) {
   const elements = Object.fromEntries(["agent-chat", "chat-thread", "chat-form", "chat-input", "chat-send",
     "chat-project", "chat-connection", "chat-guidance", "chat-target", "chat-target-text", "chat-target-clear",
-    "live-viewport", "live-caption", "live-count", "live-source", "agent-status", "chat-announcement"]
+    "live-viewport", "live-caption", "live-count", "live-source", "agent-status", "chat-announcement", "open-binding", "binding-drawer"]
     .map(name => [name, fakeNode(name === "chat-input" ? "textarea" : "div")]));
   const tabs = ["flow", "knowledge", "agents"].map(name => fakeNode("button", name));
   const doc = { createElement: tag => fakeNode(tag) };
   const navigationInventory = fakeNode();
-  const shell = { querySelector(selector) { return selector === "[data-uw-agent-inventory]" ? navigationInventory : null; } };
+  const topFlow = ribbon ? fakeNode("nav") : null;
+  const shell = { querySelector(selector) {
+    return selector === "[data-uw-agent-inventory]" ? navigationInventory : selector === "[data-uw-top-flow]" ? topFlow : null; } };
   const root = { ownerDocument: doc,
     closest(selector) { return selector === "[data-unified-workspace]" ? shell : null; },
     querySelector(selector) { return elements[/^\[data-uw-(.+)\]$/u.exec(selector)?.[1]] || null; },
@@ -94,6 +96,7 @@ function fixture() {
     reconcileDesign: () => calls.push(["reconcileDesign"]),
     prepareHandoff: () => calls.push(["prepareHandoff"]),
     reconcileHandoff: () => calls.push(["reconcileHandoff"]),
+    openPrdPage: () => calls.push(["openPrdPage"]),
   };
   desktop = createUnifiedAgentDesktop({ root, state, agent, design, nativeDraft, handoff,
     copy: key => key, buildGraph: buildLivePrdGraph,
@@ -106,8 +109,20 @@ function fixture() {
       const deeper = fakeNode("button"); deeper.className = "stub-depth"; deeper.addEventListener("click", () => onDepthChange(3)); wrapper.append(deeper);
       return wrapper;
     }, callbacks });
-  return { elements, tabs, state, agent, design, nativeDraft, handoff, callbacks, calls, desktop, navigationInventory };
+  return { elements, tabs, state, agent, design, nativeDraft, handoff, callbacks, calls, desktop, navigationInventory, topFlow };
 }
+
+const GOVERNED_STAGE_IDS = ["critical", "fetch", "thinking", "execution", "review", "meta-review", "verification", "evolution"];
+function selectGovernedRun(env, statuses, design = { status: "not_registered" }) {
+  env.state.origin = "governed_run";
+  env.state.selection = { projectId: "project", runId: "run-1" };
+  env.state.snapshot = { run: { id: "run-1", status: "running" } };
+  env.state.workspace = { runId: "run-1", design,
+    stages: GOVERNED_STAGE_IDS.map((id, index) => ({ id, label: id, status: statuses[index] || "pending" })) };
+  env.state.tasks = [];
+}
+const ribbonSteps = env => byClass(env.topFlow, "uw-top-flow-step");
+const stepName = step => byClass(step, "uw-top-flow-name")[0]?.textContent;
 
 test("the sibling navigation renders its own Agent/Skill/MCP/Hook inventory", () => {
   const env = fixture();
@@ -165,15 +180,45 @@ test("knowledge graph renders strictly Two-Level System Design PRD and never ren
   env.tabs[1].click();
   assert.equal(byText(env.elements["live-viewport"], "客户端能力").length, 0, "Host capabilities must never appear as a PRD graph tab");
   assert.equal(byText(env.elements["live-viewport"], "Pi Coding Agent").length, 0, "Host names must never be drawn as PRD nodes");
-  for (const entry of ["Meta_Kim · 系统整体框架", "一级 PRD · 系统框架", "Canonical 治理真值核", "Agent B1-B4 编排引擎"]) {
+  for (const entry of ["Meta_Kim · 系统整体框架", "Canonical 治理真值核", "Agent B1-B4 编排引擎"]) {
     assert.ok(byText(env.elements["live-viewport"], entry).length, `PRD graph missing ${entry}`);
   }
+  // Review #6: the Level-1 card is the selected node's detail, not a second copy of the PRD.
+  assert.equal(byText(env.elements["live-viewport"], "一级 PRD · 系统框架").length, 0);
+  findButton(env.elements["live-viewport"], "Meta_Kim · 系统整体框架").click();
+  assert.ok(byText(env.elements["live-viewport"], "一级 PRD · 系统框架").length, "Selecting the system node shows its Level-1 detail");
   findButton(env.elements["live-viewport"], "Agent B1-B4 编排引擎").click();
   for (const detail of ["二级 PRD · 系统详情", "功能定位与用户价值", "上游输入（用户操作 / 前置条件）", "下游产出（页面反馈 / 交付结果）"]) {
     assert.ok(byText(env.elements["live-viewport"], detail).length, `Level-2 module spec missing ${detail}`);
   }
-  findButton(env.elements["live-viewport"], "完整产品设计 PRD").click();
-  assert.ok(byText(env.elements["live-viewport"], "二级 PRD · 系统详情").length);
+  // The whole PRD lives on the PRD page; the panel links there instead of repeating it.
+  findButton(env.elements["live-viewport"], "查看完整 PRD").click();
+  assert.deepEqual(env.calls.at(-1), ["openPrdPage"]);
+});
+
+// Review #20: an input method composes a word inside a native candidate window
+// anchored to the search field, and rendering the catalog replaces that field.
+// Filtering on every composition step cut the word off and could strand that
+// window over the drawer, so the query applies once the word is composed.
+test("review #20: typing through an input method keeps the search field until the word is composed", () => {
+  const env = fixture();
+  env.state.capabilityCatalog = {
+    agents: [],
+    nativeHosts: [{ id: "codex", label: "Codex CLI", status: "detected" }],
+    nativeCapabilities: [{ id: "special", label: "Unique Review Skill", hostId: "codex", kind: "skill", scope: "global", installationState: "configured" }],
+  };
+  env.desktop.render();
+  const field = () => byClass(env.navigationInventory, "uw-agent-inventory-search")[0];
+  const composing = field();
+  composing.value = "uni";
+  composing.dispatch("input", { isComposing: true });
+  assert.equal(field(), composing, "the field an input method is composing in must stay in place");
+  assert.equal(byClass(env.navigationInventory, "uw-agent-inventory-body")[0].dataset.flyoutOpen, "false",
+    "a half-composed word filters nothing");
+  composing.value = "Unique";
+  composing.dispatch("compositionend");
+  assert.equal(field().value, "Unique");
+  assert.ok(byText(env.navigationInventory, "已筛出").length, "the composed word filters the catalog");
 });
 
 test("inventory search and category clicks open the spacious side flyout panel and inspect host capabilities in-place", () => {
@@ -219,7 +264,7 @@ test("inventory search and category clicks open the spacious side flyout panel a
   byClass(env.navigationInventory, "uw-native-host-capability")[0].click();
   assert.equal(env.desktop.mode, "flow", "inspecting a host capability stays in the side flyout without hijacking the PRD graph");
   assert.ok(byText(env.navigationInventory, "能力配置详情 · Unique Review Skill").length);
-  for (const fact of ["所属宿主", "配置范围", "用户配置", "尚未从原生客户端确认", "当前目录记录未证明实际调用"])
+  for (const fact of ["所属客户端", "配置范围", "用户配置", "尚未从原生客户端确认", "当前目录记录未证明实际调用"])
     assert.ok(byText(env.navigationInventory, fact).length, `a selected capability must reveal ${fact} inside the flyout`);
 });
 
@@ -362,4 +407,148 @@ test("rejected or unconfirmed Agent decisions keep the original composer text an
   assert.equal(elements["chat-input"].value, "请补充各个方案的真实验证依据");
   assert.equal(elements["chat-target"].hidden, false);
   assert.ok(byText(elements["chat-thread"], "你的文字已保留").length);
+});
+
+test("review #1: a selected governed Run shows the same six user steps, projected from its recorded stages", () => {
+  const env = fixture({ ribbon: true });
+  selectGovernedRun(env, ["completed", "completed", "in_progress"]);
+  env.desktop.render();
+  const steps = ribbonSteps(env);
+  assert.equal(steps.length, 6, "The eight raw stages never replace the six user steps");
+  assert.deepEqual(steps.map(stepName), ["明确目标", "方案比选", "拍板方案 B1", "产品设计 B2", "Subagent 执行 B3", "成果验收 B4"]);
+  assert.deepEqual(steps.map(step => step.dataset.state), ["completed", "completed", "running", "running", "planned", "planned"]);
+  selectGovernedRun(env, ["completed", "completed", "completed", "completed", "completed", "in_progress"], { status: "accepted" });
+  env.desktop.render();
+  assert.deepEqual(ribbonSteps(env).map(step => step.dataset.state), ["completed", "completed", "completed", "completed", "completed", "running"]);
+});
+
+test("review #1: without a governed Run the six steps follow the conversation, never an empty eight-stage list", () => {
+  const env = fixture({ ribbon: true });
+  env.desktop.render();
+  assert.deepEqual(ribbonSteps(env).map(stepName), ["明确目标", "方案比选", "拍板方案 B1", "产品设计 B2", "Subagent 执行 B3", "成果验收 B4"]);
+});
+
+// Code review: a stage recorded under another word for "underway" read as not
+// started, because only four words were recognised.
+test("review #1: a stage recorded under any started word never reads as not started", () => {
+  const env = fixture({ ribbon: true });
+  for (const word of ["active", "partial", "unproven"]) {
+    selectGovernedRun(env, ["completed", word]);
+    env.desktop.render();
+    assert.equal(ribbonSteps(env)[1].dataset.state, "running", word + " is a started stage");
+  }
+  selectGovernedRun(env, ["completed", "not_observed"]);
+  env.desktop.render();
+  assert.equal(ribbonSteps(env)[1].dataset.state, "planned", "a stage nothing has recorded stays planned");
+});
+
+test("review #13: step 05 carries its B3 marker like the other gated steps", () => {
+  const env = fixture({ ribbon: true });
+  env.desktop.render();
+  const names = ribbonSteps(env).map(stepName);
+  assert.equal(names[4], "Subagent 执行 B3");
+  assert.deepEqual(names.filter(name => /B[1-4]$/u.test(name)).map(name => name.slice(-2)), ["B1", "B2", "B3", "B4"]);
+});
+
+test("review #6: the progress ribbon carries no separate full run-graph button and its steps do not jump to it", () => {
+  const env = fixture({ ribbon: true });
+  selectGovernedRun(env, ["completed", "in_progress"]);
+  env.desktop.render();
+  assert.equal(byClass(env.topFlow, "uw-top-flow-graph-btn").length, 0);
+  assert.ok(!byText(env.topFlow, "完整运行图").length, "No ribbon text points at the run graph");
+  assert.equal(env.desktop.mode, "knowledge");
+  ribbonSteps(env)[1].click();
+  assert.equal(env.desktop.mode, "knowledge", "A step click keeps the current panel instead of opening the run graph");
+});
+
+function withBaselinePrd(env) {
+  const modules = ["采集", "检索", "分析"].map((title, index) => ({ id: "m" + (index + 1), title, objective: title + "模块的职责",
+    status: "identified", layer: "业务", layerShort: "业务", layerRank: 1, dependencies: index ? ["m" + index] : [] }));
+  env.state.projectArchitecturePrd = { schemaVersion: 1, recordOrigin: "repository_architecture_baseline",
+    system: { id: "system-architecture", title: "测试产品 · 系统框架", goal: "让业务数据可追溯", status: "identified",
+      completedModuleCount: 0, totalModuleCount: modules.length, completionBasis: "acceptance_evidence",
+      layers: [{ label: "业务", moduleIds: modules.map(item => item.id), moduleTitles: modules.map(item => item.title), moduleStatuses: modules.map(() => "identified") }] },
+    modules };
+}
+
+test("review #6: the right panel keeps only the canvas and the selected node, and links to the PRD page", () => {
+  const env = fixture({ ribbon: true });
+  withBaselinePrd(env);
+  env.desktop.render();
+  const viewport = env.elements["live-viewport"];
+  assert.equal(findButton(viewport, "完整产品设计 PRD"), undefined, "No second whole-PRD layer");
+  assert.equal(byClass(viewport, "uw-prd-full-spec").length, 0);
+  assert.equal(byClass(viewport, "uw-prd-spec-level1").length, 0, "No system card repeats the PRD under the canvas");
+  assert.equal(byClass(viewport, "uw-prd-module-chip").length, 0, "No module chips repeat the canvas nodes");
+  assert.equal(findButton(viewport, "完整运行图"), undefined, "The panel offers no extra run-graph entry");
+  const link = findButton(viewport, "查看完整 PRD");
+  assert.ok(link, "One link leads to the PRD page");
+  link.click();
+  assert.deepEqual(env.calls.at(-1), ["openPrdPage"]);
+  byClass(viewport, "stub-graph-node").find(node => node.textContent === "检索").click();
+  const detail = byClass(env.elements["live-viewport"], "uw-prd-spec-level2");
+  assert.equal(detail.length, 1, "The selected node is the only detail shown");
+  assert.ok(byText(detail[0], "检索").length);
+});
+
+test("review #1: the right panel progress reads the same six steps as the ribbon, never a module percentage", () => {
+  const env = fixture({ ribbon: true });
+  withBaselinePrd(env);
+  selectGovernedRun(env, ["completed", "completed", "in_progress"]);
+  env.desktop.render();
+  const viewport = env.elements["live-viewport"];
+  assert.equal(byClass(viewport, "uw-prd-completion-track").length, 0, "No percentage bar");
+  assert.equal(byText(viewport, "完成进度").length, 0);
+  const line = byClass(viewport, "uw-prd-step-progress")[0];
+  assert.ok(line, "The panel states the current user step");
+  assert.match(line.textContent, /第 3 步 \/ 共 6 步/u);
+  assert.match(line.textContent, /拍板方案 B1/u);
+  const current = ribbonSteps(env).find(step => step.dataset.state !== "completed");
+  assert.equal(stepName(current), "拍板方案 B1", "The ribbon and the panel name the same step");
+});
+
+test("review #12: the binding drawer and the stage strip use plain words", () => {
+  const env = fixture();
+  env.desktop.render();
+  env.elements["open-binding"].click();
+  const textOf = (node) => walk(node, () => true).map((child) => child.textContent).join("\n");
+  const drawer = textOf(env.elements["binding-drawer"]);
+  assert.match(drawer, /接入外部对话/u);
+  assert.deepEqual(["双向", "渠道", "宿主", "正向调用", "反向接入"].filter((word) => drawer.includes(word)), []);
+  const strip = textOf(env.elements["live-viewport"]);
+  assert.match(strip, /08\n总结/u, "The eighth stage reads 总结");
+  assert.doesNotMatch(strip, /沉淀/u);
+});
+
+test("review #24: a run silent for six hours or more says so on the progress bar and tells the user what to do", () => {
+  const env = fixture({ ribbon: true });
+  selectGovernedRun(env, ["completed", "completed", "running"]);
+  env.state.snapshot.run.staleness = { stale: true, idleHours: 7 };
+  env.desktop.render();
+  const chip = byClass(env.topFlow, "uw-top-flow-stale");
+  assert.equal(chip.length, 1, "the progress bar carries one staleness chip");
+  assert.equal(chip[0].textContent, "已 7 小时没有新进展");
+  assert.equal(chip[0].attributes.role, "status");
+  const guidance = () => env.elements["chat-guidance"].textContent;
+  assert.match(guidance(), /已 7 小时没有新进展，可能已经中断/u);
+  assert.match(guidance(), /回到发起它的对话/u, "the user learns where the run can actually be continued");
+  assert.match(guidance(), /在下面写一个新目标/u, "with no request pending, any typed goal starts over");
+  env.agent.pending = { key: "req-1", goal: "旧目标" };
+  env.agent.status = "completed";
+  env.desktop.render();
+  assert.match(guidance(), /新任务：你的目标/u, "after a finished request the composer needs the 新任务： prefix");
+  env.agent.status = "running";
+  env.desktop.render();
+  assert.doesNotMatch(guidance(), /新目标|新任务/u, "a running request cannot be replaced from here, so no restart is offered");
+});
+
+test("review #24: a fresh or finished run shows no staleness hint", () => {
+  for (const staleness of [{ stale: false, idleHours: 2 }, { stale: false, idleHours: 30 }, undefined]) {
+    const env = fixture({ ribbon: true });
+    selectGovernedRun(env, ["completed", "completed", "running"]);
+    if (staleness) env.state.snapshot.run.staleness = staleness;
+    env.desktop.render();
+    assert.equal(byClass(env.topFlow, "uw-top-flow-stale").length, 0);
+    assert.doesNotMatch(env.elements["chat-guidance"].textContent, /没有新进展/u);
+  }
 });

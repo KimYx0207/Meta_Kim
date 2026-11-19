@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createUnifiedAgentDesktop } from "../../src/presentation/live/live-agent-desktop.mjs";
+import { formatLiveTime } from "../../src/presentation/live/live-ui-copy.mjs";
 
 function fakeElement(tag = "div") {
   const handlers = new Map();
@@ -58,7 +59,7 @@ function setup(callbacks = {}) {
     hooks: [{ id: "preflight", label: "preflight", registrationState: "registered" }] },
   };
   const agent = { status: "idle", pending: null, hosts: [] };
-  const desktop = createUnifiedAgentDesktop({ root, state, agent,
+  const desktop = createUnifiedAgentDesktop({ root, state, agent, formatTime: (value) => formatLiveTime(value, "zh"),
     design: { snapshot: null }, nativeDraft: { snapshot: null }, handoff: { snapshot: null },
     buildGraph: () => ({ nodes: [], edges: [] }), createGraph: () => fakeElement(), callbacks });
   return { desktop, state, source, elements, tabs, agent };
@@ -76,14 +77,14 @@ test("sidebar derives distinct agent insignias and runtime conclusions from boun
   assert.ok(textNodes(sidebar, "Skills").length);
   assert.ok(textNodes(sidebar, "MCP").length);
   assert.ok(textNodes(sidebar, "Hooks").length);
-  const quicknav = classNodes(sidebar, "uw-agent-inventory-quicknav");
-  assert.equal(quicknav.length, 1, "high-priority capability families must remain visible at the top");
-  assert.deepEqual(classNodes(quicknav[0], "uw-agent-inventory-shortcut").map(item => item.dataset.targetSection),
+  // Review #7: the capability families moved from nine sidebar rows into the drawer's tab bar.
+  const familyTabs = classNodes(sidebar, "uw-inventory-flyout-tab").filter(tab => tab.dataset.count !== undefined);
+  assert.deepEqual(familyTabs.slice(0, 8).map(tab => tab.dataset.targetSection),
     ["run", "subagents", "native-hosts", "registered-agents", "professional-agents", "skill", "mcp", "hook"]);
   const skillsSection = visit(sidebar, item => item.dataset.section === "skill")[0];
   assert.equal(skillsSection.open, false, "long directories stay collapsed until requested");
-  classNodes(quicknav[0], "uw-agent-inventory-shortcut")[5].click();
-  assert.equal(skillsSection.open, true, "one click reveals the real registered entries in-place");
+  familyTabs[5].click();
+  assert.equal(visit(sidebar, item => item.dataset.section === "skill")[0].open, true, "one click reveals the real registered entries in-place");
   tabs[2].click();
   assert.ok(textNodes(elements["live-viewport"], "已汇总三个可选路径，等待审核。").length);
   assert.equal(textNodes(elements["live-viewport"], "已观测调用").length, 0,
@@ -110,8 +111,8 @@ test("verified Kim_Service professional Agents are distinct from governance role
   assert.ok(textNodes(section, "来源哈希已核验 · 未观测调用").length);
   assert.equal(textNodes(section, "负责人回报").length, 0);
   assert.equal(classNodes(sidebar, "uw-agent-inventory-agent").length, 3);
-  assert.equal(classNodes(sidebar, "uw-agent-inventory-shortcut").length, 8,
-    "source status changes update capability shortcuts in the same sidebar");
+  const professionalTab = classNodes(sidebar, "uw-inventory-flyout-tab").find(tab => tab.dataset.targetSection === "professional-agents");
+  assert.equal(professionalTab.dataset.count, "1", "source status changes update the capability counts in the same directory");
 });
 
 test("native CLI hosts and user Subagent presets are visible without claiming a native invocation", () => {
@@ -138,8 +139,7 @@ test("native CLI hosts and user Subagent presets are visible without claiming a 
   agent.hosts = [{ id: "claude", label: "Claude Code", available: true, launchSupported: true,
     statusLabel: "可用于只读研究", version: "2.1.319" }];
   desktop.render();
-  const quicknav = classNodes(elements["agent-inventory"], "uw-agent-inventory-quicknav")[0];
-  classNodes(quicknav, "uw-agent-inventory-shortcut")[2].click();
+  classNodes(elements["agent-inventory"], "uw-inventory-flyout-tab").find(tab => tab.dataset.targetSection === "native-hosts").click();
   const section = visit(elements["agent-inventory"], item => item.dataset.section === "native-hosts")[0];
   assert.ok(section.open, "clicking the hosts shortcut expands native hosts while detailed lists remain collapsed");
   assert.equal(classNodes(section, "uw-native-host").length, 2,
@@ -212,12 +212,76 @@ test("planning-only unstarted nodes never inflate Subagents or active execution 
   const sidebar = elements["agent-inventory"];
   assert.ok(textNodes(sidebar, "仅规划 · 未执行").length, "planning-only snapshots must not claim 1 active task");
   assert.equal(textNodes(sidebar, "1 个执行任务").length, 0);
-  const quicknav = classNodes(sidebar, "uw-agent-inventory-quicknav")[0];
-  assert.equal(textNodes(quicknav, "结论").length, 0, "confusing '结论' badge removed in favor of clear active run label");
-  assert.equal(textNodes(quicknav, "子任务").length, 0, "must literally say Subagents instead of 子任务");
-  const shortcuts = classNodes(sidebar, "uw-agent-inventory-shortcut");
-  const runShortcut = shortcuts.find(item => item.dataset.targetSection === "run");
-  const subagentShortcut = shortcuts.find(item => item.dataset.targetSection === "subagents");
-  assert.equal(runShortcut.attributes["aria-label"], "本轮活跃 0");
-  assert.equal(subagentShortcut.attributes["aria-label"], "Subagents 0");
+  const tabBar = classNodes(sidebar, "uw-inventory-flyout-tabs")[0];
+  assert.equal(textNodes(tabBar, "结论").length, 0, "confusing '结论' badge removed in favor of clear active run label");
+  assert.equal(textNodes(tabBar, "子任务").length, 0, "must literally say Subagents instead of 子任务");
+  const tabs = classNodes(sidebar, "uw-inventory-flyout-tab");
+  assert.equal(tabs.find(item => item.dataset.targetSection === "run").textContent, "本轮活跃 0");
+  assert.equal(tabs.find(item => item.dataset.targetSection === "subagents").textContent, "Subagents 0");
+});
+
+function withNativeClient(state) {
+  state.capabilityCatalog.nativeHosts = [{ id: "claude", label: "Claude Code", status: "detected" }];
+  state.capabilityCatalog.nativeCapabilities = [
+    { id: "h1", label: "h1", kind: "hook", hostId: "claude", scope: "project", installationState: "configured" },
+    { id: "h2", label: "h2", kind: "hook", hostId: "claude", scope: "global", installationState: "configured" },
+    { id: "s1", label: "s1", kind: "skill", hostId: "claude", scope: "global", installationState: "configured" },
+  ];
+}
+
+test("review #7: the sidebar shows one capability line that opens the existing directory drawer", () => {
+  const { elements } = setup();
+  const sidebar = elements["agent-inventory"];
+  assert.equal(classNodes(sidebar, "uw-agent-inventory-shortcut").length, 0, "No per-family rows remain in the sidebar");
+  assert.equal(classNodes(sidebar, "uw-inventory-more-trigger").length, 0);
+  const entry = classNodes(sidebar, "uw-inventory-entry");
+  assert.equal(entry.length, 1, "One line replaces the nine rows");
+  assert.equal(classNodes(sidebar, "uw-agent-inventory-body")[0].dataset.flyoutOpen, "false");
+  entry[0].click();
+  assert.equal(classNodes(sidebar, "uw-agent-inventory-body")[0].dataset.flyoutOpen, "true", "The line opens the drawer");
+  assert.ok(classNodes(sidebar, "uw-agent-inventory-flyout").length, "The existing drawer is reused");
+});
+
+test("review #5: every count names its scope and numbers with the same scope agree", () => {
+  const { elements, state, desktop } = setup();
+  withNativeClient(state);
+  desktop.render();
+  const sidebar = elements["agent-inventory"];
+  const entry = classNodes(sidebar, "uw-inventory-entry")[0];
+  assert.match(entry.title, /口径/u, "The sidebar line states what its numbers count");
+  const tabs = classNodes(sidebar, "uw-inventory-flyout-tab").filter(tab => tab.dataset.targetSection && tab.dataset.targetSection !== "all");
+  assert.ok(tabs.length >= 8);
+  for (const tab of tabs) assert.ok(tab.dataset.scopeLabel && tab.title.includes(tab.dataset.scopeLabel), `${tab.textContent} names its scope`);
+  const byId = Object.fromEntries(tabs.map(tab => [tab.dataset.targetSection, tab]));
+  assert.equal(new Set(["skill", "mcp", "hook"].map(id => byId[id].dataset.scopeLabel)).size, 1, "Skills, MCP and Hooks are counted the same way");
+  for (const id of ["registered-agents", "skill", "mcp", "hook", "native-hosts"]) {
+    const tab = byId[id];
+    assert.ok(entry.title.includes(`${tab.dataset.label} ${tab.dataset.count}`), `The sidebar line repeats ${id} with the same number`);
+    const section = visit(sidebar, item => item.dataset.section === id)[0];
+    assert.equal(classNodes(section, "uw-agent-inventory-summary")[0].children[1].textContent, tab.dataset.count, `The ${id} section agrees with its tab`);
+  }
+  const client = classNodes(sidebar, "uw-native-host")[0];
+  const scope = classNodes(client, "uw-native-host-scope");
+  assert.equal(scope.length, 1, "A client card states where its numbers come from");
+  assert.match(scope[0].textContent, /Claude Code/u);
+  assert.match(scope[0].textContent, /项目.*全局|全局.*项目/u);
+});
+
+test("review #12: the capability directory says 客户端, never the internal word 宿主", () => {
+  const { elements, state, desktop } = setup();
+  withNativeClient(state);
+  desktop.render();
+  const sidebar = elements["agent-inventory"];
+  classNodes(sidebar, "uw-inventory-entry")[0].click();
+  const words = visit(sidebar, () => true).flatMap(node => [node.textContent, node.title, node.attributes?.["aria-label"]]).filter(Boolean);
+  assert.deepEqual(words.filter(text => String(text).includes("宿主")), []);
+});
+
+test("review #14: an owner report time reads as local time, not the raw timestamp", async () => {
+  const { formatLiveTime } = await import("../../src/presentation/live/live-ui-copy.mjs");
+  const { elements, tabs } = setup();
+  tabs[2].click();
+  const viewport = elements["live-viewport"];
+  assert.equal(textNodes(viewport, "2026-11-17T01:00:00Z").length, 0, "No raw ISO timestamp is shown");
+  assert.ok(textNodes(viewport, formatLiveTime("2026-11-17T01:00:00Z", "zh")).length, "The report time is local");
 });

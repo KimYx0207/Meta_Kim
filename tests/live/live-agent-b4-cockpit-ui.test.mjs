@@ -354,3 +354,92 @@ test("Wave 2 Cockpit UI: renders 5-pillar strip, one-click B2 fast-track button,
   assert.match(LIVE_WORKSPACE_CSS, /\.uw-b4-card/);
   assert.match(renderLiveWorkspaceSurface(), /B4 用户验收/);
 });
+
+// ---------------------------------------------------------------------------
+// review #25: every state highlights at most one next step (the gold
+// `uw-chat-action`); every other action is secondary.
+// ---------------------------------------------------------------------------
+const NEXT_STEP_HOSTS = [{ id: "claude", label: "Claude Code", available: true, launchSupported: true }];
+function nextStepDesign({ systemApproved = false, moduleApproved = false, mockup = null, status = "draft" } = {}) {
+  return {
+    version: 2, status, reviewComplete: status === "approved", pendingReviewNotes: [], history: [],
+    system: { title: "运营系统", goal: "提升转化", architecture: "选品-定价", techStack: "Node.js", acceptance: ["校验通过"],
+      approval: { state: systemApproved ? "approved" : "pending" } },
+    modules: [{ id: "pricing", title: "动态定价", objective: "定价", inputContract: ["输入"], outputContract: ["输出"], boundaries: ["不付款"],
+      acceptance: ["导出函数"], dependencies: [], approval: { state: moduleApproved ? "approved" : "pending" },
+      ...(mockup ? { hasUiPage: true, uiMockup: { status: mockup } } : {}) }],
+  };
+}
+function nextStepDesktop({ agent: agentOverride, design: designSnapshot = null, designExtra = {}, nativeDraft: draftSnapshot = { status: "completed" },
+  handoff: handoffState = {}, execution: executionSnapshot = null, acceptance: acceptanceSnapshot = null } = {}) {
+  const dom = createDesktopDom();
+  const state = { canWrite: true, agentServerProjectLabel: "eu-shop", origin: "local", workspace: null, selection: {}, tasks: [],
+    capabilityCatalog: { agents: [], skills: [], nativeHosts: [], nativeCapabilities: [] } };
+  const agent = agentOverride || { status: "completed", busy: false, decisionBusy: false, loading: false, hosts: NEXT_STEP_HOSTS,
+    pending: { key: "req_next_00001", goal: "优化定价", resultPreview: "候选方案摘要",
+      decision: { state: "adopted_for_design", selectedStrategy: "A：稳健方案", selectionReason: "保毛利" } } };
+  const design = { busy: false, error: null, pendingMutation: null, snapshot: designSnapshot, ...designExtra };
+  const nativeDraft = { snapshot: draftSnapshot, error: null, busy: false };
+  const handoff = { snapshot: { status: "eligible", handoffDigest: null }, error: null, busy: false, pendingKey: null, ...handoffState };
+  const execution = { snapshot: executionSnapshot, error: null, pendingKey: null, busy: false, loading: false };
+  const acceptance = { snapshot: acceptanceSnapshot, error: null, pendingKey: null, busy: false, loading: false };
+  const noop = () => true;
+  const desktop = createUnifiedAgentDesktop({ root: dom.root, state, agent, design, nativeDraft, handoff, execution, acceptance,
+    copy: (k) => k, buildGraph: () => ({ nodes: [], edges: [] }), createGraph: ({ doc }) => doc.createElement("div"),
+    callbacks: { parseStrategies: () => null, redetect: noop, reconcileDecision: noop, verifyRequest: noop, newTask: noop, saveDraft: noop,
+      retryDraft: noop, approveNode: noop, confirmNodeMockup: noop, approveAllAndPrepare: noop, prepareHandoff: noop, reconcileHandoff: noop,
+      reconcileDesign: noop, authorizeExecution: noop, inspectExecution: noop, verifyDeliverables: noop, acceptDeliverables: noop,
+      requestDeliverableRework: noop, rollbackDeliverables: noop } });
+  desktop.render();
+  const primaries = () => [...dom.thread.querySelectorAll(".uw-chat-action"), ...dom.viewport.querySelectorAll(".uw-chat-action")];
+  const button = (fragment) => [...dom.thread.querySelectorAll("button"), ...dom.viewport.querySelectorAll("button")]
+    .find((node) => node.textContent.includes(fragment));
+  return { ...dom, desktop, primaries, button };
+}
+const primaryLabels = (env) => env.primaries().map((node) => node.textContent);
+
+test("review #25: a blocked client makes re-detecting the one highlighted next step", () => {
+  const env = nextStepDesktop({ agent: { status: "blocked", busy: false, loading: false, hosts: [], pending: null } });
+  assert.deepEqual(primaryLabels(env), ["重新检测可用客户端"]);
+});
+
+test("review #25: an uncertain decision receipt makes checking it the next step", () => {
+  const env = nextStepDesktop({ agent: { status: "completed", busy: false, decisionBusy: false, loading: false, hosts: NEXT_STEP_HOSTS,
+    decisionPending: { action: "adopt" }, pending: { key: "req_next_00002", goal: "优化定价", resultPreview: "候选方案摘要" } } });
+  assert.deepEqual(primaryLabels(env), ["核对原决策回执"]);
+});
+
+test("review #25: a failed design draft makes regenerating it the next step", () => {
+  const env = nextStepDesktop({ design: { status: "not_started" }, nativeDraft: { status: "failed" } });
+  assert.deepEqual(primaryLabels(env), ["重新生成只读设计草稿"]);
+});
+
+test("review #25: while a module's page mockup is unconfirmed, confirming it is the next step and approval is secondary", () => {
+  const env = nextStepDesktop({ design: nextStepDesign({ systemApproved: true, mockup: "pending" }) });
+  assert.deepEqual(primaryLabels(env), ["确认该模块页面效果图"]);
+  assert.ok(env.button("确认「动态定价」").className.includes("uw-chat-secondary"));
+});
+
+test("review #25: an uncertain handoff receipt is checked before anything moves forward", () => {
+  const env = nextStepDesktop({ design: nextStepDesign({ systemApproved: true, moduleApproved: true, status: "approved" }),
+    handoff: { pendingKey: "handoff-key-1" } });
+  assert.deepEqual(primaryLabels(env), ["核对原交接回执"]);
+  assert.ok(env.button("准备交接材料").className.includes("uw-chat-secondary"));
+});
+
+test("review #25: with the right panel showing B4 too, only the chat's accept button is highlighted", () => {
+  const digest = "f".repeat(64);
+  const env = nextStepDesktop({ design: nextStepDesign({ systemApproved: true, moduleApproved: true, status: "approved" }),
+    handoff: { snapshot: { status: "prepared", handoffDigest: digest } },
+    execution: { status: "ready_for_review", handoffDigest: digest, nativeSessionId: "a1b2c3d4" },
+    acceptance: { status: "awaiting_human_b4", handoffDigest: digest, changedFiles: [], verification: { passed: true, checks: [] } } });
+  env.root.querySelectorAll("[data-uw-live-mode]").find((tab) => tab.dataset.uwLiveMode === "knowledge").click();
+  assert.equal(env.viewport.querySelectorAll(".uw-b4-card").length, 1, "the right panel shows the B4 card as well");
+  assert.deepEqual(primaryLabels(env), ["通过 B4 验收并合入主项目"]);
+  assert.equal(env.thread.querySelectorAll(".uw-chat-action").length, 1, "the highlighted one sits in the chat");
+});
+
+test("review #25: the fast-track button looks like every other secondary action", () => {
+  const blocks = LIVE_WORKSPACE_CSS.split("}").filter((block) => block.split("{")[0].trim() === ".uw-chat-fasttrack");
+  assert.equal(blocks.length, 0, "no rule restyles the fast-track button away from the secondary look");
+});
