@@ -93,7 +93,8 @@ export function createPrdKnowledgeGraph({ doc, graph, copy, focusId = null, dept
   }
 
   const cardWidth = hasLayeredModules ? 222 : 200;
-  const cardHeight = hasLayeredModules ? 78 : 72;
+  // One extra line of height so a long title wraps instead of being cut.
+  const cardHeight = hasLayeredModules ? 94 : 88;
   const verticalGap = hasLayeredModules && !focusId ? 30 : 24;
   const byId = new Map(nodes.map(node => [node.id, node]));
   const positions = new Map();
@@ -237,6 +238,36 @@ export function createPrdKnowledgeGraph({ doc, graph, copy, focusId = null, dept
     svg.append(path);
     edgeRecords.push({ edge, path });
   }
+  // SVG text does not wrap, so a long card title is laid out over two balanced
+  // lines instead of being cut short. Latin letters count narrower than CJK, and
+  // a break never falls inside a Latin word.
+  const wrapCardTitle = (text) => {
+    const chars = Array.from(text);
+    const widthOf = (char) => (char.charCodeAt(0) < 0x2e80 ? 0.55 : 1);
+    const total = chars.reduce((sum, char) => sum + widthOf(char), 0);
+    if (total <= 14) return [text];
+    const target = Math.min(14, total / 2);
+    let split = 0;
+    let used = 0;
+    while (split < chars.length && used + widthOf(chars[split]) <= target + 0.5) {
+      used += widthOf(chars[split]);
+      split += 1;
+    }
+    let wordStart = split;
+    while (wordStart > 0 && /[A-Za-z0-9]/u.test(chars[wordStart - 1]) && /[A-Za-z0-9]/u.test(chars[wordStart] || "")) wordStart -= 1;
+    if (wordStart > 0) split = wordStart;
+    const second = [];
+    let secondWidth = 0;
+    for (const char of Array.from(chars.slice(split).join("").trimStart())) {
+      if (secondWidth + widthOf(char) > 14) {
+        second.push("…");
+        break;
+      }
+      second.push(char);
+      secondWidth += widthOf(char);
+    }
+    return [chars.slice(0, split).join("").trimEnd(), second.join("")];
+  };
   const nodeGroups = new Map();
   let activeNodeDrag = null;
   let suppressNextNodeClick = false;
@@ -257,17 +288,23 @@ export function createPrdKnowledgeGraph({ doc, graph, copy, focusId = null, dept
       ? copy("prdFirstLayer")
       : (node.layerShort ? `二级 · ${node.layerShort}` : copy("prdSecondLayer"));
     const status = svgEl("text", { x: cardWidth - 14, y: 20, "text-anchor": "end", class: "uw-kg-node-state" });
-    status.textContent = copy(displayStatus);
+    // A source baseline is named once in the section heading, not on every card.
+    status.textContent = displayStatus === "baseline" ? "" : copy(displayStatus);
     const subCopy = node.kind === "architecture"
       ? (node.progressNote || "")
       : (node.shortSummary || "");
     const title = svgEl("text", { x: 14, y: subCopy ? 44 : 48, class: "uw-kg-node-title" });
     const fullTitle = String(node.title || node.sourceId || node.id);
-    title.textContent = Array.from(fullTitle).length > 14 ? Array.from(fullTitle).slice(0, 13).join("") + "…" : fullTitle;
+    const titleLines = wrapCardTitle(fullTitle);
+    titleLines.forEach((line, index) => {
+      const span = svgEl("tspan", { x: 14, dy: index ? 16 : 0 });
+      span.textContent = line;
+      title.append(span);
+    });
     const tooltip = svgEl("title");
-    tooltip.textContent = [fullTitle, node.layer || "", subCopy || node.summary || "", copy(displayStatus)].filter(Boolean).join(" · ");
+    tooltip.textContent = [fullTitle, node.layer || "", subCopy || node.summary || "", displayStatus === "baseline" ? "" : copy(displayStatus)].filter(Boolean).join(" · ");
     if (subCopy) {
-      const sub = svgEl("text", { x: 14, y: 63, class: "uw-kg-node-sub" });
+      const sub = svgEl("text", { x: 14, y: 63 + (titleLines.length - 1) * 16, class: "uw-kg-node-sub" });
       sub.textContent = Array.from(subCopy).length > 18 ? Array.from(subCopy).slice(0, 17).join("") + "…" : subCopy;
       group.append(kind, status, title, sub, tooltip);
     } else {
@@ -391,7 +428,7 @@ export function createPrdKnowledgeGraph({ doc, graph, copy, focusId = null, dept
       .filter(Boolean);
     if (prerequisites.length) detail.append(el("small", "uw-knowledge-index-links",
       `${copy("requiredDependency")}：${prerequisites.join(" · ")}`));
-    const status = el("span", "uw-knowledge-index-state", copy(workspaceStatusKey(node.status)));
+    const status = el("span", "uw-knowledge-index-state", node.status === "baseline" ? "" : copy(workspaceStatusKey(node.status)));
     row.append(number, detail, status);
     row.addEventListener("click", () => onSelect(node));
     list.append(row);

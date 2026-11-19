@@ -463,3 +463,139 @@ test("review #4: a saved canvas counts accepted and verified nodes only, and an 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+function reviewWorkflow() {
+  const mockup = { status: "pending", version: 1, mode: "wireframe_fallback", variant: "workbench",
+    wireframeSpec: { layoutType: "workbench", version: 1, headerTitle: "工作台 · 页面预览 v1", summaryLine: "主界面", featurePills: ["对话", "画布"], primaryCta: "确认" } };
+  return {
+    systemTitle: "Meta_Kim · 系统框架",
+    nodes: [
+      { id: "start", kind: "terminal", code: "START", title: "开始 · 用户意图输入", status: "completed", column: -1, hasUiPage: false },
+      { id: "a", kind: "process", code: "01", title: "一体化对话决策与产品画布工作台", status: "identified", column: 0, hasUiPage: true, uiMockup: mockup,
+        subflow: { title: "二级", nodes: [{ id: "a__in", kind: "terminal", title: "进入", column: 0 }, { id: "a__s1", kind: "process", title: "子步骤", column: 1 }], edges: [] } },
+      { id: "b", kind: "parallel", code: "02A · 并行", title: "多仓库管理与双向 Agent 会话接入", status: "identified", column: 1, hasUiPage: false },
+      { id: "c", kind: "parallel", code: "02B · 并行", title: "本地历史记录与断点续接", status: "identified", column: 1, hasUiPage: false },
+      { id: "d", kind: "condition", code: "条件路由", title: "关键节点人工拍板与授权", status: "identified", column: 2, hasUiPage: false },
+      { id: "end", kind: "terminal", code: "END", title: "闭环交付与验收", status: "planned", column: 3, hasUiPage: false },
+    ],
+    edges: [
+      { id: "e1", from: "start", to: "a", label: "进入主流程", kind: "normal" },
+      { id: "e2", from: "a", to: "b", label: "并行分叉", kind: "parallel" },
+      { id: "e3", from: "a", to: "c", label: "并行分叉", kind: "parallel" },
+      { id: "e4", from: "b", to: "d", label: "汇聚", kind: "normal" },
+      { id: "e5", from: "c", to: "d", label: "汇聚", kind: "normal" },
+      { id: "e6", from: "d", to: "end", label: "通过后交付", kind: "normal" },
+      { id: "e7", from: "d", to: "a", label: "返工打回", kind: "loop" },
+    ],
+  };
+}
+const nodeGroups = (view) => findAll(view, (n) => n.dataset?.uwWfNode && n.tagName === "g");
+const nodeTexts = (group) => findAll(group, (n) => n.tagName === "text").map((n) => n.textContent);
+function nodeBox(group) {
+  const [, x, y] = /translate\(([-\d.]+),\s*([-\d.]+)\)/u.exec(group.getAttribute("transform")) || [];
+  const shape = group.children[0];
+  if (shape.tagName === "polygon") {
+    const points = shape.getAttribute("points").split(" ").map((pair) => pair.split(",").map(Number));
+    return { x: Number(x), y: Number(y), w: Math.max(...points.map((p) => p[0])), h: Math.max(...points.map((p) => p[1])) };
+  }
+  return { x: Number(x), y: Number(y), w: Number(shape.getAttribute("width")), h: Number(shape.getAttribute("height")) };
+}
+const labelUnits = (text) => Array.from(text).reduce((sum, ch) => sum + (/[⺀-鿿＀-￯　-〿]/u.test(ch) ? 1 : 0.6), 0);
+
+test("review #17: node titles wrap instead of being cut at the default zoom", () => {
+  const workflow = reviewWorkflow();
+  const view = createDynamicPrdWorkflowCanvas({ doc: fakeDoc, workflow, onSelectNode() {} });
+  for (const node of workflow.nodes) {
+    const group = nodeGroups(view).find((g) => g.dataset.uwWfNode === node.id);
+    const texts = nodeTexts(group);
+    assert.ok(!texts.some((text) => text.endsWith("…")), `${node.id} title is not truncated`);
+    assert.ok(texts.join("").replace(/\s+/gu, "").includes(node.title.replace(/\s+/gu, "")), `${node.id} shows its whole title`);
+  }
+});
+
+test("review #17: the default zoom renders text at its own size inside the measured canvas", () => {
+  const measuredDoc = { createElement: (t) => Object.assign(new FakeNode(t), { clientWidth: 775, clientHeight: 304 }),
+    createElementNS: (_ns, t) => new FakeNode(t) };
+  const view = createDynamicPrdWorkflowCanvas({ doc: measuredDoc, workflow: reviewWorkflow(), onSelectNode() {} });
+  const svg = findAll(view, (n) => n.tagName === "svg" && n.getAttribute("class") === "uw-wf-svg")[0];
+  assert.equal(svg.getAttribute("viewBox"), "0 0 775 304", "One SVG unit is one screen pixel");
+  const zoomLabel = findAll(view, (n) => /^\d+%$/u.test(n.textContent || ""))[0];
+  assert.equal(zoomLabel.textContent, "100%", "The default zoom does not shrink a wide graph");
+});
+
+const cameraOf = (view) => findAll(view, (n) => /^translate\(-?\d+, -?\d+\) scale\(/u.test(n.getAttribute?.("transform") || ""))
+  .map((n) => n.getAttribute("transform").match(/^translate\((-?\d+), (-?\d+)\)/u).slice(1).map(Number))[0];
+const sizedDoc = (width, height) => ({ createElement: (t) => Object.assign(new FakeNode(t), { clientWidth: width, clientHeight: height }),
+  createElementNS: (_ns, t) => new FakeNode(t) });
+
+// Code review: at the default zoom a graph taller than its canvas was centred,
+// which put its first row above the view.
+test("review #17: a graph taller than the canvas opens at its top", () => {
+  const view = createDynamicPrdWorkflowCanvas({ doc: sizedDoc(775, 120), workflow: reviewWorkflow(), onSelectNode() {} });
+  const [, top] = cameraOf(view);
+  assert.ok(top >= 0, "the first row stays in view, translateY " + top);
+});
+
+// Code review: a canvas built inside a hidden pane kept the camera computed for
+// the default size, because only the first frame re-read the readable camera.
+test("review #17: a canvas built while hidden opens readable once its pane has a size", () => {
+  const frames = [];
+  const observers = [];
+  const created = [];
+  const win = {
+    requestAnimationFrame: (callback) => frames.push(callback),
+    ResizeObserver: class { constructor(callback) { this.callback = callback; observers.push(this); } observe() {} disconnect() {} },
+  };
+  const hiddenDoc = {
+    defaultView: win,
+    createElement: (t) => { const node = Object.assign(new FakeNode(t), { clientWidth: 0, clientHeight: 0, isConnected: true }); created.push(node); return node; },
+    createElementNS: (_ns, t) => new FakeNode(t),
+  };
+  const view = createDynamicPrdWorkflowCanvas({ doc: hiddenDoc, workflow: reviewWorkflow(), onSelectNode() {} });
+  frames.forEach((frame) => frame());
+  for (const node of created) Object.assign(node, { clientWidth: 775, clientHeight: 304 });
+  observers.forEach((observer) => observer.callback());
+  const measured = createDynamicPrdWorkflowCanvas({ doc: sizedDoc(775, 304), workflow: reviewWorkflow(), onSelectNode() {} });
+  assert.deepEqual(cameraOf(view), cameraOf(measured), "the camera matches a canvas built at that size");
+});
+
+test("review #17: edge labels keep clear of node ports", () => {
+  const view = createDynamicPrdWorkflowCanvas({ doc: fakeDoc, workflow: reviewWorkflow(), onSelectNode() {}, onMutateWorkflow() {} });
+  const boxes = nodeGroups(view).map(nodeBox);
+  const labels = findAll(view, (n) => n.tagName === "text" && n.getAttribute("font-size") === "10.5" && n.getAttribute("text-anchor") === "middle"
+    && ["进入主流程", "并行分叉", "汇聚", "通过后交付", "返工打回"].includes(n.textContent));
+  assert.equal(labels.length, 7);
+  for (const label of labels) {
+    const x = Number(label.getAttribute("x")); const y = Number(label.getAttribute("y"));
+    const half = (labelUnits(label.textContent) * 10.5) / 2;
+    const box = { left: x - half, right: x + half, top: y - 11, bottom: y + 3 };
+    for (const node of boxes) {
+      const clear = box.right <= node.x - 6 || box.left >= node.x + node.w + 6 || box.bottom <= node.y || box.top >= node.y + node.h;
+      assert.ok(clear, `label ${label.textContent} at ${x},${y} touches the node at ${node.x},${node.y}`);
+    }
+  }
+});
+
+test("review #8: the canvas root label reads 一级 · 系统框架 without repeating the project", () => {
+  const view = createDynamicPrdWorkflowCanvas({ doc: fakeDoc, workflow: reviewWorkflow(), onSelectNode() {} });
+  const crumb = findAll(view, (n) => n.dataset?.uwWfRootCrumb)[0];
+  assert.equal(crumb.textContent, "一级 · 系统框架");
+  assert.equal(crumb.getAttribute("title"), "Meta_Kim · 系统框架", "The full title stays available as a tooltip");
+});
+
+test("review #12: the page mockup is labelled in plain words without model fallback jargon", () => {
+  const view = createDynamicPrdWorkflowCanvas({ doc: fakeDoc, workflow: reviewWorkflow(), selectedNodeId: "a", onSelectNode() {} });
+  const all = findAll(view, (n) => typeof n.textContent === "string" && n.textContent).map((n) => n.textContent).join("\n");
+  assert.doesNotMatch(all, /未配置生图模型|自动回退|组件级效果图/u);
+  assert.match(all, /页面示意图 v1/u);
+});
+
+test("review #6: no module chip strip repeats the canvas, and nodes answer the keyboard instead", () => {
+  const selected = [];
+  const view = createDynamicPrdWorkflowCanvas({ doc: fakeDoc, workflow: reviewWorkflow(), onSelectNode: (node) => selected.push(node.id) });
+  assert.equal(findAll(view, (n) => n.className === "uw-wf-module-strip").length, 0);
+  assert.equal(findAll(view, (n) => n.dataset?.livePrdGraphIndexNode).length, 0);
+  const group = nodeGroups(view).find((g) => g.dataset.uwWfNode === "b");
+  group.listeners.get("keydown")({ key: "Enter", preventDefault() {}, stopPropagation() {} });
+  assert.deepEqual(selected, ["b"]);
+});

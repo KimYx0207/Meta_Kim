@@ -33,6 +33,34 @@ export function createDynamicPrdWorkflowCanvas({
     const chars = Array.from(String(val || "").trim());
     return chars.length > max ? `${chars.slice(0, max - 1).join("")}…` : chars.join("");
   };
+  // Node titles and edge labels are measured, never cut: a wide CJK glyph is
+  // about one em and a Latin glyph about 0.6 em at the same font size.
+  const CJK_RANGE = "⺀-鿿豈-﫿＀-￯　-〿";
+  const textUnits = (text) => Array.from(String(text || "")).reduce((sum, ch) => sum + (new RegExp(`[${CJK_RANGE}]`, "u").test(ch) ? 1 : 0.6), 0);
+  const wrapTitle = (val, maxUnits) => {
+    const tokens = String(val || "").trim().match(new RegExp(`[${CJK_RANGE}]|[^\\s${CJK_RANGE}]+|\\s+`, "gu")) || [];
+    const lines = [];
+    let line = "";
+    for (const token of tokens) {
+      if (/^\s+$/u.test(token)) { if (line) line += " "; continue; }
+      if (line.trim() && textUnits(line + token) > maxUnits) { lines.push(line.trim()); line = ""; }
+      line += token;
+    }
+    if (line.trim()) lines.push(line.trim());
+    return lines.length ? lines : [""];
+  };
+  const TITLE_LAYOUT = { terminal: { w: 128, fontSize: 12, lineHeight: 15, baseHeight: 44 },
+    condition: { w: 168, fontSize: 11.5, lineHeight: 16, baseHeight: 92 },
+    process: { w: 196, fontSize: 13, lineHeight: 16, baseHeight: 94 } };
+  const layoutKind = (node) => (node.kind === "terminal" ? "terminal" : node.kind === "condition" ? "condition" : "process");
+  const titleLines = (node) => {
+    const spec = TITLE_LAYOUT[layoutKind(node)];
+    const usable = layoutKind(node) === "condition" ? spec.w * 0.56 : spec.w - 22;
+    return wrapTitle(node.title, usable / spec.fontSize);
+  };
+  const EDGE_LABEL_FONT = 10.5;
+  const PORT_CLEARANCE = 16;
+  const edgeLabelWidth = (label) => textUnits(label) * EDGE_LABEL_FONT;
 
   // Normalize fallback workflow when only `blueprint` is passed (e.g. in unit tests or B2 drafts)
   const buildFallbackWorkflow = () => {
@@ -159,8 +187,10 @@ export function createDynamicPrdWorkflowCanvas({
   // Header Bar
   const head = el("header", "uw-wf-head");
   const crumbWrap = el("div", "uw-wf-crumbs");
-  const rootCrumbBtn = el("button", "uw-wf-crumb-root", `一级 · ${wfData.systemTitle || "系统总流程图"}`);
+  // The project name already heads the window; the crumb only names the level.
+  const rootCrumbBtn = el("button", "uw-wf-crumb-root", "一级 · 系统框架");
   rootCrumbBtn.type = "button";
+  rootCrumbBtn.setAttribute("title", wfData.systemTitle || "系统总流程图");
   rootCrumbBtn.dataset.uwWfRootCrumb = "true";
   const subCrumbSep = el("span", "uw-wf-crumb-sep", "/");
   subCrumbSep.hidden = true;
@@ -285,24 +315,6 @@ export function createDynamicPrdWorkflowCanvas({
     root.append(errorLine);
   }
 
-  // Hidden/Accessible quick module index buttons so keyboard & unit tests can also jump directly by module title
-  const srModuleStrip = el("div", "uw-wf-module-strip");
-  for (const modNode of businessNodes) {
-    const chip = el("button", "uw-prd-module-chip", modNode.title);
-    chip.type = "button";
-    chip.dataset.livePrdGraphIndexNode = modNode.id;
-    chip.dataset.state = modNode.status || "planned";
-    chip.addEventListener("click", () => {
-      activeSubflowNodeId = null;
-      currentSelectedId = modNode.id;
-      if (modNode.hasUiPage) inspectorTab = "mockup";
-      drawAll();
-      onSelectNode?.({ id: modNode.id, sourceId: modNode.id, title: modNode.title, kind: "module" });
-    });
-    srModuleStrip.append(chip);
-  }
-  root.append(srModuleStrip);
-
   const activeGraphData = () => {
     if (activeSubflowNodeId) {
       const parent = wfData.nodes.find((n) => n.id === activeSubflowNodeId);
@@ -335,20 +347,25 @@ export function createDynamicPrdWorkflowCanvas({
       cols.get(c).push(n);
     }
     const sortedCols = [...cols.keys()].sort((a, b) => a - b);
-    const maxLaneRows = Math.max(1, ...[...cols.values()].map((arr) => arr.length));
-    const totalH = Math.max(360, maxLaneRows * 124 + 64);
+    const gapY = 26;
+    const heightOf = (n) => {
+      const spec = TITLE_LAYOUT[layoutKind(n)];
+      return spec.baseHeight + (titleLines(n).length - 1) * spec.lineHeight;
+    };
+    const spanOf = (group) => group.reduce((acc, n) => acc + heightOf(n), 0) + Math.max(0, group.length - 1) * gapY;
+    // Loop edges arc above the tallest column; reserve that band at the top.
+    const loopRoom = (gData.edges || []).some((edge) => edge.kind === "loop") ? 56 : 0;
+    const totalH = Math.max(360, Math.max(...[...cols.values()].map(spanOf)) + 64) + loopRoom;
+    const columnOf = new Map(gData.nodes.map((n) => [n.id, Number.isInteger(n.column) ? n.column : 0]));
     let curX = 28;
     for (const c of sortedCols) {
       const group = cols.get(c);
       const isTerm = group.every((n) => n.kind === "terminal");
       const isCond = group.every((n) => n.kind === "condition");
-      const w = isTerm ? 128 : isCond ? 148 : 196;
-      const gapY = 26;
-      const itemHeights = group.map((n) => (n.kind === "terminal" ? 44 : n.kind === "condition" ? 86 : 94));
-      const groupSpanH = itemHeights.reduce((acc, h) => acc + h, 0) + Math.max(0, group.length - 1) * gapY;
-      let curY = Math.round((totalH - groupSpanH) / 2);
-      group.forEach((n, i) => {
-        const h = itemHeights[i];
+      const w = isTerm ? TITLE_LAYOUT.terminal.w : isCond ? TITLE_LAYOUT.condition.w : TITLE_LAYOUT.process.w;
+      let curY = loopRoom + Math.round((totalH - loopRoom - spanOf(group)) / 2);
+      group.forEach((n) => {
+        const h = heightOf(n);
         const key = `${activeSubflowNodeId || "root"}:${n.id}`;
         const existing = nodePositions.get(key) || n.customPos;
         if (existing) {
@@ -358,15 +375,32 @@ export function createDynamicPrdWorkflowCanvas({
         }
         curY += h + gapY;
       });
-      curX += w + (isTerm ? 58 : 74);
+      // A label sits at the middle of its edge, so the gap must hold the
+      // widest label leaving this column plus clearance on both ports.
+      const labelNeed = Math.max(0, ...(gData.edges || [])
+        .filter((edge) => edge.kind !== "loop" && edge.label && columnOf.get(edge.from) === c)
+        .map((edge) => edgeLabelWidth(edge.label) + PORT_CLEARANCE * 2));
+      curX += w + Math.max(isTerm ? 58 : 74, Math.ceil(labelNeed));
     }
     return { contentW: curX + 24, contentH: totalH };
   };
 
   let lastDims = { contentW: 920, contentH: 420 };
+  // Once the canvas is measured one SVG unit is one screen pixel, so the
+  // default zoom shows every label at its own font size.
+  let viewW = 920;
+  let viewH = 420;
+  const measureViewport = () => {
+    const w = Math.round(Number(canvasWrap.clientWidth) || 0);
+    const h = Math.round(Number(canvasWrap.clientHeight) || 0);
+    if (w < 120 || h < 120 || (w === viewW && h === viewH)) return false;
+    viewW = w;
+    viewH = h;
+    return true;
+  };
   const syncCamera = (dims) => {
     if (dims?.contentW && dims?.contentH) lastDims = dims;
-    svg.setAttribute("viewBox", "0 0 920 420");
+    svg.setAttribute("viewBox", `0 0 ${viewW} ${viewH}`);
     viewportG.setAttribute("transform", `translate(${Math.round(panX)}, ${Math.round(panY)}) scale(${scale.toFixed(3)})`);
     zScaleBtn.textContent = `${Math.round(scale * 100)}%`;
     const gData = activeGraphData();
@@ -379,7 +413,7 @@ export function createDynamicPrdWorkflowCanvas({
       if (!box) continue;
       const fill = n.hasUiPage && n.uiMockup?.status !== "confirmed"
         ? "#f59e0b"
-        : n.status === "completed" ? "#34d399" : "#38bdf8";
+        : n.status === "completed" || n.status === "accepted" ? "#34d399" : "#38bdf8";
       minimapNodesG.append(svgEl("rect", {
         x: Math.round(box.x * sx) + 20,
         y: Math.round(box.y * sy) + 20,
@@ -394,29 +428,25 @@ export function createDynamicPrdWorkflowCanvas({
     const vy = Math.max(0, Math.round((-panY / scale) * sy));
     minimapRect.setAttribute("x", String(Math.min(1020, vx)));
     minimapRect.setAttribute("y", String(Math.min(480, vy)));
-    minimapRect.setAttribute("width", String(Math.min(1180, Math.round((920 / scale) * sx))));
-    minimapRect.setAttribute("height", String(Math.min(600, Math.round((420 / scale) * sy))));
+    minimapRect.setAttribute("width", String(Math.min(1180, Math.round((viewW / scale) * sx))));
+    minimapRect.setAttribute("height", String(Math.min(600, Math.round((viewH / scale) * sy))));
   };
 
+  // The default view never shrinks below 100%: a wide graph is panned, and
+  // 「自适应」 still fits everything on demand.
   const setReadableInitialCamera = () => {
     const dims = computeLayout(activeGraphData());
-    if (dims.contentW <= 920) {
-      scale = Math.min(1, 396 / Math.max(320, dims.contentH));
-      panX = Math.max(8, Math.round((920 - dims.contentW * scale) / 2));
-      panY = Math.max(8, Math.round((420 - dims.contentH * scale) / 2));
-    } else {
-      scale = 0.84;
-      panX = 12;
-      panY = Math.max(6, Math.round((420 - dims.contentH * scale) / 2));
-    }
+    scale = 1;
+    panX = dims.contentW <= viewW ? Math.round((viewW - dims.contentW) / 2) : 12;
+    panY = dims.contentH <= viewH ? Math.round((viewH - dims.contentH) / 2) : 12;
     syncCamera(dims);
   };
 
   const fitViewport = () => {
     const dims = computeLayout(activeGraphData());
-    scale = Math.max(0.46, Math.min(1, Math.min(896 / dims.contentW, 396 / dims.contentH)));
-    panX = Math.max(10, Math.round((920 - dims.contentW * scale) / 2));
-    panY = Math.max(10, Math.round((420 - dims.contentH * scale) / 2));
+    scale = Math.max(0.46, Math.min(1, Math.min((viewW - 24) / dims.contentW, (viewH - 24) / dims.contentH)));
+    panX = Math.max(10, Math.round((viewW - dims.contentW * scale) / 2));
+    panY = Math.max(10, Math.round((viewH - dims.contentH * scale) / 2));
     syncCamera(dims);
   };
 
@@ -452,7 +482,7 @@ export function createDynamicPrdWorkflowCanvas({
     }
 
     const fbTag = el("div", "uw-wf-source-tag uw-wf-source-fallback",
-      `🧩 组件级效果图 v${mock.version || 1}（未配置生图模型时自动回退）`);
+      `页面示意图 v${mock.version || 1}`);
     wrap.append(fbTag);
 
     const frame = el("div", "uw-wf-mock-window");
@@ -688,7 +718,9 @@ export function createDynamicPrdWorkflowCanvas({
 
       const edgeG = svgEl("g", { class: "uw-wf-edge-g" });
       const pathEl = svgEl("path", { fill: "none" });
-      const labelEl = edge.label ? svgEl("text", { "text-anchor": "middle", fill: "#cbd5e1", "font-size": "10.5" }) : null;
+      // A thin line is hard to hover; this transparent band reveals the ⊕.
+      const hitPath = svgEl("path", { fill: "none", stroke: "transparent", "stroke-width": "16", class: "uw-wf-edge-hit" });
+      const labelEl = edge.label ? svgEl("text", { "text-anchor": "middle", fill: "#cbd5e1", "font-size": String(EDGE_LABEL_FONT) }) : null;
       if (labelEl) labelEl.textContent = edge.label;
 
       let plusG = null;
@@ -702,7 +734,7 @@ export function createDynamicPrdWorkflowCanvas({
         titleHint.textContent = "点击在此连线处实时插入新节点";
         plusG.append(cEl, tEl, titleHint);
         plusG.addEventListener("pointerdown", (ev) => ev?.stopPropagation?.());
-        plusG.addEventListener("click", (ev) => {
+        const insertOnEdge = (ev) => {
           ev?.stopPropagation?.();
           const customTitle = quickInput.value.trim();
           if (customTitle) quickInput.value = "";
@@ -712,6 +744,12 @@ export function createDynamicPrdWorkflowCanvas({
             title: customTitle || undefined,
             hasUiPage: true,
           });
+        };
+        plusG.addEventListener("click", insertOnEdge);
+        plusG.addEventListener("keydown", (ev) => {
+          if (ev?.key !== "Enter" && ev?.key !== " ") return;
+          ev.preventDefault?.();
+          insertOnEdge(ev);
         });
       }
 
@@ -724,8 +762,15 @@ export function createDynamicPrdWorkflowCanvas({
           const sy = f.y;
           const tx = t.x + t.w / 2;
           const ty = t.y;
-          const arcY = Math.min(sy, ty) - 48;
-          pathEl.setAttribute("d", `M ${sx} ${sy} C ${sx} ${arcY}, ${tx} ${arcY}, ${tx} ${ty}`);
+          // Clear every node the loop passes over, not only its two ends.
+          const prefix = `${activeSubflowNodeId || "root"}:`;
+          const spanTop = Math.min(sy, ty, ...[...nodePositions.entries()]
+            .filter(([key, b]) => key.startsWith(prefix) && b.x + b.w >= Math.min(sx, tx) && b.x <= Math.max(sx, tx))
+            .map(([, b]) => b.y));
+          const arcY = spanTop - 48;
+          const d = `M ${sx} ${sy} C ${sx} ${arcY}, ${tx} ${arcY}, ${tx} ${ty}`;
+          pathEl.setAttribute("d", d);
+          hitPath.setAttribute("d", d);
           pathEl.setAttribute("stroke", "#fbbf24");
           pathEl.setAttribute("stroke-width", "1.8");
           pathEl.setAttribute("stroke-dasharray", "6 4");
@@ -742,7 +787,9 @@ export function createDynamicPrdWorkflowCanvas({
         const tx = t.x;
         const ty = t.y + t.h / 2;
         const dx = Math.max(44, Math.abs(tx - sx) * 0.46);
-        pathEl.setAttribute("d", `M ${sx} ${sy} C ${sx + dx} ${sy}, ${tx - dx} ${ty}, ${tx} ${ty}`);
+        const d = `M ${sx} ${sy} C ${sx + dx} ${sy}, ${tx - dx} ${ty}, ${tx} ${ty}`;
+        pathEl.setAttribute("d", d);
+        hitPath.setAttribute("d", d);
         const isPar = edge.kind === "parallel";
         pathEl.setAttribute("stroke", isPar ? "#38bdf8" : "#64748b");
         pathEl.setAttribute("stroke-width", "2.1");
@@ -760,7 +807,7 @@ export function createDynamicPrdWorkflowCanvas({
       };
 
       updateGeometry();
-      edgeG.append(pathEl);
+      edgeG.append(pathEl, hitPath);
       if (labelEl) edgeG.append(labelEl);
       if (plusG) edgeG.append(plusG);
       edgesLayer.append(edgeG);
@@ -791,6 +838,9 @@ export function createDynamicPrdWorkflowCanvas({
 
       if (node.kind === "terminal") {
         const isStart = node.id.includes("start") || node.id.endsWith("__in");
+        const spec = TITLE_LAYOUT.terminal;
+        const lines = titleLines(node);
+        const firstY = box.h / 2 + 4 - ((lines.length - 1) * spec.lineHeight) / 2;
         g.append(
           svgEl("rect", {
             x: "0", y: "0", width: box.w, height: box.h, rx: "22",
@@ -798,13 +848,17 @@ export function createDynamicPrdWorkflowCanvas({
             stroke: isSel ? "#f8fafc" : (isStart ? "#34d399" : "#64748b"),
             "stroke-width": isSel ? "2.5" : "1.7",
           }),
-          Object.assign(svgEl("text", {
-            x: box.w / 2, y: "26", "text-anchor": "middle", fill: "#f8fafc", "font-size": "12", "font-weight": "600",
-          }), { textContent: trunc(node.title, 10) }),
+          ...lines.map((line, index) => Object.assign(svgEl("text", {
+            x: box.w / 2, y: Math.round(firstY + index * spec.lineHeight), "text-anchor": "middle", fill: "#f8fafc",
+            "font-size": String(spec.fontSize), "font-weight": "600",
+          }), { textContent: line })),
         );
       } else if (node.kind === "condition") {
+        const spec = TITLE_LAYOUT.condition;
+        const lines = titleLines(node);
         const cx = box.w / 2;
         const cy = box.h / 2;
+        const codeY = cy - 6 - ((lines.length - 1) * spec.lineHeight) / 2;
         g.append(
           svgEl("polygon", {
             points: `${cx},0 ${box.w},${cy} ${cx},${box.h} 0,${cy}`,
@@ -813,13 +867,18 @@ export function createDynamicPrdWorkflowCanvas({
             "stroke-width": isSel ? "2.6" : "1.9",
           }),
           Object.assign(svgEl("text", {
-            x: cx, y: cy - 5, "text-anchor": "middle", fill: "#ddd6fe", "font-size": "10.5", "font-weight": "700",
+            x: cx, y: Math.round(codeY), "text-anchor": "middle", fill: "#ddd6fe", "font-size": "10.5", "font-weight": "700",
           }), { textContent: `◇ ${node.code || "条件路由"}` }),
-          Object.assign(svgEl("text", {
-            x: cx, y: cy + 12, "text-anchor": "middle", fill: "#f8fafc", "font-size": "11.5", "font-weight": "600",
-          }), { textContent: trunc(node.title, 10) }),
+          ...lines.map((line, index) => Object.assign(svgEl("text", {
+            x: cx, y: Math.round(codeY + 17 + index * spec.lineHeight), "text-anchor": "middle", fill: "#f8fafc",
+            "font-size": String(spec.fontSize), "font-weight": "600",
+          }), { textContent: line })),
         );
       } else {
+        const spec = TITLE_LAYOUT.process;
+        const lines = titleLines(node);
+        const extra = (lines.length - 1) * spec.lineHeight;
+        const done = node.status === "completed" || node.status === "accepted";
         const pendingUi = node.hasUiPage && node.uiMockup?.status !== "confirmed";
         const stroke = isSel
           ? "#f8fafc"
@@ -827,18 +886,11 @@ export function createDynamicPrdWorkflowCanvas({
             ? "#fbbf24"
             : pendingUi
               ? "#f59e0b"
-              : node.status === "completed"
+              : done
                 ? "#34d399"
                 : "#38bdf8";
-        const statusLabel = node.reacted
-          ? "⚡ 待复核"
-          : node.status === "completed"
-            ? "✓ 已完成"
-            : node.status === "running"
-              ? "● 运行中"
-              : node.status === "partial"
-                ? "◐ 进行中"
-                : "○ 待开始";
+        const statusLabel = node.reacted ? "⚡ 待复核"
+          : ({ completed: "✓ 已完成", accepted: "✓ 已验收", identified: "◇ 已识别", running: "● 运行中", partial: "◐ 进行中" })[node.status] || "○ 待开始";
 
         g.append(
           svgEl("rect", {
@@ -852,48 +904,51 @@ export function createDynamicPrdWorkflowCanvas({
           }),
           Object.assign(svgEl("text", {
             x: box.w - 10, y: "19", "text-anchor": "end",
-            fill: node.reacted ? "#fcd34d" : (node.status === "completed" ? "#6ee7b7" : "#7dd3fc"),
+            fill: node.reacted ? "#fcd34d" : (done ? "#6ee7b7" : "#7dd3fc"),
             "font-size": "10.5", "font-weight": "600",
           }), { textContent: statusLabel }),
-          Object.assign(svgEl("text", { x: "11", y: "43", fill: "#f8fafc", "font-size": "13", "font-weight": "700" }), {
-            textContent: trunc(node.title, 12),
-          }),
+          ...lines.map((line, index) => Object.assign(svgEl("text", {
+            x: "11", y: String(43 + index * spec.lineHeight), fill: "#f8fafc", "font-size": String(spec.fontSize), "font-weight": "700",
+          }), { textContent: line })),
         );
 
-        if (!gData.isSubflow && node.subflow) {
-          g.append(Object.assign(svgEl("text", { x: box.w - 10, y: "43", "text-anchor": "end", fill: "#38bdf8", "font-size": "10" }), {
-            textContent: "二级↘",
-          }));
-        }
-
+        // The drill-down hint shares the bottom row so the title keeps the full width.
+        const drillable = !gData.isSubflow && Boolean(node.subflow);
+        const badgeW = box.w - 20 - (drillable ? 44 : 0);
+        const badgeY = 60 + extra;
         if (node.hasUiPage) {
           const ok = node.uiMockup?.status === "confirmed";
           const ver = node.uiMockup?.version || 1;
           g.append(
             svgEl("rect", {
-              x: "10", y: "60", width: box.w - 20, height: "22", rx: "6",
+              x: "10", y: String(badgeY), width: badgeW, height: "22", rx: "6",
               fill: ok ? "#064e3b" : "#451a03",
               stroke: ok ? "#10b981" : "#f59e0b",
               "stroke-width": "1.1",
             }),
             Object.assign(svgEl("text", {
-              x: box.w / 2, y: "74.5", "text-anchor": "middle",
+              x: 10 + badgeW / 2, y: String(badgeY + 14.5), "text-anchor": "middle",
               fill: ok ? "#a7f3d0" : "#fde68a",
               "font-size": "10.5", "font-weight": "600",
             }), {
-              textContent: ok ? `🖼 效果图 v${ver} 已确认` : `🖼 待先确认效果图 v${ver}`,
+              textContent: ok ? `🖼 示意图 v${ver} 已确认` : `🖼 待确认示意图 v${ver}`,
             }),
           );
         } else {
           g.append(
             svgEl("rect", {
-              x: "10", y: "60", width: box.w - 20, height: "21", rx: "6",
+              x: "10", y: String(badgeY), width: badgeW, height: "21", rx: "6",
               fill: "#0f172a", stroke: "#334155", "stroke-width": "1",
             }),
             Object.assign(svgEl("text", {
-              x: box.w / 2, y: "74", "text-anchor": "middle", fill: "#94a3b8", "font-size": "10.5",
-            }), { textContent: "⚙ 纯后台节点（无页面）" }),
+              x: 10 + badgeW / 2, y: String(badgeY + 14), "text-anchor": "middle", fill: "#94a3b8", "font-size": "10.5",
+            }), { textContent: "⚙ 后台模块（无页面）" }),
           );
+        }
+        if (drillable) {
+          g.append(Object.assign(svgEl("text", { x: box.w - 10, y: String(badgeY + 14.5), "text-anchor": "end", fill: "#38bdf8", "font-size": "10.5" }), {
+            textContent: "二级↘",
+          }));
         }
       }
 
@@ -934,14 +989,22 @@ export function createDynamicPrdWorkflowCanvas({
       };
       g.addEventListener("pointerup", stopNodeDrag);
       g.addEventListener("pointercancel", stopNodeDrag);
-      g.addEventListener("click", (ev) => {
-        if (suppressClick) { suppressClick = false; ev?.stopPropagation?.(); return; }
+      const selectThisNode = () => {
         currentSelectedId = node.id;
         if (node.hasUiPage) inspectorTab = "mockup";
         drawAll();
         if (!gData.isSubflow && node.kind !== "terminal") {
           onSelectNode?.({ id: node.id, sourceId: node.id, title: node.title, kind: "module" });
         }
+      };
+      g.addEventListener("click", (ev) => {
+        if (suppressClick) { suppressClick = false; ev?.stopPropagation?.(); return; }
+        selectThisNode();
+      });
+      g.addEventListener("keydown", (ev) => {
+        if (ev?.key !== "Enter" && ev?.key !== " ") return;
+        ev.preventDefault?.();
+        selectThisNode();
       });
       g.addEventListener("dblclick", (ev) => {
         ev?.stopPropagation?.();
@@ -1005,7 +1068,7 @@ export function createDynamicPrdWorkflowCanvas({
   });
   zInBtn.addEventListener("click", () => { scale = Math.min(1.85, scale + 0.12); syncCamera(); });
   zOutBtn.addEventListener("click", () => { scale = Math.max(0.42, scale - 0.12); syncCamera(); });
-  zScaleBtn.addEventListener("click", () => { scale = 0.85; panX = 16; panY = 16; syncCamera(); });
+  zScaleBtn.addEventListener("click", () => { scale = 1; panX = 16; panY = 16; syncCamera(); });
   fitBtn.addEventListener("click", fitViewport);
   maxBtn.addEventListener("click", () => {
     const next = root.dataset.maximized !== "true";
@@ -1052,7 +1115,25 @@ export function createDynamicPrdWorkflowCanvas({
     onMutateWorkflow?.({ action: "reset_baseline" });
   });
 
+  let cameraMeasured = measureViewport();
   setReadableInitialCamera();
   drawAll();
+  // The canvas is measured again once the host attaches it, and the viewBox
+  // follows later panel resizes without changing the user's zoom. A canvas built
+  // inside a hidden or collapsed pane has nothing to measure yet, so its readable
+  // camera waits for the first measurement that succeeds.
+  const win = doc.defaultView;
+  win?.requestAnimationFrame?.(() => { if (measureViewport()) { cameraMeasured = true; setReadableInitialCamera(); drawAll(); } });
+  if (typeof win?.ResizeObserver === "function") {
+    const resizeWatch = new win.ResizeObserver(() => {
+      if (!canvasWrap.isConnected) { resizeWatch.disconnect(); return; }
+      if (!measureViewport()) return;
+      if (cameraMeasured) { syncCamera(); return; }
+      cameraMeasured = true;
+      setReadableInitialCamera();
+      drawAll();
+    });
+    resizeWatch.observe(canvasWrap);
+  }
   return root;
 }

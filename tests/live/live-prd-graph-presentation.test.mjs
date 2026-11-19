@@ -24,6 +24,24 @@ const fixture = { architecture: { id: "system", title: "业务系统", status: "
     { id: "b", title: "结算", status: "revision_required", dependsOn: ["a"] },
     { id: "c", title: "物流", status: "not_reviewed", dependsOn: ["b"] }], totalModules: 3, nextCursor: null };
 
+// Review #17: at the default zoom a card title is read whole. SVG text does not
+// wrap, so a long title is laid out over two lines instead of being cut.
+test("review #17: a long module title wraps onto a second line instead of being cut", () => {
+  const mixed = "多仓库管理与双向 Agent 协同交接";
+  const cjk = "两级产品设计图谱与进度汇总引擎";
+  const titles = { a: mixed, b: cjk };
+  const graph = buildLivePrdGraph({ ...fixture, modules: fixture.modules.map((item) => titles[item.id] ? { ...item, title: titles[item.id] } : item) });
+  const view = createPrdKnowledgeGraph({ doc, graph, copy: key => LIVE_WORKSPACE_MESSAGES.zh[key] || key, onSelect() {}, onDepthChange() {} });
+  const card = (id) => findAll(view, element => element.tagName === "g" && element.dataset.livePrdGraphNode === id)[0];
+  const linesOf = (id) => card(id).children.find(element => element.attributes.get("class") === "uw-kg-node-title")
+    .children.filter(element => element.tagName === "tspan").map(element => element.textContent);
+  assert.deepEqual(linesOf("a"), ["多仓库管理与双向", "Agent 协同交接"], "the break falls at the space, never inside the Latin word");
+  assert.equal(linesOf("b").join(""), cjk, "every character of the title is shown");
+  assert.ok(linesOf("b").every(line => Array.from(line).length >= 3), "neither line is left with a stray character: " + linesOf("b").join(" / "));
+  const height = Number(card("a").children.find(element => element.tagName === "rect").attributes.get("height"));
+  assert.ok(16 * 2 + 44 <= height, "the card is tall enough for both lines");
+});
+
 test("rendered PRD graph is a real navigable SVG with correctly translated review states", () => {
   const selected = [];
   const graph = buildLivePrdGraph(fixture);
