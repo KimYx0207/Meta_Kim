@@ -50,6 +50,14 @@ export const LIVE_COMPACT_PROJECTION_SCHEMA_VERSION = "meta-kim-live-projection-
 export const LIVE_MAX_COMPACT_BYTES = 256 * 1024;
 export const LIVE_STALE_AFTER_MS = 10 * 60 * 1000;
 export const LIVE_STALE_IDLE_HOURS = 6;
+export const LIVE_MAX_NODES = 128;
+export const LIVE_MAX_EDGES = 256;
+export const LIVE_MAX_EVIDENCE = 256;
+export const LIVE_MAX_REPLAY = 512;
+export const LIVE_MAX_STRING = 240;
+export const LIVE_MAX_CONTEXT_TRANSFERS = 128;
+export const LIVE_MAX_CONTEXT_EVIDENCE_REFS = 24;
+export const LIVE_MAX_DECLARED_PLAN_NODES = 512;
 
 // Statuses after which no further progress is expected: the outcomes the shared
 // vocabulary already words as final, plus the two ways a host closes a run.
@@ -72,14 +80,6 @@ export function liveRunStaleness({ status, updatedAt, nowMs } = {}) {
   const closed = LIVE_CLOSED_STATUSES.has(normalizeLiveStatus(status, "in_doubt"));
   return { stale: !closed && idleHours >= LIVE_STALE_IDLE_HOURS, idleHours };
 }
-export const LIVE_MAX_NODES = 128;
-export const LIVE_MAX_EDGES = 256;
-export const LIVE_MAX_EVIDENCE = 256;
-export const LIVE_MAX_REPLAY = 512;
-export const LIVE_MAX_STRING = 240;
-export const LIVE_MAX_CONTEXT_TRANSFERS = 128;
-export const LIVE_MAX_CONTEXT_EVIDENCE_REFS = 24;
-export const LIVE_MAX_DECLARED_PLAN_NODES = 512;
 
 /**
  * Statuses a stage-DAG packet or one of its lanes uses to say it has not run.
