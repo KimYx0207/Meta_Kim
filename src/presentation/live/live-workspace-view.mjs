@@ -29,7 +29,7 @@ export function renderLiveWorkspaceNavigation() {
     <section class="uw-agent-inventory" data-uw-agent-inventory aria-label="Agent 协作与能力清单"></section>
     <div class="uw-nav-section-heading"><span data-uw-module-heading>系统模块</span><span data-uw-module-count>—</span></div>
     <div class="uw-module-nav" data-uw-modules aria-label="全部系统模块"><p class="uw-nav-empty">模块拆分后会出现在这里</p></div>
-    <div class="uw-nav-footer"><p data-uw-nav-footer>同一工作 · 持续接续</p></div>
+    <div class="uw-nav-footer"><p data-uw-nav-footer></p></div>
     <div class="uw-nav-resizer" data-uw-nav-resizer role="separator" aria-orientation="vertical" aria-label="拖拽调整侧边栏宽度" title="拖拽调整侧边栏宽度，双击重置"></div>
   </aside>`;
 }
@@ -47,21 +47,21 @@ export function renderLiveWorkspaceSurface() {
         <header class="uw-agent-chat-header">
           <div class="uw-agent-chat-identity"><button type="button" class="uw-icon-button uw-nav-expand-btn" data-uw-nav-expand hidden title="展开侧边栏" aria-label="展开侧边栏">${liveWorkspaceIcon("sidebarLeft")}</button><span class="uw-agent-chat-emblem" aria-hidden="true">K</span><div><strong>Meta_Kim</strong><span>Agent 对话 · 关键节点由你决定</span></div></div>
           <div class="uw-pane-header-right">
-            <button type="button" class="uw-binding-toggle-btn" data-uw-open-binding aria-expanded="false" title="正向调用或反向绑定外部 Agent 会话">双向绑定</button>
+            <button type="button" class="uw-binding-toggle-btn" data-uw-open-binding aria-expanded="false" title="把目标交给本机 AI 客户端，或接入在外部开始的对话">接入外部对话</button>
             <span class="uw-agent-chat-connection" data-uw-chat-connection>正在连接</span>
             <button type="button" class="uw-pane-restore-pill" data-uw-pane-restore-live hidden title="展开右侧 Live 画布" aria-label="展开右侧 Live 画布">展开画布</button>
             <button type="button" class="uw-icon-button uw-pane-btn" data-uw-pane-toggle="chat-max" title="最大化对话窗口" aria-label="最大化对话窗口">${liveWorkspaceIcon("maximize")}</button>
           </div>
         </header>
-        <div class="uw-agent-chat-scope"><span class="uw-agent-chat-scope-dot" aria-hidden="true"></span><span>当前仓库</span><strong data-uw-chat-project>正在核对…</strong><button type="button" class="uw-chat-repo-switch-btn" data-uw-chat-switch-repo title="切换本地已登记仓库或历史运行">切换仓库 ▾</button></div>
-        <section class="uw-binding-drawer" data-uw-binding-drawer hidden aria-label="双向 Agent 绑定与渠道中心"></section>
+        <div class="uw-agent-chat-scope"><span class="uw-agent-chat-scope-dot" aria-hidden="true"></span><span>当前仓库</span><strong data-uw-chat-project>正在核对…</strong><button type="button" class="uw-chat-repo-switch-btn" data-uw-chat-switch-repo title="查看这个仓库的运行记录">运行记录 ▾</button></div>
+        <section class="uw-binding-drawer" data-uw-binding-drawer hidden aria-label="接入外部对话"></section>
         <div class="uw-agent-chat-thread" data-uw-chat-thread role="log" aria-label="Agent 对话记录" aria-live="off"></div>
         <div class="uw-chat-announcement" data-uw-chat-announcement role="status" aria-live="polite" aria-atomic="true"></div>
         <div class="uw-agent-chat-target" data-uw-chat-target hidden><span data-uw-chat-target-text></span><button type="button" data-uw-chat-target-clear aria-label="取消关联节点">×</button></div>
         <form class="uw-agent-chat-composer" data-uw-chat-form autocomplete="off">
           <label class="uw-agent-chat-label" for="uw-chat-input">向 Meta_Kim 发送消息</label>
           <textarea id="uw-chat-input" data-uw-chat-input rows="2" maxlength="6000" placeholder="说说你想完成什么，或直接指出右侧节点的问题…"></textarea>
-          <div class="uw-agent-chat-composer-bottom"><label class="uw-chat-channel-picker" for="uw-chat-host"><span class="uw-chat-channel-label">渠道</span><select id="uw-chat-host" class="uw-chat-host-select" data-uw-chat-host aria-label="选择 Agent 渠道"><option value="">检测渠道…</option></select></label><span data-uw-chat-guidance>Enter 发送，Shift+Enter 换行</span><button type="submit" data-uw-chat-send aria-label="发送消息" title="发送消息">${liveWorkspaceIcon("arrow")}</button></div>
+          <div class="uw-agent-chat-composer-bottom"><label class="uw-chat-channel-picker" for="uw-chat-host"><span class="uw-chat-channel-label">客户端</span><select id="uw-chat-host" class="uw-chat-host-select" data-uw-chat-host aria-label="选择用哪个 AI 客户端"><option value="">检测客户端…</option></select></label><span data-uw-chat-guidance>Enter 发送，Shift+Enter 换行</span><button type="submit" data-uw-chat-send aria-label="发送消息" title="发送消息">${liveWorkspaceIcon("arrow")}</button></div>
         </form>
       </div>
       <div class="uw-agent-legacy" hidden>
@@ -110,7 +110,7 @@ export function renderLiveWorkspaceSurface() {
         </section>
         <section class="uw-agent-gate" data-uw-agent-execution aria-labelledby="uw-agent-execution-title" hidden>
           <div class="uw-agent-design-heading"><div><span>下一关 · 真实运行与 B3 权限</span><h3 id="uw-agent-execution-title">执行前，还要核验什么？</h3></div><button type="button" data-uw-agent-execution-records>查看正式 Run 记录</button></div>
-          <p class="uw-agent-design-status" data-uw-agent-execution-status role="status">等待真实宿主、正式运行身份与必要的副作用授权。</p>
+          <p class="uw-agent-design-status" data-uw-agent-execution-status role="status">等待本机客户端、正式 Run 身份和必要的操作授权。</p>
           <p class="uw-agent-design-note">B3 仅允许当前项目的一次本地草稿修改。原生客户端使用受限工具，禁止命令、对外发送、付款和发布；正式 Run、测试与 B4 验收仍需单独核对。</p>
           <div class="uw-agent-transfer-actions">
             <button type="button" data-uw-agent-execution-authorize hidden>批准 B3 并启动本地草稿</button>
@@ -119,7 +119,7 @@ export function renderLiveWorkspaceSurface() {
           <p class="uw-agent-design-status" data-uw-agent-execution-native role="status" aria-live="polite"></p>
 
           <ul class="uw-agent-gate-list" data-uw-agent-execution-evidence></ul>
-          <p class="uw-agent-design-note">这里会清楚区分“设计批准”“交接封存”“宿主确认”“实际运行”和“敏感操作授权”。左侧选中的 Run 不会自动视作本任务的执行证据。</p>
+          <p class="uw-agent-design-note">这里会清楚区分“设计批准”“交接封存”“客户端确认”“实际运行”和“敏感操作授权”。左侧选中的 Run 不会自动视作本任务的执行证据。</p>
         </section>
         <section class="uw-agent-gate" data-uw-agent-acceptance aria-labelledby="uw-agent-acceptance-title" hidden>
           <div class="uw-agent-design-heading"><div><span>最终关 · B4 用户验收</span><h3 id="uw-agent-acceptance-title">有证据后再交付</h3></div></div>
@@ -154,10 +154,12 @@ export function renderLiveWorkspaceSurface() {
       <div class="uw-agent-docked-run-slot" data-uw-docked-run-slot hidden></div>
       <footer class="uw-agent-live-footer" data-uw-live-footer><span data-uw-live-caption>拖拽节点或分栏可自由布局；点击节点可在左侧反馈</span><span data-uw-live-count>0 个节点</span></footer>
     </section>
-    <section class="uw-user-flow" id="uw-user-flow" data-uw-user-flow aria-label="已选正式运行的用户路径">
-      <div class="uw-user-flow-heading"><strong>已选正式 Run · 五步治理进度</strong><span>仅显示左侧所选运行的真实阶段。上方研究草稿或采纳回执不会直接推进这里。</span></div>
-      <ol class="uw-phase-strip" data-uw-phases aria-label="五步用户进度"></ol>
-      <details class="uw-advanced-stages"><summary>展开 Meta 治理八阶段 · 查看原始状态和证据</summary><div class="uw-stage-strip" data-uw-stages role="list" aria-label="八阶段与当前状态"></div></details>
+    <section class="uw-user-flow" id="uw-user-flow" data-uw-user-flow aria-label="所选 Run 的原始阶段记录">
+      <details class="uw-run-details"><summary>详情 · 所选 Run 的原始阶段记录</summary>
+        <p class="uw-run-details-note">进度以顶部 6 步为准。这里按原始记录列出五个阶段分组和八个阶段的状态与证据；上方研究草稿或采纳回执不会直接推进这里。</p>
+        <ol class="uw-phase-strip" data-uw-phases aria-label="五个阶段分组"></ol>
+        <div class="uw-stage-strip" data-uw-stages role="list" aria-label="八个阶段与当前状态"></div>
+      </details>
     </section>
     <div class="uw-notice" data-uw-notice role="status" hidden></div>
     <div class="uw-body">
@@ -172,7 +174,7 @@ export function renderLiveWorkspaceSurface() {
         <div class="uw-detail-body" data-uw-detail-body></div>
       </aside>
     </div>
-    <footer class="uw-workspace-footer"><span data-uw-source>结果以实际记录与验证为准</span><span data-uw-read-state></span></footer>
+    <footer class="uw-workspace-footer"><span data-uw-source></span><span data-uw-read-state></span></footer>
   </div>`;
 }
 

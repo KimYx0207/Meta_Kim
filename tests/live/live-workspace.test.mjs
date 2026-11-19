@@ -1055,3 +1055,22 @@ test('synthetic task verification rejects null and primitive checks with the wor
   }
   assert.equal((await f.overview()).revision, 0);
 });
+
+test("review #3: a run without a registered workspace reads an empty record history instead of a 409 conflict", async t => {
+  const f = await fixture(t);
+  const overview = await f.overview();
+  assert.equal(overview.design.status, "not_registered");
+  const page = await f.service.getRequests({ runId: f.runId });
+  assert.equal(page.schemaVersion, "meta-kim-live-workspace-requests-v1");
+  assert.equal(page.runId, f.runId);
+  assert.equal(page.registered, false);
+  assert.deepEqual(page.requests, []);
+  assert.equal(page.total, 0);
+  assert.equal(page.nextCursor, null);
+  assert.equal(page.order, "newest_first");
+  assert.equal(page.revision, overview.revision);
+  await writeFile(path.join(f.root, ".meta-kim/work/design.json"), JSON.stringify(designInput()));
+  await f.publish(designInput());
+  const registered = await f.service.getRequests({ runId: f.runId });
+  assert.equal(registered.registered, true, "A registered workspace says so explicitly");
+});

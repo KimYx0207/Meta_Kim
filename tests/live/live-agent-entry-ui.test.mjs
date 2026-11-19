@@ -30,7 +30,7 @@ function uiNode(initialValue = "") {
   };
 }
 
-function harness(fetcher, enabled = true, entryEnabled = true) {
+function harness(fetcher, enabled = true, entryEnabled = true, { desktop } = {}) {
   const selectors = ["entry", "start", "goal", "host", "host-status", "host-list", "submit", "status", "recovery", "verify", "redetect", "new", "result", "output"];
   const ui = Object.fromEntries(selectors.map((name) => [name, uiNode(name === "goal" ? "帮我研究三个方案" : "")]));
   ui["host-list"].items = [];
@@ -60,6 +60,8 @@ function harness(fetcher, enabled = true, entryEnabled = true) {
   Object.defineProperty(ui.host, "textContent", { get() { return ""; }, set(value) { if (value === "") { this.options.length = 0; this.value = ""; } } });
   ui.host.appendChild = (option) => { ui.host.options.push(option); if (!ui.host.value && !option.disabled) ui.host.value = option.value; };
   const context = vm.createContext({ URL, AbortController, TextEncoder, Date, LIVE_WORKSPACE_MESSAGES, workspaceArtifactItems, workspaceMaterialIdentity, workspaceMaterialMatches, workspaceMaterialReady, workspaceCommandMessage,
+    ...(desktop ? { createUnifiedAgentDesktop: desktop, createDynamicPrdWorkflowCanvas() {}, buildLivePrdGraph() {}, createPrdKnowledgeGraph() {},
+      parseNativeStrategyOptions: () => [], translateAgentUi: (value) => value, formatLiveTime: String } : {}),
     createLiveWorkspaceRenderer: ({ state: controllerState }) => { state = controllerState; return { render() {}, renderMain() {}, detailCloseButton: null, content: { scrollTop: 0, focus() {} } }; },
     options: { app, policy: LIVE_WORKSPACE_UI_POLICY, config: { enabled, agentEntryEnabled: entryEnabled, controlHeader: "x-meta-kim-workspace-token", controlToken: token }, language: () => "zh", showLegacyView() {}, openProjects() {}, openGraph() {} },
   });
@@ -303,4 +305,16 @@ test("Hub without explicit agent entry capability never exposes launch", async (
   assert.equal(h.calls.length, 0);
   h.ui.start.dispatch("submit"); await settled();
   assert.equal(h.calls.length, 0);
+});
+
+test("review #24: opening the full run graph tab keeps the chat beside it", () => {
+  let callbacks = null;
+  const desktop = (options) => { callbacks = options.callbacks; return { render() {}, mode: "live-run" }; };
+  const h = harness(({ url }) => reply(url.pathname.endsWith("/hosts") ? hosts() : {}), true, true, { desktop });
+  assert.ok(callbacks?.onLiveModeChange, "the controller hands the desktop a tab-change callback");
+  h.root.dataset.paneLayout = "split";
+  callbacks.onLiveModeChange("live-run", "flow");
+  assert.equal(h.root.dataset.paneLayout, "split", "the chat column must stay open when the run graph tab opens");
+  callbacks.onLiveModeChange("flow", "live-run");
+  assert.equal(h.root.dataset.paneLayout, "split");
 });

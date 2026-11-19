@@ -518,14 +518,20 @@ export function createLiveWorkspaceService(options) {
 
   async function getRequests({ runId, commandId = null, nonce = null, cursor = null }) {
     const state = await stateFor(runId);
+    // Most runs never register a design workspace. Their history is empty, the
+    // same as the overview reports, and must not read as a version conflict.
+    if (!state.liveWorkspace) {
+      return { schemaVersion: "meta-kim-live-workspace-requests-v1", runId, revision: state.hostCheckpointRevision || 0,
+        requests: [], total: 0, nextCursor: null, order: "newest_first", registered: false };
+    }
     const workspace = workspaceFor(state);
     if (commandId || nonce) {
       workspaceRequire(!cursor, "workspace_cursor_with_filter_invalid");
       const requests = workspace.requests.filter(request => (!commandId || request.commandId === commandId) && (!nonce || request.nonce === nonce));
       return { schemaVersion: "meta-kim-live-workspace-requests-v1", runId, revision: state.hostCheckpointRevision || 0,
-        requests: requests.toReversed().map(publicRequest), total: requests.length, nextCursor: null, order: "newest_first" };
+        requests: requests.toReversed().map(publicRequest), total: requests.length, nextCursor: null, order: "newest_first", registered: true };
     }
-    return { schemaVersion: "meta-kim-live-workspace-requests-v1", runId, ...requestPage(state, workspace, cursor) };
+    return { schemaVersion: "meta-kim-live-workspace-requests-v1", runId, ...requestPage(state, workspace, cursor), registered: true };
   }
 
   async function hostInspect({ runId, conversationId }) {

@@ -1599,6 +1599,8 @@ export function createLiveControlRoomServer(options = {}) {
           controlHeader: WORKSPACE_HEADER,
           controlToken: workspaceToken,
           agentEntryEnabled,
+          // Mirrors the `workspace_exact_selection_required` guard below.
+          requiresProjectId: globalHub,
         },
       });
       textResponse(response, 200, body, "text/html; charset=utf-8");

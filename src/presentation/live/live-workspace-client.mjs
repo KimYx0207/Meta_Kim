@@ -1,9 +1,10 @@
-import { LIVE_WORKSPACE_MESSAGES, serializeLiveWorkspaceModel, workspaceArtifactItems, workspaceMaterialIdentity, workspaceMaterialMatches, workspaceMaterialReady, workspaceCommandMessage, buildLivePrdGraph } from "./live-workspace-model.mjs";
+import { LIVE_WORKSPACE_MESSAGES, organizeRepositoryCatalog, serializeLiveWorkspaceModel, workspaceArtifactItems, workspaceMaterialIdentity, workspaceMaterialMatches, workspaceMaterialReady, workspaceCommandMessage, buildLivePrdGraph } from "./live-workspace-model.mjs";
 import { createLiveWorkspaceRenderer, projectLiveUserPhases } from "./live-workspace-renderer.mjs";
 import { createPrdKnowledgeGraph } from "./live-prd-knowledge-graph.mjs";
 import { createDynamicPrdWorkflowCanvas } from "./live-prd-workflow-canvas.mjs";
 import { createUnifiedAgentDesktop } from "./live-agent-desktop.mjs";
 import { serializeLiveAgentCopy, translateAgentUi } from "./live-agent-copy.mjs";
+import { formatLiveTime } from "./live-ui-copy.mjs";
 
 export const LIVE_WORKSPACE_UI_POLICY = Object.freeze({ pageSize: 50, refreshMs: 15000, requestTimeoutMs: 12000, refreshCoalesceMs: 1500, agentReceiptPollMs: 2500 });
 
@@ -143,25 +144,43 @@ export function createLiveWorkspaceController(options) {
     for (const [key, value] of Object.entries({ projectId: selection.projectId, runId: selection.runId, ...extra })) if (value !== undefined && value !== null && value !== "") url.searchParams.set(key, String(value));
     return url.href;
   };
+  // A Hub answers a private read without the project with 400, so a page that
+  // has not resolved its project yet waits instead of reporting a failure.
+  const selectionReady = () => Boolean(state.selection.runId)
+    && (options.config?.requiresProjectId !== true || Boolean(state.selection.projectId));
+  const describeFailure = (error) => error?.kind === "timeout" ? { kind: "timeout", timeoutMs: error.timeoutMs }
+    : error?.kind === "network" ? { kind: "network" }
+      : Number.isInteger(error?.status) ? { kind: "status", status: error.status } : { kind: "contract" };
   async function request(path, { method = "GET", body, query = {}, selection = state.selection, runScoped = !path.startsWith("/api/agent/") } = {}) {
     const controller = new AbortController();
     if (runScoped) pendingControllers.add(controller);
-    const timer = win.setTimeout(() => controller.abort(), policy.requestTimeoutMs);
+    let timedOut = false;
+    const timer = win.setTimeout(() => { timedOut = true; controller.abort(); }, policy.requestTimeoutMs);
     try {
       const headers = { accept: "application/json" };
       if (token) headers["x-meta-kim-workspace-token"] = token;
       if (method !== "GET") headers["content-type"] = "application/json";
-      const response = await win.fetch(route(path, query, selection), { method, headers, credentials: "same-origin", cache: "no-store", signal: controller.signal, ...(body ? { body: JSON.stringify(body) } : {}) });
+      let response;
+      try {
+        response = await win.fetch(route(path, query, selection), { method, headers, credentials: "same-origin", cache: "no-store", signal: controller.signal, ...(body ? { body: JSON.stringify(body) } : {}) });
+      } catch (error) {
+        // A selection change aborts on purpose and stays an AbortError; only
+        // the timer and an unreachable server are failures worth naming.
+        if (timedOut) throw Object.assign(new Error("Workspace request timed out"), { kind: "timeout", timeoutMs: policy.requestTimeoutMs });
+        if (error?.name !== "AbortError") throw Object.assign(new Error("Workspace service unreachable"), { kind: "network" });
+        throw error;
+      }
       let payload;
       try { payload = await response.json(); } catch { payload = null; }
       if (!response.ok) { const error = new Error(payload?.error?.message || payload?.message || "Workspace request failed"); error.status = response.status; error.code = typeof payload?.error === "string" ? payload.error : payload?.error?.code; throw error; }
       return payload;
     } finally { win.clearTimeout(timer); pendingControllers.delete(controller); }
   }
+  let repoQuery = "";
+  let repoRestOpen = false;
   let architectureRead = null;
   let architectureLastRead = 0;
   let architectureProjectId = "";
-  const isEphemeralProjectName = (name) => /^(?:\d{10,}-[a-f0-9-]{8,}|draft-[a-f0-9-]{8,}|tmp\.|L\d{2}-[A-Za-z0-9]{4,}|probe-|meta-kim-agent-project-|metakim-|mk-spine-|conv-binding-)/iu.test(String(name || ""));
 
   function enhanceRepositorySurface() {
     const repoView = app.querySelector("[data-live-repository-view]");
@@ -176,8 +195,8 @@ export function createLiveWorkspaceController(options) {
     }
     if (repoBoundary && facts) {
       repoBoundary.textContent = facts.isExecutionBoundRepo
-        ? "当前启动绑定仓库 · 支持对话研究、B1–B4 执行与双向会话接入"
-        : "已登记本地仓库 · 支持只读运行观测、两级架构 PRD 解析与外部会话接入";
+        ? "当前启动的仓库 · 可以对话研究、执行 B1–B4，也能接入外部对话"
+        : "已登记的本地仓库 · 可以查看运行、阅读两级 PRD、接入外部对话";
     }
     let liveCard = repoView.querySelector("[data-uw-repo-live-panel]");
     if (!liveCard) {
@@ -186,7 +205,15 @@ export function createLiveWorkspaceController(options) {
       liveCard.dataset.uwRepoLivePanel = "true";
       factsHost.parentElement?.insertBefore(liveCard, factsHost);
     }
-    liveCard.replaceChildren();
+    // Facts refresh on every update; the repository list keeps its search box
+    // in place so a poll never interrupts typing.
+    let factsSlot = liveCard.querySelector("[data-uw-repo-facts-slot]");
+    if (!factsSlot) {
+      factsSlot = doc.createElement("div");
+      factsSlot.dataset.uwRepoFactsSlot = "true";
+      liveCard.append(factsSlot);
+    }
+    factsSlot.replaceChildren();
     if (facts) {
       const grid = doc.createElement("div");
       grid.className = "uw-repo-facts-grid";
@@ -195,7 +222,7 @@ export function createLiveWorkspaceController(options) {
         ["最新提交", facts.headCommit || "无提交记录"],
         ["工作区状态", !facts.hasGit ? "非 Git 目录" : facts.worktree?.state === "clean" ? "干净（0 处未提交变更）"
           : `${facts.worktree?.totalChanges || 0} 处变更（修改 ${facts.worktree?.modifiedCount || 0} · 暂存 ${facts.worktree?.stagedCount || 0} · 未跟踪 ${facts.worktree?.untrackedCount || 0}）`],
-        ["双向同步 Hook", facts.enrolledRuntimes?.length
+        ["自动同步 Hook", facts.enrolledRuntimes?.length
           ? facts.enrolledRuntimes.map((h) => `${h.label}${h.autoSync ? "（自动同步）" : ""}`).join(" · ")
           : "尚未安装项目级 Hook"],
       ];
@@ -207,52 +234,75 @@ export function createLiveWorkspaceController(options) {
         cell.append(labelEl, valEl);
         grid.append(cell);
       }
-      liveCard.append(grid);
+      factsSlot.append(grid);
       const emptyPlaceholder = factsHost.querySelector(".repository-empty");
       emptyPlaceholder?.remove();
     }
     const allCatalog = typeof options.getCatalog === "function" ? (options.getCatalog() || []) : [];
-    if (allCatalog.length > 0) {
-      const primaryRepos = allCatalog.filter((p) => !isEphemeralProjectName(p.displayName));
-      const tempRepos = allCatalog.filter((p) => isEphemeralProjectName(p.displayName));
-      const switcher = doc.createElement("div");
-      switcher.className = "uw-repo-catalog-box";
+    let catalogBox = liveCard.querySelector("[data-uw-repo-catalog]");
+    if (allCatalog.length > 0 && !catalogBox) {
+      catalogBox = doc.createElement("div");
+      catalogBox.className = "uw-repo-catalog-box";
+      catalogBox.dataset.uwRepoCatalog = "true";
       const head = doc.createElement("div");
       head.className = "uw-repo-catalog-head";
       const titleEl = doc.createElement("strong");
-      titleEl.textContent = `切换已登记仓库（核心工程 ${primaryRepos.length} 个 · 共 ${allCatalog.length} 个）`;
-      head.append(titleEl);
-      switcher.append(head);
-      const makeRepoGrid = (list) => {
-        const g = doc.createElement("div");
-        g.className = "uw-repo-chip-grid";
-        for (const item of list) {
-          const btn = doc.createElement("button");
-          btn.type = "button";
-          btn.className = "uw-repo-chip";
-          btn.dataset.selected = String(item.projectId === state.selection?.projectId);
-          const nameSpan = doc.createElement("strong");
-          nameSpan.textContent = item.displayName || item.projectId;
-          const countSpan = doc.createElement("small");
-          countSpan.textContent = `${item.sessionCount || 0} 条运行`;
-          btn.append(nameSpan, countSpan);
-          btn.addEventListener("click", () => {
-            options.selectProjectRun?.(item.projectId, "");
-          });
-          g.append(btn);
-        }
-        return g;
-      };
-      switcher.append(makeRepoGrid(primaryRepos));
-      if (tempRepos.length > 0) {
-        const more = doc.createElement("details");
-        more.className = "uw-repo-temp-group";
-        const sum = doc.createElement("summary");
-        sum.textContent = `展开临时测试与沙盒目录（${tempRepos.length} 个）`;
-        more.append(sum, makeRepoGrid(tempRepos));
-        switcher.append(more);
+      titleEl.dataset.uwRepoCatalogTitle = "true";
+      const search = doc.createElement("input");
+      search.type = "search";
+      search.className = "uw-repo-search";
+      search.placeholder = "搜索仓库名";
+      search.autocomplete = "off";
+      search.setAttribute("aria-label", "搜索仓库");
+      search.addEventListener("input", () => { repoQuery = search.value; enhanceRepositorySurface(); });
+      const lists = doc.createElement("div");
+      lists.dataset.uwRepoLists = "true";
+      head.append(titleEl, search);
+      catalogBox.append(head, lists);
+      liveCard.append(catalogBox);
+    }
+    if (!catalogBox) return;
+    catalogBox.hidden = allCatalog.length === 0;
+    const repoGroups = organizeRepositoryCatalog(allCatalog, { selectedProjectId: state.selection?.projectId || "", query: repoQuery });
+    catalogBox.querySelector("[data-uw-repo-catalog-title]").textContent = `仓库（共 ${repoGroups.total} 个）`;
+    const makeRepoGrid = (list) => {
+      const g = doc.createElement("div");
+      g.className = "uw-repo-chip-grid";
+      for (const item of list) {
+        const btn = doc.createElement("button");
+        btn.type = "button";
+        btn.className = "uw-repo-chip";
+        btn.dataset.selected = String(item.projectId === state.selection?.projectId);
+        const nameSpan = doc.createElement("strong");
+        nameSpan.textContent = item.displayName || item.projectId;
+        const countSpan = doc.createElement("small");
+        countSpan.textContent = `${item.sessionCount || 0} 条运行`;
+        btn.append(nameSpan, countSpan);
+        btn.addEventListener("click", () => {
+          options.selectProjectRun?.(item.projectId, "");
+        });
+        g.append(btn);
       }
-      liveCard.append(switcher);
+      return g;
+    };
+    const lists = catalogBox.querySelector("[data-uw-repo-lists]");
+    lists.replaceChildren();
+    if (repoGroups.front.length) lists.append(makeRepoGrid(repoGroups.front));
+    else if (repoQuery.trim()) {
+      const none = doc.createElement("p");
+      none.className = "uw-repo-search-empty";
+      none.textContent = "没有匹配的仓库";
+      lists.append(none);
+    }
+    if (repoGroups.rest.length) {
+      const more = doc.createElement("details");
+      more.className = "uw-repo-temp-group";
+      more.open = repoRestOpen;
+      more.addEventListener("toggle", () => { repoRestOpen = more.open; });
+      const sum = doc.createElement("summary");
+      sum.textContent = `显示其余 ${repoGroups.rest.length} 个`;
+      more.append(sum, makeRepoGrid(repoGroups.rest));
+      lists.append(more);
     }
   }
 
@@ -1415,7 +1465,7 @@ export function createLiveWorkspaceController(options) {
       }
     };
     if (!entries.length) {
-      appendBothOptions("", "没有可用渠道");
+      appendBothOptions("", "没有可用的客户端");
     } else {
       const recHost = entries.find((h) => h.id === agent.recommendedHostId) || launchableHosts()[0];
       if (autoHostAvailable()) {
@@ -1875,7 +1925,7 @@ export function createLiveWorkspaceController(options) {
     if (item?.artifactId && (!state.material || state.material.identity !== workspaceMaterialIdentity(item))) void loadMaterial(item, false);
   }
   async function loadMaterial(item, append) {
-    if (!item?.artifactId || state.material?.loading && state.material.identity === workspaceMaterialIdentity(item)) return;
+    if (!selectionReady() || !item?.artifactId || state.material?.loading && state.material.identity === workspaceMaterialIdentity(item)) return;
     const currentGeneration = generation;
     const currentMaterialGeneration = ++materialGeneration;
     const identity = workspaceMaterialIdentity(item);
@@ -1902,7 +1952,7 @@ export function createLiveWorkspaceController(options) {
   }
   async function loadRecords(append = false) {
     const history = state.history;
-    if (disposed || !state.selection.runId || state.origin === "demo" || history.loading || append && (!history.nextCursor || history.stale)) return;
+    if (disposed || !selectionReady() || state.origin === "demo" || history.loading || append && (!history.nextCursor || history.stale)) return;
     const requestGeneration = generation;
     history.loading = true; history.attempted = true; history.error = null; renderer.renderMain();
     try {
@@ -1916,7 +1966,8 @@ export function createLiveWorkspaceController(options) {
       const rows = new Map((append ? history.rows : []).map((row) => [row.commandId, row]));
       for (const row of payload.requests) rows.set(row.commandId, row);
       state.history = { rows: [...rows.values()], revision: payload.revision, total: payload.total, nextCursor: payload.nextCursor || null,
-        loading: false, loaded: true, attempted: true, stale: Number.isSafeInteger(state.workspace?.revision) && state.workspace.revision > payload.revision, error: null };
+        loading: false, loaded: true, attempted: true, stale: Number.isSafeInteger(state.workspace?.revision) && state.workspace.revision > payload.revision, error: null,
+        registered: payload.registered !== false };
       if (!append) state.recordPage = 0;
     } catch (error) {
       if (requestGeneration !== generation || disposed) return;
@@ -1927,7 +1978,7 @@ export function createLiveWorkspaceController(options) {
     }
   }
   async function refresh({ force = false, cursor = null, reloadCount = 0 } = {}) {
-    if (disposed || !state.selection.runId || state.origin === "demo") return;
+    if (disposed || !selectionReady() || state.origin === "demo") return;
     if (workspaceInFlight) {
       refreshAgain = refreshAgain || force;
       if (cursor) queuedCursor = cursor;
@@ -1992,7 +2043,7 @@ export function createLiveWorkspaceController(options) {
         payload.reviews = payload.reviews.map((item) => affectedArtifacts.has(item.artifactId)
           ? { ...item, state: "material_changed", available: false, reason: "material_changed" } : item);
       }
-      state.workspace = payload; state.error = null; state.loading = false; lastRefresh = Date.now();
+      state.workspace = payload; state.error = null; state.errorDetail = null; state.loading = false; lastRefresh = Date.now();
       if (state.history.loaded && payload.revision !== state.history.revision) state.history.stale = true;
       const command = state.command;
       if (command?.awaitingRefresh && command.commandId) {
@@ -2010,6 +2061,7 @@ export function createLiveWorkspaceController(options) {
     } catch (error) {
       if (requestGeneration !== generation || disposed) return;
       state.error = error.status || "unavailable";
+      state.errorDetail = describeFailure(error);
       if (error.status === 409) state.notice = copy("conflict");
     } finally {
       if (requestGeneration === generation) {
@@ -2092,6 +2144,12 @@ export function createLiveWorkspaceController(options) {
       else { state.prdMode = "overview"; state.material = null; setView("prd"); }
     },
     loadModules: () => refresh({ force: true, cursor: state.workspace?.design?.nextCursor }),
+    // Explicit refresh re-reads the pages already opened by this user. Polling
+    // stays bounded to one page; no decision or readiness cache is added.
+    retryRefresh: () => {
+      state.notice = "";
+      void refresh({ force: true, reloadCount: state.workspace?.design?.modules?.length || 0 });
+    },
     verifyCommand: () => verifyCommand(),
     openGraph: (nodeId) => { state.externalView = "graph"; updateLocation(); options.openGraph(nodeId); renderer.render(); },
     review: (review, item, choice) => {
@@ -2105,14 +2163,16 @@ export function createLiveWorkspaceController(options) {
       void submit("feedback", item, { moduleId: item.moduleId || null, original });
     },
   };
-  const renderer = createLiveWorkspaceRenderer({ app, root, state, copy, actions, taskOutputs: options.taskOutputs });
+  const renderer = createLiveWorkspaceRenderer({ app, root, state, copy, actions, taskOutputs: options.taskOutputs, localizeRecord: options.localize });
   desktop = agentEntryEnabled && typeof createUnifiedAgentDesktop === "function" ? createUnifiedAgentDesktop({
     root, state, agent, design, nativeDraft, handoff, execution, acceptance, copy,
     translateUi: (value) => translateAgentUi(value, state.language || "zh"),
+    formatTime: (value) => formatLiveTime(value, state.language || "zh"),
     createWorkflowCanvas: createDynamicPrdWorkflowCanvas,
     buildGraph: buildLivePrdGraph, createGraph: createPrdKnowledgeGraph,
     callbacks: {
       parseStrategies: parseNativeStrategyOptions,
+      openPrdPage() { state.prdMode = "overview"; setView("prd"); },
       startGoal(goal) {
         if (!agentGoal || !agentSubmit) return false;
         agentGoal.value = goal;
@@ -2333,19 +2393,8 @@ export function createLiveWorkspaceController(options) {
       },
       rollbackDeliverables() { void decideAgentAcceptance("rollback"); },
       dockLiveRunView,
-      onLiveModeChange(nextMode, prevMode) {
-        if (nextMode === "live-run") {
-          if (!root.dataset.paneLayout || root.dataset.paneLayout === "split") {
-            setPaneLayout("live-max", { autoFromLiveRun: true });
-          } else {
-            syncRestoreChatLabel();
-          }
-        } else if (prevMode === "live-run" && autoExpandedForLiveRun && root.dataset.paneLayout === "live-max") {
-          setPaneLayout("split");
-        } else {
-          syncRestoreChatLabel();
-        }
-      },
+      // Switching tabs never hides the chat; only the maximize button does.
+      onLiveModeChange() { syncRestoreChatLabel(); },
     },
   }) : null;
   // Keep the single composer and Live diagrams in sync with real governed
@@ -2483,15 +2532,13 @@ export function createLiveWorkspaceController(options) {
   const liveMinBtn = root.querySelector('[data-uw-pane-toggle="live-min"]');
   const restoreLiveBtn = root.querySelector("[data-uw-pane-restore-live]");
   const restoreChatBtn = root.querySelector("[data-uw-pane-restore-chat]");
-  let autoExpandedForLiveRun = false;
   function syncRestoreChatLabel() {
     if (!restoreChatBtn) return;
     const label = desktop?.mode === "live-run" ? "并排对话" : "还原分栏";
     restoreChatBtn.textContent = translateAgentUi(label, state.language || "zh");
   }
-  function setPaneLayout(layout, { autoFromLiveRun = false } = {}) {
+  function setPaneLayout(layout) {
     const next = ["split", "chat-max", "live-max"].includes(layout) ? layout : "split";
-    autoExpandedForLiveRun = next === "live-max" && Boolean(autoFromLiveRun);
     root.dataset.paneLayout = next;
     if (restoreLiveBtn) restoreLiveBtn.hidden = next !== "chat-max";
     if (restoreChatBtn) {
@@ -2541,12 +2588,7 @@ export function createLiveWorkspaceController(options) {
     win?.dispatchEvent?.(new win.Event("resize"));
   });
 
-  root.querySelector("[data-uw-refresh]")?.addEventListener("click", () => {
-    state.notice = "";
-    // Explicit refresh re-reads the pages already opened by this user. Polling
-    // stays bounded to one page; no decision or readiness cache is added.
-    void refresh({ force: true, reloadCount: state.workspace?.design?.modules?.length || 0 });
-  });
+  root.querySelector("[data-uw-refresh]")?.addEventListener("click", actions.retryRefresh);
   renderer.detailCloseButton?.addEventListener("click", closeDetail);
   const onKey = (event) => {
     if (event.key !== "Escape") return;

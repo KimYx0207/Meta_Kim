@@ -26,7 +26,7 @@ async function until(check) {
   assert.ok(check(), "The actual service/controller request should settle");
 }
 
-function harness(fetcher) {
+function harness(fetcher, { config = {}, policy = {} } = {}) {
   const calls = [];
   const storage = new Map();
   const listeners = new Map();
@@ -51,7 +51,7 @@ function harness(fetcher) {
   const app = { querySelector: (selector) => selector === "[data-uw-workspace]" ? root : null, querySelectorAll: () => [] };
   const context = vm.createContext({ URL, AbortController, TextEncoder, Date, LIVE_WORKSPACE_MESSAGES, workspaceArtifactItems, workspaceMaterialIdentity, workspaceMaterialMatches, workspaceMaterialReady, workspaceCommandMessage,
     createLiveWorkspaceRenderer: (input) => { state = input.state; actions = input.actions; return { render() {}, renderMain() {}, detailCloseButton: null, content: { scrollTop: 0, focus() {} } }; },
-    options: { app, policy: { ...LIVE_WORKSPACE_UI_POLICY, refreshCoalesceMs: 0 }, config: { enabled: true, controlHeader: "x-meta-kim-workspace-token", controlToken: token }, language: () => "zh", showLegacyView() {}, openProjects() {}, openGraph() {} },
+    options: { app, policy: { ...LIVE_WORKSPACE_UI_POLICY, refreshCoalesceMs: 0, ...policy }, config: { enabled: true, controlHeader: "x-meta-kim-workspace-token", controlToken: token, ...config }, language: () => "zh", showLegacyView() {}, openProjects() {}, openGraph() {} },
   });
   const controller = vm.runInContext("(" + createLiveWorkspaceController.toString() + ")(options)", context);
   const update = (runId = "run") => controller.update({ snapshot: { run: { id: runId, title: "真实任务", status: "running" } }, project: { displayName: "项目" }, selection: { projectId: "project", runId }, tasks: [], fallbackStages: [], origin: "governed_run" });
@@ -513,7 +513,7 @@ test("capacity refusal is explicit, preserves the draft, and is not treated as u
 
 // Minimal DOM storage for exercising the production renderer, without a browser
 // or a second implementation of its presentation decisions.
-function presentationHarness({ language = "zh", mode = "overview" } = {}) {
+function presentationHarness({ language = "zh", mode = "overview", localizeRecord } = {}) {
   class Element {
     constructor(tag = "div") { this.tagName = tag; this.children = []; this.dataset = {}; this.attributes = new Map(); this.listeners = new Map(); this.hidden = false; this.scrollTop = 0; this.textContent = ""; }
     get lastChild() { return this.children.at(-1) || null; }
@@ -539,9 +539,10 @@ function presentationHarness({ language = "zh", mode = "overview" } = {}) {
   state.material = { ...readMaterial(selected), text: "完整正文", totalBytes: 12, loadedBytes: 12 };
   const openedActions = [];
   const feedbackSubmissions = [];
-  const renderer = createLiveWorkspaceRenderer({ app: { querySelector: () => null }, root, state, copy: (key) => LIVE_WORKSPACE_MESSAGES[language][key] || key,
-    actions: { openNextAction: (action) => openedActions.push(action), feedback: (item, original) => feedbackSubmissions.push({ item, original }) } });
-  return { state, renderer, fullVersion, openedActions, feedbackSubmissions, node: (name) => root.querySelector("[data-uw-" + name + "]"), article: () => {
+  const retried = [];
+  const renderer = createLiveWorkspaceRenderer({ app: { querySelector: () => null }, root, state, localizeRecord, copy: (key) => LIVE_WORKSPACE_MESSAGES[language][key] || key,
+    actions: { openNextAction: (action) => openedActions.push(action), feedback: (item, original) => feedbackSubmissions.push({ item, original }), retryRefresh: () => retried.push(true) } });
+  return { state, renderer, fullVersion, openedActions, feedbackSubmissions, retried, node: (name) => root.querySelector("[data-uw-" + name + "]"), article: () => {
     const first = root.querySelector("[data-uw-content]").children[0];
     return first?.className === "uw-prd-layout" ? first.children.find(node => node.className === "uw-document") : first;
   } };
@@ -749,4 +750,169 @@ test("record timeline displays the actual bounded file and immutable receipt has
   assert.match(rendered, /\.meta-kim\/work\/receipt\.json/u);
   assert.ok(rendered.includes("a".repeat(64)) && rendered.includes("b".repeat(64)));
   assert.ok(rendered.includes(LIVE_WORKSPACE_MESSAGES.zh.evidenceMore.replace("{count}", "2")));
+});
+
+test("review #3: a hub page waits for the selected project before reading private workspace data", async (t) => {
+  const h = harness(() => reply(workspace()), { config: { requiresProjectId: true } });
+  t.after(() => h.controller.dispose());
+  h.controller.update({ snapshot: { run: { id: "run", title: "真实任务", status: "running" } }, project: null,
+    selection: { projectId: "", runId: "run" }, tasks: [], fallbackStages: [], origin: "governed_run" });
+  await settled();
+  assert.equal(h.calls.filter((call) => call.url.pathname.startsWith("/api/workspace")).length, 0,
+    "A hub rejects a projectless private read with 400, so none is sent");
+  assert.equal(h.state.error, null);
+  h.update(); await settled();
+  const reads = h.calls.filter((call) => call.url.pathname === "/api/workspace");
+  assert.equal(reads.length, 1);
+  assert.equal(reads[0].url.searchParams.get("projectId"), "project");
+});
+
+test("review #3: a timed-out read is named as a timeout, keeps the last workspace and recovers through retry", async (t) => {
+  let hang = false;
+  const h = harness(({ url, signal }) => {
+    if (url.pathname === "/api/workspace" && hang) {
+      return new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" }))));
+    }
+    return reply(workspace());
+  }, { policy: { requestTimeoutMs: 20 } });
+  t.after(() => h.controller.dispose());
+  h.update(); await settled();
+  assert.equal(h.state.error, null);
+  const kept = h.state.workspace;
+  hang = true;
+  h.refresh();
+  await until(() => h.state.error !== null && !h.state.loading);
+  assert.equal(h.state.errorDetail.kind, "timeout");
+  assert.equal(h.state.errorDetail.timeoutMs, 20);
+  assert.equal(h.state.workspace, kept, "The last valid workspace stays visible");
+  hang = false;
+  h.actions.retryRefresh();
+  await until(() => h.state.error === null && !h.state.loading);
+  assert.equal(h.state.errorDetail, null);
+});
+
+test("review #3: an HTTP failure and a broken payload are named separately from a timeout", async (t) => {
+  let mode = "ok";
+  const h = harness(({ url }) => {
+    if (url.pathname === "/api/workspace" && mode === "status") return reply({ error: "workspace_request_unavailable" }, 500);
+    if (url.pathname === "/api/workspace" && mode === "contract") return reply({ schemaVersion: "other" });
+    return reply(workspace());
+  });
+  t.after(() => h.controller.dispose());
+  h.update(); await settled();
+  mode = "status"; h.refresh();
+  await until(() => h.state.error !== null && !h.state.loading);
+  assert.deepEqual({ ...h.state.errorDetail }, { kind: "status", status: 500 });
+  mode = "contract"; h.refresh();
+  await until(() => h.state.errorDetail?.kind === "contract" && !h.state.loading);
+});
+
+test("review #3: an unregistered workspace shows an explained empty record history instead of a read failure", async (t) => {
+  const h = harness(({ url }) => url.pathname.endsWith("/requests")
+    ? reply({ schemaVersion: "meta-kim-live-workspace-requests-v1", runId: "run", revision: 2, requests: [], total: 0, nextCursor: null, order: "newest_first", registered: false })
+    : reply(workspace()));
+  t.after(() => h.controller.dispose());
+  h.update(); await settled();
+  h.actions.openRecords(); await settled();
+  assert.equal(h.state.history.error, null);
+  assert.equal(h.state.history.loaded, true);
+  assert.equal(h.state.history.registered, false);
+});
+
+test("review #3: the failure banner says what failed and offers a retry button in every locale", () => {
+  for (const language of ["zh", "en", "ja", "ko"]) {
+    for (const [detail, needle] of [[{ kind: "timeout", timeoutMs: 12000 }, /12/], [{ kind: "status", status: 503 }, /503/],
+      [{ kind: "network" }, null], [{ kind: "contract" }, null]]) {
+      const h = presentationHarness({ language });
+      h.state.error = "unavailable"; h.state.errorDetail = detail;
+      h.renderer.render();
+      const notice = h.node("notice");
+      assert.equal(notice.hidden, false);
+      const reasonKey = { timeout: "failureTimeout", status: "failureStatus", network: "failureNetwork", contract: "failureContract" }[detail.kind];
+      const reasonStem = String(LIVE_WORKSPACE_MESSAGES[language][reasonKey] || "").split("{")[0].trim();
+      assert.ok(reasonStem && notice.textContent.includes(reasonStem), language + " names the " + detail.kind + " failure");
+      if (needle) assert.match(notice.textContent, needle, language + " " + detail.kind);
+      assert.doesNotMatch(notice.textContent, /\{[a-z]+\}/u, "No template placeholder leaks");
+      const retry = notice.children.find((node) => node.tagName === "button" && node.attributes.has("data-uw-retry"));
+      assert.ok(retry, language + " banner offers retry");
+      assert.equal(retry.textContent, LIVE_WORKSPACE_MESSAGES[language].bannerRetry);
+      retry.click();
+      assert.equal(h.retried.length, 1);
+    }
+  }
+});
+
+test("review #3: an unregistered workspace record page explains why it is empty", () => {
+  const h = presentationHarness();
+  h.state.view = "records";
+  h.state.history = { rows: [], revision: 2, total: 0, nextCursor: null, loading: false, loaded: true, attempted: true, stale: false, error: null, registered: false };
+  h.state.workspace.requests = [];
+  h.renderer.render();
+  const box = h.node("content").children.find((node) => node.className === "uw-empty");
+  assert.ok(box, "An explicit empty state is shown");
+  assert.ok(box.children.some((node) => node.textContent === LIVE_WORKSPACE_MESSAGES.zh.recordsNotRegistered));
+});
+
+test("review #14: the record timeline shows local time instead of the raw timestamp", async () => {
+  const { formatLiveTime } = await import("../../src/presentation/live/live-ui-copy.mjs");
+  const h = presentationHarness();
+  h.state.view = "records";
+  h.state.history = { rows: [], revision: 2, total: 0, nextCursor: null, loading: false, loaded: true, attempted: true, stale: false, error: null, registered: true };
+  h.state.workspace.requests = [];
+  h.state.snapshot.replay = [{ id: "event-1", label: "Run · opened", kind: "run", at: "2026-11-18T23:20:53.394Z" }];
+  h.state.recordPage = 0; h.state.pageSize = 50;
+  h.renderer.render();
+  const times = [];
+  const visit = (node) => { if (node.tagName === "time") times.push(node); for (const child of node.children || []) visit(child); };
+  visit(h.node("content"));
+  assert.equal(times.length, 1);
+  assert.equal(times[0].textContent, formatLiveTime("2026-11-18T23:20:53.394Z", "zh"));
+  assert.doesNotMatch(times[0].textContent, /T\d{2}:|Z$/u);
+});
+
+test("review #15: run record titles go through the page's language helper instead of showing raw English", () => {
+  const h = presentationHarness({ localizeRecord: (value) => ({ "Run · opened": "Run 已开启" })[value] || value });
+  h.state.view = "records";
+  h.state.history = { rows: [], revision: 2, total: 0, nextCursor: null, loading: false, loaded: true, attempted: true, stale: false, error: null, registered: true };
+  h.state.workspace.requests = [];
+  h.state.snapshot.replay = [{ id: "event-1", label: "Run · opened", kind: "run", at: "2026-11-18T23:20:53.394Z" }];
+  h.state.recordPage = 0; h.state.pageSize = 50;
+  h.renderer.render();
+  const titles = [];
+  const visit = (node) => { if (node.tagName === "strong") titles.push(node.textContent); for (const child of node.children || []) visit(child); };
+  visit(h.node("content"));
+  assert.ok(titles.includes("Run 已开启"));
+  assert.ok(!titles.includes("Run · opened"));
+});
+
+test("review #15: the page hands its language helper to the workspace records", async () => {
+  const { renderLiveControlRoomPage } = await import("../../src/presentation/live/live-control-room-page.mjs");
+  const { serializeLiveWorkspaceClient } = await import("../../src/presentation/live/live-workspace-client.mjs");
+  assert.match(renderLiveControlRoomPage(), /createLiveWorkspaceController\(\{[\s\S]{0,400}localize,/u);
+  assert.match(serializeLiveWorkspaceClient(), /localizeRecord: options\.localize/u);
+});
+
+test("review #9: the PRD page names its source-measured baseline once, not on every card", () => {
+  const h = presentationHarness();
+  h.state.workspace = workspace({ design: { version: null, architecture: null, modules: [], totalModules: 0 }, reviews: [], stages: [] });
+  h.state.material = null;
+  h.state.projectArchitecturePrd = { system: { id: "system-architecture", title: "测试产品 · 系统框架", goal: "让数据可追溯" }, modules: [
+    { id: "a", title: "模块甲", objective: "收集数据", layer: "业务", layerShort: "业务", layerRank: 1, directory: "src/a", dependencies: [] },
+    { id: "b", title: "模块乙", objective: "分析数据", layer: "业务", layerShort: "业务", layerRank: 1, directory: "src/b", dependencies: ["a"] }] };
+  h.state.view = "prd"; h.state.prdMode = "overview"; h.state.prdDepth = 2; h.state.prdGraphLimit = 40;
+  h.renderer.render();
+  const texts = [];
+  const visit = (node) => { texts.push(String(node.textContent || "")); for (const child of node.children || []) visit(child); };
+  visit(h.node("content"));
+  const badge = LIVE_WORKSPACE_MESSAGES.zh.baseline;
+  assert.equal(texts.join("\n").split(badge).length - 1, 1, "Named once, in the section heading");
+});
+
+test("review #9: the workspace footer carries no slogan", async () => {
+  const h = presentationHarness();
+  h.renderer.render();
+  assert.equal(h.node("source").textContent, "");
+  const { renderLiveWorkspaceSurface, renderLiveWorkspaceNavigation } = await import("../../src/presentation/live/live-workspace-view.mjs");
+  const html = renderLiveWorkspaceSurface() + renderLiveWorkspaceNavigation();
+  assert.doesNotMatch(html, /版本可追溯|结果以实际记录与验证为准/u);
 });

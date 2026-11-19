@@ -67,9 +67,41 @@ export function workspaceCommandMessage(status, kind) {
   return "uncertain";
 }
 
+/**
+ * Repositories in use come first: the selected one, then those with runs or
+ * activity in the last two weeks, newest first. One name is one row, and the
+ * search covers every repository, folded or not.
+ */
+export function organizeRepositoryCatalog(catalog, { selectedProjectId = "", query = "", now = Date.now() } = {}) {
+  const recentWindowMs = 14 * 24 * 3600 * 1000;
+  // A run recorded outside the repository says nothing about when it was used.
+  const lastActivity = (project) => Math.max(0, Date.parse(project.updatedAt || "") || 0,
+    ...(Array.isArray(project.sessions) ? project.sessions : [])
+      .filter((session) => session.attribution !== "unattributed")
+      .map((session) => Date.parse(session.updatedAt || "") || 0));
+  const runs = (project) => Number(project.sessionCount) || 0;
+  const name = (project) => String(project.displayName || project.projectId || "").trim();
+  const ranked = [...(Array.isArray(catalog) ? catalog : [])].sort((a, b) =>
+    Number(b.projectId === selectedProjectId) - Number(a.projectId === selectedProjectId)
+    || Number(runs(b) > 0) - Number(runs(a) > 0)
+    || lastActivity(b) - lastActivity(a)
+    || runs(b) - runs(a)
+    || name(a).localeCompare(name(b)));
+  const byName = new Map();
+  for (const project of ranked) {
+    const key = name(project).toLowerCase();
+    if (key && !byName.has(key)) byName.set(key, project);
+  }
+  const unique = [...byName.values()];
+  const needle = String(query || "").trim().toLowerCase();
+  if (needle) return { front: unique.filter((project) => name(project).toLowerCase().includes(needle)), rest: [], total: unique.length };
+  const inUse = (project) => project.projectId === selectedProjectId || runs(project) > 0 || now - lastActivity(project) <= recentWindowMs;
+  return { front: unique.filter(inUse), rest: unique.filter((project) => !inUse(project)), total: unique.length };
+}
+
 export function serializeLiveWorkspaceModel() {
   return `const LIVE_WORKSPACE_MESSAGES = ${JSON.stringify(LIVE_WORKSPACE_MESSAGES)};\n${[
     workspaceStatusKey, workspaceArtifactItems, workspaceMaterialIdentity, workspaceMaterialMatches, workspaceMaterialReady,
-    workspaceStructuredPrdMaterial, workspaceReviewForArtifact, workspaceCommandMessage, buildLivePrdGraph,
+    workspaceStructuredPrdMaterial, workspaceReviewForArtifact, workspaceCommandMessage, buildLivePrdGraph, organizeRepositoryCatalog,
   ].map((fn) => fn.toString()).join("\n")}`;
 }

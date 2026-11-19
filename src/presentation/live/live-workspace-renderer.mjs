@@ -1,5 +1,6 @@
 import { workspaceStatusKey, workspaceArtifactItems, workspaceMaterialIdentity, workspaceMaterialReady, workspaceReviewForArtifact, workspaceCommandMessage, workspaceStructuredPrdMaterial, buildLivePrdGraph } from "./live-workspace-model.mjs";
 import { createPrdKnowledgeGraph } from "./live-prd-knowledge-graph.mjs";
+import { formatLiveTime } from "./live-ui-copy.mjs";
 
 /** Product-facing grouping of native stages. Missing/partial records never imply completion. */
 export function projectLiveUserPhases(stages) {
@@ -29,7 +30,9 @@ export function projectLiveUserPhases(stages) {
 }
 
 /** DOM-only workspace rendering. Inputs are retained across refreshes. */
-export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, taskOutputs }) {
+export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, taskOutputs, localizeRecord }) {
+  // Run records are worded by the service in English; the page localizes them.
+  const recordText = (value) => (typeof localizeRecord === "function" ? localizeRecord(value) : value);
   const doc = root.ownerDocument;
   const find = (name) => root.querySelector("[data-uw-" + name + "]");
   const nav = app.querySelector("[data-uw-navigation]");
@@ -136,6 +139,14 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
     box.append(previous, e("span", "", (page + 1) + " / " + Math.max(1, Math.ceil(total / size))), next);
     return box;
   };
+  function refreshFailureText() {
+    const detail = state.errorDetail || {};
+    const reason = detail.kind === "timeout" ? copy("failureTimeout").replace("{seconds}", String(Math.max(1, Math.round((detail.timeoutMs || 0) / 1000))))
+      : detail.kind === "network" ? copy("failureNetwork")
+        : detail.kind === "status" ? copy("failureStatus").replace("{status}", String(detail.status))
+          : copy("failureContract");
+    return copy("refreshError").replace("{reason}", reason);
+  }
   function renderHeader() {
     const snapshot = state.snapshot;
     root.dataset.workspaceRevision = state.workspace?.revision == null ? "" : String(state.workspace.revision);
@@ -150,19 +161,21 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
     find("next").hidden = !subtitle || String(subtitle).trim() === String(title).trim();
     text("status", snapshot?.run?.status ? label(snapshot.run.status) : copy("waitingRun"));
     const fullVersion = String(state.workspace?.source?.version ?? "");
-    text("update", [fullVersion ? copy("version") + " " + displayVersion(fullVersion) : "", state.lastReadAt ? new Date(state.lastReadAt).toLocaleTimeString(state.language === "zh" ? "zh-CN" : state.language, { hour: "2-digit", minute: "2-digit" }) : ""].filter(Boolean).join(" · "));
+    text("update", [fullVersion ? copy("version") + " " + displayVersion(fullVersion) : "", state.lastReadAt ? formatLiveTime(state.lastReadAt, state.language) : ""].filter(Boolean).join(" · "));
     find("update").title = fullVersion;
     find("update").dataset.version = fullVersion;
     text("data-state", copy(state.loading && !state.workspace ? "loading" : state.error ? "stale" : state.workspace ? "fresh" : "partial"));
-    text("source", copy("footer"));
+    text("source", "");
     text("read-state", state.workspace?.capabilities?.host?.mode === "current_host_pull" ? copy("hostBoundary") : "");
     const origin = find("origin");
     origin.hidden = !["demo", "acceptance_fixture"].includes(state.origin);
     origin.textContent = state.origin === "demo" ? copy("demo") : copy("fixture");
     const unresolved = ["pending_verification", "in_doubt"].includes(state.command?.status);
-    const notice = state.notice || (state.error ? copy("refreshError") : unresolved ? copy("uncertain") : state.command?.awaitingRefresh ? copy("bindingPending") : "");
+    const failure = state.error && !state.notice ? refreshFailureText() : "";
+    const notice = state.notice || failure || (unresolved ? copy("uncertain") : state.command?.awaitingRefresh ? copy("bindingPending") : "");
     find("notice").hidden = !notice;
     text("notice", notice);
+    if (failure && actions.retryRefresh) find("notice").append(button(copy("bannerRetry"), actions.retryRefresh, { "data-uw-retry": "" }, true));
     if ((unresolved || state.command?.awaitingRefresh) && !state.command?.busy) find("notice").append(button(copy("checkResult"), actions.verifyCommand, { "data-live-workspace-pending-verify": "" }, true));
     text("view-title", copy(state.view));
     text("eyebrow", copy("currentRun"));
@@ -176,7 +189,7 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
     const researchingWithoutRun = root.dataset.agentEntryEnabled === "true" && !state.snapshot?.run;
     const moduleHeadingEl = nav.querySelector("[data-uw-module-heading]");
     moduleHeadingEl.textContent = researchingWithoutRun ? copy("formalRunModules") : copy("modules");
-    nav.querySelector("[data-uw-nav-footer]").textContent = copy("footer");
+    nav.querySelector("[data-uw-nav-footer]").textContent = "";
     const switchBtn = nav.querySelector("[data-uw-project-switch]");
     switchBtn.setAttribute("aria-label", copy("chooseRun"));
     nav.querySelector("[data-uw-nav-close]").setAttribute("aria-label", copy("closeNavigation"));
@@ -559,11 +572,7 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
         e("h3", "", selectedMod ? selectedMod.title : base.system.title),
         e("span", "uw-source-ref", selectedMod ? `${selectedMod.directory} · ${selectedMod.layer}` : "当前项目两级架构 PRD · 源码实测基线"),
       );
-      const metadata = e("div", "uw-document-meta");
-      const currentStatus = e("span", "uw-document-state", copy("baseline"));
-      currentStatus.dataset.state = "baseline";
-      metadata.append(currentStatus);
-      header.append(heading, metadata);
+      header.append(heading);
       article.append(header);
       const appendListSection = (secTitle, rows) => {
         if (!Array.isArray(rows) || !rows.length) return;
@@ -668,7 +677,7 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
     const requests = new Map((history.rows || []).map((item) => [item.commandId, item]));
     for (const item of state.workspace?.requests || []) requests.set(item.commandId, item);
     const rows = [
-      ...(state.snapshot?.replay || []).map((item) => ({ id: item.id, title: item.label || item.kind, summary: item.detail || item.summary || "", at: item.at, kind: item.kind })),
+      ...(state.snapshot?.replay || []).map((item) => ({ id: item.id, title: recordText(item.label || item.kind), summary: recordText(item.detail || item.summary || ""), at: item.at, kind: item.kind })),
       ...[...requests.values()].map((item) => ({ id: item.commandId, title: copy(item.kind === "feedback" ? "feedback" : item.kind === "review" ? "decision" : "request") + " · " + label(item.status), summary: item.summary || copy(workspaceCommandMessage(item.status, item.kind)), at: item.updatedAt || item.createdAt, kind: "request", receipt: item.receipt })),
     ].sort((a, b) => String(b.at || "").localeCompare(String(a.at || "")));
     if (history.stale || history.error) {
@@ -676,13 +685,14 @@ export function createLiveWorkspaceRenderer({ app, root, state, copy, actions, t
       note.append(button(copy("refreshRecords"), () => actions.loadRecords(false), { "data-live-workspace-records-refresh": "" }, true));
       content.append(note);
     }
-    if (!rows.length) content.append(history.loading ? skeleton() : empty(copy("noEvents"), copy("noEventsNote")));
+    if (!rows.length) content.append(history.loading ? skeleton()
+      : empty(copy("noEvents"), copy(history.registered === false ? "recordsNotRegistered" : "noEventsNote")));
     state.recordPage = Math.min(state.recordPage, Math.max(0, Math.ceil(rows.length / state.pageSize) - 1));
     const list = e("ol", "uw-timeline");
     const start = state.recordPage * state.pageSize;
     for (const row of rows.slice(start, start + state.pageSize)) {
       const item = e("li", "uw-timeline-item"); item.dataset.liveWorkspaceEvent = row.id || "";
-      const body = e("div", "uw-timeline-copy"); body.append(e("strong", "", row.title), e("p", "", row.summary), e("time", "", row.at || copy("unknown")));
+      const body = e("div", "uw-timeline-copy"); body.append(e("strong", "", row.title), e("p", "", row.summary), e("time", "", formatLiveTime(row.at, state.language) || copy("unknown")));
       if (row.receipt) {
         const evidence = e("details", "uw-source-ref");
         evidence.append(e("summary", "", copy("receipt") + " · " + copy("evidence")));
