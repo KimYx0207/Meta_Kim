@@ -4542,7 +4542,7 @@ function buildAgUiStageEvents({
     },
     Thinking: {
       en: "Choose owner, loadout, and route",
-      "zh-CN": "选择 owner、能力和路线",
+      "zh-CN": "选择负责人、能力和路线",
       "ja-JP": "担当、装備、経路を選ぶ",
       "ko-KR": "담당자, 수단, 경로 선택",
     },

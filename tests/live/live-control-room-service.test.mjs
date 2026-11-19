@@ -16,6 +16,7 @@ import { createLiveRuntimeAdapterRegistry, createFakeLiveRuntimeAdapter } from "
 import { createLiveContinuationCommandStore } from "../../src/infrastructure/live/live-continuation-command-store.mjs";
 import { createLiveContinuationPlanner } from "../../src/application/live/plan-live-continuation.mjs";
 import { buildLiveCompactProjection } from "../../src/application/live/live-control-room-service.mjs";
+import * as liveServiceModule from "../../src/application/live/live-control-room-service.mjs";
 import { renderLiveReadmeEmbed } from "../../src/presentation/live/render-live-share-card.mjs";
 
 test("does not present an unproven completed node as verified completion", () => {
@@ -2539,4 +2540,134 @@ test("refuses a stored plan whose lane counts exceed the count it declared", () 
     2,
     "a stored file claiming more invoked lanes than it declared is clamped to what it declared",
   );
+});
+
+test("review #12: an activation-only run says no execution result has arrived yet, in plain words", () => {
+  const snapshot = buildLiveSnapshot({
+    durableStatus: {
+      schemaVersion: 2,
+      active: true,
+      lifecycleStatus: "active",
+      runId: "meta-review-12",
+      currentStage: "Critical",
+      currentStageKey: "critical",
+      updatedAt: "2026-08-24T01:00:00.000Z",
+      startedAt: "2026-08-24T01:00:00.000Z",
+      stages: { critical: { status: "in_progress" } },
+    },
+    governedArtifact: null,
+    observedAt: "2026-08-24T01:01:00.000Z",
+  });
+  assert.equal(snapshot.run.substanceClass, "activation_only");
+  assert.equal(snapshot.run.statusReason, "只登记了启动，还没有收到执行结果。");
+  assert.doesNotMatch(snapshot.run.statusReason, /回写/u, "the jargon word for an execution report must not reach the reader");
+});
+
+function laneArtifact() {
+  return {
+    schemaVersion: "governed-execution-v1",
+    runId: "meta-review-15",
+    status: "partial",
+    task: "Lane label probe",
+    updatedAt: "2026-08-24T10:00:00.000Z",
+    workerTaskPackets: [
+      { taskPacketId: "task-a", roleDisplayName: "backend", ownerAgent: "backend-architect", todayTask: "A", parallelGroup: "route-execution" },
+      { taskPacketId: "task-b", roleDisplayName: "frontend", ownerAgent: "frontend-developer", todayTask: "B" },
+    ],
+    workerResultPackets: [
+      { taskPacketId: "task-a", status: "planned_not_executed" },
+      { taskPacketId: "task-b", status: "planned_not_executed" },
+    ],
+  };
+}
+
+test("review #15: a named workflow lane shows a numbered label and keeps the raw lane id in laneId", () => {
+  const lanes = buildLiveCompactProjection(laneArtifact()).nodes.filter((node) => node.kind === "workflow");
+  assert.equal(lanes.length, 2);
+  const named = lanes.find((node) => node.laneId === "route-execution");
+  assert.ok(named, "the declared lane keeps its raw id in laneId");
+  assert.equal(named.label, "Workflow lane 1");
+  const fallback = lanes.find((node) => node.laneId === "execution");
+  assert.ok(fallback, "the default lane also reports its id");
+  assert.equal(fallback.label, "Execution lanes", "the default lane keeps its existing label");
+  assert.ok(lanes.every((node) => !/route-execution/u.test(node.label)), "no label may print the raw lane id");
+});
+
+test("review #15: the lane id and the numbered label survive reading a stored compact projection", () => {
+  const stored = JSON.parse(JSON.stringify(buildLiveCompactProjection(laneArtifact())));
+  const snapshot = buildLiveSnapshot({ governedArtifact: stored, observedAt: "2026-08-24T10:01:00.000Z" });
+  const lane = snapshot.nodes.find((node) => node.kind === "workflow" && node.laneId === "route-execution");
+  assert.ok(lane, "laneId must not be dropped by the stored-projection reader");
+  assert.equal(lane.label, "Workflow lane 1");
+});
+
+test("review #24: a run that looks unfinished and has been silent for six hours reports staleness", () => {
+  const status = {
+    schemaVersion: 2,
+    active: true,
+    lifecycleStatus: "active",
+    runId: "meta-review-24",
+    currentStage: "Critical",
+    currentStageKey: "critical",
+    updatedAt: "2026-08-24T01:00:00.000Z",
+    startedAt: "2026-08-24T01:00:00.000Z",
+    stages: { critical: { status: "in_progress" } },
+  };
+  const at = (observedAt) => buildLiveSnapshot({ durableStatus: status, governedArtifact: null, observedAt }).run.staleness;
+  assert.deepEqual(at("2026-08-24T01:30:00.000Z"), { stale: false, idleHours: 0 });
+  assert.deepEqual(at("2026-08-24T06:59:59.000Z"), { stale: false, idleHours: 5 }, "five hours fifty-nine minutes is not yet stale");
+  assert.deepEqual(at("2026-08-24T07:00:00.000Z"), { stale: true, idleHours: 6 }, "exactly six hours is stale");
+  assert.deepEqual(at("2026-08-25T04:30:00.000Z"), { stale: true, idleHours: 27 });
+});
+
+test("review #24: a run with a fuller record carries staleness on the main snapshot path too", () => {
+  const status = {
+    schemaVersion: 2,
+    active: true,
+    lifecycleStatus: "active",
+    runId: "meta-review-24-full",
+    currentStage: "Execution",
+    currentStageKey: "execution",
+    updatedAt: "2026-08-24T01:00:00.000Z",
+    startedAt: "2026-08-24T00:59:00.000Z",
+    stages: {
+      critical: { status: "completed" },
+      fetch: { status: "completed" },
+      thinking: { status: "completed" },
+      execution: { status: "in_progress" },
+    },
+  };
+  const run = buildLiveSnapshot({ durableStatus: status, governedArtifact: null, observedAt: "2026-08-24T09:10:00.000Z" }).run;
+  assert.notEqual(run.status, "completed");
+  assert.deepEqual(run.staleness, { stale: true, idleHours: 8 });
+});
+
+test("review #24: a run that ended is never stale however long ago it stopped", () => {
+  const snapshot = buildLiveSnapshot({
+    governedArtifact: { ...sampleArtifact("meta-review-24-ended"), status: "superseded", updatedAt: "2026-08-20T01:00:00.000Z" },
+    observedAt: "2026-08-24T01:00:00.000Z",
+  });
+  assert.equal(snapshot.run.status, "superseded");
+  assert.deepEqual(snapshot.run.staleness, { stale: false, idleHours: 96 });
+});
+
+test("review #24: staleness without a usable update time reports zero idle hours and not stale", () => {
+  const { liveRunStaleness } = liveServiceModule;
+  const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+  assert.deepEqual(liveRunStaleness({ status: "active", updatedAt: null, nowMs }), { stale: false, idleHours: 0 });
+  assert.deepEqual(liveRunStaleness({ status: "active", updatedAt: "not a time", nowMs }), { stale: false, idleHours: 0 });
+  assert.deepEqual(liveRunStaleness({ status: "active", updatedAt: "2026-08-24T13:00:00.000Z", nowMs }),
+    { stale: false, idleHours: 0 }, "a time in the future is not idle time");
+});
+
+test("review #24: only runs that can still progress can be stale", () => {
+  const { liveRunStaleness } = liveServiceModule;
+  const nowMs = Date.parse("2026-08-25T00:00:00.000Z");
+  const updatedAt = "2026-08-24T00:00:00.000Z";
+  for (const status of ["active", "pending", "in_doubt"]) {
+    assert.deepEqual(liveRunStaleness({ status, updatedAt, nowMs }), { stale: true, idleHours: 24 }, status);
+  }
+  for (const status of ["completed", "failed", "blocked", "cancelled", "partial", "superseded", "archived_legacy", "archived", "session_stopped"]) {
+    assert.deepEqual(liveRunStaleness({ status, updatedAt, nowMs }), { stale: false, idleHours: 24 }, status);
+  }
 });

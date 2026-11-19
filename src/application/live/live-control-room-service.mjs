@@ -37,6 +37,7 @@ import { LIVE_RECORD_ORIGINS, liveRecordOrigin } from "./live-record-origin.mjs"
 import {
   liveTerminalStatusDisplay,
   LIVE_PLANNING_DISPLAY,
+  LIVE_TERMINAL_STATUS_DISPLAY,
   normalizeLiveStatus,
 } from "./live-status-vocabulary.mjs";
 import { collectLiveDeliverables, publicLiveDeliverable, readLiveDeliverable } from "./live-deliverables.mjs";
@@ -48,6 +49,29 @@ export const LIVE_REPLAY_SCHEMA_VERSION = "meta-kim-live-replay-v2";
 export const LIVE_COMPACT_PROJECTION_SCHEMA_VERSION = "meta-kim-live-projection-v2";
 export const LIVE_MAX_COMPACT_BYTES = 256 * 1024;
 export const LIVE_STALE_AFTER_MS = 10 * 60 * 1000;
+export const LIVE_STALE_IDLE_HOURS = 6;
+
+// Statuses after which no further progress is expected: the outcomes the shared
+// vocabulary already words as final, plus the two ways a host closes a run.
+const LIVE_CLOSED_STATUSES = new Set([
+  ...Object.keys(LIVE_TERMINAL_STATUS_DISPLAY),
+  "archived",
+  "session_stopped",
+]);
+
+/**
+ * How long a run has been silent, and whether that silence matters: only a run
+ * that can still progress (`active`, `pending`, `in_doubt`) goes stale. Without a
+ * usable update time there is nothing to measure, so the answer is zero hours and
+ * not stale rather than a guess.
+ */
+export function liveRunStaleness({ status, updatedAt, nowMs } = {}) {
+  const updatedMs = typeof updatedAt === "string" ? Date.parse(updatedAt) : Number.NaN;
+  if (!Number.isFinite(updatedMs) || !Number.isFinite(nowMs)) return { stale: false, idleHours: 0 };
+  const idleHours = Math.max(0, Math.floor((nowMs - updatedMs) / 3_600_000));
+  const closed = LIVE_CLOSED_STATUSES.has(normalizeLiveStatus(status, "in_doubt"));
+  return { stale: !closed && idleHours >= LIVE_STALE_IDLE_HOURS, idleHours };
+}
 export const LIVE_MAX_NODES = 128;
 export const LIVE_MAX_EDGES = 256;
 export const LIVE_MAX_EVIDENCE = 256;
@@ -724,8 +748,9 @@ function durableOnlySnapshot(durable, { observedAt, stale, active }) {
     ...publicDisplay(run.status, { active: runActive, structuralOnly: false }),
     ...(substance.substanceClass === "activation_only" ? {
       displayState: "unreported",
-      statusReason: "只登记了启动，尚未收到执行回写。",
+      statusReason: "只登记了启动，还没有收到执行结果。",
     } : {}),
+    staleness: liveRunStaleness({ status: run.status, updatedAt: run.updatedAt, nowMs: Date.parse(observedAt) }),
   };
   return {
     schemaVersion: LIVE_SNAPSHOT_SCHEMA_VERSION,
@@ -2233,10 +2258,13 @@ export function buildLiveCompactProjection(artifact, { maxBytes = LIVE_MAX_COMPA
     if (!groupRecords.has(groupKey)) groupRecords.set(groupKey, []);
     groupRecords.get(groupKey).push(nodeByTaskId.get(taskId));
   }
+  // A declared lane id is an internal name (`route-execution`), so it rides in
+  // `laneId` for the details view and the label stays a plain numbered one.
   const workflowNodes = [...groupRecords.entries()].map(([groupKey, childIds], index) => ({
     id: publicId("workflow", `${runId}:${groupKey}`),
     kind: "workflow",
-    label: groupKey === "execution" ? "Execution lanes" : safeText(groupKey, `Workflow ${index + 1}`, 80),
+    label: groupKey === "execution" ? "Execution lanes" : `Workflow lane ${index + 1}`,
+    laneId: safeText(groupKey, `lane-${index + 1}`, 80),
     stage: "execution",
     status: aggregateNodeStatus(workerNodes.filter((node) => childIds.includes(node.id))),
     active: workerNodes.some((node) => childIds.includes(node.id) && node.active === true),
@@ -2946,6 +2974,7 @@ function sanitizeCompactProjection(value) {
       kind: raw.kind,
       isMain: raw.isMain === true,
       label: safeText(raw.label, raw.kind === "workflow" ? "Workflow" : "Agent", 120),
+      ...(raw.kind === "workflow" && safeNullableText(raw.laneId, 80) ? { laneId: safeNullableText(raw.laneId, 80) } : {}),
       task: safeNullableText(raw.task, 240),
       roleDisplayName: safeNullableText(raw.roleDisplayName, 80),
       roleInstanceId: safeNullableText(raw.roleInstanceId, 120),
@@ -3385,6 +3414,7 @@ export function buildLiveSnapshot({
   const runActive = Boolean(sameRunDurable && durableActive) || observedRunActive;
   if (observedRunActive && ["pending"].includes(run.status)) run.status = "active";
   run.active = runActive;
+  run.staleness = liveRunStaleness({ status: run.status, updatedAt: run.updatedAt, nowMs: Date.parse(safeObservedAt) });
   run.governance = governanceProjection(sameRunDurable ? selectedDurable : null, run.runId);
   Object.assign(run, publicDisplay(run.status, { active: runActive, structuralOnly, governanceActive: run.governance?.active }));
   if (!runActive && run.governance?.active) run.statusReason = "治理任务进行中，待执行回报；原生执行状态仍未确认。";
