@@ -5,10 +5,11 @@ description = "Meta_Kim desktop shell; runs beside a full Meta_Kim source checko
 authors = ["Meta_Kim Contributors"]
 license = "MIT"
 edition = "2021"
-# Cargo.lock pins crates (for example block-buffer 0.12) that need the
-# edition2024 Cargo feature, so 1.85 is the lowest toolchain that can resolve it.
-# CI checks the desktop crate with exactly this declared toolchain.
-rust-version = "1.85"
+# Cargo.lock pins Tauri 2.7 (tauri, tauri-build, its plugins) and muda 0.20,
+# which declare rust-version 1.90, so 1.90 is the lowest toolchain that can
+# build the locked tree. CI checks the desktop crate with exactly this
+# declared toolchain.
+rust-version = "1.90"
 default-run = "meta-kim-desktop"
 
 [build-dependencies]
