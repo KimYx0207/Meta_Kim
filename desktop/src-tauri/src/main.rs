@@ -139,6 +139,16 @@ fn resolve_initial_project(repo_root: &Path) -> PathBuf {
     load_saved_project().unwrap_or_else(|| repo_root.to_path_buf())
 }
 
+/// The product is named once: a Meta_Kim checkout is just "Meta_Kim", any
+/// other project leads with its own name. The page title follows the same rule.
+fn window_title(project_name: &str) -> String {
+    if project_name.trim().is_empty() || project_name.eq_ignore_ascii_case("Meta_Kim") {
+        "Meta_Kim".to_string()
+    } else {
+        format!("{} · Meta_Kim", project_name)
+    }
+}
+
 fn is_trusted_loopback_url(url: &str) -> bool {
     let Some(rest) = url.strip_prefix("http://127.0.0.1:") else {
         return false;
@@ -169,7 +179,7 @@ fn navigate_main_window(app: &AppHandle, url: &str, project: &Path) {
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("Workspace");
-        let _ = win.set_title(&format!("Meta_Kim · {}", project_name));
+        let _ = win.set_title(&window_title(project_name));
         if let Ok(encoded) = serde_json::to_string(url) {
             let _ = win.eval(&format!("window.location.replace({});", encoded));
         }
@@ -474,4 +484,19 @@ fn main() {
             supervisor_exit.stop_child();
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::window_title;
+
+    #[test]
+    fn review_8_meta_kim_checkout_is_titled_once() {
+        assert_eq!(window_title("Meta_Kim"), "Meta_Kim");
+    }
+
+    #[test]
+    fn review_8_other_projects_lead_with_their_own_name() {
+        assert_eq!(window_title("Kim Digital Human"), "Kim Digital Human · Meta_Kim");
+    }
 }
