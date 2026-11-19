@@ -12,7 +12,11 @@ import {
 } from "node:fs";
 import path from "node:path";
 
-import { buildDefaultSubflowForModule, discoverProjectArchitecturePrd } from "./project-architecture-prd-service.mjs";
+import {
+  buildDefaultSubflowForModule,
+  discoverProjectArchitecturePrd,
+  isCompleteModuleStatus,
+} from "./project-architecture-prd-service.mjs";
 import {
   buildStructuredWireframeSpec,
   generatePageEffectMockup,
@@ -47,6 +51,21 @@ export function ensureWorkflowStateDir(projectRoot, profile = "default") {
   return current;
 }
 
+// An earlier build wrote `completed` (or `partial`, once an upstream edit touched
+// it) for every module whose source it had merely found. Those words were never
+// acceptance evidence, so a saved canvas reads them back as `identified`. The
+// start node's `completed` only says the user's intent was entered.
+const LEGACY_FOUND_ONLY_STATUSES = new Set(["completed", "partial"]);
+
+function withoutLegacyCompletion(state) {
+  return {
+    ...state,
+    nodes: state.nodes.map((node) => (node?.id !== "start" && LEGACY_FOUND_ONLY_STATUSES.has(node?.status)
+      ? { ...node, status: "identified" }
+      : node)),
+  };
+}
+
 function readCanvasState(workflowStateDir) {
   const target = path.join(workflowStateDir, "canvas-state.json");
   if (!existsSync(target)) return null;
@@ -58,7 +77,7 @@ function readCanvasState(workflowStateDir) {
     if (!stat.isFile() || stat.size < 2 || stat.size > MAX_STATE_BYTES) return null;
     const parsed = JSON.parse(readFileSync(fd, "utf8"));
     return parsed && typeof parsed === "object" && Array.isArray(parsed.nodes) && Array.isArray(parsed.edges)
-      ? parsed
+      ? withoutLegacyCompletion(parsed)
       : null;
   } catch {
     return null;
@@ -163,13 +182,13 @@ function buildInitialWorkflowFromPrd(prd) {
         outputContract: mod.outputContract || [],
         boundaries: mod.boundaries || [],
         acceptance: mod.acceptance || [],
-        status: mod.status || "completed",
+        status: mod.status || "identified",
         column: col,
         parallelGroup: isParallel ? (mod.parallelGroup || `lane_${col}`) : null,
         hasUiPage: Boolean(mod.hasUiPage),
         uiMockup: mod.hasUiPage
           ? (mod.uiMockup || {
-              status: mod.status === "completed" ? "confirmed" : "pending",
+              status: isCompleteModuleStatus(mod.status) ? "confirmed" : "pending",
               version: 1,
               mode: "wireframe_fallback",
               variant: inferMockupVariant({ nodeId: mod.id, title: mod.title, objective: mod.objective }),
@@ -195,7 +214,7 @@ function buildInitialWorkflowFromPrd(prd) {
     kind: "terminal",
     code: "END",
     title: "闭环交付",
-    status: prd?.system?.status || "completed",
+    status: prd?.system?.status || "identified",
     column: maxCol + 1,
     hasUiPage: false,
     uiMockup: null,
@@ -287,7 +306,8 @@ function markDownstreamImpacted(stateObj, startNodeId) {
         const target = stateObj.nodes.find((n) => n.id === edge.to);
         if (target && target.kind !== "terminal") {
           target.reacted = true;
-          if (target.status === "completed") target.status = "partial";
+          // An upstream change withdraws an acceptance it no longer covers.
+          if (isCompleteModuleStatus(target.status)) target.status = "identified";
           impacted.push(target.id);
         }
         queue.push(edge.to);
@@ -313,7 +333,8 @@ function decorateSummary(stateObj) {
   const businessNodes = stateObj.nodes.filter((n) => n.kind !== "terminal");
   const uiNodes = businessNodes.filter((n) => n.hasUiPage);
   const confirmedUiNodes = uiNodes.filter((n) => n.uiMockup?.status === "confirmed");
-  const completedNodes = businessNodes.filter((n) => n.status === "completed");
+  // Only accepted or verified work is complete; finding a module's source is not.
+  const completedNodes = businessNodes.filter((n) => isCompleteModuleStatus(n.status));
   return {
     ...stateObj,
     summary: {

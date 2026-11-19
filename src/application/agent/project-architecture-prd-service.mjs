@@ -5,12 +5,15 @@
  * - Level 1 (`system` — 系统框架): Product positioning & user value, end-to-end user
  *   journey, functional product domains/framework, experience & safety principles,
  *   product acceptance criteria, and overall module completion summary.
- * - Level 2 (`modules` — 系统详情): Per-subsystem completion status (`completed` /
- *   `partial` / `planned`), user-facing value, core features & interactions,
- *   plain-language upstream inputs & downstream outputs, cross-module synergy (acyclic DAG),
- *   edge-case fallbacks, and verifiable product acceptance checklist.
+ * - Level 2 (`modules` — 系统详情): Per-subsystem status (`identified` when its source
+ *   was found, `planned` when none was, `accepted` only with acceptance evidence),
+ *   user-facing value, core features & interactions, plain-language upstream inputs &
+ *   downstream outputs, cross-module synergy (acyclic DAG), edge-case fallbacks, and
+ *   verifiable product acceptance checklist.
  *
  * Governance & security invariants:
+ * - Finding source never completes a module. The repository baseline has no
+ *   acceptance evidence, so it can only report `identified` or `planned`.
  * - Never claims human B2 approval (`approvalClaimed: false`, `recordOrigin: "repository_architecture_baseline"`).
  * - Reads strictly within `realpathSync(projectRoot)`, skipping symlinks, hidden
  *   runtime projection dirs, and `node_modules` / build outputs.
@@ -22,6 +25,10 @@ import { validateDesignDag } from "../../domain/runtime/agent-design-contract.mj
 import { buildStructuredWireframeSpec, inferMockupVariant } from "./prd-mockup-generator-service.mjs";
 
 export const PROJECT_ARCHITECTURE_PRD_SCHEMA = "meta-kim-project-architecture-prd-v1";
+
+/** The only module statuses that count as complete: both need acceptance evidence. */
+const COMPLETE_MODULE_STATUSES = new Set(["accepted", "verified"]);
+export const isCompleteModuleStatus = (status) => COMPLETE_MODULE_STATUSES.has(status);
 
 const IGNORED_DIRS = new Set([
   ".git", "node_modules", "dist", "build", "out", "target", ".next", ".nuxt",
@@ -200,7 +207,7 @@ const META_KIM_PRODUCT_BLUEPRINTS = [
     dir: "config",
     id: "config-contracts",
     title: "角色技能目录与客户端管理",
-    shortSummary: "可用 AI 渠道登记 · 技能与插件清单",
+    shortSummary: "可用 AI 客户端登记 · 技能与插件清单",
     layer: "能力与规则底座",
     layerShort: "能力目录",
     layerRank: 0,
@@ -209,16 +216,16 @@ const META_KIM_PRODUCT_BLUEPRINTS = [
     nodeKind: "parallel",
     hasUiPage: true,
     mockupVariant: "catalog_grid",
-    objective: "集中管理本机可用的 AI 客户端渠道（Claude Code、Codex、Gemini 等）、专业角色库、技能包（Skills）与扩展工具清单。",
+    objective: "集中管理本机可用的 AI 客户端（Claude Code、Codex、Gemini 等）、专业角色库、技能包（Skills）与扩展工具清单。",
     features: [
-      "渠道就绪状态管理：识别哪些 AI 客户端已安装可用、哪些仅可只读观测、哪些需要登录或授权",
+      "客户端就绪状态管理：识别哪些 AI 客户端已安装可用、哪些仅可只读观测、哪些需要登录或授权",
       "侧边宽幅能力大面板：点击左侧分类即可展开大面板搜索查看所有角色、Subagent 预设、Skills、MCP 与 Hooks",
       "专业方法匹配：根据用户的任务领域自动检索可复用的专业技能与过往经验",
     ],
     inputContract: ["本机已安装的 AI 工具状态", "用户在侧边栏发起的能力搜索或筛选操作"],
-    outputContract: ["分类清晰的可用渠道列表、角色技能说明卡片与权限边界提示"],
+    outputContract: ["分类清晰的可用客户端列表、角色技能说明卡片与权限边界提示"],
     boundaries: ["严格区分「本机已配置的静态预设」与「当前任务真正派发运行的节点」，绝不混报数量"],
-    productAcceptance: ["用户在左侧一键展开即可看清所有可用角色、60+ Subagent 预设及每个渠道的可用原因"],
+    productAcceptance: ["用户在左侧一键展开即可看清所有可用角色、60+ Subagent 预设及每个客户端的可用原因"],
     testHint: "tests",
   },
   {
@@ -275,7 +282,7 @@ const META_KIM_PRODUCT_BLUEPRINTS = [
     dir: "src/application/agent",
     id: "app-agent-workflow",
     title: "多仓库管理与双向 Agent 协同服务",
-    shortSummary: "正向调起渠道 · 反向接入外部 Agent · 多仓切换",
+    shortSummary: "正向调起客户端 · 反向接入外部 Agent · 多仓切换",
     layer: "协同调度与投影中心",
     layerShort: "双向协同",
     layerRank: 2,
@@ -284,16 +291,16 @@ const META_KIM_PRODUCT_BLUEPRINTS = [
     nodeKind: "parallel",
     hasUiPage: true,
     mockupVariant: "binding_hub",
-    objective: "连接用户的多个本地代码仓库与各类外部 AI 客户端——既支持从本工作台选渠道发起任务，也支持把终端/IDE 里启动的 AI 会话实时接入观测。",
+    objective: "连接用户的多个本地代码仓库与各类外部 AI 客户端——既支持从本工作台选客户端发起任务，也支持把终端/IDE 里启动的 AI 会话实时接入观测。",
     features: [
-      "双向 Agent 绑定：正向可在输入框底部选定渠道调起 AI；反向可扫描并一键接入外部正在运行的 Claude Code / Codex 会话",
+      "接入外部对话：正向可在输入框底部选定客户端调起 AI；反向可扫描并一键接入外部正在运行的 Claude Code / Codex 会话",
       "本地多仓库统一管理：支持在几十个已登记本地项目间一键切换，实时查看分支、最新提交与未提交改动数",
-      "隔离草稿核验与经验沉淀：自动比对试跑产生的文件变更并执行安全体检，验收通过后沉淀为可复用经验方法卡",
+      "隔离草稿核验与总结可复用经验：自动比对试跑产生的文件变更并执行安全体检，验收通过后总结成可复用的经验方法卡",
     ],
-    inputContract: ["用户在对话框发送的目标、选择的 AI 渠道、或点击切换的目标仓库与外部会话"],
+    inputContract: ["用户在对话框发送的目标、选择的 AI 客户端、或点击切换的目标仓库与外部会话"],
     outputContract: ["候选方案对比结果、目标仓库的动态流程图 PRD、隔离区变更体检单与经验方法卡"],
     boundaries: ["切换浏览其他已登记仓库时保持只读安全观测，绝不跨仓库误改代码"],
-    productAcceptance: ["用户可在底部直接选渠道发消息，也可在「双向绑定」和「仓库」页一键接入外部会话或切换项目"],
+    productAcceptance: ["用户可在底部直接选客户端发消息，也可在「接入外部对话」和「仓库」页一键接入外部会话或切换项目"],
     testHint: "tests/live",
   },
   {
@@ -373,8 +380,8 @@ const META_KIM_PRODUCT_BLUEPRINTS = [
   {
     dir: "desktop",
     id: "desktop-tauri-shell",
-    title: "独立原生桌面软件客户端",
-    shortSummary: "双击即用 · 系统托盘常驻 · 单实例防重开",
+    title: "实验性 Tauri 桌面壳，需在完整源码检出旁运行",
+    shortSummary: "需在完整源码检出旁运行 · 尚未作为安装包发布",
     layer: "用户界面与客户端体验",
     layerShort: "桌面客户端",
     layerRank: 5,
@@ -382,16 +389,20 @@ const META_KIM_PRODUCT_BLUEPRINTS = [
     nodeKind: "process",
     hasUiPage: true,
     mockupVariant: "desktop_shell",
-    objective: "将整个工作台封装为独立的 Windows / 桌面端原生应用程序，告别浏览器地址栏与手工启动命令，提供正式产品级体验。",
+    objective: "把本地工作台放进一个桌面窗口。它必须放在完整的 Meta_Kim 源码目录旁边运行，启动时拉起本地服务并打开主窗口；目前还没有经过自动构建流程编译，所以不作为安装包发布。",
     features: [
-      "一键启动自动守护：双击桌面图标自动在后台拉起本地服务并打开主窗口，无黑框闪烁",
-      "系统托盘常驻与防多开：支持最小化到右下角托盘随时秒开，重复点击图标自动唤醒已有窗口",
-      "正式版安全加固：内置窗口防逆向保护、内容安全策略与崩溃自动恢复机制",
+      "运行在完整源码检出旁：需要和完整的 Meta_Kim 源码目录放在一起，不能单独拷到别的电脑上使用",
+      "启动本地服务并打开主窗口：启动时自动拉起本地服务，再在窗口里打开工作台",
+      "托盘图标与单实例：提供系统托盘图标，重复启动时唤醒已有窗口，不再多开一个",
     ],
-    inputContract: ["用户双击启动软件、窗口最大化/关闭与系统托盘菜单操作"],
-    outputContract: ["流畅稳定的原生桌面工作窗口与后台常驻守护服务"],
-    boundaries: ["退出客户端时干净释放其托管的后台临时资源，不污染用户系统环境"],
-    productAcceptance: ["像日常桌面办公软件一样即开即用，托盘切换与窗口缩放顺滑稳定"],
+    inputContract: ["用户在完整源码检出旁启动桌面壳，并操作窗口与托盘图标"],
+    outputContract: ["一个已启动本地服务、打开了主窗口的桌面窗口"],
+    boundaries: ["自动构建流程编译通过之前，不作为安装包发布，也不承诺脱离源码目录运行"],
+    productAcceptance: [
+      "在完整源码检出旁启动后，本地服务随之启动并打开主窗口",
+      "托盘图标可用，重复启动时唤醒已有窗口",
+      "自动构建流程尚未编译它，所以现在不作为安装包发布",
+    ],
     testHint: "desktop/src-tauri",
   },
 ];
@@ -403,9 +414,10 @@ export function buildDefaultSubflowForModule(mod) {
   const step1 = feats[0] || `${mod.title}输入处理`;
   const step2a = feats[1] || "核心业务并发处理";
   const step2b = feats[2] || "状态同步与边界防护";
-  const modStatus = mod.status || "completed";
+  // A module that states no status has only been found, never accepted.
+  const modStatus = mod.status || "identified";
   const hasPage = Boolean(mod.hasUiPage);
-  const mockupStatus = mod.uiMockup?.status || (modStatus === "completed" ? "confirmed" : "pending");
+  const mockupStatus = mod.uiMockup?.status || (isCompleteModuleStatus(modStatus) ? "confirmed" : "pending");
   return {
     title: `${mod.title} · 二级动态子工作流`,
     nodes: [
@@ -547,8 +559,8 @@ function inferProductDomainForGenericDir(relDir, rawName) {
       layer: "连接通道与支撑服务",
       layerShort: "服务连接",
       layerRank: 3,
-      objective: "负责前后端数据通信及与外部服务渠道的稳定对接，保障高并发或弱网下的连接可靠与权限安全。",
-      features: ["统一安全接口通信与鉴权检查", "外部服务渠道连接状态检测", "超时重试与异常隔离保护"],
+      objective: "负责前后端数据通信及与外部服务的稳定对接，保障高并发或弱网下的连接可靠与权限安全。",
+      features: ["统一安全接口通信与鉴权检查", "外部服务连接状态检测", "超时重试与异常隔离保护"],
       inputContract: ["前端界面请求与已配置的外部服务连接凭据"],
       outputContract: ["标准化的业务响应数据与实时状态通知"],
     };
@@ -690,7 +702,7 @@ function resolveRelativeImportToRepoPath(fromAbsFile, specifier, rootReal) {
 
 function extractProductPositioning(rootReal, pkg, displayName) {
   if (displayName === "Meta_Kim" && existsSync(path.join(rootReal, "AGENTS.md"))) {
-    return "面向个人与团队的一体化 AI 协同产品工作台：用户只需用日常语言说出目标，系统自动调用最佳 AI 渠道完成多方案调研比选，生成普通人看得懂的「一级系统框架 + 二级系统详情」产品设计书，在关键节点交由人工拍板后安全执行、核验成果并沉淀可复用经验。";
+    return "面向个人与团队的一体化 AI 协同产品工作台：用户只需用日常语言说出目标，系统自动调用最合适的 AI 客户端完成多方案调研比选，生成普通人看得懂的「一级系统框架 + 二级系统详情」产品设计书，在关键节点交由人工拍板后安全执行、核验成果并总结可复用经验。";
   }
   for (const docName of ["README.zh-CN.md", "README.md"]) {
     const summary = extractLeadDocSummary(path.join(rootReal, docName));
@@ -706,11 +718,11 @@ function extractProductPositioning(rootReal, pkg, displayName) {
 function buildUserJourneySteps(displayName, isMetaKim, layers) {
   if (isMetaKim) {
     return [
-      "第一步 · 一句话提目标：在左侧对话框选定 AI 渠道并输入想完成的事，或一键接入外部正在运行的 Agent 会话",
+      "第一步 · 一句话提目标：在左侧对话框选定 AI 客户端并输入想完成的事，或一键接入外部正在运行的 Agent 会话",
       "第二步 · 多方案比选拍板（B1）：对比系统给出的 2–3 套候选方案优劣与风险，拍板选定方向",
       "第三步 · 审阅两级产品设计 PRD（B2）：在右侧查看「一级系统框架」与「二级系统详情」及各模块完成状态，点选不满意的模块直接提修改意见",
       "第四步 · 隔离试跑与全景追踪（B3）：从顶部单行进度栏随时打开「完整运行图」，实时查看主 Agent 与各 Subagent 的执行进展",
-      "第五步 · 成果核验与经验沉淀（B4）：核对变更文件清单与自动体检结果，满意则一键合入主项目并沉淀为跨项目可复用经验卡",
+      "第五步 · 成果核验与总结可复用经验（B4）：核对变更文件清单与自动体检结果，满意则一键合入主项目并总结成跨项目可复用的经验卡",
     ];
   }
   const layerNames = layers.map((l) => l.label);
@@ -809,18 +821,14 @@ export function discoverProjectArchitecturePrd({ projectRoot } = {}) {
       || readmeSummary
       || `为用户提供「${candidate.title}」相关的核心业务功能、状态反馈与异常处理体验。`;
 
-    const hasModuleVerified = candidate.testHint
+    const hasCompanionTests = candidate.testHint
       ? existsSync(path.join(rootReal, candidate.testHint))
       : (hasRepoTests && (codeFiles.length >= 1 || files.length >= 2));
-
-    const completionStatus = (codeFiles.length >= 1 || candidate.isCuratedProduct) && hasModuleVerified
-      ? "completed"
-      : files.length >= 1 ? "partial" : "planned";
 
     const acceptance = candidate.productAcceptance || [
       `「${candidate.title}」主流程可正常操作并给出清晰的状态与结果反馈`,
       "遇到空数据、未配置或网络波动时显示通俗易懂的引导提示，不白屏不卡死",
-      hasModuleVerified ? "已具备配套自动化校验保障核心功能稳定可用" : "待补充完整端到端验收测试确认边界情况",
+      hasCompanionTests ? "已有配套自动化测试，尚未据此验收" : "待补充完整端到端验收测试确认边界情况",
     ];
 
     const hasUiPage = inferHasUiPage(candidate, relDir);
@@ -835,7 +843,11 @@ export function discoverProjectArchitecturePrd({ projectRoot } = {}) {
       id,
       title: scrubText(candidate.title, 120),
       shortSummary: scrubText(candidate.shortSummary || objective, 42),
-      status: completionStatus,
+      // Finding a module's source says it exists, not that it was accepted. Only
+      // acceptance evidence can make a module `accepted`, and a repository scan has
+      // none, so a module whose files were found is `identified`. Modules with no
+      // files never get this far.
+      status: "identified",
       layer: candidate.layer || "核心产品功能",
       layerShort: candidate.layerShort || "核心功能",
       layerRank: Number.isInteger(candidate.layerRank) ? candidate.layerRank : 2,
@@ -864,7 +876,7 @@ export function discoverProjectArchitecturePrd({ projectRoot } = {}) {
       id: "core-product",
       title: `${displayName} 核心业务功能`,
       shortSummary: "产品主流程与基础体验",
-      status: "partial",
+      status: "planned",
       layer: "核心产品功能",
       layerShort: "核心功能",
       layerRank: 1,
@@ -939,7 +951,7 @@ export function discoverProjectArchitecturePrd({ projectRoot } = {}) {
   const modules = enriched.map((mod) => {
     const uiMockup = mod.hasUiPage
       ? {
-          status: mod.status === "completed" ? "confirmed" : "pending",
+          status: isCompleteModuleStatus(mod.status) ? "confirmed" : "pending",
           version: 1,
           mode: "wireframe_fallback",
           variant: mod.mockupVariant || "workbench",
@@ -985,10 +997,12 @@ export function discoverProjectArchitecturePrd({ projectRoot } = {}) {
     };
   });
 
-  const completedCount = modules.filter((m) => m.status === "completed").length;
-  const partialCount = modules.filter((m) => m.status === "partial").length;
-  const systemStatus = completedCount === modules.length ? "completed"
-    : (completedCount > 0 || partialCount > 0) ? "partial" : "planned";
+  // Complete means accepted on evidence. A repository scan only finds modules, so
+  // the system reads as accepted only when every module is, and otherwise as far
+  // along as its source has been identified.
+  const acceptedCount = modules.filter((m) => isCompleteModuleStatus(m.status)).length;
+  const systemStatus = acceptedCount === modules.length ? "accepted"
+    : modules.some((m) => m.status === "identified") ? "identified" : "planned";
 
   const layerMap = new Map();
   for (const mod of modules) {
@@ -1013,14 +1027,13 @@ export function discoverProjectArchitecturePrd({ projectRoot } = {}) {
     ]
     : [
       "用户操作安全优先：所有关键变更均需清晰的状态反馈，遇到异常保留用户已输入数据",
-      "模块完成度实事求是：各二级系统模块的状态根据当前工程真实实现与测试覆盖情况自动核算",
+      "模块状态实事求是：源码里找到的模块先记为「已识别」，只有留下验收证据后才算完成",
     ];
 
   const systemAcceptance = isMetaKim
     ? [
       "普通人无需阅读代码，打开「产品设计 PRD」即可看懂一级系统框架、二级系统详情及每个模块的完成状态",
-      "Logo 正下方一行展示全局执行进度，点击即可直达「完整运行图」查看主 Agent 与各 Subagent 实时拓扑",
-      "支持底部直接选择 AI 渠道、顶栏双向绑定外部会话，以及在「仓库」视图一键切换本机多仓库",
+      "支持底部直接选择 AI 客户端、顶栏接入外部对话，以及在「仓库」视图一键切换本机多仓库",
     ]
     : [
       `一级系统框架清晰呈现「${displayName}」的业务定位、主流程与功能板块划分`,
@@ -1031,8 +1044,9 @@ export function discoverProjectArchitecturePrd({ projectRoot } = {}) {
     id: "system-architecture",
     title: `${displayName} · 系统框架`,
     status: systemStatus,
-    completedModuleCount: completedCount,
+    completedModuleCount: acceptedCount,
     totalModuleCount: modules.length,
+    completionBasis: "acceptance_evidence",
     goal: extractProductPositioning(rootReal, pkg, displayName),
     userJourney,
     architecture: userJourney.join(" → "),

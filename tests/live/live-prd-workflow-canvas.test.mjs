@@ -283,3 +283,183 @@ test("live workflow canvas service supports edge insertion, parallel branch addi
     rmSync(repoDir, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// review #4 block: self-contained (own imports, own helper names) so it merges
+// next to any other tests appended to this file.
+// ---------------------------------------------------------------------------
+import * as review4Prd from "../../src/application/agent/project-architecture-prd-service.mjs";
+import * as review4Canvas from "../../src/application/agent/prd-workflow-canvas-service.mjs";
+
+// A checkout shaped like Meta_Kim's own: nine curated modules, every one of them
+// with source files and with the test directory its blueprint points at.
+function review4CuratedFixture() {
+  const root = mkdtempSync(path.join(os.tmpdir(), "mk-prd-curated-"));
+  writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "meta-kim", description: "fixture" }));
+  writeFileSync(path.join(root, "AGENTS.md"), "# Fixture\n");
+  for (const [dir, file, text] of [
+    ["canonical", "rules.md", "# Rules\n"],
+    ["config", "hosts.json", "{}\n"],
+    ["src/domain", "model.mjs", "export const model = 1;\n"],
+    ["src/data", "store.mjs", "export const store = 1;\n"],
+    ["src/application/agent", "agent.mjs", "export const agent = 1;\n"],
+    ["src/application/live", "live.mjs", "export const live = 1;\n"],
+    ["src/infrastructure", "server.mjs", "export const server = 1;\n"],
+    ["src/presentation", "page.mjs", "export const page = 1;\n"],
+    ["desktop", "main.rs", "fn main() {}\n"],
+    ["desktop/src-tauri", "lib.rs", "pub fn run() {}\n"],
+    ["tests/live", "one.test.mjs", "export {};\n"],
+  ]) {
+    mkdirSync(path.join(root, dir), { recursive: true });
+    writeFileSync(path.join(root, dir, file), text);
+  }
+  return root;
+}
+
+test("review #4: a module whose test directory exists is identified, never completed, and nothing is accepted without acceptance evidence", () => {
+  const root = review4CuratedFixture();
+  try {
+    const prd = review4Prd.discoverProjectArchitecturePrd({ projectRoot: root });
+    assert.equal(prd.modules.length, 9);
+    for (const module of prd.modules) assert.equal(module.status, "identified", module.id);
+    assert.equal(prd.system.status, "identified");
+    assert.equal(prd.system.completedModuleCount, 0);
+    assert.equal(prd.system.totalModuleCount, 9);
+    assert.equal(prd.system.completionBasis, "acceptance_evidence");
+    for (const module of prd.modules.filter((item) => item.hasUiPage)) {
+      assert.equal(module.uiMockup.status, "pending", `${module.id}: the repository alone cannot confirm a page mockup`);
+    }
+    for (const module of prd.modules) {
+      assert.ok(module.subflow.nodes.every((node) => node.status === "identified"), `${module.id}: its sub-workflow follows the module`);
+    }
+    assert.doesNotMatch(JSON.stringify(prd), /"status":"(?:completed|partial)"/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("review #4: a repository with no discoverable module source is planned, not partly done", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "mk-prd-empty-"));
+  try {
+    writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "empty-app" }));
+    const prd = review4Prd.discoverProjectArchitecturePrd({ projectRoot: root });
+    assert.equal(prd.modules.length, 1);
+    assert.equal(prd.modules[0].status, "planned");
+    assert.equal(prd.system.status, "planned");
+    assert.equal(prd.system.completedModuleCount, 0);
+    assert.equal(prd.system.completionBasis, "acceptance_evidence");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("review #4: the desktop module and the system text claim nothing the product cannot back, in plain words", () => {
+  const root = review4CuratedFixture();
+  try {
+    const prd = review4Prd.discoverProjectArchitecturePrd({ projectRoot: root });
+    const desktop = prd.modules.find((module) => module.id === "desktop-tauri-shell");
+    assert.ok(desktop);
+    assert.equal(desktop.title, "实验性 Tauri 桌面壳，需在完整源码检出旁运行");
+    const text = JSON.stringify(desktop);
+    assert.doesNotMatch(text, /即开即用|双击即用|双击|正式产品级|正式版|独立原生桌面|告别浏览器|防逆向|崩溃自动恢复|像日常桌面办公软件/u);
+    for (const fact of [/完整源码检出/u, /本地服务/u, /主窗口/u, /托盘/u, /单实例/u, /尚未/u, /不作为安装包发布/u]) {
+      assert.match(text, fact);
+    }
+    const everything = JSON.stringify(prd);
+    assert.doesNotMatch(everything, /经验沉淀|双向绑定|渠道/u, "plain words: no jargon for lessons learned, linking outside chats, or clients");
+    assert.doesNotMatch(prd.system.acceptance.join("\n"), /Logo|完整运行图/u, "the removed progress-button line is gone from the system acceptance");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("review #4: the plain-word rule also covers the modules inferred for an ordinary repository", () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "mk-prd-generic-"));
+  try {
+    writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "ordinary-app" }));
+    for (const dir of ["src/server", "src/ui"]) {
+      mkdirSync(path.join(root, dir), { recursive: true });
+      writeFileSync(path.join(root, dir, "index.mjs"), "export const index = 1;\n");
+    }
+    const prd = review4Prd.discoverProjectArchitecturePrd({ projectRoot: root });
+    assert.ok(prd.modules.length >= 2);
+    assert.doesNotMatch(JSON.stringify(prd), /经验沉淀|双向绑定|渠道/u);
+    assert.ok(prd.modules.every((module) => module.status === "identified"));
+    assert.match(prd.system.boundaries.join("\n"), /验收证据/u, "the boundary states what makes a module complete");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("review #4: the canvas service never defaults a node to completed", () => {
+  const root = review4CuratedFixture();
+  try {
+    const canvas = getOrBuildPrdWorkflowCanvas({ projectRoot: root });
+    const business = canvas.nodes.filter((node) => node.kind !== "terminal");
+    assert.equal(business.length, 9);
+    assert.ok(business.every((node) => node.status === "identified"));
+    assert.equal(canvas.summary.completedNodes, 0);
+    assert.equal(canvas.nodes.find((node) => node.id === "end").status, "identified", "the closing node follows the system status");
+    for (const node of business.filter((item) => item.hasUiPage)) assert.equal(node.uiMockup.status, "pending", node.id);
+
+    const bare = review4Prd.buildDefaultSubflowForModule({ id: "bare-module", title: "没有状态的模块", hasUiPage: true });
+    assert.ok(bare.nodes.every((node) => node.status === "identified"), "a module that states no status is identified, not completed");
+    assert.ok(bare.nodes.filter((node) => node.hasUiPage).every((node) => node.mockupStatus === "pending"));
+    const accepted = review4Prd.buildDefaultSubflowForModule({ id: "ok-module", title: "已验收的模块", status: "accepted", hasUiPage: true });
+    assert.ok(accepted.nodes.every((node) => node.status === "accepted"));
+    assert.ok(accepted.nodes.filter((node) => node.hasUiPage).every((node) => node.mockupStatus === "confirmed"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("review #4: a saved canvas counts accepted and verified nodes only, and an upstream change withdraws acceptance downstream", async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), "mk-prd-saved-"));
+  try {
+    writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "saved-app" }));
+    const workflowDir = review4Canvas.ensureWorkflowStateDir(root);
+    const node = (id, status) => ({ id, kind: "process", title: id, status, column: 0, hasUiPage: false, uiMockup: null, reacted: false });
+    const saved = {
+      schemaVersion: review4Canvas.PRD_WORKFLOW_CANVAS_SCHEMA,
+      revision: 1,
+      projectName: "saved-app",
+      nodes: [
+        { id: "start", kind: "terminal", title: "开始", status: "completed", column: -1, hasUiPage: false, uiMockup: null },
+        node("mod-a", "identified"),
+        node("mod-b", "accepted"),
+        node("mod-c", "verified"),
+        // Statuses an earlier build wrote for modules it had only found in source.
+        node("mod-d", "completed"),
+        node("mod-e", "partial"),
+        { id: "end", kind: "terminal", title: "结束", status: "identified", column: 9, hasUiPage: false, uiMockup: null },
+      ],
+      edges: [
+        { id: "e1", from: "start", to: "mod-a", label: "", kind: "normal" },
+        { id: "e2", from: "mod-a", to: "mod-b", label: "", kind: "normal" },
+        { id: "e3", from: "mod-b", to: "mod-c", label: "", kind: "normal" },
+        { id: "e4", from: "mod-c", to: "end", label: "", kind: "normal" },
+      ],
+    };
+    writeFileSync(path.join(workflowDir, "canvas-state.json"), JSON.stringify(saved));
+
+    const canvas = getOrBuildPrdWorkflowCanvas({ projectRoot: root });
+    assert.equal(canvas.summary.completedNodes, 2, "only the accepted node and the verified node are complete");
+    assert.deepEqual(
+      canvas.nodes.filter((item) => item.kind !== "terminal").map((item) => [item.id, item.status]),
+      [["mod-a", "identified"], ["mod-b", "accepted"], ["mod-c", "verified"], ["mod-d", "identified"], ["mod-e", "identified"]],
+      "an earlier build's completed and partial are read back as identified",
+    );
+
+    const changed = await mutatePrdWorkflowCanvas({
+      projectRoot: root,
+      mutation: { action: "update_node", nodeId: "mod-a", title: "改过的上游模块" },
+    });
+    const downstream = (id) => changed.nodes.find((item) => item.id === id);
+    assert.equal(downstream("mod-b").status, "identified", "an upstream change withdraws the acceptance it no longer covers");
+    assert.equal(downstream("mod-b").reacted, true);
+    assert.equal(downstream("mod-c").status, "identified");
+    assert.equal(changed.summary.completedNodes, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

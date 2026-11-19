@@ -172,8 +172,12 @@ test("project architecture PRD baseline extracts Level-1 system framework and Le
   assert.equal(prd.approvalClaimed, false);
   assert.equal(prd.dagValid, true, "measured cross-module dependencies must form a valid acyclic DAG");
   assert.equal(prd.system.title, "Meta_Kim · 系统框架");
-  assert.equal(prd.system.status, "completed");
-  assert.equal(prd.system.completedModuleCount, prd.modules.length);
+  // Finding a module's source is not accepting it: with no acceptance evidence
+  // behind any module, nothing in the baseline may read as complete.
+  assert.equal(prd.system.status, "identified");
+  assert.equal(prd.system.completedModuleCount, 0);
+  assert.equal(prd.system.completionBasis, "acceptance_evidence");
+  assert.ok(prd.modules.every((module) => module.status === "identified"));
   assert.ok(Array.isArray(prd.system.layers) && prd.system.layers.length >= 4);
   assert.ok(prd.modules.length >= 8, `expected >= 8 subsystems, got ${prd.modules.length}`);
   const serialized = JSON.stringify(prd);
