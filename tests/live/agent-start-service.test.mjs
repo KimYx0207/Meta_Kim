@@ -544,3 +544,110 @@ test("a changed professional agent invalidates source binding without injecting 
   assert.ok(!invocation.input.includes("TAMPERED_UNVERIFIED_PROMPT"));
   service.close();
 });
+
+// ---------------------------------------------------------------------------
+// review #5 block: self-contained (own helpers, own names).
+//
+// Measured on one machine: asking for the clients' status 14 times, the number the
+// panel counts was 10 thirteen times and 9 once. The client that dropped out was
+// Pi, which is not installed: its PATH lookup alone ran past the 900 ms deadline in
+// that round, so it was reported unprobed instead of not_found, and the panel does
+// not count unprobed clients that have no capabilities.
+// ---------------------------------------------------------------------------
+
+const review5LookupTimedOut = () => ({ status: "unprobed", version: null, reason: "timeout" });
+const review5VersionTimedOut = () => ({
+  status: "unprobed", version: null, reason: "timeout", executablePath: "/not/for/browser/slow-client",
+});
+const review5NotFound = () => ({ status: "not_found", version: null });
+
+function review5Service(t, probe) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "mk-hosts-review5-"));
+  const service = createAgentStartService({ projectRoot: directory, environment: { PATH: "" }, probe,
+    launch: () => { throw new Error("Must not launch"); } });
+  t.after(() => {
+    service.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  return service;
+}
+
+/** The rule the panel applies when it counts discovered clients. */
+function review5DiscoveredIds(directory, snapshot) {
+  const known = new Map(directory.nativeHosts.map((host) => [host.id, { ...host }]));
+  for (const probeEntry of snapshot.hosts) known.set(probeEntry.id, { ...(known.get(probeEntry.id) || { id: probeEntry.id }), probe: probeEntry });
+  const withCapabilities = new Set(directory.nativeCapabilities.map((item) => item.hostId));
+  return [...known.values()]
+    .filter((host) => host.probe || withCapabilities.has(host.id) || !["not_probed", "unprobed", undefined, null].includes(host.status))
+    .map((host) => host.id).sort();
+}
+
+test("review #5: a client that was found but did not answer in time is reported as timeout and stays counted", async (t) => {
+  const service = review5Service(t, (command) => {
+    if (command === "claude") return detection();
+    if (command === "gemini" || command === "pi") return review5VersionTimedOut();
+    return review5NotFound();
+  });
+  const snapshot = await service.getHosts();
+  const directory = await service.getNativeDirectory();
+  const status = (id) => directory.nativeHosts.find((host) => host.id === id).status;
+  assert.equal(status("pi"), "timeout");
+  assert.equal(status("gemini"), "timeout");
+  assert.equal(status("claude"), "detected");
+  assert.equal(status("zcode"), "not_found");
+  assert.ok(review5DiscoveredIds(directory, snapshot).includes("pi"), "an installed client that is slow to answer is still a discovered client");
+  const gemini = snapshot.hosts.find((host) => host.id === "gemini");
+  assert.equal(gemini.available, false, "a version that was never read is not availability");
+  assert.equal(gemini.reason, "client_detection_not_verified");
+});
+
+test("review #5: a PATH lookup that ran out of time is repeated once before a client is called unprobed", async (t) => {
+  const calls = new Map();
+  const service = review5Service(t, (command) => {
+    calls.set(command, (calls.get(command) || 0) + 1);
+    if (command === "pi" && calls.get("pi") === 1) return review5LookupTimedOut();
+    return review5NotFound();
+  });
+  const directory = await service.getNativeDirectory();
+  assert.equal(directory.nativeHosts.find((host) => host.id === "pi").status, "not_found");
+  assert.equal(calls.get("pi"), 2, "one repeat, no more");
+  assert.equal(calls.get("zcode"), 1, "a client that answered is not asked twice");
+});
+
+test("review #5: a lookup that times out twice stays unprobed after exactly two attempts", async (t) => {
+  const calls = new Map();
+  const service = review5Service(t, (command) => {
+    calls.set(command, (calls.get(command) || 0) + 1);
+    return command === "pi" ? review5LookupTimedOut() : review5NotFound();
+  });
+  const directory = await service.getNativeDirectory();
+  assert.equal(directory.nativeHosts.find((host) => host.id === "pi").status, "unprobed", "nothing was found, so nothing is claimed");
+  assert.equal(calls.get("pi"), 2);
+});
+
+test("review #5: a client that is found but structurally slow is probed once per detection, not repeated", async (t) => {
+  const calls = new Map();
+  const service = review5Service(t, (command) => {
+    calls.set(command, (calls.get(command) || 0) + 1);
+    return command === "gemini" ? review5VersionTimedOut() : review5NotFound();
+  });
+  await service.getHosts();
+  assert.equal(calls.get("gemini"), 1);
+});
+
+test("review #5: the number of discovered clients is the same in every round, whichever lookup is slow", async (t) => {
+  const baseline = await (async () => {
+    const service = review5Service(t, review5NotFound);
+    return review5DiscoveredIds(await service.getNativeDirectory(), await service.getHosts());
+  })();
+  assert.ok(baseline.includes("pi"));
+  for (const [round, slowHost] of ["pi", "zcode", "dsh", "opencode", "pi", "openclaw"].entries()) {
+    const seen = new Map();
+    const service = review5Service(t, (command) => {
+      seen.set(command, (seen.get(command) || 0) + 1);
+      return command === slowHost && seen.get(command) === 1 ? review5LookupTimedOut() : review5NotFound();
+    });
+    const directory = await service.getNativeDirectory();
+    assert.deepEqual(review5DiscoveredIds(directory, await service.getHosts()), baseline, `round ${round} (${slowHost} slow)`);
+  }
+});

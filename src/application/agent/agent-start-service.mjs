@@ -511,7 +511,16 @@ export function createAgentStartService({
           : piDetection.status === "not_found" ? "未检测到 Pi 客户端" : "Pi 客户端检测待确认",
         nextAction: "Pi 可读取本地 Agent/Skill/Extension/MCP 配置；实际调用需独立审阅并授权。",
       }] };
-      return discoverNativeHostInventory({ projectRoot: root, hostSnapshot });
+      const inventory = await discoverNativeHostInventory({ projectRoot: root, hostSnapshot });
+      // The inventory words every client that is neither detected nor missing as
+      // unprobed, and the panel does not count an unprobed client. A client that
+      // was found but did not answer in time is a different fact, and it is counted.
+      const timedOut = new Set([...hosts.map((host) => host.id), "pi"]
+        .filter((id) => probeCache.get(id)?.result.status === "timeout"));
+      return timedOut.size === 0 ? inventory : {
+        ...inventory,
+        nativeHosts: inventory.nativeHosts.map((entry) => (timedOut.has(entry.id) ? { ...entry, status: "timeout" } : entry)),
+      };
     })();
     nativeDirectoryCache = { at: Date.now(), promise };
     return promise;
@@ -618,18 +627,33 @@ export function createAgentStartService({
     return requests.size < maxRequests;
   }
 
+  async function probeHost(host) {
+    try {
+      return await probe(host.command, { env: environment, cwd: root, timeoutMs: probeTimeoutMs });
+    } catch {
+      return { status: "unprobed", version: null };
+    }
+  }
+
   async function detect(host) {
     const cached = probeCache.get(host.id);
     if (cached && Date.now() - cached.at < probeTtlMs) return cached.result;
-    let evidence;
-    try {
-      evidence = await probe(host.command, { env: environment, cwd: root, timeoutMs: probeTimeoutMs });
-    } catch {
-      evidence = { status: "unprobed", version: null };
+    let evidence = await probeHost(host);
+    // Measured on one machine: a client that is not installed was reported
+    // not_found in 13 of 14 rounds and unprobed in the 14th, because its PATH
+    // lookup alone ran past the deadline. Nothing was found, so one slow lookup
+    // must not change the answer: look once more. A client that was found is
+    // never asked twice, since a slow version command would only be slow again.
+    if (evidence?.status === "unprobed" && evidence.reason === "timeout" && !evidence.executablePath) {
+      evidence = await probeHost(host);
     }
     const result = {
       status: evidence?.status === "detected" ? "detected"
-        : evidence?.status === "not_found" ? "not_found" : "unprobed",
+        : evidence?.status === "not_found" ? "not_found"
+          // Found on PATH, but its version command did not answer in time: the
+          // client is there and only its version is unconfirmed.
+          : evidence?.reason === "timeout" && typeof evidence.executablePath === "string" ? "timeout"
+            : "unprobed",
       version: typeof evidence?.version === "string" ? evidence.version.slice(0, 96) : null,
     };
     probeCache.set(host.id, { at: Date.now(), result });
