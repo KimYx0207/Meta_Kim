@@ -1,4 +1,4 @@
-import { lstat, opendir, realpath } from "node:fs/promises";
+import { lstat, open, opendir, readdir, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -12,7 +12,7 @@ import {
   loadLiveDefaultSelectionPolicy,
   sessionSelectionRow,
 } from "../../application/live/live-default-selection.mjs";
-import { buildLiveCompactProjection } from "../../application/live/live-control-room-service.mjs";
+import { buildLiveCompactProjection, liveRunStaleness } from "../../application/live/live-control-room-service.mjs";
 import { loadLiveCatalogScanPolicy } from "../../application/live/live-catalog-scan-policy.mjs";
 import {
   conversationDiscoveryForRuntime,
@@ -40,6 +40,7 @@ import {
   safeReadJson,
   sanitizeLiveProfile,
 } from "./live-read-repository.mjs";
+import { sourceDirectory } from "./claude-native-session-reader.mjs";
 
 export const LIVE_HUB_MAX_PROJECTS = 128;
 export const LIVE_HUB_MAX_SESSIONS = 256;
@@ -769,6 +770,7 @@ function sessionFromRecords(runId, records, { nowMs, activeFreshnessMs }) {
     ...(nodeCount === null ? {} : { nodeCount }),
     ...(eventCount === null ? {} : { eventCount }),
     active,
+    staleness: liveRunStaleness({ status, updatedAt: observedTime.timestamp, nowMs }),
   };
 }
 
@@ -980,6 +982,232 @@ function selectCandidateRuns(candidates, maxSessions, activeRunId) {
     .slice(0, maxSessions * LIVE_HUB_CANDIDATE_RUNS_PER_SESSION);
 }
 
+// ---------------------------------------------------------------------------
+// Which project a session belongs to
+//
+// A governed run record states no working directory, and records land in the
+// `.meta-kim/state` of whichever repository the host process was started from. So
+// the project is decided by the one source that does state where the work ran: the
+// transcript of the session's own verified conversation. Claude transcripts record
+// `cwd` on their message rows; Codex rollouts open with a `session_meta` record
+// whose payload carries it.
+//
+// Each conversation costs at most one directory lookup and one read of the first
+// 64 KB of one file, and the answer is remembered, so a refresh does not walk the
+// disk again. A conversation reference comes out of an untrusted run record, so it
+// is only used to name a file after it has been proven to be a plain UUID.
+// ---------------------------------------------------------------------------
+
+export const SESSION_ATTRIBUTION_HEAD_BYTES = 64 * 1024;
+const ATTRIBUTION_MAX_VERIFIED_LINKS = 4;
+const ATTRIBUTION_MAX_CLAUDE_PROJECT_DIRECTORIES = 512;
+const ATTRIBUTION_MAX_REMEMBERED_CONVERSATIONS = 2048;
+const ATTRIBUTION_MISS_TTL_MS = 30_000;
+const ATTRIBUTION_PARALLEL_SESSIONS = 8;
+const DAY_MS = 86_400_000;
+const CONVERSATION_ID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu;
+const TIME_ORDERED_ID = /^[a-f0-9]{8}-[a-f0-9]{4}-7[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/iu;
+const CUT_OFF_CWD = /"cwd"\s*:\s*("(?:[^"\\]|\\.)*")/u;
+const CUT_OFF_SESSION_META = /"type"\s*:\s*"session_meta"/u;
+
+/** Equal to the project root, or anywhere beneath it. */
+export function cwdIsWithinProject(cwd, projectRoot) {
+  if (typeof cwd !== "string" || !path.isAbsolute(cwd)) return false;
+  const root = comparablePath(projectRoot).replace(/\/+$/u, "");
+  const candidate = comparablePath(cwd).replace(/\/+$/u, "");
+  return candidate === root || candidate.startsWith(`${root}/`);
+}
+
+async function isPlainDirectory(directory) {
+  const info = await pathInfo(directory);
+  return Boolean(info?.isDirectory() && !info.isSymbolicLink());
+}
+
+async function isPlainFile(file) {
+  const info = await pathInfo(file);
+  return Boolean(info?.isFile() && !info.isSymbolicLink());
+}
+
+async function readTranscriptHead(file) {
+  const info = await lstat(file);
+  const handle = await open(file, "r");
+  try {
+    const buffer = Buffer.alloc(Math.min(info.size, SESSION_ATTRIBUTION_HEAD_BYTES));
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    return buffer.toString("utf8", 0, bytesRead);
+  } finally {
+    await handle.close();
+  }
+}
+
+function parseJsonLine(line) {
+  try {
+    return JSON.parse(line);
+  } catch {
+    return null;
+  }
+}
+
+// A line cut off at the read limit cannot be parsed, but the field is written
+// early in the record, so it can still be read directly.
+function cutOffCwd(line) {
+  const match = CUT_OFF_CWD.exec(line);
+  if (!match) return null;
+  try {
+    const value = JSON.parse(match[1]);
+    return typeof value === "string" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function claudeRecordedCwd(head, sessionId) {
+  const lines = head.split("\n");
+  for (const [index, line] of lines.entries()) {
+    if (!line.trim()) continue;
+    const record = parseJsonLine(line);
+    if (!record) {
+      const cwd = index === lines.length - 1 ? cutOffCwd(line) : null;
+      if (cwd) return cwd;
+      continue;
+    }
+    if (typeof record.cwd === "string" && (record.sessionId === undefined || String(record.sessionId).toLowerCase() === sessionId)) {
+      return record.cwd;
+    }
+  }
+  return null;
+}
+
+function codexRecordedCwd(head, threadId) {
+  const first = head.split("\n", 1)[0];
+  const record = parseJsonLine(first);
+  if (!record) return CUT_OFF_SESSION_META.test(first) ? cutOffCwd(first) : null;
+  const meta = record.type === "session_meta" ? record.payload : null;
+  return meta && String(meta.id).toLowerCase() === threadId && typeof meta.cwd === "string" ? meta.cwd : null;
+}
+
+async function locateClaudeTranscript({ claudeHome, projectRoot, sessionId }) {
+  const fileName = `${sessionId}.jsonl`;
+  try {
+    // The project's own transcript directory, named the way the Claude reader names it.
+    const { directory } = await sourceDirectory({ projectRoot, claudeHome });
+    const own = path.join(directory, fileName);
+    if (await isPlainFile(own)) return own;
+  } catch {
+    // This home has no transcript directory for the project; look at the others.
+  }
+  const projects = path.join(claudeHome, "projects");
+  if (!(await isPlainDirectory(projects))) return null;
+  let entries;
+  try {
+    entries = await readdir(projects, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  for (const entry of entries.slice(0, ATTRIBUTION_MAX_CLAUDE_PROJECT_DIRECTORIES)) {
+    if (!entry.isDirectory()) continue;
+    const candidate = path.join(projects, entry.name, fileName);
+    if (await isPlainFile(candidate)) return candidate;
+  }
+  return null;
+}
+
+async function locateCodexRollout({ codexHome, threadId }) {
+  // Only a time-ordered id says which day the rollout was filed under. The host
+  // files by local date, so the days either side of the UTC date are searched too.
+  if (!TIME_ORDERED_ID.test(threadId)) return null;
+  const sessions = path.join(codexHome, "sessions");
+  if (!(await isPlainDirectory(sessions))) return null;
+  const createdMs = Number.parseInt(threadId.replaceAll("-", "").slice(0, 12), 16);
+  const days = [...new Set([-DAY_MS, 0, DAY_MS].map((offset) => new Date(createdMs + offset).toISOString().slice(0, 10)))].sort();
+  const matches = [];
+  for (const day of days) {
+    const directory = path.join(sessions, ...day.split("-"));
+    let names;
+    try {
+      names = await readdir(directory);
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      if (name.startsWith("rollout-") && name.endsWith(".jsonl") && name.toLowerCase().includes(threadId)) {
+        matches.push(path.join(directory, name));
+      }
+    }
+  }
+  matches.sort();
+  for (const file of matches) {
+    if (await isPlainFile(file)) return file;
+  }
+  return null;
+}
+
+async function readRecordedCwd({ runtime, conversationId, projectRoot, claudeHome, codexHome }) {
+  const id = conversationId.toLowerCase();
+  if (runtime === "claude") {
+    const file = await locateClaudeTranscript({ claudeHome, projectRoot, sessionId: id });
+    return file ? claudeRecordedCwd(await readTranscriptHead(file), id) : null;
+  }
+  if (runtime === "codex") {
+    const file = await locateCodexRollout({ codexHome, threadId: id });
+    return file ? codexRecordedCwd(await readTranscriptHead(file), id) : null;
+  }
+  return null;
+}
+
+/**
+ * One resolver belongs to one catalog. The cwd a conversation recorded never
+ * changes, so a found value is kept for the life of the resolver; a miss is only
+ * kept briefly because a transcript can appear a moment after its run does.
+ */
+export function createSessionAttributionResolver({ claudeHome, codexHome, now = Date.now } = {}) {
+  const remembered = new Map();
+
+  function recordedCwd({ runtime, conversationId, projectRoot }) {
+    if (!["claude", "codex"].includes(runtime) || !CONVERSATION_ID.test(String(conversationId))) return Promise.resolve(null);
+    const key = `${runtime}:${String(conversationId).toLowerCase()}`;
+    const held = remembered.get(key);
+    if (held && (held.pending || held.cwd !== null || now() - held.at < ATTRIBUTION_MISS_TTL_MS)) return held.promise;
+    const entry = { cwd: null, at: now(), pending: true, promise: null };
+    entry.promise = readRecordedCwd({ runtime, conversationId, projectRoot, claudeHome, codexHome })
+      .catch(() => null)
+      .then((cwd) => {
+        entry.cwd = cwd;
+        entry.at = now();
+        entry.pending = false;
+        return cwd;
+      });
+    remembered.delete(key);
+    remembered.set(key, entry);
+    if (remembered.size > ATTRIBUTION_MAX_REMEMBERED_CONVERSATIONS) remembered.delete(remembered.keys().next().value);
+    return entry.promise;
+  }
+
+  async function attribute(session, { projectRoot }) {
+    const links = Array.isArray(session?.verifiedLinks) ? session.verifiedLinks.slice(0, ATTRIBUTION_MAX_VERIFIED_LINKS) : [];
+    let recordedElsewhere = false;
+    for (const link of links) {
+      const cwd = await recordedCwd({ runtime: link?.sourceRuntime, conversationId: link?.conversationRef, projectRoot });
+      if (cwd === null) continue;
+      if (cwdIsWithinProject(cwd, projectRoot)) return { attribution: "project", attributionBasis: "transcript_cwd" };
+      recordedElsewhere = true;
+    }
+    return { attribution: "unattributed", attributionBasis: recordedElsewhere ? "cwd_outside_project" : "no_recorded_cwd" };
+  }
+
+  async function attributeSessions(sessions, { projectRoot }) {
+    const stamped = new Array(sessions.length);
+    for (let start = 0; start < sessions.length; start += ATTRIBUTION_PARALLEL_SESSIONS) {
+      const batch = sessions.slice(start, start + ATTRIBUTION_PARALLEL_SESSIONS);
+      const results = await Promise.all(batch.map((session) => attribute(session, { projectRoot })));
+      results.forEach((result, offset) => { stamped[start + offset] = { ...batch[offset], ...result }; });
+    }
+    return stamped;
+  }
+
+  return { attributeSessions };
+}
+
 async function listSessionsForProject(project, {
   profile,
   maxSessions,
@@ -991,6 +1219,7 @@ async function listSessionsForProject(project, {
   discoverRuntimeConversations,
   visibilityPolicy,
   selectionPolicy,
+  sessionAttribution,
 }) {
   const stateRoot = path.join(project.repoRoot, ".meta-kim", "state", profile);
   const recordsByRun = new Map();
@@ -1204,8 +1433,14 @@ async function listSessionsForProject(project, {
     { observedAt: new Date(nowMs).toISOString() },
   );
   const visible = visibility.visible.slice(0, maxSessions);
+  // Attribution runs on the rows that will be published, not on every candidate
+  // read: each one may cost a transcript lookup.
+  const sessions = await sessionAttribution.attributeSessions(
+    visible.map(({ visibilityReason, ...session }) => session),
+    { projectRoot: project.repoRoot },
+  );
   return {
-    sessions: visible.map(({ visibilityReason, ...session }) => session),
+    sessions,
     omittedSessionCount: visibility.counts.omitted +
       Math.max(0, visibility.counts.visible - maxSessions),
     discovery: publicDiscoveryDiagnostic(budget),
@@ -1240,6 +1475,13 @@ export function createLiveHubProjectCatalog(options = {}) {
   const visibilityPolicy = options.visibilityPolicy || loadLiveRunRetentionPolicy();
   const selectionPolicy = options.selectionPolicy || loadLiveDefaultSelectionPolicy();
   const scanPolicy = options.scanPolicy || loadLiveCatalogScanPolicy();
+  // Where the hosts keep conversation transcripts. Defaults follow the hosts' own
+  // overrides and otherwise sit under the same home the project registry uses.
+  const sessionAttribution = createSessionAttributionResolver({
+    claudeHome: path.resolve(options.claudeHome || process.env.CLAUDE_CONFIG_DIR || path.join(homeDir, ".claude")),
+    codexHome: path.resolve(options.codexHome || process.env.CODEX_HOME || path.join(homeDir, ".codex")),
+    now,
+  });
 
   const seedProjectRoot = typeof options.seedProjectRoot === "string" && path.isAbsolute(options.seedProjectRoot)
     ? path.resolve(options.seedProjectRoot)
@@ -1304,6 +1546,7 @@ export function createLiveHubProjectCatalog(options = {}) {
       discoverRuntimeConversations,
       visibilityPolicy,
       selectionPolicy,
+      sessionAttribution,
     });
     return result.sessions;
   };
@@ -1342,14 +1585,20 @@ export function createLiveHubProjectCatalog(options = {}) {
       discoverRuntimeConversations,
       visibilityPolicy,
       selectionPolicy,
+      sessionAttribution,
     });
     const activeSession = sessions.find((session) => session.active) || null;
+    const attributedCount = sessions.filter((session) => session.attribution === "project").length;
     return {
       projectRef: project.projectRef,
       displayName: project.displayName,
       updatedAt: newestTimestamp(project.updatedAt, sessions[0]?.updatedAt),
       status: activeSession ? "active" : sessions.length > 0 ? "idle" : "empty",
-      sessionCount: sessions.length,
+      // Only sessions whose own conversation ran in this project are counted. The
+      // rest stay listed, so the list is still the whole record, but the number a
+      // reader sees is the number that belongs here.
+      sessionCount: attributedCount,
+      unattributedSessionCount: sessions.length - attributedCount,
       omittedSessionCount,
       activeSessionId: activeSession?.sessionId || null,
       sessions,

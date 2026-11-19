@@ -25,7 +25,7 @@ async function plainDirectory(directory) {
   return path.resolve(directory);
 }
 
-async function sourceDirectory({ projectRoot, claudeHome }) {
+export async function sourceDirectory({ projectRoot, claudeHome }) {
   if (typeof projectRoot !== "string" || !path.isAbsolute(projectRoot)) throw new Error("claude_project_unavailable");
   const root = await plainDirectory(projectRoot);
   const home = await plainDirectory(claudeHome || path.join(os.homedir(), ".claude"));

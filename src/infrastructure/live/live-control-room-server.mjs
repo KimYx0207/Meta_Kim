@@ -8,6 +8,7 @@ import { buildProjectRef } from "../../../scripts/project-registry.mjs";
 import {
   createLiveControlRoomService,
   LIVE_REPLAY_SCHEMA_VERSION,
+  liveRunStaleness,
 } from "../../application/live/live-control-room-service.mjs";
 import {
   loadLiveDefaultSelectionPolicy,
@@ -51,6 +52,39 @@ function boundedPublicCount(value, maximum) {
 function publicSubstanceClass(value) {
   return value === "substantive" || value === "activation_only" ? value : "unknown";
 }
+
+const MAX_PUBLIC_IDLE_HOURS = 24 * 365 * 10;
+// The only verdict/basis pairs the project catalog produces. `native_reader_cwd`
+// is deliberately absent: a row cannot claim it by carrying the label.
+const CATALOG_ATTRIBUTIONS = Object.freeze({
+  project: new Set(["transcript_cwd"]),
+  unattributed: new Set(["cwd_outside_project", "no_recorded_cwd"]),
+});
+
+/**
+ * A row read by a native reader is bound to its project by that reader, which
+ * checks the recorded cwd itself, so it is attributed here and nowhere earlier.
+ * Any other row carries the catalog's own answer. A row from a catalog that never
+ * attributed (an injected one) is published without a claim rather than with an
+ * invented one.
+ */
+function publicAttribution(session, nativeSnapshot) {
+  if (nativeSnapshot) return { attribution: "project", attributionBasis: "native_reader_cwd" };
+  const allowedBases = Object.hasOwn(CATALOG_ATTRIBUTIONS, session.attribution) ? CATALOG_ATTRIBUTIONS[session.attribution] : null;
+  return allowedBases?.has(session.attributionBasis)
+    ? { attribution: session.attribution, attributionBasis: session.attributionBasis }
+    : {};
+}
+
+function publicStaleness(session, nowMs) {
+  const declared = session.staleness;
+  const idleHours = boundedPublicCount(declared?.idleHours, MAX_PUBLIC_IDLE_HOURS);
+  if (typeof declared?.stale === "boolean" && idleHours !== null) return { stale: declared.stale, idleHours };
+  return liveRunStaleness({ status: session.status, updatedAt: session.updatedAt, nowMs });
+}
+
+/** Only a row that is positively unattributed is left out of counts and defaults. */
+const isUnattributedSession = (session) => session.attribution === "unattributed";
 
 /**
  * The public shape re-derives count availability from the counts that survived
@@ -663,6 +697,7 @@ export function createLiveControlRoomServer(options = {}) {
       await nativeBindings.read({ projectRef: requestedProjectId, projectRoot: requestedProject?.repoRoot || null, runId: requestedRunId, catalog: true });
     }
     const internalProjects = await nativeBindings.mergeProjects(durableProjects);
+    const catalogNowMs = hubCatalogClock();
     const unorderedProjects = internalProjects.map((project) => ({
       projectId: project.projectRef,
       displayName: project.displayName,
@@ -748,20 +783,42 @@ export function createLiveControlRoomServer(options = {}) {
               ...(nodeCount === null ? {} : { nodeCount }),
               ...(eventCount === null ? {} : { eventCount }),
               active: session.active === true,
+              ...publicAttribution(session, nativeSnapshot),
+              staleness: publicStaleness(session, catalogNowMs),
             };
           })
         : [],
-    }));
+    })).map((project) => {
+      // The count a reader sees is the count of sessions that belong to the
+      // project; the ones that do not stay in `sessions` and are counted apart.
+      const unattributedSessionCount = project.sessions.filter(isUnattributedSession).length;
+      return {
+        ...project,
+        sessionCount: Number.isFinite(project.sessionCount)
+          ? Math.max(0, project.sessionCount - unattributedSessionCount)
+          : project.sessionCount,
+        unattributedSessionCount,
+      };
+    });
+    // Unattributed sessions neither make a project look worth opening nor become
+    // the run it opens on, so projects are ranked by the sessions that belong to
+    // them. An explicitly requested run still opens whatever its attribution.
+    const rankingView = (project) => ({ ...project, sessions: project.sessions.filter((session) => !isUnattributedSession(session)) });
+    const projectsById = new Map(unorderedProjects.map((project) => [project.projectId, project]));
     // Drawability first, then liveness. Ranking liveness first is what opened
     // the control room on a project whose every run was an activation receipt.
-    const projects = sortProjectsForDefault(unorderedProjects, DEFAULT_SELECTION);
-    const selectedProject = pickDefaultRow(
-      projects.map((project) => projectSelectionRow(project, DEFAULT_SELECTION)),
+    const rankedViews = sortProjectsForDefault(unorderedProjects.map(rankingView), DEFAULT_SELECTION);
+    const projects = rankedViews.map((view) => projectsById.get(view.projectId));
+    const selectedView = pickDefaultRow(
+      rankedViews.map((view) => projectSelectionRow(view, DEFAULT_SELECTION)),
       DEFAULT_SELECTION,
       requestedProjectId || "",
     )?.project || null;
+    const selectedProject = selectedView ? projectsById.get(selectedView.projectId) : null;
     const selectedRun = pickDefaultRow(
-      (selectedProject?.sessions || []).map((session) => sessionSelectionRow(session)),
+      (selectedProject?.sessions || [])
+        .filter((session) => !isUnattributedSession(session) || session.runId === requestedRunId)
+        .map((session) => sessionSelectionRow(session)),
       DEFAULT_SELECTION,
       requestedRunId || "",
     )?.session || null;

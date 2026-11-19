@@ -764,3 +764,120 @@ test("past the freshness window the catalog is served from what is in hand while
     "a list older than the stale window has to be replaced before it is served, or a finished run stays on the panel forever",
   );
 });
+
+function attributionRow(runId, overrides = {}) {
+  return {
+    sessionId: runId, runId, title: runId, status: "completed", currentStage: "verification", runtime: "codex",
+    updatedAt: "2026-11-19T07:00:00.000Z", active: false, ...overrides,
+  };
+}
+
+function attributionProject(projectRef, displayName, sessions, overrides = {}) {
+  return {
+    projectRef, repoRoot: `C:\\private\\${displayName}`, displayName, updatedAt: "2026-11-19T07:00:00.000Z",
+    status: "idle", activeSessionId: null, sessionCount: sessions.length, sessions, ...overrides,
+  };
+}
+
+test("review #2: the public catalog publishes attribution, separate counts and staleness, and never opens on an unattributed run", async (t) => {
+  const home = attributionProject("project-a1a1a1a1a1a1", "Home", [
+    attributionRow("meta-home-elsewhere", {
+      attribution: "unattributed", attributionBasis: "cwd_outside_project", status: "active", active: true,
+      updatedAt: "2026-11-19T08:30:00.000Z", nodeCount: 12, eventCount: 40,
+    }),
+    attributionRow("meta-home-own", {
+      attribution: "project", attributionBasis: "transcript_cwd", updatedAt: "2026-11-19T07:00:00.000Z", nodeCount: 6, eventCount: 12,
+    }),
+    // A stored row cannot acquire the native reader's standing by carrying its label.
+    attributionRow("meta-home-forged", {
+      attribution: "project", attributionBasis: "native_reader_cwd", updatedAt: "2026-11-01T07:00:00.000Z",
+    }),
+    attributionRow("meta-home-old-active", { status: "active", updatedAt: "2026-11-19T01:00:00.000Z" }),
+    attributionRow("meta-home-declared", { staleness: { stale: true, idleHours: 5 } }),
+  ]);
+  const foreign = attributionProject("project-b2b2b2b2b2b2", "Foreign", [
+    attributionRow("meta-foreign-1", {
+      attribution: "unattributed", attributionBasis: "no_recorded_cwd", status: "active", active: true,
+      updatedAt: "2026-11-19T08:45:00.000Z", nodeCount: 20, eventCount: 30,
+    }),
+  ], { status: "active", activeSessionId: "meta-foreign-1", updatedAt: "2026-11-19T08:45:00.000Z" });
+  const controller = createLiveControlRoomServer({
+    globalHub: true,
+    instanceId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+    hubCatalogClock: () => Date.parse("2026-11-19T09:00:00.000Z"),
+    hubCatalog: {
+      listProjects: async () => [{ ...foreign }, { ...home }],
+      resolveProject: async (projectRef) => [home, foreign].find((project) => project.projectRef === projectRef) || null,
+    },
+    createProjectService: () => ({
+      getSnapshot: async () => snapshot("meta-home-own"),
+      getReplay: async (runId) => ({ schemaVersion: "meta-kim-live-replay-v2", runId, replay: [] }),
+      getShare: async () => ({ schemaVersion: "meta-kim-live-share-v1" }),
+    }),
+  });
+  t.after(() => controller.close());
+  const address = await controller.start();
+
+  const catalog = await (await fetch(`${address.url}/api/projects`)).json();
+  const publicHome = catalog.projects.find((project) => project.projectId === home.projectRef);
+  const publicForeign = catalog.projects.find((project) => project.projectId === foreign.projectRef);
+  const row = (runId) => publicHome.sessions.find((session) => session.runId === runId);
+
+  assert.equal(row("meta-home-elsewhere").attribution, "unattributed");
+  assert.equal(row("meta-home-elsewhere").attributionBasis, "cwd_outside_project");
+  assert.equal(row("meta-home-own").attribution, "project");
+  assert.equal(row("meta-home-own").attributionBasis, "transcript_cwd");
+  assert.equal(row("meta-home-forged").attribution, undefined, "a copied native label is not a claim this boundary will repeat");
+  assert.equal(row("meta-home-forged").attributionBasis, undefined);
+  assert.equal(publicHome.sessions.length, 5, "an unattributed row stays in the list");
+
+  assert.equal(publicHome.sessionCount, 4, "the five listed rows minus the one that does not belong");
+  assert.equal(publicHome.unattributedSessionCount, 1);
+  assert.equal(publicForeign.sessionCount, 0);
+  assert.equal(publicForeign.unattributedSessionCount, 1);
+
+  assert.deepEqual(row("meta-home-own").staleness, { stale: false, idleHours: 2 });
+  assert.deepEqual(row("meta-home-old-active").staleness, { stale: true, idleHours: 8 });
+  assert.deepEqual(row("meta-home-declared").staleness, { stale: true, idleHours: 5 }, "a staleness the catalog already measured is repeated as measured");
+
+  assert.equal(catalog.selected.projectId, home.projectRef, "a project of unattributed runs does not outrank one that has its own");
+  assert.notEqual(catalog.selected.runId, "meta-home-elsewhere", "an unattributed run is never the default");
+
+  const requested = await (await fetch(`${address.url}/api/projects?projectId=${home.projectRef}&runId=meta-home-elsewhere`)).json();
+  assert.equal(requested.selected.runId, "meta-home-elsewhere", "an explicit request still opens it");
+});
+
+test("review #2: a project whose every run is unattributed opens on no run, but still opens when one is asked for", async (t) => {
+  const only = attributionProject("project-c3c3c3c3c3c3", "Only", [
+    attributionRow("meta-only-1", { attribution: "unattributed", attributionBasis: "no_recorded_cwd", nodeCount: 8, eventCount: 9 }),
+  ]);
+  const controller = createLiveControlRoomServer({
+    globalHub: true,
+    instanceId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+    hubCatalog: {
+      listProjects: async () => [{ ...only }],
+      resolveProject: async (projectRef) => (projectRef === only.projectRef ? { ...only } : null),
+    },
+    createProjectService: () => ({
+      getSnapshot: async (runId) => snapshot(runId),
+      getReplay: async (runId) => ({ schemaVersion: "meta-kim-live-replay-v2", runId, replay: [] }),
+      getShare: async () => ({ schemaVersion: "meta-kim-live-share-v1" }),
+    }),
+  });
+  t.after(() => controller.close());
+  const address = await controller.start();
+
+  const catalog = await (await fetch(`${address.url}/api/projects`)).json();
+  assert.equal(catalog.selected.projectId, only.projectRef);
+  assert.equal(catalog.selected.runId, null);
+  assert.equal(catalog.projects[0].sessionCount, 0);
+  assert.equal(catalog.projects[0].unattributedSessionCount, 1);
+  assert.equal(catalog.projects[0].sessions.length, 1);
+
+  const opened = new URL(`${address.url}/api/snapshot`);
+  opened.searchParams.set("projectId", only.projectRef);
+  opened.searchParams.set("runId", "meta-only-1");
+  const response = await fetch(opened);
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).run.runId, "meta-only-1");
+});

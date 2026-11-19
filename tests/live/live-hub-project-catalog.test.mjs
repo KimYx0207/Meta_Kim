@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { lstat, mkdir, mkdtemp, rm, symlink, utimes, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -149,12 +149,17 @@ test("lists only public project/session catalog fields and resolves the root ser
     "sessionCount",
     "sessions",
     "status",
+    "unattributedSessionCount",
     "updatedAt",
   ]);
   assert.equal(projects[0].displayName, "Meta Kim");
   assert.equal(projects[0].status, "active");
   assert.equal(projects[0].activeSessionId, "meta-catalog-2");
-  assert.equal(projects[0].sessionCount, 2);
+  // Neither run states a conversation, so neither can be attributed to this
+  // project by a recorded cwd: both are listed and neither is counted.
+  assert.equal(projects[0].sessionCount, 0);
+  assert.equal(projects[0].unattributedSessionCount, 2);
+  assert.equal(projects[0].sessions.length, 2);
   assert.equal(
     projects[0].omittedSessionCount,
     0,
@@ -209,7 +214,10 @@ test("the default session list folds away stale activation receipts and reports 
     "a run that did work and a run that just started both stay listed",
   );
   assert.equal(project.omittedSessionCount, 3);
-  assert.equal(project.sessionCount, 2);
+  // Both listed runs are unlinked, so neither has a recorded cwd to attribute by.
+  assert.equal(project.sessionCount, 0);
+  assert.equal(project.unattributedSessionCount, 2);
+  assert.equal(project.sessions.length, 2);
   assert.equal(project.status, "idle");
 });
 
@@ -537,6 +545,9 @@ test("includes a fresh root active-run status as the selectable active session",
       reason: "no_governed_artifact_for_run",
     },
     active: true,
+    staleness: { stale: false, idleHours: 0 },
+    attribution: "unattributed",
+    attributionBasis: "no_recorded_cwd",
   }]);
 });
 
@@ -617,6 +628,9 @@ test("prefers the latest compact projection over a stale active status", async (
     nodeCount: 2,
     eventCount: 1,
     active: false,
+    staleness: { stale: false, idleHours: 0 },
+    attribution: "unattributed",
+    attributionBasis: "no_recorded_cwd",
   });
   assert.equal(project.sessions[1].status, "in_doubt");
   assert.equal(project.sessions[1].active, false);
@@ -1914,4 +1928,261 @@ test("listProjects walks independent projects at once and answers in registry or
     registryOrder,
     "the answer is ordered by the registry, not by which disk finished first; otherwise the project list reshuffles between two identical requests",
   );
+});
+
+// ---------------------------------------------------------------------------
+// review #2: a session belongs to a project by the cwd its conversation recorded
+// ---------------------------------------------------------------------------
+
+const ATTRIBUTION_NOW = Date.parse("2026-11-19T09:00:00.000Z");
+const CLAUDE_SESSION = "5c1f0a3e-2b7d-4e8a-9f61-0d2c7a8b1e34";
+
+/** A UUIDv7 whose leading 48 bits are the creation time, as Codex thread ids are. */
+function codexThreadAt(ms, tail) {
+  const hex = ms.toString(16).padStart(12, "0");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-7abc-8def-${tail}`;
+}
+
+async function attributionHomes(t) {
+  const claudeHome = await mkdtemp(path.join(os.tmpdir(), "meta-kim-claude-home-"));
+  const codexHome = await mkdtemp(path.join(os.tmpdir(), "meta-kim-codex-home-"));
+  t.after(() => Promise.all([
+    rm(claudeHome, { recursive: true, force: true }),
+    rm(codexHome, { recursive: true, force: true }),
+  ]));
+  return { claudeHome, codexHome };
+}
+
+async function writeClaudeTranscript(claudeHome, directoryRoot, sessionId, recordedCwd) {
+  const directory = path.join(claudeHome, "projects", (await realpath(directoryRoot)).replace(/[^A-Za-z0-9]/gu, "-"));
+  await mkdir(directory, { recursive: true });
+  const rows = [
+    { type: "summary", summary: "earlier work", leafUuid: "11111111-1111-4111-8111-111111111111" },
+    {
+      parentUuid: null, isSidechain: false, cwd: recordedCwd, sessionId, type: "user",
+      message: { role: "user", content: "hello" }, uuid: "22222222-2222-4222-8222-222222222222",
+      timestamp: "2026-11-19T08:00:00.000Z",
+    },
+  ];
+  await writeFile(path.join(directory, `${sessionId}.jsonl`), rows.map((row) => JSON.stringify(row)).join("\n") + "\n", "utf8");
+  return directory;
+}
+
+async function writeCodexRollout(codexHome, threadId, recordedCwd, { padding = 0 } = {}) {
+  const createdMs = Number.parseInt(threadId.replaceAll("-", "").slice(0, 12), 16);
+  const day = new Date(createdMs).toISOString().slice(0, 10);
+  const directory = path.join(codexHome, "sessions", ...day.split("-"));
+  await mkdir(directory, { recursive: true });
+  const meta = {
+    timestamp: new Date(createdMs).toISOString(),
+    type: "session_meta",
+    payload: {
+      id: threadId, timestamp: new Date(createdMs).toISOString(), originator: "Codex Desktop",
+      // `padding` pushes the cwd past the first 64 KB the reader is allowed to look at.
+      ...(padding ? { base_instructions: "x".repeat(padding) } : {}),
+      cwd: recordedCwd,
+    },
+  };
+  const file = path.join(directory, `rollout-${new Date(createdMs).toISOString().slice(0, 19).replaceAll(":", "-")}-${threadId}.jsonl`);
+  await writeFile(file, JSON.stringify(meta) + "\n" + JSON.stringify({ type: "turn_context", payload: { cwd: recordedCwd } }) + "\n", "utf8");
+  return file;
+}
+
+async function writeGovernedRun(projectRoot, runId, conversation, extra = {}) {
+  await writeArtifact(projectRoot, runId, {
+    ...(conversation ? { sourceConversation: { ...conversation, runId, matchBasis: "transcript_file_verified" } } : {}),
+    ...extra,
+  });
+}
+
+function attributionCatalog(projectRoot, homes, extra = {}) {
+  return createLiveHubProjectCatalog({
+    listJoinedProjects: async () => [registryEntry(projectRoot)],
+    now: () => ATTRIBUTION_NOW,
+    ...homes,
+    ...extra,
+  });
+}
+
+test("review #2: a verified Claude conversation whose transcript sits under the project directory belongs to the project", async (t) => {
+  const projectRoot = await makeProject("attr-claude");
+  t.after(() => rm(projectRoot, { recursive: true, force: true }));
+  const homes = await attributionHomes(t);
+  await writeClaudeTranscript(homes.claudeHome, projectRoot, CLAUDE_SESSION, await realpath(projectRoot));
+  await writeGovernedRun(projectRoot, "meta-attr-claude", { runtime: "claude", conversationId: CLAUDE_SESSION });
+
+  const [project] = await attributionCatalog(projectRoot, homes).listProjects();
+  const [session] = project.sessions;
+  assert.equal(session.runId, "meta-attr-claude");
+  assert.equal(session.attribution, "project");
+  assert.equal(session.attributionBasis, "transcript_cwd");
+  assert.equal(project.sessionCount, 1);
+  assert.equal(project.unattributedSessionCount, 0);
+});
+
+test("review #2: a verified Codex conversation that ran in another directory is unattributed as cwd_outside_project", async (t) => {
+  const projectRoot = await makeProject("attr-codex-outside");
+  const elsewhere = await makeProject("attr-codex-elsewhere");
+  t.after(() => Promise.all([rm(projectRoot, { recursive: true, force: true }), rm(elsewhere, { recursive: true, force: true })]));
+  const homes = await attributionHomes(t);
+  const threadId = codexThreadAt(Date.parse("2026-11-18T10:00:00.000Z"), "0123456789ab");
+  await writeCodexRollout(homes.codexHome, threadId, await realpath(elsewhere));
+  await writeGovernedRun(projectRoot, "meta-attr-outside", { runtime: "codex", conversationId: threadId });
+
+  const [project] = await attributionCatalog(projectRoot, homes).listProjects();
+  const [session] = project.sessions;
+  assert.equal(session.attribution, "unattributed");
+  assert.equal(session.attributionBasis, "cwd_outside_project");
+  assert.equal(project.sessionCount, 0);
+  assert.equal(project.unattributedSessionCount, 1);
+  assert.equal(project.sessions.length, 1, "an unattributed row stays in the list");
+});
+
+test("review #2: a Codex conversation that ran inside a subdirectory of the project still belongs to it", async (t) => {
+  const projectRoot = await makeProject("attr-codex-inside");
+  t.after(() => rm(projectRoot, { recursive: true, force: true }));
+  const homes = await attributionHomes(t);
+  const threadId = codexThreadAt(Date.parse("2026-11-17T23:30:00.000Z"), "0123456789ac");
+  await writeCodexRollout(homes.codexHome, threadId, path.join(await realpath(projectRoot), "desktop", "src-tauri"));
+  await writeGovernedRun(projectRoot, "meta-attr-inside", { runtime: "codex", conversationId: threadId });
+
+  const [project] = await attributionCatalog(projectRoot, homes).listProjects();
+  assert.equal(project.sessions[0].attribution, "project");
+  assert.equal(project.sessions[0].attributionBasis, "transcript_cwd");
+});
+
+test("review #2: a run without a verified conversation, or without a readable transcript, has no recorded cwd", async (t) => {
+  const projectRoot = await makeProject("attr-none");
+  t.after(() => rm(projectRoot, { recursive: true, force: true }));
+  const homes = await attributionHomes(t);
+  await writeGovernedRun(projectRoot, "meta-attr-unlinked", null);
+  await writeGovernedRun(projectRoot, "meta-attr-missing", { runtime: "claude", conversationId: "9d9d9d9d-0000-4000-8000-000000000001" });
+  await writeGovernedRun(projectRoot, "meta-attr-candidate", null, {
+    conversationCandidates: [{ runtime: "claude", conversationId: CLAUDE_SESSION, title: "similar chat" }],
+  });
+  // The transcript for the candidate exists and sits in the project, but only a
+  // verified link may attribute a run; a similarity guess must not.
+  await writeClaudeTranscript(homes.claudeHome, projectRoot, CLAUDE_SESSION, await realpath(projectRoot));
+
+  const [project] = await attributionCatalog(projectRoot, homes).listProjects();
+  const byRun = new Map(project.sessions.map((session) => [session.runId, session]));
+  for (const runId of ["meta-attr-unlinked", "meta-attr-missing", "meta-attr-candidate"]) {
+    assert.equal(byRun.get(runId).attribution, "unattributed", runId);
+    assert.equal(byRun.get(runId).attributionBasis, "no_recorded_cwd", runId);
+  }
+  assert.equal(project.sessionCount, 0);
+  assert.equal(project.unattributedSessionCount, 3);
+});
+
+test("review #2: only attributed sessions are counted, and unattributed ones stay in the list", async (t) => {
+  const projectRoot = await makeProject("attr-counts");
+  const elsewhere = await makeProject("attr-counts-elsewhere");
+  t.after(() => Promise.all([rm(projectRoot, { recursive: true, force: true }), rm(elsewhere, { recursive: true, force: true })]));
+  const homes = await attributionHomes(t);
+  await writeClaudeTranscript(homes.claudeHome, projectRoot, CLAUDE_SESSION, await realpath(projectRoot));
+  const outsideThread = codexThreadAt(Date.parse("2026-11-18T10:00:00.000Z"), "0123456789ad");
+  await writeCodexRollout(homes.codexHome, outsideThread, await realpath(elsewhere));
+  await writeGovernedRun(projectRoot, "meta-attr-count-a", { runtime: "claude", conversationId: CLAUDE_SESSION });
+  await writeGovernedRun(projectRoot, "meta-attr-count-b", { runtime: "codex", conversationId: outsideThread });
+  await writeGovernedRun(projectRoot, "meta-attr-count-c", null);
+
+  const catalog = attributionCatalog(projectRoot, homes);
+  const [project] = await catalog.listProjects();
+  assert.equal(project.sessions.length, 3);
+  assert.equal(project.sessionCount, 1, "sessionCount counts only attribution === project");
+  assert.equal(project.unattributedSessionCount, 2);
+  assert.equal(project.sessions.filter((session) => session.attribution === "project").length, project.sessionCount);
+  assert.deepEqual(
+    (await catalog.listSessions(registryEntry(projectRoot).projectRef)).map((session) => [session.runId, session.attribution]).sort(),
+    project.sessions.map((session) => [session.runId, session.attribution]).sort(),
+    "listSessions publishes the same attribution as listProjects",
+  );
+});
+
+test("review #2: only the first 64 KB of a transcript is read", async (t) => {
+  const projectRoot = await makeProject("attr-bounded");
+  t.after(() => rm(projectRoot, { recursive: true, force: true }));
+  const homes = await attributionHomes(t);
+  const near = codexThreadAt(Date.parse("2026-11-18T10:00:00.000Z"), "0123456789ae");
+  const far = codexThreadAt(Date.parse("2026-11-18T11:00:00.000Z"), "0123456789af");
+  // `near` carries a large instruction block after its cwd; `far` carries it before.
+  const nearFile = await writeCodexRollout(homes.codexHome, near, await realpath(projectRoot));
+  const farFile = await writeCodexRollout(homes.codexHome, far, await realpath(projectRoot), { padding: 200 * 1024 });
+  assert.ok((await lstat(farFile)).size > 200 * 1024);
+  assert.ok((await lstat(nearFile)).size < 64 * 1024);
+  await writeGovernedRun(projectRoot, "meta-attr-near", { runtime: "codex", conversationId: near });
+  await writeGovernedRun(projectRoot, "meta-attr-far", { runtime: "codex", conversationId: far });
+
+  const [project] = await attributionCatalog(projectRoot, homes).listProjects();
+  const byRun = new Map(project.sessions.map((session) => [session.runId, session]));
+  assert.equal(byRun.get("meta-attr-near").attribution, "project");
+  // The padded record is one 200 KB line. Its cwd follows the padding, so a reader
+  // bounded to the first 64 KB cannot see it and must not guess.
+  assert.equal(byRun.get("meta-attr-far").attribution, "unattributed");
+  assert.equal(byRun.get("meta-attr-far").attributionBasis, "no_recorded_cwd");
+});
+
+test("review #2: a resolved cwd is remembered per conversation for the life of the catalog", async (t) => {
+  const projectRoot = await makeProject("attr-cache");
+  t.after(() => rm(projectRoot, { recursive: true, force: true }));
+  const homes = await attributionHomes(t);
+  const threadId = codexThreadAt(Date.parse("2026-11-18T10:00:00.000Z"), "0123456789b0");
+  const rollout = await writeCodexRollout(homes.codexHome, threadId, await realpath(projectRoot));
+  await writeGovernedRun(projectRoot, "meta-attr-cache", { runtime: "codex", conversationId: threadId });
+
+  const catalog = attributionCatalog(projectRoot, homes);
+  assert.equal((await catalog.listProjects())[0].sessions[0].attribution, "project");
+  await rm(rollout);
+  assert.equal(
+    (await catalog.listProjects())[0].sessions[0].attribution,
+    "project",
+    "the transcript is not opened again once its cwd is known",
+  );
+  const fresh = await attributionCatalog(projectRoot, homes).listProjects();
+  assert.equal(fresh[0].sessions[0].attribution, "unattributed", "the memory belongs to one catalog instance");
+});
+
+test("review #2: a conversation reference that is not a plain id never reaches the filesystem", async (t) => {
+  const { createSessionAttributionResolver } = await import("../../src/infrastructure/live/live-hub-project-catalog.mjs");
+  const projectRoot = await makeProject("attr-hostile");
+  const outside = await mkdtemp(path.join(os.tmpdir(), "meta-kim-attr-outside-"));
+  t.after(() => Promise.all([rm(projectRoot, { recursive: true, force: true }), rm(outside, { recursive: true, force: true })]));
+  const homes = await attributionHomes(t);
+  const root = await realpath(projectRoot);
+  // A transcript that a traversal-shaped id would reach if it were joined into a path.
+  await mkdir(path.join(homes.claudeHome, "projects", "some-other-project"), { recursive: true });
+  await writeFile(path.join(outside, "stolen.jsonl"), JSON.stringify({ cwd: root }) + "\n", "utf8");
+  const traversal = path.relative(path.join(homes.claudeHome, "projects", "some-other-project"), path.join(outside, "stolen")).replaceAll("\\", "/");
+  assert.match(traversal, /^\.\.\//u);
+
+  const resolver = createSessionAttributionResolver({ claudeHome: homes.claudeHome, codexHome: homes.codexHome });
+  const [row] = await resolver.attributeSessions(
+    [{ runId: "meta-attr-hostile", verifiedLinks: [{ sourceRuntime: "claude", conversationRef: traversal, matchBasis: "transcript_file_verified" }] }],
+    { projectRoot: root },
+  );
+  assert.equal(row.attribution, "unattributed");
+  assert.equal(row.attributionBasis, "no_recorded_cwd");
+});
+
+test("review #24: catalog rows report staleness against the injected clock", async (t) => {
+  const projectRoot = await makeProject("stale-rows");
+  t.after(() => rm(projectRoot, { recursive: true, force: true }));
+  const writeStatus = async (runId, status) => {
+    const runDir = path.join(projectRoot, ".meta-kim", "state", "default", "runs", runId);
+    await mkdir(runDir, { recursive: true });
+    await writeFile(path.join(runDir, "status.json"), JSON.stringify({ runId, currentStageKey: "execution", ...status }), "utf8");
+  };
+  await writeStatus("meta-stale-quiet", { lifecycleStatus: "active", active: true, updatedAt: "2026-11-19T01:00:00.000Z" });
+  await writeStatus("meta-stale-fresh", { lifecycleStatus: "active", active: true, updatedAt: "2026-11-19T08:58:00.000Z" });
+  await writeStatus("meta-stale-stopped", { lifecycleStatus: "session_stopped", active: false, updatedAt: "2026-11-19T01:00:00.000Z" });
+
+  const catalog = createLiveHubProjectCatalog({
+    listJoinedProjects: async () => [registryEntry(projectRoot)],
+    now: () => ATTRIBUTION_NOW,
+  });
+  const [project] = await catalog.listProjects();
+  const byRun = new Map(project.sessions.map((session) => [session.runId, session]));
+  assert.deepEqual(byRun.get("meta-stale-quiet").staleness, { stale: true, idleHours: 8 });
+  assert.deepEqual(byRun.get("meta-stale-fresh").staleness, { stale: false, idleHours: 0 });
+  assert.deepEqual(byRun.get("meta-stale-stopped").staleness, { stale: false, idleHours: 8 }, "a stopped session is not waiting for anything");
 });

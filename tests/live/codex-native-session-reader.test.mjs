@@ -1069,6 +1069,22 @@ test("trusted native observed run joins existing hub catalog and snapshot withou
   assert.notEqual(invalid.status, 200);
 });
 
+test("review #2: a row read by the native reader is attributed by the reader's own cwd check and is counted", async (t) => {
+  const f = await fixture(t);
+  await f.write([meta(f.projectRoot), context(f.projectRoot), command(f.projectRoot)]);
+  const controller = createLiveControlRoomServer({ globalHub: true, nativeCodex: f.options, hubCatalog: { profile: "default", listProjects: async () => [], resolveProject: async () => null } });
+  controller.server.address = () => ({ address: "127.0.0.1", port: 4331 });
+  const catalog = await request(controller, "/api/projects");
+  const [project] = catalog.body.projects;
+  const nativeSession = project.sessions.find((session) => session.runId === catalog.body.selected.runId);
+  assert.match(nativeSession.runId, /^native-codex-/u);
+  assert.equal(nativeSession.attribution, "project");
+  assert.equal(nativeSession.attributionBasis, "native_reader_cwd");
+  assert.equal(project.sessionCount, 1);
+  assert.equal(project.unattributedSessionCount, 0);
+  assert.equal(catalog.body.selected.runId, nativeSession.runId, "an attributed native run remains the default");
+});
+
 test("a planning row cannot copy native labels to acquire an observed execution summary", async (t) => {
   const f = await fixture(t);
   await f.write([meta(f.projectRoot), context(f.projectRoot), command(f.projectRoot)]);
