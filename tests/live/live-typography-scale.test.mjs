@@ -499,12 +499,16 @@ test("the graph and its node titles outrank the compact run identity at measured
   }
 });
 
-test("the reading workspace reserves the shared display tier for its view-scoped project heading", () => {
+// Review #22: the run title on the records page read as oversized beside every
+// other page title, so the view-scoped heading uses the view-title tier and no
+// rule draws text at the hero size.
+test("review #22: the view-scoped run heading uses the view-title tier, not the hero size", () => {
   const scale = loadLiveTypographyScale();
   const css = stylesheetOf(renderLiveControlRoomPage());
   const { applied } = appliedTextSizes(css, scale, 1440);
   const heroSelectors = [...applied].filter(([, size]) => size.value === "var(--fs-hero)").map(([selector]) => selector);
-  assert.deepEqual(heroSelectors, ['.shell[data-work-view="workspace"] .uw-overview h1']);
+  assert.deepEqual(heroSelectors, []);
+  assert.equal(new Map(applied).get('.shell[data-work-view="workspace"] .uw-overview h1')?.value, "var(--fs-view-title)");
 });
 
 test("adjacent tiers are separated enough to read as different levels", () => {

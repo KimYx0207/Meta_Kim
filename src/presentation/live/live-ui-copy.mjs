@@ -20,6 +20,8 @@ const LIVE_UI_PATTERNS = Object.freeze([
   ["^\\+ (\\d+) runs without an openable record$", "+ {count} runs without an openable record", ["count"]],
   ["^(.*) · (\\d+) runs$", "{project} · {count} runs", ["project", "count"]],
   ["^(.*) · no runs$", "{project} · no runs", ["project"]],
+  ["^Show ([0-9]+) runs from other folders$", "Show {count} runs from other folders", ["count"]],
+  ["^No progress for ([0-9]+) h$", "No progress for {count} h", ["count"]],
   ["^(.*) · (\\d+) observed run records$", "{project} · {count} observed run records", ["project", "count"]],
   ["^(\\d+) of (\\d+) steps complete$", "{done} of {total} steps complete", ["done", "total"]],
   ["^(\\d+) active workers?$", "{count} active workers", ["count"]],
@@ -84,8 +86,23 @@ export function liveUiLocale(language) {
   return ({ zh: "zh-CN", en: "en", ja: "ja-JP", ko: "ko-KR" })[language] || "en";
 }
 
+/** Same rule as the desktop window: Meta_Kim is named once, other projects lead. */
+export function liveDocumentTitle(projectName) {
+  const name = String(projectName || "").trim();
+  return !name || name.toLowerCase() === "meta_kim" ? "Meta_Kim" : name + " · Meta_Kim";
+}
+
+/** Every time shown to people: the viewer's local month/day and hour:minute. */
+export function formatLiveTime(value, language) {
+  const time = typeof value === "number" ? value : Date.parse(String(value ?? ""));
+  if (!Number.isFinite(time)) return "";
+  return new Intl.DateTimeFormat(liveUiLocale(language || "zh"), {
+    month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false,
+  }).format(new Date(time));
+}
+
 /** The browser runs the same renderer as the focused unit tests, offline. */
 export function serializeLiveUiCopy() {
   const json = (value) => JSON.stringify(value).replaceAll("<", "\\u003c").replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
-  return `const LIVE_UI_COPY = ${json(LIVE_UI_COPY)};\nconst LIVE_UI_PATTERNS = ${json(LIVE_UI_PATTERNS)};\n${translateLiveUiCopy.toString()}\n${liveUiLocale.toString()}`;
+  return `const LIVE_UI_COPY = ${json(LIVE_UI_COPY)};\nconst LIVE_UI_PATTERNS = ${json(LIVE_UI_PATTERNS)};\n${translateLiveUiCopy.toString()}\n${liveUiLocale.toString()}\n${liveDocumentTitle.toString()}\n${formatLiveTime.toString()}`;
 }

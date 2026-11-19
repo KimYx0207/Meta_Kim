@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { renderLiveControlRoomPage } from "../../src/presentation/live/live-control-room-page.mjs";
-import { LIVE_UI_COPY, liveUiLocale, serializeLiveUiCopy, translateLiveUiCopy } from "../../src/presentation/live/live-ui-copy.mjs";
+import { LIVE_UI_COPY, formatLiveTime, liveUiLocale, serializeLiveUiCopy, translateLiveUiCopy } from "../../src/presentation/live/live-ui-copy.mjs";
 import { buildLocalFeedbackText } from "../../src/presentation/live/live-feedback-draft.mjs";
 
 function shippedHelper(name) {
@@ -78,11 +78,12 @@ test("stage labels and evidence type/status are reader-facing copy, not raw mach
 test("the short update clock follows the selected UI language", () => {
   const at = "2026-11-12T16:07:15.000Z";
   for (const language of ["zh", "en", "ja", "ko"]) {
-    const formatTime = new Function("currentLanguage", "liveUiLocale", "DISPLAY_FORMAT",
+    const formatTime = new Function("currentLanguage", "liveUiLocale", "DISPLAY_FORMAT", "formatLiveTime",
       shippedHelper("display") + shippedHelper("formatTime") + "\nreturn formatTime;")(
-      language, liveUiLocale, { emptyPlaceholder: "—" },
+      language, liveUiLocale, { emptyPlaceholder: "—" }, formatLiveTime,
     );
-    assert.equal(formatTime(at), new Intl.DateTimeFormat(liveUiLocale(language), { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(at)));
+    // Review #14: the clock carries its local date, so the run graph's update time is never a bare hour.
+    assert.equal(formatTime(at), new Intl.DateTimeFormat(liveUiLocale(language), { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(at)));
     assert.equal(formatTime(null), "");
   }
 });

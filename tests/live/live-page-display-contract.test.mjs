@@ -17,6 +17,7 @@
  * evaluating what it actually emits can refute a regression in it.
  */
 import assert from "node:assert/strict";
+import { formatLiveTime } from "../../src/presentation/live/live-ui-copy.mjs";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
@@ -272,7 +273,7 @@ test("every stylesheet the module declares is actually injected into the page", 
 });
 
 test("an absent timestamp formats to nothing instead of to a placeholder", () => {
-  const formatTime = evaluateClientFunction("formatTime", ["display"]);
+  const formatTime = evaluateClientFunction("formatTime", ["display"], { formatLiveTime, currentLanguage: "zh" });
   for (const absent of [null, undefined, ""]) {
     assert.equal(formatTime(absent), "", "a row with no observed time must not claim one");
   }

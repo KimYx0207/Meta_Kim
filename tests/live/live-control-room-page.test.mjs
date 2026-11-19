@@ -1,4 +1,4 @@
-import { liveUiLocale } from "../../src/presentation/live/live-ui-copy.mjs";
+import { liveUiLocale, formatLiveTime } from "../../src/presentation/live/live-ui-copy.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -1134,6 +1134,9 @@ test("an explicit not-yet-indexed run waits, appears automatically, and does not
     const updateSelectionUrl = () => { requested = { projectId: selectedProjectId, runId: selectedRunId }; };
     const showEmpty = (message) => empty.push(message);
     const loadSnapshot = async () => { loads.push(selectedRunId); currentSnapshot = { run: { id: selectedRunId } }; };
+    let showUnlinkedSessions = false, showOutsideSessions = false;
+    const sessionIsIdentified = () => true;
+    ${shippedHelper(html, "projectRunTally")}
     ${shippedHelper(html, "defaultSessionFor")}
     ${shippedHelper(html, "switchSelection")}
     ${shippedHelper(html, "applyProjectCatalog")}
@@ -1297,7 +1300,8 @@ test("renders a complete local control-room shell with no external assets", () =
 test("defaults to Chinese without a preference and provides a persistent four-language selector", () => {
   const html = renderLiveControlRoomPage();
 
-  assert.match(html, /<title>Meta_Kim Live · 控制中心<\/title>/u);
+  // Review #8: the title names Meta_Kim once; other projects lead with their own name.
+  assert.match(html, /<title>Meta_Kim<\/title>/u);
   assert.match(html, /data-live-language-select/u);
   assert.match(html, /data-i18n-en="Execution graph" data-i18n-zh="实时运行图">实时运行图/u);
   assert.match(html, /data-i18n-en="Inspector" data-i18n-zh="检查器">检查器/u);
@@ -3974,7 +3978,7 @@ test("inactive legacy unknown nodes use the honest no-writeback label and human 
   const html = renderLiveControlRoomPage({ snapshot: snapshotFixture });
   assert.match(html, /state === "unknown" && node\?\.active !== true/u);
   assert.match(html, /normalizedRunDisplayState\(runInput/u);
-  assert.match(html, /"未收到执行回写"/u);
+  assert.match(html, /"还没有收到执行结果"/u);
   assert.match(html, /"角色 · "/u);
   assert.match(html, /"AI 执行者 · "/u);
   assert.doesNotMatch(html, /"专业 "/u);
@@ -4050,7 +4054,7 @@ test("a run row states the outcome its record proves instead of an unjudged stat
   assert.equal(sessionStateCopy({ displayState: "partial" }), "已执行并验证 · 未达发布标准");
   assert.equal(sessionStateCopy({ displayState: "superseded" }), "被新任务替代");
   assert.equal(sessionStateCopy({ displayState: "archived_legacy" }), "早期版本的归档记录");
-  assert.equal(sessionStateCopy({ displayState: "unreported" }), "未收到执行回写");
+  assert.equal(sessionStateCopy({ displayState: "unreported" }), "还没有收到执行结果");
   assert.equal(
     sessionStateCopy({ displayState: "unknown" }),
     "记录不足以判断",
@@ -4412,13 +4416,13 @@ test("overview reuses guarded timestamp rendering with localized copy and no emp
   });
   for (const language of ["zh", "en"]) {
     const overview = makeElement("section");
-    const render = new Function("runOverview", "makeElement", "clearChildren", "resolveLiveRunOverview", "liveTaskLifecycleCopy", "DISPLAY_FORMAT", "currentLanguage", "workHelpers", "liveUiLocale", `
+    const render = new Function("runOverview", "makeElement", "clearChildren", "resolveLiveRunOverview", "liveTaskLifecycleCopy", "DISPLAY_FORMAT", "currentLanguage", "workHelpers", "liveUiLocale", "formatLiveTime", `
 const selectedProjectId = "";
 const localize = (value) => value;
 const { liveWorkOverviewCopy, plainLiveTaskLabel, liveTaskDisplayLabel, liveRunTaskNodes, resolveLiveTaskLifecycle, resolveLiveNodeTaskLifecycle, normalizeLiveOwnerReport } = workHelpers;
 ${serializeLiveTokenUsageResolvers()}
 ${["renderRunOverview", "appendObservedTime", "formatTime", "formatSessionTime", "display"].map((name) => shippedHelper(html, name)).join("\n")}
-return renderRunOverview;`)(overview, makeElement, (element) => { element.children = []; }, resolveLiveRunOverview, liveTaskLifecycleCopy, displayFormat, language, workOverviewHelpers, liveUiLocale);
+return renderRunOverview;`)(overview, makeElement, (element) => { element.children = []; }, resolveLiveRunOverview, liveTaskLifecycleCopy, displayFormat, language, workOverviewHelpers, liveUiLocale, formatLiveTime);
     const snapshot = { run: { id: "run-time", active: true, status: "active" }, nodes: [], replay: [
       { id: "call", eventType: "command_returned", label: "shell", at: "2026-10-22T09:00:00Z" },
     ] };

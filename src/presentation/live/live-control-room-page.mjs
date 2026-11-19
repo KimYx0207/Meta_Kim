@@ -369,8 +369,9 @@ function normalizeWorkspaceConfig(value) {
         // The regular Live Hub is a viewer. Native Agent starts require the
         // separately launched local application and cannot be inferred from
         // the presence of an ordinary workspace review token.
-        agentEntryEnabled: value.agentEntryEnabled === true }
-    : { enabled: false };
+        agentEntryEnabled: value.agentEntryEnabled === true,
+        requiresProjectId: value.requiresProjectId === true }
+    : { enabled: false, requiresProjectId: value?.requiresProjectId === true };
 }
 
 const CLIENT_SCRIPT = String.raw`(() => {
@@ -474,7 +475,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     "Paused while hidden": "后台省电待命",
     "Catching up after pause": "正在补齐暂停期间的进度",
     "The snapshot request timed out. Other open control room tabs hold this origin's connections. Close one, or wait for them to release.": "快照请求超时。其他已打开的控制室标签页占用了本源的连接，关掉一个，或等它们释放。",
-    "Snapshot loaded": "已载入快照",
+    "Snapshot loaded": "已读取最新进度",
     "Snapshot unavailable": "运行快照不可用",
     "State demo": "状态演示",
     "No run observed": "尚未观测到运行",
@@ -522,10 +523,12 @@ const CLIENT_SCRIPT = String.raw`(() => {
     "Meta-Review": "复审",
     "verification": "验收",
     "Verification": "验收",
-    "evolution": "经验沉淀",
+    "evolution": "总结经验",
     "evidence": "证据",
     "verified": "已验证",
-    "Evolution": "经验沉淀",
+    "Evolution": "总结经验",
+    "Execution lanes": "执行分组",
+    "Main governed run owner": "主任务负责人",
     "Live execution": "Meta_Kim 治理运行",
     "local observer": "本地观察器",
     "durable_status": "运行状态记录",
@@ -639,7 +642,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     ,"Declared capability loadout": "已声明能力装载"
     ,"observed": "已观测"
     ,"planned snapshot": "计划快照"
-    ,"structural evidence only": "仅结构化证据"
+    ,"structural evidence only": "只有结构记录，还没有运行结果"
     ,"Prompt summary withheld": "提示词摘要未展示"
     ,"No accepted host execution evidence": "没有已接受的主机执行证据"
     ,"No worker report": "未收到执行者回报"
@@ -749,9 +752,18 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (text.startsWith("Selected node: ")) return "已选择节点：" + text.slice(15);
     if (text.startsWith("Replay ")) return "回放 " + text.slice(7);
     if (text.startsWith("Stage state projected from")) return "阶段状态来自运行记录";
-    if (text.endsWith(" evidence")) return text.slice(0, -9) + " 证据";
     match = text.match(/^(planned|observed) · (\d+) evidence$/u);
     if (match) return (match[1] === "planned" ? "计划" : "已观测") + " · " + match[2] + " 条证据";
+    // Record sentences composed in English by the service read as Chinese here.
+    match = text.match(/^Main governed run owner · (.*)$/u);
+    if (match) return "主任务负责人 · " + match[1];
+    match = text.match(/^(\d+) worker tasks? · declared route$/u);
+    if (match) return match[1] + " 个 worker 任务 · 按计划路线";
+    match = text.match(/^Workflow lane (\d+)$/u);
+    if (match) return "工作线 " + match[1];
+    match = text.match(/^(.*) · (opened|queued)$/u);
+    if (match) return (match[1] === "Run" ? "Run" : localize(match[1])) + (match[2] === "opened" ? " 已开启" : " 已排队");
+    if (text.endsWith(" evidence")) return text.slice(0, -9) + " 证据";
     if (text === "planned · awaiting host evidence") return "计划 · 等待主机证据";
     if (text === "no evidence linked") return "未关联证据";
     if (text.startsWith("↳ from ")) return "↳ 来自 " + text.slice(7);
@@ -760,7 +772,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
 
   function applyLanguage() {
     document.documentElement.lang = liveUiLocale(currentLanguage);
-    document.title = currentLanguage === "zh" ? "Meta_Kim Live · 控制中心" : localize("Meta_Kim Live · Control room");
+    document.title = liveDocumentTitle(projectForSelection()?.displayName);
     document.querySelectorAll("[data-i18n-en][data-i18n-zh]").forEach((element) => {
       element.textContent = currentLanguage === "zh" ? element.dataset.i18nZh : localize(element.dataset.i18nEn);
     });
@@ -870,6 +882,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
   const infoDialog = app.querySelector("[data-live-info-dialog]");
   const infoTools = app.querySelector("[data-live-info-tools]");
   const infoFacts = app.querySelector("[data-live-info-facts]");
+  const infoTechFacts = app.querySelector("[data-live-info-tech-facts]");
   const replayRange = app.querySelector("[data-replay-range]");
   const replayTicks = app.querySelector("[data-replay-ticks]");
   const replayEvents = app.querySelector("[data-replay-events]");
@@ -971,6 +984,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
   let selectedRunId = "";
   let sessionSearchQuery = "";
   let showUnlinkedSessions = false;
+  let showOutsideSessions = false;
   const expandedSessionRecords = new Set();
   let catalogAvailable = false;
   let catalogRequestInFlight = false;
@@ -1679,15 +1693,8 @@ const CLIENT_SCRIPT = String.raw`(() => {
   function formatTime(value) {
     const text = display(value, "");
     if (text === "") return "";
-    const date = new Date(text);
-    if (!Number.isNaN(date.getTime())) {
-      try {
-        return new Intl.DateTimeFormat(liveUiLocale(currentLanguage), { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(date);
-      } catch {
-        return text;
-      }
-    }
-    return text;
+    // Local month/day and hour:minute everywhere, so 「更新」 always carries its date.
+    return formatLiveTime(text, currentLanguage) || text;
   }
 
   /**
@@ -1964,7 +1971,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
    * on the panel named the other 13.
    */
   function projectRunTally(project) {
-    const sessions = Array.isArray(project?.sessions) ? project.sessions : [];
+    // A run recorded outside the project belongs to another workspace, so it is
+    // listed apart and never counted.
+    const sessions = (Array.isArray(project?.sessions) ? project.sessions : [])
+      .filter((session) => session.attribution !== "unattributed");
     const openable = sessions.filter(sessionIsIdentified).length;
     return {
       held: sessions.length,
@@ -2080,7 +2090,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (status === "partial") return currentLanguage === "zh" ? "已执行并验证 · 未达发布标准" : localize("Executed and verified · below release bar");
     if (status === "superseded") return currentLanguage === "zh" ? "被新任务替代" : localize("Replaced by a newer task");
     if (status === "archived_legacy") return currentLanguage === "zh" ? "早期版本的归档记录" : localize("Archived record from an earlier version");
-    if (status === "unreported") return currentLanguage === "zh" ? "未收到执行回写" : localize("No execution report");
+    if (status === "unreported") return currentLanguage === "zh" ? "还没有收到执行结果" : localize("No execution report");
     // Reserved for records that really do say nothing decisive. Every outcome the
     // record does name has its own branch above, so this reaching the screen means
     // the record is genuinely silent rather than merely unread.
@@ -4212,17 +4222,14 @@ const CLIENT_SCRIPT = String.raw`(() => {
       const ownerLine = makeElement("div", "node-owner-line");
       if (usefulNodeMeta(node.role)) ownerLine.append(makeElement("span", "node-owner-role", (currentLanguage === "zh" ? "角色 · " : localize("Role · ")) + node.role));
       if (usefulNodeMeta(node.agent)) ownerLine.append(makeElement("span", "node-owner-agent", (currentLanguage === "zh" ? "AI 执行者 · " : localize("AI worker · ")) + node.agent));
-      const outgoingRelations = graphEdges.filter((edge) => edge.from === node.id);
-      const ownershipOnly = outgoingRelations.length > 0 && outgoingRelations.every((edge) => edge.kind === "contains");
-      const proof = makeElement("div", "node-proof", ownershipOnly
-        ? (currentLanguage === "zh" ? "结构归属关系 · 不代表所有任务同时执行" : localize("Structural ownership · does not mean every task runs at once"))
-        : node.statusReason || (
+      // Ownership edges are explained once in the legend, not on every card.
+      const proof = makeElement("div", "node-proof", node.statusReason || (
           publicState === "unreported"
           ? (currentLanguage === "zh" ? "结构已规划，但没有可信执行回写" : localize("Structurally planned; no trusted execution report"))
           : publicState === "queued"
             ? (currentLanguage === "zh" ? "当前运行活跃，等待执行" : localize("Active run; waiting to execute"))
             : node.evidenceCount
-              ? "observed · " + node.evidenceCount + " evidence"
+              ? localize("observed · " + node.evidenceCount + " evidence")
               : (currentLanguage === "zh" ? "暂无可信证据" : localize("No trusted evidence linked"))
         ));
       const task = taskLine === "" ? null : makeElement("p", "node-task", taskLine, { record: true });
@@ -4589,6 +4596,10 @@ const CLIENT_SCRIPT = String.raw`(() => {
   function renderSessionInfo(snapshot) {
     if (!infoFacts) return;
     clearChildren(infoFacts);
+    if (infoTechFacts) clearChildren(infoTechFacts);
+    // Plain facts stay in view; the technical ones sit with the developer tools.
+    const technical = new Set(["Mode", "Runtime", "Loadout", "Proof"]);
+    const factHost = (label) => (technical.has(label) && infoTechFacts ? infoTechFacts : infoFacts);
     const session = snapshot.sessionInfo || {};
     const loadoutTotals = snapshot.nodes.reduce((totals, node) => {
       const loadout = node.loadout || {};
@@ -4621,14 +4632,14 @@ const CLIENT_SCRIPT = String.raw`(() => {
       if (!usefulNodeMeta(value)) return;
       const row = makeElement("div", "info-fact-row");
       row.append(makeElement("span", "info-fact-label", localize(label)), makeElement("span", "info-fact-value", display(value)));
-      infoFacts.append(row);
+      factHost(label).append(row);
     });
     if (session.lastPromptSummary === "Prompt summary withheld") {
       infoFacts.append(makeElement("p", "panel-note", currentLanguage === "zh" ? "未记录可显示的提示词摘要。" : localize("No displayable prompt summary was recorded.")));
     } else if (usefulNodeMeta(session.lastPromptSummary)) {
       const prompt = makeElement("div", "info-fact-prompt");
       prompt.append(makeElement("span", "info-fact-label", localize("Prompt summary")), makeElement("p", "info-fact-value", session.lastPromptSummary));
-      infoFacts.append(prompt);
+      (infoTechFacts || infoFacts).append(prompt);
     }
     if (!infoFacts.children.length) infoFacts.append(makeElement("p", "panel-empty", currentLanguage === "zh" ? "此记录没有更多会话信息。" : localize("No additional session information was recorded.")));
   }
@@ -5352,6 +5363,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
   }
 
   function syncUnifiedWorkspace(snapshot = currentSnapshot) {
+    document.title = liveDocumentTitle(projectForSelection()?.displayName);
     if (!liveWorkspaceController) return;
     const project = projectForSelection();
     const selectedSession = project?.sessions?.find((item) => item.runId === selectedRunId);
@@ -5858,6 +5870,12 @@ const CLIENT_SCRIPT = String.raw`(() => {
           nodeCount: nullableCountOf(session, ["nodeCount"]),
           recordOrigin: sessionRecordOrigin(session),
           active: session.active === true,
+          // Only the two verdicts the catalog issues survive: a run recorded outside
+          // the project is listed apart and left out of every count.
+          attribution: session.attribution === "project" || session.attribution === "unattributed" ? session.attribution : "",
+          staleIdleHours: session.staleness?.stale === true && Number.isSafeInteger(session.staleness.idleHours) && session.staleness.idleHours >= 0
+            ? session.staleness.idleHours
+            : null,
         };
       }).filter(Boolean);
       return {
@@ -5936,7 +5954,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
     const project = projectForSelection();
     const sessions = project?.sessions || [];
     const selectedSession = sessions.find((session) => session.runId === selectedRunId);
-    const selectableSessions = sessions.filter(sessionIsIdentified);
+    const selectableSessions = sessions.filter((session) => sessionIsIdentified(session) && session.attribution !== "unattributed");
     if (selectedSession && !selectableSessions.some((session) => session.runId === selectedSession.runId)) {
       selectableSessions.unshift(selectedSession);
     }
@@ -5988,11 +6006,35 @@ const CLIENT_SCRIPT = String.raw`(() => {
       return;
     }
     const orderedSessions = sessionGroups(matchingSessions).ordered;
-    const identifiedSessions = orderedSessions.filter(sessionIsForeground);
-    const unlinkedSessions = orderedSessions.filter((session) => !sessionIsForeground(session));
+    // A run recorded outside the project belongs to another workspace: it is
+    // listed last and stays collapsed unless asked for or matched by a search.
+    const outsideSessions = orderedSessions.filter((session) => session.attribution === "unattributed");
+    const ownSessions = orderedSessions.filter((session) => session.attribution !== "unattributed");
+    const identifiedSessions = ownSessions.filter(sessionIsForeground);
+    const unlinkedSessions = ownSessions.filter((session) => !sessionIsForeground(session));
     const shouldShowUnlinked = Boolean(query) || showUnlinkedSessions;
-    const visibleSessions = [...identifiedSessions, ...(shouldShowUnlinked ? unlinkedSessions : [])].slice(0, 64);
-    if (!identifiedSessions.length && unlinkedSessions.length && !shouldShowUnlinked) {
+    const shouldShowOutside = Boolean(query) || showOutsideSessions;
+    const visibleSessions = [
+      ...identifiedSessions,
+      ...(shouldShowUnlinked ? unlinkedSessions : []),
+      ...(shouldShowOutside ? outsideSessions : []),
+    ].slice(0, 64);
+    const appendOutsideToggle = () => {
+      if (!outsideSessions.length || query) return;
+      const toggle = makeElement("button", "session-unlinked-toggle", showOutsideSessions
+        ? (currentLanguage === "zh" ? "收起不属于本项目的运行记录" : localize("Hide runs from other folders"))
+        : (currentLanguage === "zh"
+          ? "显示 " + outsideSessions.length + " 条不属于本项目的运行记录"
+          : localize("Show " + outsideSessions.length + " runs from other folders")));
+      toggle.type = "button";
+      toggle.dataset.liveShowOutside = showOutsideSessions ? "false" : "true";
+      toggle.addEventListener("click", () => {
+        showOutsideSessions = !showOutsideSessions;
+        renderSessionCards(sessions);
+      });
+      sessionList.append(toggle);
+    };
+    if (!visibleSessions.length && unlinkedSessions.length && !shouldShowUnlinked) {
       const empty = makeElement("section", "session-identity-empty");
       empty.append(
         makeElement("strong", "", currentLanguage === "zh" ? "还没有可识别的聊天记录" : localize("No identifiable chat records yet")),
@@ -6011,20 +6053,26 @@ const CLIENT_SCRIPT = String.raw`(() => {
       });
       empty.append(reveal);
       sessionList.append(empty);
+      appendOutsideToggle();
       return;
     }
+    if (!visibleSessions.length) sessionList.append(makeElement("p", "panel-empty", "No governed runs yet"));
     let lastGroup = "";
     visibleSessions.forEach((session) => {
-      const group = sessionIsForeground(session) ? "identified" : "unlinked";
+      const group = session.attribution === "unattributed" ? "outside" : sessionIsForeground(session) ? "identified" : "unlinked";
       if (!query && group !== lastGroup) {
         const groupHeading = makeElement("div", "session-group-heading");
         groupHeading.append(
           makeElement("strong", "", group === "identified"
             ? (currentLanguage === "zh" ? "可识别的聊天 / 任务" : localize("Identified chats / tasks"))
-            : "Background run records"),
+            : group === "outside"
+              ? (currentLanguage === "zh" ? "不属于本项目的运行" : localize("Runs from other folders"))
+              : "Background run records"),
           makeElement("span", "", group === "identified"
             ? (currentLanguage === "zh" ? "可按标题定位" : localize("Locate by title"))
-            : "Activation only, or no chat link"),
+            : group === "outside"
+              ? (currentLanguage === "zh" ? "对话记录的工作目录在本项目之外，或没有记录" : localize("Recorded outside this project, or no folder recorded"))
+              : "Activation only, or no chat link"),
         );
         sessionList.append(groupHeading);
         lastGroup = group;
@@ -6064,6 +6112,11 @@ const CLIENT_SCRIPT = String.raw`(() => {
       open.title = sessionDisplayTitle(session);
       const summary = makeElement("span", "session-card-summary", timeCopy.text + " · " + sourceLabel + (session.active ? (currentLanguage === "zh" ? " · 实时" : localize(" · Live")) : ""));
       open.append(heading, summary);
+      if (Number.isInteger(session.staleIdleHours)) {
+        open.append(makeElement("span", "session-card-stale", currentLanguage === "zh"
+          ? "已 " + session.staleIdleHours + " 小时没有新进展"
+          : localize("No progress for " + session.staleIdleHours + " h")));
+      }
       open.addEventListener("click", () => switchSelection(selectedProjectId, session.runId, { updateUrl: true }));
       const details = makeElement("details", "session-card-details");
       details.open = expandedSessionRecords.has(session.runId);
@@ -6097,13 +6150,17 @@ const CLIENT_SCRIPT = String.raw`(() => {
       });
       sessionList.append(hide);
     }
-    if (matchingSessions.length > visibleSessions.length) {
+    appendOutsideToggle();
+    // Collapsed runs from other folders are announced by their own toggle, not
+    // counted into the project's total.
+    const listedCount = shouldShowOutside ? matchingSessions.length : ownSessions.length;
+    if (listedCount > visibleSessions.length) {
       sessionList.append(makeElement(
         "p",
         "panel-empty",
         currentLanguage === "zh"
-          ? "显示最近 " + visibleSessions.length + "/" + matchingSessions.length + " 条运行记录"
-          : "Showing the newest " + visibleSessions.length + " of " + matchingSessions.length + " run records",
+          ? "显示最近 " + visibleSessions.length + "/" + listedCount + " 条运行记录"
+          : "Showing the newest " + visibleSessions.length + " of " + listedCount + " run records",
       ));
     }
   }
@@ -6117,7 +6174,9 @@ const CLIENT_SCRIPT = String.raw`(() => {
     if (preferredRunId) return preferredRunId;
     if (!project) return "";
     const row = pickDefaultRow(
-      project.sessions.map((session) => sessionSelectionRow(session)),
+      project.sessions
+        .filter((session) => session.attribution !== "unattributed")
+        .map((session) => sessionSelectionRow(session)),
       DEFAULT_SELECTION,
     );
     return row?.identity || "";
@@ -6186,7 +6245,13 @@ const CLIENT_SCRIPT = String.raw`(() => {
     selectedNodeId = null;
     currentReplayIndex = 0;
     replayFollowingLive = true;
-    selectedProjectId = safeIdentifier(projectId);
+    const nextProjectId = safeIdentifier(projectId);
+    // Expanded run groups belong to the project they were opened in.
+    if (nextProjectId !== selectedProjectId) {
+      showUnlinkedSessions = false;
+      showOutsideSessions = false;
+    }
+    selectedProjectId = nextProjectId;
     const project = projectCatalog.find((item) => item.projectId === selectedProjectId) || null;
     selectedRunId = defaultSessionFor(project, safeIdentifier(runIdentifier));
     populateProjectSelect();
@@ -6224,7 +6289,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
       return;
     }
     showEmpty("Loading the selected run…");
-    setHubStatus(project.displayName + " · " + project.sessions.length + " observed run records");
+    setHubStatus(project.displayName + " · " + projectRunTally(project).held + " observed run records");
     await loadSnapshot(false, generation);
     if (generation === selectionGeneration) connectEvents(generation);
   }
@@ -6242,7 +6307,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
           populateProjectSelect();
           populateSessionSelect();
           if (currentSnapshot) renderRunOverview(currentSnapshot, currentProject);
-          setHubStatus(currentProject.displayName + " · " + currentProject.sessions.length + " observed run records");
+          setHubStatus(currentProject.displayName + " · " + projectRunTally(currentProject).held + " observed run records");
           return true;
         }
         await switchSelection(selectedProjectId, selectedRunId, { updateUrl: false });
@@ -6730,7 +6795,6 @@ const CLIENT_SCRIPT = String.raw`(() => {
     window.location.reload();
   });
   projectSelect?.addEventListener("change", () => {
-    showUnlinkedSessions = false;
     void switchSelection(projectSelect.value, "", { updateUrl: true });
   });
   sessionSelect?.addEventListener("change", () => {
@@ -6935,7 +6999,7 @@ const CLIENT_SCRIPT = String.raw`(() => {
   let workspaceConfig = { enabled: false };
   try { workspaceConfig = JSON.parse(workspaceConfigElement?.textContent || "null") || workspaceConfig; } catch {}
   liveWorkspaceController = createLiveWorkspaceController({
-    app, config: workspaceConfig, policy: LIVE_WORKSPACE_UI_POLICY,
+    app, config: workspaceConfig, policy: LIVE_WORKSPACE_UI_POLICY, localize,
     language: () => currentLanguage,
     showLegacyView: (view) => setWorkView(view, { persist: false }),
     openProjects: () => setDialogOpen(sessionsDialog, true),
@@ -7056,6 +7120,7 @@ button { color: inherit; }
 .topbar-button, .graph-tool-button, .replay-button { min-height: 30px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--muted); cursor: pointer; }
 .ui-icon, .empty-state-icon { width: 1rem; height: 1rem; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .topbar-button { padding: 0 var(--sp-cozy); font-size: var(--fs-body); }
+.topbar-button[data-live-language-select] { appearance: none; -webkit-appearance: none; min-width: 76px; padding: 0 var(--sp-roomy) 0 var(--sp-cozy); border: 1px solid var(--line); border-radius: var(--radius-sm); background: #0b1018 url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%23929db0' stroke-width='1.5'/></svg>") no-repeat right 8px center; color: var(--text); cursor: pointer; }
 .topbar-button:hover, .topbar-button:focus-visible, .graph-tool-button:hover, .graph-tool-button:focus-visible, .replay-button:hover, .replay-button:focus-visible { border-color: rgba(88,212,207,.5); background: rgba(88,212,207,.06); color: var(--accent); outline: none; }
 .main { min-width: 0; min-height: 0; overflow: hidden; display: grid; grid-template-rows: auto auto minmax(0, 1fr); }
 .run-overview { min-width: 0; display: grid; grid-template-columns: minmax(0,1fr); gap: var(--sp-snug); padding: var(--sp-cozy) var(--sp-section); border-bottom: 1px solid var(--line); background: #0f141d; }
@@ -7474,6 +7539,7 @@ button { color: inherit; }
 .session-card-activity { display: block; margin-top: var(--sp-cozy); color: var(--muted); font-size: var(--fs-entity-body); line-height: var(--lh-normal); overflow-wrap: anywhere; }
 .session-card[data-identity="unlinked"] .session-card-activity { color: var(--amber); }
 .session-card-origin { grid-column: 1; grid-row: 2; justify-self: start; margin-bottom: var(--sp-cozy); color: var(--amber); font-size: var(--fs-entity-body); line-height: var(--lh-flat); }
+.session-card-stale { color: var(--amber); font-size: var(--fs-entity-body); line-height: var(--lh-flat); }
 .session-card-details { grid-column: 2; grid-row: 1; align-self: center; color: var(--muted); font-size: var(--fs-entity-body); }
 .session-card-details > summary { min-height: 36px; display: list-item; padding-block: var(--sp-cozy); color: var(--muted); cursor: pointer; }
 .session-card-details > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -7484,6 +7550,12 @@ button { color: inherit; }
 .session-identity-empty strong { color: var(--text); font-size: var(--fs-view-title); }.session-identity-empty p { max-width: 64ch; margin: 0; color: var(--muted); font-size: var(--fs-body); line-height: var(--lh-normal); }
 .session-unlinked-toggle { width: 100%; min-height: 36px; padding: var(--sp-cozy) var(--sp-default); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: transparent; color: var(--muted); text-align: left; font-size: var(--fs-body); cursor: pointer; }
 .session-unlinked-toggle:hover,.session-unlinked-toggle:focus-visible { border-color: var(--accent); color: var(--accent); background: rgba(88,212,207,.05); outline: 2px solid rgba(88,212,207,.22); outline-offset: 2px; }
+.help-guide { display: grid; gap: var(--sp-snug); margin-bottom: var(--sp-roomy); }
+.help-guide-title { margin: var(--sp-cozy) 0 0; color: var(--text); font-size: var(--fs-label); font-weight: var(--weight-semibold); }
+.help-guide-list { display: grid; gap: var(--sp-snug); margin: 0; padding-left: var(--sp-default); color: var(--muted); font-size: var(--fs-label); line-height: var(--lh-normal); }
+.info-dev-tools { margin-top: var(--sp-default); padding-top: var(--sp-cozy); border-top: 1px solid var(--line-soft); }
+.info-dev-tools > summary { cursor: pointer; color: var(--muted); font-size: var(--fs-label); }
+.info-dev-tools[open] > summary { margin-bottom: var(--sp-cozy); }
 .shortcut-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: var(--sp-snug) var(--sp-default); margin: 0; }
 .shortcut-grid div { display: flex; justify-content: space-between; gap: var(--sp-roomy); padding: var(--sp-cozy) 0; border-bottom: 1px solid var(--line-soft); color: var(--muted); font-size: var(--fs-body); }
 kbd { min-width: 28px; padding: var(--sp-hairline) var(--sp-tight); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: #0f1726; color: var(--completion-bright); text-align: center; font-size: var(--fs-entity-body); line-height: var(--lh-flat); font-family: var(--font-ui); }
@@ -7824,7 +7896,7 @@ export function renderLiveControlRoomPage({
   <meta name="theme-color" content="#121212">
   <meta name="description" content="Meta_Kim Live 统一工作空间：模块、PRD、执行与版本记录">
   <link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCAzMiAzMic+PHJlY3Qgd2lkdGg9JzMyJyBoZWlnaHQ9JzMyJyByeD0nOCcgZmlsbD0nIzA3MGIxNicvPjxwYXRoIGQ9J004IDIyVjEwaDRsNCA1IDQtNWg0djEyaC00di02bC00IDUtNC01djZ6JyBmaWxsPScjNmVlN2ZmJy8+PC9zdmc+">
-  <title>Meta_Kim Live · 控制中心</title>
+  <title>Meta_Kim</title>
   <style>${GRAPH_FIRST_CSS}${LIVE_WORKSPACE_CSS}</style>
 </head>
 <body>
@@ -7879,7 +7951,7 @@ export function renderLiveControlRoomPage({
           <div class="graph-stage" data-live-graph-viewport>
             <h1 class="sr-only" id="graph-title" data-live-graph-title data-i18n-en="Execution graph" data-i18n-zh="实时运行图">实时运行图</h1>
             <details class="stage-overview" aria-label="Stage progress"><summary class="stage-overview-toggle"><span data-i18n-en="Eight-stage flow" data-i18n-zh="八阶段流程">八阶段流程</span><span data-stage-rail-state="collapse" data-i18n-en="Collapse" data-i18n-zh="收起">收起</span><span data-stage-rail-state="expand" data-i18n-en="Expand" data-i18n-zh="展开">展开</span></summary><div class="stage-overview-body"><ol class="stage-rail" data-live-stage-rail></ol></div></details>
-            <div class="graph-stage-bar"><details class="graph-record-controls"><summary data-i18n-en="Map settings" data-i18n-zh="图表设置">图表设置</summary><div class="graph-relation-controls" role="group" aria-label="Graph relations"><button type="button" data-live-graph-relations="dependency" aria-pressed="true">执行依赖</button><button type="button" data-live-graph-relations="all" aria-pressed="false">全部关系</button></div><span class="graph-relation-summary" data-live-graph-relation-summary aria-live="polite"></span></details><span class="graph-canvas-title" aria-hidden="true">${fixedUiIcon("graph")}<span data-live-graph-title data-i18n-en="Live execution graph" data-i18n-zh="实时运行图">实时运行图</span></span><details class="graph-legend-details"><summary data-i18n-en="Relations · State key" data-i18n-zh="关系连线 · 状态图例">关系连线 · 状态图例</summary><span class="graph-edge-legend" data-i18n-en="Status text: pale red = in progress · pale yellow = completed · pale green = not started. Gold node dot = actually running. Lines: Gray dashed = queued · Gold moving dot = running (observed) · Green solid = done · Amber dashed = blocked. Arrows = dependencies; no arrow = ownership · Dashed card = declared, not started" data-i18n-zh="状态文字：淡红＝进行中 · 淡黄＝已完成 · 淡绿＝未开始。节点金点＝实际运行中。连线：浅灰虚线＝未开始 · 金色动点＝运行中 · 淡绿实线＝已完成 · 琥珀虚线＝阻塞。有箭头＝执行依赖，无箭头＝结构归属；连线颜色取自目标任务，不表示依赖执行证据。虚线卡片＝声明未执行">状态文字：淡红＝进行中 · 淡黄＝已完成 · 淡绿＝未开始。节点金点＝实际运行中。连线：浅灰虚线＝未开始 · 金色动点＝运行中 · 淡绿实线＝已完成 · 琥珀虚线＝阻塞。有箭头＝执行依赖，无箭头＝结构归属；连线颜色取自目标任务，不表示依赖执行证据。虚线卡片＝声明未执行</span></details><div class="graph-canvas-tools" data-live-graph-tools data-floating="false"><button class="graph-tools-handle" type="button" data-live-graph-tools-handle aria-label="Move graph controls: drag, or arrow keys to nudge, Enter to dock" title="Drag to move · arrow keys to nudge · Enter to dock">${fixedUiIcon("grip")}</button><div class="graph-toolbar" role="group" aria-label="Graph camera controls"><button class="graph-tool-button" type="button" data-live-graph-fit aria-label="Overview" title="Overview (O)">${fixedUiIcon("overview")}<span data-i18n-en="Overview" data-i18n-zh="总览">总览</span></button><button class="graph-tool-button" type="button" data-live-graph-follow data-active="false" aria-pressed="false" aria-label="Follow active node" title="Follow (F)">${fixedUiIcon("follow")}<span data-i18n-en="Follow" data-i18n-zh="跟随">跟随</span></button><button class="graph-tool-button" type="button" data-live-graph-layout aria-label="Relayout graph" title="Relayout (R)">${fixedUiIcon("relayout")}<span data-i18n-en="Relayout" data-i18n-zh="重排">重排</span></button><button class="graph-tool-button" type="button" data-live-graph-live aria-label="Follow live execution">${fixedUiIcon("live")}<span data-i18n-en="Live" data-i18n-zh="实时">实时</span></button><button class="graph-tool-button" type="button" data-live-graph-reset aria-label="Reset graph camera">${fixedUiIcon("reset")}<span data-i18n-en="Reset" data-i18n-zh="重置">重置</span></button><button class="graph-tool-button" type="button" data-live-graph-map aria-pressed="false" data-i18n-en="Map" data-i18n-zh="小地图">小地图</button><button class="graph-tool-button graph-precision-control" type="button" data-live-graph-zoom-out aria-label="Zoom graph out" title="Zoom out">−</button><button class="graph-tool-button graph-precision-control" type="button" data-live-graph-zoom-in aria-label="Zoom graph in" title="Zoom in">+</button><button class="graph-tool-button" type="button" data-evidence-toggle aria-controls="live-inspector" aria-expanded="false" aria-label="Open inspector" title="Inspector" data-i18n-en="Inspector" data-i18n-zh="检查器">检查器</button></div></div></div>
+            <div class="graph-stage-bar"><details class="graph-record-controls"><summary data-i18n-en="Map settings" data-i18n-zh="图表设置">图表设置</summary><div class="graph-relation-controls" role="group" aria-label="Graph relations"><button type="button" data-live-graph-relations="dependency" aria-pressed="true">执行依赖</button><button type="button" data-live-graph-relations="all" aria-pressed="false">全部关系</button></div><span class="graph-relation-summary" data-live-graph-relation-summary aria-live="polite"></span></details><span class="graph-canvas-title" aria-hidden="true">${fixedUiIcon("graph")}<span data-live-graph-title data-i18n-en="Live execution graph" data-i18n-zh="实时运行图">实时运行图</span></span><details class="graph-legend-details"><summary data-i18n-en="Relations · State key" data-i18n-zh="关系连线 · 状态图例">关系连线 · 状态图例</summary><span class="graph-edge-legend" data-i18n-en="Status text: pale red = in progress · pale yellow = completed · pale green = not started. Gold node dot = actually running. Lines: Gray dashed = queued · Gold moving dot = running (observed) · Green solid = done · Amber dashed = blocked. Arrows = dependencies; no arrow = ownership. Structural ownership does not mean every task runs at once · Dashed card = declared, not started" data-i18n-zh="状态文字：淡红＝进行中 · 淡黄＝已完成 · 淡绿＝未开始。节点金点＝实际运行中。连线：浅灰虚线＝未开始 · 金色动点＝运行中 · 淡绿实线＝已完成 · 琥珀虚线＝阻塞。有箭头＝执行依赖，无箭头＝结构归属，结构归属不代表所有任务同时执行；连线颜色取自目标任务，不表示依赖执行证据。虚线卡片＝声明未执行">状态文字：淡红＝进行中 · 淡黄＝已完成 · 淡绿＝未开始。节点金点＝实际运行中。连线：浅灰虚线＝未开始 · 金色动点＝运行中 · 淡绿实线＝已完成 · 琥珀虚线＝阻塞。有箭头＝执行依赖，无箭头＝结构归属，结构归属不代表所有任务同时执行；连线颜色取自目标任务，不表示依赖执行证据。虚线卡片＝声明未执行</span></details><div class="graph-canvas-tools" data-live-graph-tools data-floating="false"><button class="graph-tools-handle" type="button" data-live-graph-tools-handle aria-label="Move graph controls: drag, or arrow keys to nudge, Enter to dock" title="Drag to move · arrow keys to nudge · Enter to dock">${fixedUiIcon("grip")}</button><div class="graph-toolbar" role="group" aria-label="Graph camera controls"><button class="graph-tool-button" type="button" data-live-graph-fit aria-label="Overview" title="Overview (O)">${fixedUiIcon("overview")}<span data-i18n-en="Overview" data-i18n-zh="总览">总览</span></button><button class="graph-tool-button" type="button" data-live-graph-follow data-active="false" aria-pressed="false" aria-label="Follow active node" title="Follow (F)">${fixedUiIcon("follow")}<span data-i18n-en="Follow" data-i18n-zh="跟随">跟随</span></button><button class="graph-tool-button" type="button" data-live-graph-layout aria-label="Relayout graph" title="Relayout (R)">${fixedUiIcon("relayout")}<span data-i18n-en="Relayout" data-i18n-zh="重排">重排</span></button><button class="graph-tool-button" type="button" data-live-graph-live aria-label="Follow live execution">${fixedUiIcon("live")}<span data-i18n-en="Live" data-i18n-zh="实时">实时</span></button><button class="graph-tool-button" type="button" data-live-graph-reset aria-label="Reset graph camera">${fixedUiIcon("reset")}<span data-i18n-en="Reset" data-i18n-zh="重置">重置</span></button><button class="graph-tool-button" type="button" data-live-graph-map aria-pressed="false" data-i18n-en="Map" data-i18n-zh="小地图">小地图</button><button class="graph-tool-button graph-precision-control" type="button" data-live-graph-zoom-out aria-label="Zoom graph out" title="Zoom out">−</button><button class="graph-tool-button graph-precision-control" type="button" data-live-graph-zoom-in aria-label="Zoom graph in" title="Zoom in">+</button><button class="graph-tool-button" type="button" data-evidence-toggle aria-controls="live-inspector" aria-expanded="false" aria-label="Open inspector" title="Inspector" data-i18n-en="Inspector" data-i18n-zh="检查器">检查器</button></div></div></div>
             <div class="graph-canvas" data-live-graph role="region" aria-label="Read-only execution graph" tabindex="0">
               <div class="graph-scene" data-live-graph-scene>
                 <svg class="edge-layer" data-live-edge-layer aria-hidden="true" focusable="false"></svg>
@@ -7943,8 +8015,8 @@ export function renderLiveControlRoomPage({
         </div>
       </div>
     </section>
-    <section class="live-dialog" data-live-dialog data-live-help-dialog role="dialog" aria-modal="true" aria-labelledby="help-title" aria-hidden="true" hidden><div class="dialog-card"><header class="dialog-header"><h2 class="dialog-title" id="help-title" data-i18n-en="Keyboard shortcuts" data-i18n-zh="快捷键">快捷键</h2><button class="graph-tool-button" type="button" data-live-dialog-close aria-label="Close help">×</button></header><div class="dialog-body"><div class="shortcut-grid"><div><span data-i18n-en="Overview" data-i18n-zh="查看全图">查看全图</span><kbd>O</kbd></div><div><span data-i18n-en="Follow active" data-i18n-zh="跟随当前任务">跟随当前任务</span><kbd>F</kbd></div><div><span data-i18n-en="Relayout" data-i18n-zh="重新排列">重新排列</span><kbd>R</kbd></div><div><span data-i18n-en="Play / pause" data-i18n-zh="播放／暂停">播放／暂停</span><kbd>Space</kbd></div><div><span data-i18n-en="Previous event" data-i18n-zh="上一条活动">上一条活动</span><kbd>[</kbd></div><div><span data-i18n-en="Next event" data-i18n-zh="下一条活动">下一条活动</span><kbd>]</kbd></div><div><span data-i18n-en="Jump live" data-i18n-zh="回到实时">回到实时</span><kbd>End</kbd></div><div><span data-i18n-en="Session info" data-i18n-zh="会话信息">会话信息</span><kbd>I</kbd></div><div><span data-i18n-en="Close" data-i18n-zh="关闭弹窗">关闭弹窗</span><kbd>Esc</kbd></div><div><span data-i18n-en="Help" data-i18n-zh="打开帮助">打开帮助</span><kbd>?</kbd></div></div></div></div></section>
-    <section class="live-dialog" data-live-dialog data-live-info-dialog role="dialog" aria-modal="true" aria-labelledby="info-title" aria-hidden="true" hidden><div class="dialog-card"><header class="dialog-header"><h2 class="dialog-title" id="info-title" data-i18n-en="Session info and local tools" data-i18n-zh="会话信息与本地工具">会话信息与本地工具</h2><button class="graph-tool-button" type="button" data-live-dialog-close aria-label="Close session info">×</button></header><div class="dialog-body"><p class="panel-note"><span data-i18n-en="Local observer" data-i18n-zh="本地观察器">本地观察器</span> · <span data-live-last-update>最近观测 ${EMPTY_PLACEHOLDER}</span> · <span data-i18n-en="Read-only by default" data-i18n-zh="默认只读">默认只读</span></p><div class="info-facts" data-live-info-facts></div><div data-live-info-tools></div></div></div></section>
+    <section class="live-dialog" data-live-dialog data-live-help-dialog role="dialog" aria-modal="true" aria-labelledby="help-title" aria-hidden="true" hidden><div class="dialog-card"><header class="dialog-header"><h2 class="dialog-title" id="help-title" data-i18n-en="Help" data-i18n-zh="帮助">帮助</h2><button class="graph-tool-button" type="button" data-live-dialog-close aria-label="Close help">×</button></header><div class="dialog-body"><div class="help-guide"><h3 class="help-guide-title" data-i18n-en="What each page is for" data-i18n-zh="每个页面是做什么的">每个页面是做什么的</h3><ul class="help-guide-list"><li data-i18n-en="Work: talk with the Agent; the right side shows this Run's flow and the selected step." data-i18n-zh="工作：和 Agent 对话，右侧看这个 Run 的流程图和选中的节点。">工作：和 Agent 对话，右侧看这个 Run 的流程图和选中的节点。</li><li data-i18n-en="PRD: the full product design, with the system framework and every module." data-i18n-zh="PRD：完整的产品设计，包括系统框架和每个模块。">PRD：完整的产品设计，包括系统框架和每个模块。</li><li data-i18n-en="Repository: this repository's branch and changes, and switching to another repository." data-i18n-zh="仓库：当前仓库的分支和改动，也可以换到别的仓库。">仓库：当前仓库的分支和改动，也可以换到别的仓库。</li><li data-i18n-en="Records: this Run's activity and review history in time order." data-i18n-zh="记录：按时间看这个 Run 的活动和审阅记录。">记录：按时间看这个 Run 的活动和审阅记录。</li><li data-i18n-en="Run map: how the main Agent and each Subagent split the work, and how far they got." data-i18n-zh="运行图：主 Agent 和各个 Subagent 怎么分工、做到哪一步。">运行图：主 Agent 和各个 Subagent 怎么分工、做到哪一步。</li></ul><h3 class="help-guide-title" data-i18n-en="What B1–B4 mean" data-i18n-zh="B1–B4 是什么">B1–B4 是什么</h3><ul class="help-guide-list"><li data-i18n-en="B1: you choose which approach to take." data-i18n-zh="B1：你拍板采用哪个方案。">B1：你拍板采用哪个方案。</li><li data-i18n-en="B2: you confirm the product design (PRD)." data-i18n-zh="B2：你确认产品设计（PRD）。">B2：你确认产品设计（PRD）。</li><li data-i18n-en="B3: you authorize the Subagents to do the work." data-i18n-zh="B3：你授权 Subagent 动手执行。">B3：你授权 Subagent 动手执行。</li><li data-i18n-en="B4: you accept the result, or send it back." data-i18n-zh="B4：你验收成果，决定合入还是退回。">B4：你验收成果，决定合入还是退回。</li></ul><h3 class="help-guide-title" data-i18n-en="Keyboard shortcuts" data-i18n-zh="快捷键">快捷键</h3></div><div class="shortcut-grid"><div><span data-i18n-en="Overview" data-i18n-zh="查看全图">查看全图</span><kbd>O</kbd></div><div><span data-i18n-en="Follow active" data-i18n-zh="跟随当前任务">跟随当前任务</span><kbd>F</kbd></div><div><span data-i18n-en="Relayout" data-i18n-zh="重新排列">重新排列</span><kbd>R</kbd></div><div><span data-i18n-en="Play / pause" data-i18n-zh="播放／暂停">播放／暂停</span><kbd>Space</kbd></div><div><span data-i18n-en="Previous event" data-i18n-zh="上一条活动">上一条活动</span><kbd>[</kbd></div><div><span data-i18n-en="Next event" data-i18n-zh="下一条活动">下一条活动</span><kbd>]</kbd></div><div><span data-i18n-en="Jump live" data-i18n-zh="回到实时">回到实时</span><kbd>End</kbd></div><div><span data-i18n-en="Session info" data-i18n-zh="会话信息">会话信息</span><kbd>I</kbd></div><div><span data-i18n-en="Close" data-i18n-zh="关闭弹窗">关闭弹窗</span><kbd>Esc</kbd></div><div><span data-i18n-en="Help" data-i18n-zh="打开帮助">打开帮助</span><kbd>?</kbd></div></div></div></div></section>
+    <section class="live-dialog" data-live-dialog data-live-info-dialog role="dialog" aria-modal="true" aria-labelledby="info-title" aria-hidden="true" hidden><div class="dialog-card"><header class="dialog-header"><h2 class="dialog-title" id="info-title" data-i18n-en="About this Run" data-i18n-zh="这个 Run 的概况">这个 Run 的概况</h2><button class="graph-tool-button" type="button" data-live-dialog-close aria-label="Close session info">×</button></header><div class="dialog-body"><p class="panel-note"><span data-i18n-en="Read from local records only; nothing in your project is changed." data-i18n-zh="这里只读取本机记录，不会改动你的项目。">这里只读取本机记录，不会改动你的项目。</span> · <span data-live-last-update>最近观测 ${EMPTY_PLACEHOLDER}</span></p><div class="info-facts" data-live-info-facts></div><details class="info-dev-tools"><summary data-i18n-en="Developer tools: export JSON, copy PR card, README embed" data-i18n-zh="开发者工具：导出 JSON、复制 PR 卡片、README 嵌入">开发者工具：导出 JSON、复制 PR 卡片、README 嵌入</summary><div class="info-facts" data-live-info-tech-facts></div><div data-live-info-tools></div></details></div></div></section>
   </div>
   <script type="application/json" id="live-initial-snapshot">${initialJson}</script>
   <script type="application/json" id="live-initial-catalog">${initialCatalogJson}</script>

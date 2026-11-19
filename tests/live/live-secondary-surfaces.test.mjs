@@ -57,7 +57,7 @@ test("run rows keep selection and independently expandable identities without ne
     const { sessionList, makeElement, clearChildren, selections } = deps;
     const expandedSessionRecords = new Set();
     const currentLanguage = "zh", selectedProjectId = "project", selectedRunId = "run-current";
-    let showUnlinkedSessions = false, sessionSearchQuery = "";
+    let showUnlinkedSessions = false, showOutsideSessions = false, sessionSearchQuery = "";
     const sessionGroups = (sessions) => ({ ordered: sessions });
     const sessionIsForeground = () => true;
     const sessionDisplayTitle = (session) => session.title;
@@ -101,6 +101,7 @@ test("session information omits unknown values and empty diagnostic categories",
   const api = new Function("deps", `
     const { infoFacts, makeElement, clearChildren, usefulNodeMeta } = deps;
     const currentLanguage = "zh", localize = (value) => value, display = (value) => value;
+    const infoTechFacts = null;
     ${helper("renderSessionInfo")}
     return renderSessionInfo;
   `)({ infoFacts, makeElement: element, clearChildren, usefulNodeMeta });
