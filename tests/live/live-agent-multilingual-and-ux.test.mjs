@@ -132,7 +132,8 @@ test("Tauri v2 + Rust desktop shell enforces release hardening, loopback guard, 
   assert.doesNotMatch(mainRs, /Node\.js >= 20/);
   const tauriConf = JSON.parse(readFileSync(path.join(repoRoot, "desktop/src-tauri/tauri.conf.json"), "utf8"));
   assert.equal(tauriConf.version, "../../package.json");
-  assert.match(cargoToml, /rust-version = "1\.85"/);
+  // CI compiles the crate with exactly this toolchain; the locked Tauri 2.7 tree needs rustc 1.90.
+  assert.match(cargoToml, /rust-version = "1\.90"/);
 });
 
 test("compact single-column sidebar CSS, duplicate topbar session guard, and single-project /api/projects catalog work end-to-end", async (t) => {
