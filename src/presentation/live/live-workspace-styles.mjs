@@ -597,7 +597,7 @@ export const LIVE_WORKSPACE_CSS = String.raw`
 .uw-prd-tech-footnote > summary { cursor: pointer; font-size: var(--fs-micro); color: #8c98ab; }
 .uw-prd-tech-footnote > p { margin: var(--sp-cozy) 0 0; font-size: var(--fs-micro); color: #96a3b8; line-height: var(--lh-normal); overflow-wrap: anywhere; }
 .uw-prd-spec-inspector { display: grid; gap: var(--sp-default); margin-top: var(--sp-default); }
-.uw-prd-spec-hint { margin: 0; color: #9da3ad; font-size: var(--fs-label); }
+.uw-prd-spec-hint { color: #9da3ad; font-size: var(--fs-label); }
 .uw-prd-page-link { justify-self: start; min-height: 32px; padding: var(--sp-tight) var(--sp-default); line-height: var(--lh-flat); border: 1px solid #3a4150; border-radius: 7px; background: transparent; color: #d6dbe3; font: inherit; font-size: var(--fs-label); cursor: pointer; }
 .uw-prd-page-link:hover { border-color: #6c717a; color: #f0f2f5; }
 .uw-prd-page-link:focus-visible { outline: 2px solid #dec187; outline-offset: 2px; }
