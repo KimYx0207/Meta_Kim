@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -825,6 +825,88 @@ test("hook check ignores event key order while retaining strict hook array order
     writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
     const hookOrderChanged = runSync(root, ["--check", "--targets", "claude", "--with-global-hooks"], env);
     assert.notEqual(hookOrderChanged.status, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Codex global sync adds the project-doc budget as a root key and uninstall restores the exact bytes", () => {
+  // The user-facing entry: `sync-global-meta-theory.mjs --targets codex` against
+  // an existing ~/.codex/config.toml, then `uninstall.mjs --scope=global --yes`.
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "meta-kim-codex-doc-budget-")));
+  try {
+    const configPath = path.join(root, ".codex", "config.toml");
+    mkdirSync(path.dirname(configPath), { recursive: true });
+    // Shape of a real Codex config: root keys, then an array of tables before
+    // any plain table, then plain and quoted-name tables.
+    const original = [
+      'model = "gpt-5.5"',
+      'model_reasoning_effort = "high"',
+      'approval_policy = "on-request"',
+      "",
+      "[[skills.config]]",
+      'path = "/fixture/skills/one/SKILL.md"',
+      "enabled = false",
+      "",
+      "[[skills.config]]",
+      'path = "/fixture/skills/two/SKILL.md"',
+      "enabled = false",
+      "",
+      "[analytics]",
+      "enabled = false",
+      "",
+      "[features]",
+      "default_mode_request_user_input = true",
+      "",
+      '[plugins."github@openai-curated"]',
+      "enabled = true",
+      "",
+      '[projects."/fixture/workspace"]',
+      'trust_level = "trusted"',
+      "",
+    ].join("\n");
+    writeFileSync(configPath, original);
+
+    const sync = runSync(root, ["--targets", "codex"]);
+    assert.equal(sync.status, 0, `${sync.stderr}\n${sync.stdout}`);
+    const lines = readFileSync(configPath, "utf8").split("\n");
+    const budgetLines = lines
+      .map((line, index) => ({ line, index }))
+      .filter(({ line }) => /project_doc_max_bytes/u.test(line));
+    assert.deepEqual(
+      budgetLines.map(({ line }) => line),
+      ["project_doc_max_bytes = 131072"],
+    );
+    const firstHeader = lines.findIndex((line) => /^\s*\[/u.test(line));
+    assert.equal(lines[firstHeader], "[[skills.config]]");
+    assert.ok(
+      budgetLines[0].index < firstHeader,
+      `budget must precede the first table header:\n${lines.join("\n")}`,
+    );
+
+    const runtimeEnv = {};
+    for (const profile of Object.values(RUNTIME_PROFILES)) {
+      const runtimeHome = path.join(root, profile.activation.defaultHomeDir);
+      for (const envKey of profile.activation.envKeys) runtimeEnv[envKey] = runtimeHome;
+    }
+    const uninstall = spawnSync(
+      process.execPath,
+      ["scripts/uninstall.mjs", "--scope=global", "--yes"],
+      {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          HOME: root,
+          USERPROFILE: root,
+          ...runtimeEnv,
+          METAKIM_LANG: "en",
+          META_KIM_CLAUDE_USER_CONFIG: path.join(root, ".claude.json"),
+        },
+      },
+    );
+    assert.equal(uninstall.status, 0, `${uninstall.stderr}\n${uninstall.stdout}`);
+    assert.equal(readFileSync(configPath, "utf8"), original);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

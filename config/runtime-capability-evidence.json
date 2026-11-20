@@ -562,7 +562,7 @@
         "AGENTS.md"
       ],
       "sourceArtifacts": [
-        { "path": "canonical/runtime-assets/codex", "digestKind": "sha256", "sha256": "963571257fe2d043793ddd2e34ef2a272f0e27dd6ce87a01e85a99591fc1bcc5" },
+        { "path": "canonical/runtime-assets/codex", "digestKind": "sha256", "sha256": "68a5ce0a3f7302d13d70de419d1138db1121ed9341afa43184e4379ad9e198c1" },
         { "path": "scripts/runtime-hook-mapping.mjs", "digestKind": "sha256", "sha256": "4cf5c5f56d19ad2bc6c1bd25cc193e384f33d76fb4ca6f801e6e681de2ccb1ea" },
         { "path": "setup.mjs", "digestKind": "sha256", "sha256": "f8f926e0ec443ccebd355c72c2782ac12135d54a02f951b5c34d3d4d4ed9ac45" },
         { "path": "AGENTS.md", "digestKind": "sha256", "sha256": "f31dcafe17735dcc34898d64e778218aedde620ae11832a54496bec3f162b587" }

@@ -381,7 +381,7 @@ describe("Codex config merge", () => {
   });
 
   test("native-control planner leaves already-equal bytes untouched", () => {
-    const input = "\uFEFF[features]\r\ndefault_mode_request_user_input = true # keep\r\njs_repl = true\r\n\r\n[agents]\r\nmax_threads = 2\r\nmax_depth = 1\r\n";
+    const input = "\uFEFFproject_doc_max_bytes = 65536 # keep\r\n\r\n[features]\r\ndefault_mode_request_user_input = true # keep\r\njs_repl = true\r\n\r\n[agents]\r\nmax_threads = 2\r\nmax_depth = 1\r\n";
     const planned = planCodexAppNativeControls(input, { platformName: "linux" });
     assert.equal(planned.text, input);
     assert.deepEqual(planned.mutations, []);
@@ -397,11 +397,12 @@ describe("Codex config merge", () => {
       "",
     ].join("\r\n");
     const planned = planCodexAppNativeControls(input, { platformName: "linux" });
-    assert.equal(planned.mutations.length, 2);
+    assert.equal(planned.mutations.length, 3);
     assert.ok(planned.mutations.every((mutation) => mutation.kind === "insert"));
     assert.deepEqual(
       planned.mutations.map((mutation) => mutation.locator),
       [
+        { table: "", key: "project_doc_max_bytes" },
         { table: "agents", key: "max_threads" },
         { table: "agents", key: "max_depth" },
       ],

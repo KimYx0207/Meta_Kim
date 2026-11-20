@@ -128,6 +128,8 @@ describe("Codex config native-control planner compatibility", () => {
 
   test("an already compliant document remains a byte-identical no-op", () => {
     const input = [
+      "project_doc_max_bytes = 131072",
+      "",
       "[features]",
       "default_mode_request_user_input = true # user comment",
       "js_repl = true",

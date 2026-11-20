@@ -6,6 +6,13 @@ export const CODEX_JS_REPL_FEATURE = "js_repl";
 export const CODEX_DEFAULT_AGENT_MAX_THREADS = 2;
 export const CODEX_LEGACY_META_KIM_AGENT_MAX_THREADS = 6;
 export const CODEX_DEFAULT_AGENT_MAX_DEPTH = 1;
+// Codex CLI caps concatenated project docs (AGENTS.md, root to cwd) at 32 KiB
+// and silently drops the tail beyond it. The Meta_Kim entry that project
+// bootstrap appends as a managed block is larger than that cap on its own, so
+// the default keeps the entry plus the user's full native allowance readable.
+export const CODEX_PROJECT_DOC_MAX_BYTES_SETTING = "project_doc_max_bytes";
+export const CODEX_BUILTIN_PROJECT_DOC_MAX_BYTES = 32768;
+export const CODEX_DEFAULT_PROJECT_DOC_MAX_BYTES = 131072;
 export const CODEX_APP_NATIVE_PLUGIN_IDS = [
   "browser@openai-bundled",
   "chrome@openai-bundled",
@@ -22,7 +29,7 @@ const WINDOWS_NOTIFY_COMMAND = [
 
 function findSection(lines, sectionName) {
   const headerRe = new RegExp(`^\\s*\\[${sectionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\]\\s*(?:#.*)?$`);
-  const anyHeaderRe = /^\s*\[[^\]]+\]\s*(?:#.*)?$/;
+  const anyHeaderRe = TOML_TABLE_HEADER_RE;
   const start = lines.findIndex((line) => headerRe.test(line));
   if (start < 0) {
     return null;
@@ -218,8 +225,19 @@ function ensureSectionSetting(lines, sectionName, settingName, settingValue) {
   lines.splice(section.end, 0, settingLine);
 }
 
+// Callers pass only root keys that codexAppNativeDefaultSettings found unset.
+function insertRootSetting(lines, settingName, settingValue) {
+  const settingLine = `${settingName} = ${settingValue}`;
+  const insertAt = firstSectionIndex(lines);
+  if (insertAt < lines.length) {
+    lines.splice(insertAt, 0, settingLine, "");
+    return;
+  }
+  lines.push(settingLine);
+}
+
 function firstSectionIndex(lines) {
-  const index = lines.findIndex((line) => /^\s*\[[^\]]+\]\s*(?:#.*)?$/.test(line));
+  const index = lines.findIndex((line) => TOML_TABLE_HEADER_RE.test(line));
   return index < 0 ? lines.length : index;
 }
 
@@ -227,8 +245,9 @@ function rootSettingNames(lines) {
   const names = new Set();
   const end = firstSectionIndex(lines);
   for (const line of lines.slice(0, end)) {
-    const match = line.match(/^\s*([A-Za-z0-9_.-]+)\s*=/);
-    if (match) names.add(match[1]);
+    // TOML allows a bare key to be written quoted: "name" = 1 or 'name' = 1.
+    const match = line.match(/^\s*(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9_.-]+))\s*=/);
+    if (match) names.add(match[1] ?? match[2] ?? match[3]);
   }
   return names;
 }
@@ -267,7 +286,7 @@ export function removeMetaKimTemporaryProjectResidue(configText = "") {
     const projectPath = codexProjectPathFromSectionName(sectionName);
     if (!projectPath || !isMetaKimTemporaryProjectPath(projectPath)) continue;
     let end = index + 1;
-    while (end < lines.length && !/^\s*\[[^\]]+\]\s*(?:#.*)?$/u.test(lines[end])) {
+    while (end < lines.length && !TOML_TABLE_HEADER_RE.test(lines[end])) {
       end += 1;
     }
     lines.splice(index, end - index);
@@ -838,10 +857,19 @@ function ensureOpenAiBundledMarketplace(lines, options = {}) {
 }
 
 function codexAppNativeDefaultSettings(lines, platformName) {
-  const settings = [
+  const settings = [];
+  // Any existing root value is user-owned: smaller, larger, or 0 (disabled).
+  if (!rootSettingNames(lines).has(CODEX_PROJECT_DOC_MAX_BYTES_SETTING)) {
+    settings.push([
+      "",
+      CODEX_PROJECT_DOC_MAX_BYTES_SETTING,
+      String(CODEX_DEFAULT_PROJECT_DOC_MAX_BYTES),
+    ]);
+  }
+  settings.push(
     ["features", CODEX_REQUEST_USER_INPUT_FEATURE, "true"],
     ["features", CODEX_JS_REPL_FEATURE, "true"],
-  ];
+  );
   // Existing values are user-owned, including former Meta_Kim defaults. Either
   // capacity spelling suppresses a default; keep the legacy key for old clients.
   if (
@@ -859,7 +887,9 @@ function codexAppNativeDefaultSettings(lines, platformName) {
       ]),
     );
   }
-  return settings.filter(([table, key]) => sectionSettingValue(lines, table, key) === null);
+  return settings.filter(([table, key]) =>
+    table === "" || sectionSettingValue(lines, table, key) === null
+  );
 }
 
 export function ensureCodexAppNativeControls(configText = "", options = {}) {
@@ -868,6 +898,10 @@ export function ensureCodexAppNativeControls(configText = "", options = {}) {
   const lines = normalizeLines(configText);
   const platformName = options.platformName ?? process.platform;
   for (const [table, key, value] of codexAppNativeDefaultSettings(lines, platformName)) {
+    if (table === "") {
+      insertRootSetting(lines, key, value);
+      continue;
+    }
     ensureSectionSetting(lines, table, key, value);
   }
   if (platformName === "win32") {
@@ -936,6 +970,13 @@ function parseCodexConfigLocators(configText = "") {
     if (header) {
       table = header[1];
       push(tables, table, record);
+      continue;
+    }
+    const arrayHeader = record.body.match(/^\s*\[\[([^\]]+)\]\]\s*(?:#.*)?$/u);
+    if (arrayHeader) {
+      // Keys of an array-of-tables element belong to neither the root table
+      // nor the preceding plain table; no managed locator ever names them.
+      table = `[[${arrayHeader[1]}]]`;
       continue;
     }
     const assignment = record.body.match(/^(\s*)([A-Za-z0-9_.-]+)(\s*=\s*)(.*)$/u);
@@ -1052,7 +1093,7 @@ function planCodexSettingMutation(configText, table, key, desiredValue) {
   } else if (table) {
     const headerIndex = parsed.records.indexOf(header);
     const nextHeader = parsed.records.slice(headerIndex + 1).find((record) =>
-      /^\s*\[[^\]]+\]\s*(?:#.*)?$/u.test(record.body)
+      TOML_TABLE_HEADER_RE.test(record.body)
     );
     position = nextHeader?.start ?? configText.length;
     const prefix = position === configText.length && !parsed.trailingNewline && parsed.body.length > 0
@@ -1062,11 +1103,17 @@ function planCodexSettingMutation(configText, table, key, desiredValue) {
     afterFragment = `${prefix}${settingLine}${suffix}`;
   } else {
     const firstHeader = parsed.records.find((record) =>
-      /^\s*\[[^\]]+\]\s*(?:#.*)?$/u.test(record.body)
+      TOML_TABLE_HEADER_RE.test(record.body)
     );
     position = firstHeader?.start ?? configText.length;
-    const suffix = position < configText.length || parsed.trailingNewline ? parsed.eol : "";
-    afterFragment = `${settingLine}${suffix}`;
+    if (firstHeader) {
+      // Keep the root key visually separate from the first table.
+      afterFragment = `${settingLine}${parsed.eol}${parsed.eol}`;
+    } else {
+      const prefix = !parsed.trailingNewline && parsed.body.length > 0 ? parsed.eol : "";
+      const suffix = parsed.trailingNewline ? parsed.eol : "";
+      afterFragment = `${prefix}${settingLine}${suffix}`;
+    }
   }
   return {
     text: `${configText.slice(0, position)}${afterFragment}${configText.slice(position)}`,
@@ -1531,7 +1578,7 @@ function insertedTableHasUnmanagedContent(text, mutation, assignment) {
     );
   if (!header) return true;
   const nextHeader = parsed.records.find((record) =>
-    record.start > header.start && /^\s*\[[^\]]+\]\s*(?:#.*)?$/u.test(record.body)
+    record.start > header.start && TOML_TABLE_HEADER_RE.test(record.body)
   );
   const sectionEnd = nextHeader?.start ?? text.length;
   const remainder = `${text.slice(header.end, assignment.start)}${text.slice(assignment.end, sectionEnd)}`;
@@ -1563,11 +1610,11 @@ export function invertCodexConfigMutations(configText = "", mutations = []) {
       if (mutation.locator.table) {
         const header = parsed.tables.get(mutation.locator.table)[0];
         position = parsed.records.find((record) =>
-          record.start > header.start && /^\s*\[[^\]]+\]\s*(?:#.*)?$/u.test(record.body)
+          record.start > header.start && TOML_TABLE_HEADER_RE.test(record.body)
         )?.start ?? text.length;
       } else {
         position = parsed.records.find((record) =>
-          /^\s*\[[^\]]+\]\s*(?:#.*)?$/u.test(record.body)
+          TOML_TABLE_HEADER_RE.test(record.body)
         )?.start ?? text.length;
       }
       text = `${text.slice(0, position)}${mutation.beforeFragment}${text.slice(position)}`;
