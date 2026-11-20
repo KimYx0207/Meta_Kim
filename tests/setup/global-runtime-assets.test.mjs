@@ -127,6 +127,26 @@ const LEGACY_MCP_SUFFIX = JSON.parse(
   readFileSync(path.join(REPO_ROOT, "canonical", "runtime-assets", "claude", "mcp.json"), "utf8"),
 ).mcpServers["meta-kim-runtime"].args[0].replace(/^__REPO_ROOT__[\\/]/u, "");
 
+function runGlobalUninstall(root) {
+  const runtimeEnv = {};
+  for (const profile of Object.values(RUNTIME_PROFILES)) {
+    const runtimeHome = path.join(root, profile.activation.defaultHomeDir);
+    for (const envKey of profile.activation.envKeys) runtimeEnv[envKey] = runtimeHome;
+  }
+  return spawnSync(process.execPath, ["scripts/uninstall.mjs", "--scope=global", "--yes"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      HOME: root,
+      USERPROFILE: root,
+      ...runtimeEnv,
+      METAKIM_LANG: "en",
+      META_KIM_CLAUDE_USER_CONFIG: path.join(root, ".claude.json"),
+    },
+  });
+}
+
 function runSync(root, args, extraEnv = {}) {
   const runtimeEnv = {};
   for (const profile of Object.values(RUNTIME_PROFILES)) {
@@ -884,27 +904,47 @@ test("Codex global sync adds the project-doc budget as a root key and uninstall 
       `budget must precede the first table header:\n${lines.join("\n")}`,
     );
 
-    const runtimeEnv = {};
-    for (const profile of Object.values(RUNTIME_PROFILES)) {
-      const runtimeHome = path.join(root, profile.activation.defaultHomeDir);
-      for (const envKey of profile.activation.envKeys) runtimeEnv[envKey] = runtimeHome;
-    }
-    const uninstall = spawnSync(
-      process.execPath,
-      ["scripts/uninstall.mjs", "--scope=global", "--yes"],
-      {
-        cwd: REPO_ROOT,
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          HOME: root,
-          USERPROFILE: root,
-          ...runtimeEnv,
-          METAKIM_LANG: "en",
-          META_KIM_CLAUDE_USER_CONFIG: path.join(root, ".claude.json"),
-        },
-      },
+    const uninstall = runGlobalUninstall(root);
+    assert.equal(uninstall.status, 0, `${uninstall.stderr}\n${uninstall.stdout}`);
+    assert.equal(readFileSync(configPath, "utf8"), original);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Codex global sync keeps table-looking instruction text inside its multi-line string", () => {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "meta-kim-codex-doc-budget-ml-")));
+  try {
+    const configPath = path.join(root, ".codex", "config.toml");
+    mkdirSync(path.dirname(configPath), { recursive: true });
+    const instructions = [
+      'developer_instructions = """',
+      "Plan before editing.",
+      "[result]",
+      "Report the outcome.",
+      '"""',
+    ];
+    const tables = [
+      "[features]",
+      "default_mode_request_user_input = true",
+      "js_repl = true",
+      "",
+      "[agents]",
+      "max_threads = 2",
+      "max_depth = 1",
+      "",
+    ];
+    const original = [...instructions, "", ...tables].join("\n");
+    writeFileSync(configPath, original);
+
+    const sync = runSync(root, ["--targets", "codex"]);
+    assert.equal(sync.status, 0, `${sync.stderr}\n${sync.stdout}`);
+    assert.equal(
+      readFileSync(configPath, "utf8"),
+      [...instructions, "", "project_doc_max_bytes = 131072", "", ...tables].join("\n"),
     );
+
+    const uninstall = runGlobalUninstall(root);
     assert.equal(uninstall.status, 0, `${uninstall.stderr}\n${uninstall.stdout}`);
     assert.equal(readFileSync(configPath, "utf8"), original);
   } finally {

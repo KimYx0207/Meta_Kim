@@ -8,13 +8,16 @@ import * as codexConfigMerge from "../../scripts/codex-config-merge.mjs";
 const {
   ensureCodexAppNativeControls,
   invertCodexConfigMutations,
+  mergeCodexConfigAddOnly,
   planCodexAppNativeControls,
+  reconcileCodexConfigAfterUpstreamInstall,
   removeMetaKimTemporaryProjectResidue,
 } = codexConfigMerge;
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const options = { platformName: "linux" };
 const KEY = "project_doc_max_bytes";
+const BOM = "\uFEFF";
 
 function rootAssignments(configText, key) {
   const lines = String(configText).split(/\r\n|\n|\r/u);
@@ -149,6 +152,100 @@ describe("Codex project-doc budget native control", () => {
       assert.deepEqual(planned.mutations, [], value);
       assert.equal(ensureCodexAppNativeControls(input, options), input, value);
     }
+  });
+});
+
+describe("Codex project-doc budget insertion edge cases", () => {
+  const budgetLine = `${KEY} = ${codexConfigMerge.CODEX_DEFAULT_PROJECT_DOC_MAX_BYTES}`;
+  // Features and agents already configured: the budget is the only new key, so
+  // every change in the output comes from the root-key insertion.
+  const configuredTables = [
+    "[features]",
+    "default_mode_request_user_input = true",
+    "js_repl = true",
+    "",
+    "[agents]",
+    "max_threads = 2",
+    "max_depth = 1",
+    "",
+  ];
+
+  test("a leading BOM stays at byte zero when the budget is inserted before the first table", () => {
+    // Windows editors save config.toml with a BOM and CRLF; dependency
+    // install/update rewrites it through reconcileCodexConfigAfterUpstreamInstall.
+    const crlfInput = `${BOM}${configuredTables.join("\r\n")}`;
+    const lfBody = configuredTables.join("\n");
+    const expectedLf = `${BOM}${budgetLine}\n\n${lfBody}`;
+    const outputs = {
+      reconcile: reconcileCodexConfigAfterUpstreamInstall(crlfInput, "", options),
+      ensure: ensureCodexAppNativeControls(crlfInput, options),
+      addOnlyMerge: mergeCodexConfigAddOnly(`${BOM}${lfBody}`, `${budgetLine}\n`),
+    };
+    for (const [entry, text] of Object.entries(outputs)) {
+      assert.equal(text, expectedLf, entry);
+      assert.equal(text.split(BOM).length - 1, 1, `${entry}: exactly one BOM`);
+    }
+    const planned = planCodexAppNativeControls(crlfInput, options);
+    assert.equal(planned.text, `${BOM}${budgetLine}\r\n\r\n${configuredTables.join("\r\n")}`);
+    assert.equal(invertCodexConfigMutations(planned.text, planned.mutations), crlfInput);
+  });
+
+  for (const delimiter of ['"""', "'''"]) {
+    // A table-looking line and a budget-looking line are both string content.
+    // The closer carries one extra quote (content) and a comment that would
+    // reopen a string if that quote were read as a new string opener.
+    // Escaped quotes must not end a string early: `\"` in a basic string and
+    // `\"""` in a multi-line basic string are content.
+    const quote = delimiter[0];
+    const instructions = [
+      'review_note = "keep \\" \'\'\' as text"',
+      `developer_instructions = ${delimiter}`,
+      "Plan before editing.",
+      ...(quote === '"' ? ['Escaped \\""" stays inside.'] : []),
+      "[result]",
+      `${KEY} = 1`,
+      `Report the outcome.${quote}${delimiter} # a ${quote} b ${delimiter}`,
+    ];
+
+    test(`table-looking lines inside a ${delimiter} string are not the root boundary`, () => {
+      const input = [...instructions, "", ...configuredTables].join("\n");
+      const expected = [...instructions, "", budgetLine, "", ...configuredTables].join("\n");
+      const planned = planCodexAppNativeControls(input, options);
+      assert.equal(planned.text, expected);
+      assert.deepEqual(planned.mutations.map((mutation) => mutation.locator), [{ table: "", key: KEY }]);
+      assert.equal(invertCodexConfigMutations(planned.text, planned.mutations), input);
+      assert.equal(ensureCodexAppNativeControls(input, options), expected);
+      assert.equal(planCodexAppNativeControls(expected, options).text, expected);
+    });
+
+    test(`a root budget after a ${delimiter} string stays user-owned and is not duplicated`, () => {
+      const input = [...instructions, `${KEY} = 4096`, "", ...configuredTables].join("\n");
+      const planned = planCodexAppNativeControls(input, options);
+      assert.equal(planned.text, input);
+      assert.deepEqual(planned.mutations, []);
+      assert.equal(ensureCodexAppNativeControls(input, options), input);
+    });
+  }
+
+  test("section defaults are not placed inside a multi-line string that ends the table", () => {
+    const input = [
+      `${KEY} = 65536`,
+      "",
+      "[features]",
+      "default_mode_request_user_input = true",
+      "js_repl = true",
+      "",
+      "[agents]",
+      'description = """',
+      "[result]",
+      '"""',
+      "",
+    ].join("\n");
+    const expected = `${input}max_threads = 2\nmax_depth = 1\n`;
+    const planned = planCodexAppNativeControls(input, options);
+    assert.equal(planned.text, expected);
+    assert.equal(invertCodexConfigMutations(planned.text, planned.mutations), input);
+    assert.equal(ensureCodexAppNativeControls(input, options), expected);
   });
 });
 
