@@ -515,10 +515,11 @@ describe("install-manifest schema + helpers", () => {
       const secondResult = await second.flush();
       assert.equal(secondResult.ok, true, secondResult.error);
       const secondEntry = readManifest(manifestPathFor("project", dir)).entries[0];
-      assert.equal(secondEntry.tomlMutationJournal.length, 3);
+      assert.equal(secondEntry.tomlMutationJournal.length, 4);
       assert.deepEqual(
         secondEntry.tomlMutationJournal.map((mutation) => mutation.locator),
         [
+          { table: "", key: "project_doc_max_bytes" },
           { table: "agents", key: "max_threads" },
           { table: "agents", key: "max_depth" },
           { table: "marketplaces.openai-bundled", key: "source" },

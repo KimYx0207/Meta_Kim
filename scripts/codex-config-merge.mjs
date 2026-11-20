@@ -6,6 +6,13 @@ export const CODEX_JS_REPL_FEATURE = "js_repl";
 export const CODEX_DEFAULT_AGENT_MAX_THREADS = 2;
 export const CODEX_LEGACY_META_KIM_AGENT_MAX_THREADS = 6;
 export const CODEX_DEFAULT_AGENT_MAX_DEPTH = 1;
+// Codex CLI caps concatenated project docs (AGENTS.md, root to cwd) at 32 KiB
+// and silently drops the tail beyond it. The Meta_Kim entry that project
+// bootstrap appends as a managed block is larger than that cap on its own, so
+// the default keeps the entry plus the user's full native allowance readable.
+export const CODEX_PROJECT_DOC_MAX_BYTES_SETTING = "project_doc_max_bytes";
+export const CODEX_BUILTIN_PROJECT_DOC_MAX_BYTES = 32768;
+export const CODEX_DEFAULT_PROJECT_DOC_MAX_BYTES = 131072;
 export const CODEX_APP_NATIVE_PLUGIN_IDS = [
   "browser@openai-bundled",
   "chrome@openai-bundled",
@@ -22,18 +29,12 @@ const WINDOWS_NOTIFY_COMMAND = [
 
 function findSection(lines, sectionName) {
   const headerRe = new RegExp(`^\\s*\\[${sectionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\]\\s*(?:#.*)?$`);
-  const anyHeaderRe = /^\s*\[[^\]]+\]\s*(?:#.*)?$/;
-  const start = lines.findIndex((line) => headerRe.test(line));
-  if (start < 0) {
+  const headers = tomlTableHeaderLineIndexes(lines);
+  const start = headers.find((index) => headerRe.test(lines[index]));
+  if (start === undefined) {
     return null;
   }
-  let end = lines.length;
-  for (let index = start + 1; index < lines.length; index += 1) {
-    if (anyHeaderRe.test(lines[index])) {
-      end = index;
-      break;
-    }
-  }
+  const end = headers.find((index) => index > start) ?? lines.length;
   return { start, end };
 }
 
@@ -49,6 +50,74 @@ function normalizeLines(configText = "") {
 
 const TOML_BARE_KEY_RE = /^\s*[A-Za-z0-9_.-]+\s*=/;
 const TOML_TABLE_HEADER_RE = /^\s*\[\[?[^\]]+\]\]?\s*(?:#.*)?$/;
+const UTF8_BOM = "\uFEFF";
+
+// Returns the multi-line string delimiter (""" or ''') still open after `line`,
+// given the one open before it, or null when the line ends outside such a string.
+function tomlMultilineStringAfterLine(line = "", openBefore = null) {
+  let open = openBefore;
+  let index = 0;
+  while (index < line.length) {
+    if (open) {
+      if (open === '"""' && line[index] === "\\") {
+        index += 2;
+        continue;
+      }
+      if (line.startsWith(open, index)) {
+        // Up to two quote characters may sit directly before the closing delimiter.
+        let end = index + 3;
+        while (end < line.length && end < index + 5 && line[end] === open[0]) end += 1;
+        index = end;
+        open = null;
+        continue;
+      }
+      index += 1;
+      continue;
+    }
+    const ch = line[index];
+    if (ch === "#") return null;
+    if (ch === '"' || ch === "'") {
+      if (line.startsWith(ch.repeat(3), index)) {
+        open = ch.repeat(3);
+        index += 3;
+        continue;
+      }
+      index += 1;
+      while (index < line.length && line[index] !== ch) {
+        index += ch === '"' && line[index] === "\\" ? 2 : 1;
+      }
+      index += 1;
+      continue;
+    }
+    index += 1;
+  }
+  return open;
+}
+
+// One flag per line: true when the line starts inside a multi-line string, so a
+// "[table]" or "key = value" there is string content, not TOML structure.
+function tomlMultilineStringLineMask(lineBodies) {
+  const mask = [];
+  let open = null;
+  for (const body of lineBodies) {
+    mask.push(open !== null);
+    open = tomlMultilineStringAfterLine(body, open);
+  }
+  return mask;
+}
+
+function tomlTableHeaderLineIndexes(lines) {
+  const inString = tomlMultilineStringLineMask(lines);
+  return lines.flatMap((line, index) =>
+    !inString[index] && TOML_TABLE_HEADER_RE.test(line) ? [index] : []
+  );
+}
+
+function tomlRootLines(lines) {
+  const inString = tomlMultilineStringLineMask(lines);
+  const end = firstSectionIndex(lines);
+  return lines.slice(0, end).filter((_, index) => !inString[index]);
+}
 
 function codeBeforeTomlComment(line = "") {
   let quote = null;
@@ -218,29 +287,49 @@ function ensureSectionSetting(lines, sectionName, settingName, settingValue) {
   lines.splice(section.end, 0, settingLine);
 }
 
+// Inserts root-table lines before the first table. A leading BOM stays at byte
+// zero instead of being left on the old first line in the middle of the file.
+function insertBeforeFirstSection(lines, block) {
+  const insertAt = firstSectionIndex(lines);
+  if (insertAt === 0 && lines[0].startsWith(UTF8_BOM)) {
+    lines[0] = lines[0].slice(UTF8_BOM.length);
+    lines.splice(0, 0, `${UTF8_BOM}${block[0]}`, ...block.slice(1));
+    return;
+  }
+  lines.splice(insertAt, 0, ...block);
+}
+
+// Callers pass only root keys that codexAppNativeDefaultSettings found unset.
+function insertRootSetting(lines, settingName, settingValue) {
+  const settingLine = `${settingName} = ${settingValue}`;
+  if (firstSectionIndex(lines) < lines.length) {
+    insertBeforeFirstSection(lines, [settingLine, ""]);
+    return;
+  }
+  lines.push(settingLine);
+}
+
 function firstSectionIndex(lines) {
-  const index = lines.findIndex((line) => /^\s*\[[^\]]+\]\s*(?:#.*)?$/.test(line));
-  return index < 0 ? lines.length : index;
+  return tomlTableHeaderLineIndexes(lines)[0] ?? lines.length;
 }
 
 function rootSettingNames(lines) {
   const names = new Set();
-  const end = firstSectionIndex(lines);
-  for (const line of lines.slice(0, end)) {
-    const match = line.match(/^\s*([A-Za-z0-9_.-]+)\s*=/);
-    if (match) names.add(match[1]);
+  for (const line of tomlRootLines(lines)) {
+    // TOML allows a bare key to be written quoted: "name" = 1 or 'name' = 1.
+    const match = line.match(/^\s*(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9_.-]+))\s*=/);
+    if (match) names.add(match[1] ?? match[2] ?? match[3]);
   }
   return names;
 }
 
 function rootSettingLines(lines) {
-  const end = firstSectionIndex(lines);
-  return lines.slice(0, end).filter((line) => /^\s*[A-Za-z0-9_.-]+\s*=/.test(line));
+  return tomlRootLines(lines).filter((line) => /^\s*[A-Za-z0-9_.-]+\s*=/.test(line));
 }
 
 function sectionNames(lines) {
-  return lines
-    .map((line) => line.match(/^\s*\[([^\]]+)\]\s*(?:#.*)?$/)?.[1])
+  return tomlTableHeaderLineIndexes(lines)
+    .map((index) => lines[index].match(/^\s*\[([^\]]+)\]\s*(?:#.*)?$/)?.[1])
     .filter(Boolean);
 }
 
@@ -267,7 +356,7 @@ export function removeMetaKimTemporaryProjectResidue(configText = "") {
     const projectPath = codexProjectPathFromSectionName(sectionName);
     if (!projectPath || !isMetaKimTemporaryProjectPath(projectPath)) continue;
     let end = index + 1;
-    while (end < lines.length && !/^\s*\[[^\]]+\]\s*(?:#.*)?$/u.test(lines[end])) {
+    while (end < lines.length && !TOML_TABLE_HEADER_RE.test(lines[end])) {
       end += 1;
     }
     lines.splice(index, end - index);
@@ -359,9 +448,7 @@ export function mergeCodexConfigAddOnly(baseConfigText = "", additiveConfigText 
   });
 
   if (missingRootLines.length > 0) {
-    const insertAt = firstSectionIndex(baseLines);
-    const block = [...missingRootLines, ""];
-    baseLines.splice(insertAt, 0, ...block);
+    insertBeforeFirstSection(baseLines, [...missingRootLines, ""]);
   }
 
   for (const sectionName of sectionNames(additiveLines)) {
@@ -838,10 +925,19 @@ function ensureOpenAiBundledMarketplace(lines, options = {}) {
 }
 
 function codexAppNativeDefaultSettings(lines, platformName) {
-  const settings = [
+  const settings = [];
+  // Any existing root value is user-owned: smaller, larger, or 0 (disabled).
+  if (!rootSettingNames(lines).has(CODEX_PROJECT_DOC_MAX_BYTES_SETTING)) {
+    settings.push([
+      "",
+      CODEX_PROJECT_DOC_MAX_BYTES_SETTING,
+      String(CODEX_DEFAULT_PROJECT_DOC_MAX_BYTES),
+    ]);
+  }
+  settings.push(
     ["features", CODEX_REQUEST_USER_INPUT_FEATURE, "true"],
     ["features", CODEX_JS_REPL_FEATURE, "true"],
-  ];
+  );
   // Existing values are user-owned, including former Meta_Kim defaults. Either
   // capacity spelling suppresses a default; keep the legacy key for old clients.
   if (
@@ -859,7 +955,9 @@ function codexAppNativeDefaultSettings(lines, platformName) {
       ]),
     );
   }
-  return settings.filter(([table, key]) => sectionSettingValue(lines, table, key) === null);
+  return settings.filter(([table, key]) =>
+    table === "" || sectionSettingValue(lines, table, key) === null
+  );
 }
 
 export function ensureCodexAppNativeControls(configText = "", options = {}) {
@@ -868,6 +966,10 @@ export function ensureCodexAppNativeControls(configText = "", options = {}) {
   const lines = normalizeLines(configText);
   const platformName = options.platformName ?? process.platform;
   for (const [table, key, value] of codexAppNativeDefaultSettings(lines, platformName)) {
+    if (table === "") {
+      insertRootSetting(lines, key, value);
+      continue;
+    }
     ensureSectionSetting(lines, table, key, value);
   }
   if (platformName === "win32") {
@@ -916,7 +1018,15 @@ function codexConfigLineRecords(configText = "") {
     offset += whole.length;
     if (!eol) break;
   }
-  return { ...style, records };
+  const inString = tomlMultilineStringLineMask(records.map((record) => record.body));
+  return {
+    ...style,
+    records: records.map((record, index) => ({ ...record, inMultilineString: inString[index] })),
+  };
+}
+
+function isTomlTableHeaderRecord(record) {
+  return !record.inMultilineString && TOML_TABLE_HEADER_RE.test(record.body);
 }
 
 function parseCodexConfigLocators(configText = "") {
@@ -932,10 +1042,18 @@ function parseCodexConfigLocators(configText = "") {
   };
 
   for (const record of document.records) {
+    if (record.inMultilineString) continue;
     const header = record.body.match(/^\s*\[([^\]]+)\]\s*(?:#.*)?$/u);
     if (header) {
       table = header[1];
       push(tables, table, record);
+      continue;
+    }
+    const arrayHeader = record.body.match(/^\s*\[\[([^\]]+)\]\]\s*(?:#.*)?$/u);
+    if (arrayHeader) {
+      // Keys of an array-of-tables element belong to neither the root table
+      // nor the preceding plain table; no managed locator ever names them.
+      table = `[[${arrayHeader[1]}]]`;
       continue;
     }
     const assignment = record.body.match(/^(\s*)([A-Za-z0-9_.-]+)(\s*=\s*)(.*)$/u);
@@ -1052,7 +1170,7 @@ function planCodexSettingMutation(configText, table, key, desiredValue) {
   } else if (table) {
     const headerIndex = parsed.records.indexOf(header);
     const nextHeader = parsed.records.slice(headerIndex + 1).find((record) =>
-      /^\s*\[[^\]]+\]\s*(?:#.*)?$/u.test(record.body)
+      isTomlTableHeaderRecord(record)
     );
     position = nextHeader?.start ?? configText.length;
     const prefix = position === configText.length && !parsed.trailingNewline && parsed.body.length > 0
@@ -1062,11 +1180,17 @@ function planCodexSettingMutation(configText, table, key, desiredValue) {
     afterFragment = `${prefix}${settingLine}${suffix}`;
   } else {
     const firstHeader = parsed.records.find((record) =>
-      /^\s*\[[^\]]+\]\s*(?:#.*)?$/u.test(record.body)
+      isTomlTableHeaderRecord(record)
     );
     position = firstHeader?.start ?? configText.length;
-    const suffix = position < configText.length || parsed.trailingNewline ? parsed.eol : "";
-    afterFragment = `${settingLine}${suffix}`;
+    if (firstHeader) {
+      // Keep the root key visually separate from the first table.
+      afterFragment = `${settingLine}${parsed.eol}${parsed.eol}`;
+    } else {
+      const prefix = !parsed.trailingNewline && parsed.body.length > 0 ? parsed.eol : "";
+      const suffix = parsed.trailingNewline ? parsed.eol : "";
+      afterFragment = `${prefix}${settingLine}${suffix}`;
+    }
   }
   return {
     text: `${configText.slice(0, position)}${afterFragment}${configText.slice(position)}`,
@@ -1531,7 +1655,7 @@ function insertedTableHasUnmanagedContent(text, mutation, assignment) {
     );
   if (!header) return true;
   const nextHeader = parsed.records.find((record) =>
-    record.start > header.start && /^\s*\[[^\]]+\]\s*(?:#.*)?$/u.test(record.body)
+    record.start > header.start && isTomlTableHeaderRecord(record)
   );
   const sectionEnd = nextHeader?.start ?? text.length;
   const remainder = `${text.slice(header.end, assignment.start)}${text.slice(assignment.end, sectionEnd)}`;
@@ -1563,11 +1687,11 @@ export function invertCodexConfigMutations(configText = "", mutations = []) {
       if (mutation.locator.table) {
         const header = parsed.tables.get(mutation.locator.table)[0];
         position = parsed.records.find((record) =>
-          record.start > header.start && /^\s*\[[^\]]+\]\s*(?:#.*)?$/u.test(record.body)
+          record.start > header.start && isTomlTableHeaderRecord(record)
         )?.start ?? text.length;
       } else {
         position = parsed.records.find((record) =>
-          /^\s*\[[^\]]+\]\s*(?:#.*)?$/u.test(record.body)
+          isTomlTableHeaderRecord(record)
         )?.start ?? text.length;
       }
       text = `${text.slice(0, position)}${mutation.beforeFragment}${text.slice(position)}`;

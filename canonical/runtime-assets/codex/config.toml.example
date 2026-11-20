@@ -10,6 +10,9 @@
 approval_policy = "on-request"
 sandbox_mode = "workspace-write"
 suppress_unstable_features_warning = true
+# Codex truncates project docs (AGENTS.md, root to cwd) beyond its built-in
+# 32768-byte budget. Keeps the Meta_Kim entry readable in full.
+project_doc_max_bytes = 131072
 
 [features]
 # Enables Codex's native request_user_input surface in Default mode.
