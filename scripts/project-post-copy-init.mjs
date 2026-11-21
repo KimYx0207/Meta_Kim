@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { detectPython310, formatPythonLauncher, runPythonModule } from "./graphify-runtime.mjs";
+import { checkNetworkx, detectPython310, formatPythonLauncher, runPythonModule } from "./graphify-runtime.mjs";
 import { sanitizeGraphifyWindowsHooks } from "./graphify-hook-sanitize.mjs";
 import { resolveProjectRoot } from "../canonical/runtime-assets/shared/hooks/project-root.mjs";
 
@@ -185,22 +185,89 @@ function guideAlreadyHasGraphifySection(platform) {
   return /^##\s+graphify\b/im.test(readFileSync(filePath, "utf8"));
 }
 
-const python = findPython();
+// Same lookup as setup's readManagedGraphConfig(). An unreadable config fails
+// closed: continuing would let the native installer replace managed hook blocks.
+function readManagedGraphConfig() {
+  const location = spawnSync("git", ["rev-parse", "--git-path", "graphify/config.json"], {
+    cwd: rootDir,
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (location.status !== 0) return null;
+  const configFile = resolve(rootDir, location.stdout.trim());
+  if (!existsSync(configFile)) return null;
+  let config;
+  try {
+    config = JSON.parse(readFileSync(configFile, "utf8"));
+  } catch (error) {
+    fail(`[Meta_Kim] Cannot read managed Graphify config ${configFile}: ${error.message}`);
+  }
+  if (typeof config?.python !== "string" || !config.python) {
+    fail(`[Meta_Kim] Managed Graphify config ${configFile} has no python interpreter.`);
+  }
+  return config;
+}
+
+// Mirrors setup's runManagedGraphLifecycle(): always call the packaged manager
+// so a stale runtime copy under .git/graphify is refreshed by `install`.
+function runManagedGraph(action, managedConfig) {
+  const manager = fileURLToPath(new URL("./graphify-managed.py", import.meta.url));
+  const result = spawnSync(managedConfig.python, [manager, action, "--repo", rootDir], {
+    cwd: rootDir,
+    stdio: "inherit",
+    env: { ...process.env, PYTHONNOUSERSITE: "1", PYTHONHASHSEED: "0" },
+    windowsHide: true,
+  });
+  if (result.status !== 0) {
+    fail(`[Meta_Kim] Managed Graphify ${action} failed.`, result.status || 1);
+  }
+}
+
+const managedGraphConfig = readManagedGraphConfig();
+if (managedGraphConfig && process.platform === "win32") {
+  fail("[Meta_Kim] Repository-managed Graphify is currently supported on macOS/Linux.");
+}
+
+const python = managedGraphConfig
+  ? { command: managedGraphConfig.python, args: [] }
+  : findPython();
 if (!python) {
   fail("[Meta_Kim] Python 3.10+ with pip is required for graphify. Install Python, then run this script again.");
 }
 console.log(`[Meta_Kim] Using Python for graphify: ${formatPythonLauncher(python)}`);
 
-const pipShow = runCandidate(python, ["-m", "pip", "show", "graphifyy"], "pipe");
-if (pipShow.status !== 0) {
-  runPython(python, ["-m", "pip", "install", "graphifyy"]);
+if (managedGraphConfig) {
+  // Loaded only here so projects without a managed config import nothing new.
+  const { reconcileGraphifyPackage } = await import("./graphify-package-install.mjs");
+  // The managed producer requires the shared baseline version (setup and
+  // graphify-cli install use the same reconciliation).
+  const packageResult = reconcileGraphifyPackage(python);
+  if (!packageResult.ok) {
+    fail(`[Meta_Kim] Graphify package verification failed: ${packageResult.code}`);
+  }
+  // Same check-then-upgrade as setup's ensureNetworkxCompatibility().
+  if (!checkNetworkx(python).meets) {
+    runPython(python, ["-m", "pip", "install", "--upgrade", "networkx>=3.4"], {
+      optional: true,
+    });
+  }
+} else {
+  const pipShow = runCandidate(python, ["-m", "pip", "show", "graphifyy"], "pipe");
+  if (pipShow.status !== 0) {
+    runPython(python, ["-m", "pip", "install", "graphifyy"]);
+  }
+  runPython(python, ["-m", "pip", "install", "--upgrade", "networkx>=3.4"], {
+    optional: true,
+  });
 }
-runPython(python, ["-m", "pip", "install", "--upgrade", "networkx>=3.4"], {
-  optional: true,
-});
 
+let nativeHookFailed = false;
 if (existsSync(join(rootDir, ".git"))) {
-  runPython(python, ["-m", "graphify", "hook", "install"]);
+  // In managed mode a failed native hook install must still reach the manager
+  // repair below (setup marks wiring failed and keeps going).
+  nativeHookFailed = !runPython(python, ["-m", "graphify", "hook", "install"], {
+    optional: Boolean(managedGraphConfig),
+  });
   const repaired = sanitizeGraphifyWindowsHooks(
     join(rootDir, ".claude", "settings.json"),
   );
@@ -222,7 +289,18 @@ for (const platform of graphifyPlatforms()) {
   runPython(python, ["-m", "graphify", platform, "install"], { optional: true });
 }
 
-runPython(python, ["-m", "graphify", "update", "."]);
+if (managedGraphConfig) {
+  // Native installers above may rewrite Graphify-owned hook blocks and guide
+  // sections; repair them after the last installer, then refresh through the
+  // manager instead of a raw update (docs/graphify-managed-lifecycle.md).
+  runManagedGraph("install", managedGraphConfig);
+  if (nativeHookFailed) {
+    fail("[Meta_Kim] graphify hook install failed; managed hooks were repaired.");
+  }
+  runManagedGraph("run", managedGraphConfig);
+} else {
+  runPython(python, ["-m", "graphify", "update", "."]);
+}
 writeAutoMarker("passed", {
   mode: autoWorkerMode ? "auto" : "manual",
   graphPath: join(rootDir, "graphify-out", "graph.json"),
