@@ -3392,6 +3392,190 @@ async function rollbackGlobalSyncTransaction(
   }
 }
 
+// Every update materializes the durable Claude MCP bundle under a new version
+// directory, so a server that is still running keeps its files. This step
+// bounds that growth: after a committed sync it retires superseded bundles that
+// still hold exactly the bytes this installer recorded and that the Claude MCP
+// configuration does not mention. The current version and the most recently
+// installed earlier version always stay.
+const RETAINED_SUPERSEDED_DURABLE_MCP_BUNDLES = 1;
+const DURABLE_MCP_BUNDLE_PURPOSE = "claude-global-mcp-runtime-bundle";
+
+function jsonMentionsPathWithin(value, directoryPath) {
+  if (typeof value === "string") {
+    const portable = (text) => {
+      const forward = text.replaceAll("\\", "/");
+      return process.platform === "win32" ? forward.toLowerCase() : forward;
+    };
+    const needle = portable(path.resolve(directoryPath));
+    const haystack = portable(value);
+    return haystack === needle || haystack.includes(`${needle}/`);
+  }
+  if (Array.isArray(value)) {
+    return value.some((item) => jsonMentionsPathWithin(item, directoryPath));
+  }
+  if (value && typeof value === "object") {
+    return Object.values(value).some((item) => jsonMentionsPathWithin(item, directoryPath));
+  }
+  return false;
+}
+
+async function supersededDurableMcpBundleBlocker(entry, { runtimeBaseDir, runtimeRoot, claudeConfig }) {
+  if (jsonMentionsPathWithin(claudeConfig, entry.path)) {
+    return "the Claude MCP configuration still refers to it";
+  }
+  try {
+    if (
+      !(await directoryChainHasNoLinks(runtimeBaseDir, entry.path)) ||
+      !pathIsWithin(await fs.realpath(runtimeRoot), await fs.realpath(entry.path))
+    ) {
+      return "its path contains a link or leaves the runtime store";
+    }
+  } catch {
+    return "its path could not be inspected";
+  }
+  if (
+    typeof entry.directoryClosureSha256 !== "string" ||
+    !Number.isFinite(entry.directoryClosureEntryCount)
+  ) {
+    return "the manifest holds no content record for it";
+  }
+  const closure = directoryClosureSync(entry.path);
+  if (
+    !closure ||
+    closure.sha256 !== entry.directoryClosureSha256 ||
+    closure.entryCount !== entry.directoryClosureEntryCount
+  ) {
+    return "its contents differ from the recorded install";
+  }
+  return null;
+}
+
+async function retireSupersededDurableMcpBundles(plan) {
+  if (!plan?.identity || !plan?.packageManifest) return;
+  const runtimeBaseDir = path.resolve(path.dirname(runtimeHomes.claude.dir));
+  const currentLayout = resolveDurableMetaKimRuntimeLayout(
+    runtimeBaseDir,
+    plan.identity,
+    plan.packageManifest,
+    process.execPath,
+    "claude",
+  );
+  const bundleParent = path.dirname(currentLayout.bundleDir);
+  const manifest = readManifest(manifestPathFor("global"));
+  const recordedBySync = (entry) =>
+    entry.source === "sync-global-meta-theory" &&
+    typeof entry.path === "string" &&
+    path.isAbsolute(entry.path);
+  const superseded = (manifest?.entries ?? [])
+    .filter((entry) =>
+      recordedBySync(entry) &&
+      entry.kind === "dir" &&
+      entry.purpose === DURABLE_MCP_BUNDLE_PURPOSE &&
+      packagePathKey(path.dirname(entry.path)) === packagePathKey(bundleParent) &&
+      isStrictSemVer(path.basename(entry.path)) &&
+      packagePathKey(entry.path) !== packagePathKey(currentLayout.bundleDir))
+    .sort((left, right) =>
+      String(right.installedAt ?? "").localeCompare(String(left.installedAt ?? "")));
+  const candidates = [];
+  for (const entry of superseded.slice(RETAINED_SUPERSEDED_DURABLE_MCP_BUNDLES)) {
+    if (await pathExists(entry.path)) candidates.push(entry);
+  }
+  if (candidates.length === 0) return;
+
+  let claudeConfig;
+  try {
+    claudeConfig = (await pathExists(plan.configPath))
+      ? JSON.parse(await fs.readFile(plan.configPath, "utf8"))
+      : {};
+  } catch {
+    return;
+  }
+
+  const recorder = openRecorder({
+    scope: "global",
+    metaKimVersion: plan.identity.packageVersion,
+    requireExistingValidManifest: true,
+  });
+  const trackedPurposes = new Set(
+    ["package-manifest", "cli", "server"].map((label) => `${DURABLE_MCP_BUNDLE_PURPOSE}:${label}`),
+  );
+  const staged = [];
+  const preserved = [];
+  const restoreStaged = async () => {
+    for (const item of staged.splice(0)) {
+      await renameDirectoryWithRetry(item.stagedPath, item.entry.path);
+    }
+  };
+  try {
+    for (const entry of candidates) {
+      const blocker = await supersededDurableMcpBundleBlocker(entry, {
+        runtimeBaseDir,
+        runtimeRoot: currentLayout.runtimeRoot,
+        claudeConfig,
+      });
+      if (blocker) {
+        preserved.push(`${path.basename(entry.path)} (${blocker})`);
+        continue;
+      }
+      const stagedPath = path.join(
+        bundleParent,
+        `.meta-kim-runtime-retired-${process.pid}-${randomUUID()}`,
+      );
+      assertHomeBound(stagedPath);
+      await assertRealHomeBound(stagedPath);
+      try {
+        await renameDirectoryWithRetry(entry.path, stagedPath);
+      } catch (error) {
+        if (!isRetryableDirectoryLock(error)) throw error;
+        preserved.push(`${path.basename(entry.path)} (it is in use)`);
+        continue;
+      }
+      staged.push({ entry, stagedPath });
+      recorder.forget(entry.path, entry.purpose);
+      for (const fileEntry of manifest.entries) {
+        if (
+          recordedBySync(fileEntry) &&
+          fileEntry.kind === "file" &&
+          trackedPurposes.has(fileEntry.purpose) &&
+          pathIsWithin(entry.path, fileEntry.path)
+        ) {
+          recorder.forget(fileEntry.path, fileEntry.purpose);
+        }
+      }
+    }
+    if (staged.length > 0) {
+      const result = process.env.META_KIM_TEST_FAIL_DURABLE_MCP_AT === "retire_manifest"
+        ? { ok: false, error: "Injected durable MCP retire_manifest failure." }
+        : await recorder.flush();
+      if (!result.ok) throw new Error(result.error ?? "install manifest flush failed");
+    }
+  } catch (error) {
+    await restoreStaged();
+    throw error;
+  }
+
+  const retired = [];
+  for (const { entry, stagedPath } of staged) {
+    retired.push(path.basename(entry.path));
+    await fs.rm(stagedPath, { recursive: true, force: true }).catch((error) => {
+      console.warn(
+        `${C.yellow}⚠${C.reset} ${C.dim}Retired durable MCP bundle could not be deleted; remove it manually: ${stagedPath} (${error?.message ?? error})${C.reset}`,
+      );
+    });
+  }
+  if (retired.length > 0) {
+    console.log(
+      `${C.green}✓${C.reset} ${C.dim}Removed ${retired.length} superseded durable MCP bundle(s) from ${bundleParent}: ${retired.join(", ")}${C.reset}`,
+    );
+  }
+  if (preserved.length > 0) {
+    console.log(
+      `${C.yellow}⊘${C.reset} ${C.dim}Kept superseded durable MCP bundle(s): ${preserved.join("; ")}${C.reset}`,
+    );
+  }
+}
+
 function globalManifestPartialFailure(reasons) {
   return new Error(
     `Global sync is partial because install manifest persistence failed: ${reasons}. ` +
@@ -3555,6 +3739,13 @@ async function runSync() {
     console.log(
       `${C.green}✓${C.reset} ${C.dim}Install manifest: ${result.path} (${result.entries} entries)${C.reset}`,
     );
+    // The sync above is committed. A failed retirement keeps every bundle and
+    // must not roll the committed update back.
+    await retireSupersededDurableMcpBundles(mcpPlan).catch((error) => {
+      console.warn(
+        `${C.yellow}⚠${C.reset} ${C.dim}Superseded durable MCP bundles were kept: ${error?.message ?? error}${C.reset}`,
+      );
+    });
   }
   } catch (error) {
     try {
