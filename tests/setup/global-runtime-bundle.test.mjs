@@ -737,6 +737,318 @@ function verifyConcurrentEditsBlockRollback() {
   }
 }
 
+function durableBundleLedger(runtime) {
+  const manifest = JSON.parse(
+    readFileSync(path.join(runtime.userHome, ".meta-kim", "install-manifest.json"), "utf8"),
+  );
+  return manifest.entries
+    .filter((entry) => String(entry.purpose ?? "").startsWith("claude-global-mcp-runtime-bundle"))
+    .map((entry) => `${entry.purpose} ${path.relative(runtime.userHome, entry.path)}`)
+    .sort();
+}
+
+function expectedDurableBundleLedger(runtime, layouts) {
+  return layouts.flatMap((layout) => [
+    ["claude-global-mcp-runtime-bundle", layout.bundleDir],
+    ["claude-global-mcp-runtime-bundle:package-manifest", layout.packageManifestPath],
+    ["claude-global-mcp-runtime-bundle:cli", layout.cliPath],
+    ["claude-global-mcp-runtime-bundle:server", layout.serverPath],
+  ]).map(([purpose, target]) => `${purpose} ${path.relative(runtime.userHome, target)}`).sort();
+}
+
+function verifySupersededDurableBundlesAreRetired() {
+  const testRoot = mkdtempSync(path.join(os.tmpdir(), "meta-kim-runtime-retire-"));
+  try {
+    const candidate = preparePackedCandidate(testRoot);
+    const runtime = isolatedRuntime(testRoot, "runtime-home");
+    const layouts = [];
+    const syncVersion = (suffix, extraEnv = {}) => {
+      const manifest = setPackedFixtureVersion(
+        candidate.workspace,
+        suffix ? `${ORIGINAL_MANIFEST.version}-retire-test.${suffix}` : ORIGINAL_MANIFEST.version,
+      );
+      const layout = resolveDurableMetaKimRuntimeLayout(
+        runtime.userHome,
+        resolvePortableMetaKimPackageIdentity(manifest, DISTRIBUTION),
+        manifest,
+        process.execPath,
+        "claude",
+      );
+      if (!layouts.some((known) => known.bundleDir === layout.bundleDir)) layouts.push(layout);
+      const result = requireSuccess(
+        `packed global sync ${manifest.version}`,
+        runGlobalSync(candidate.workspace, runtime, extraEnv),
+      );
+      assert.deepEqual(
+        JSON.parse(readFileSync(runtime.claudeConfig, "utf8")).mcpServers["meta-kim-runtime"],
+        layout.definition,
+        "the Claude MCP entry must launch the bundle of the version just synced",
+      );
+      return `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+    };
+    const bundleParent = () => path.dirname(layouts[0].bundleDir);
+    const assertBundles = (expected, message) => {
+      assert.deepEqual(
+        readdirSync(bundleParent()).sort(),
+        expected.map((layout) => path.basename(layout.bundleDir)).sort(),
+        message,
+      );
+      assert.deepEqual(
+        durableBundleLedger(runtime),
+        expectedDurableBundleLedger(runtime, expected),
+        `${message} (install manifest)`,
+      );
+    };
+
+    syncVersion(null);
+    const [first] = layouts;
+    const firstOutput = syncVersion(1);
+    const [, second] = layouts;
+    assertBundles([first, second], "the version replaced by the latest update stays as the previous bundle");
+    assert.doesNotMatch(firstOutput, /superseded durable MCP bundle/iu);
+
+    const secondOutput = syncVersion(2);
+    const [, , third] = layouts;
+    assertBundles([second, third], "an update keeps only the current and the previous bundle");
+    assert.match(secondOutput, /Removed 1 superseded durable MCP bundle\(s\)/u);
+
+    // A manifest write failure during retirement leaves the committed update
+    // and every bundle exactly as they were.
+    const secondFingerprint = treeFingerprint(second.bundleDir);
+    const failedOutput = syncVersion(3, { META_KIM_TEST_FAIL_DURABLE_MCP_AT: "retire_manifest" });
+    const [, , , fourth] = layouts;
+    assert.match(failedOutput, /Superseded durable MCP bundles were kept: Injected durable MCP retire_manifest failure/u);
+    assertBundles([second, third, fourth], "a failed retirement restores the staged bundle and its manifest entries");
+    assert.equal(treeFingerprint(second.bundleDir), secondFingerprint);
+
+    // Bundles that carry a user file, or that the Claude configuration still
+    // mentions, are not the installer's to delete.
+    const userFile = path.join(second.bundleDir, "user-added-runtime-file.txt");
+    writeFileSync(userFile, "preserve\n", "utf8");
+    const pinnedConfig = JSON.parse(readFileSync(runtime.claudeConfig, "utf8"));
+    pinnedConfig.mcpServers["user-pinned-runtime"] = {
+      type: "stdio",
+      command: process.execPath,
+      args: [third.cliPath, "mcp", "serve"],
+    };
+    writeFileSync(runtime.claudeConfig, `${JSON.stringify(pinnedConfig, null, 2)}\n`, "utf8");
+    const protectedOutput = syncVersion(4);
+    const [, , , , fifth] = layouts;
+    assertBundles([second, third, fourth, fifth], "user-modified and still-referenced bundles are preserved");
+    assert.equal(readFileSync(userFile, "utf8"), "preserve\n");
+    assert.match(protectedOutput, /Kept superseded durable MCP bundle\(s\)/u);
+    assert.match(protectedOutput, /its contents differ from the recorded install/u);
+    assert.match(protectedOutput, /the Claude MCP configuration still refers to it/u);
+    assert.doesNotMatch(protectedOutput, /Removed \d+ superseded/u);
+    assert.deepEqual(
+      JSON.parse(readFileSync(runtime.claudeConfig, "utf8")).mcpServers["user-pinned-runtime"],
+      pinnedConfig.mcpServers["user-pinned-runtime"],
+    );
+
+    // Once those reasons are gone, a same-version sync retires the backlog
+    // that earlier updates left behind. A bundle whose manifest record predates
+    // directory closures cannot be proven free of user files, so it stays.
+    rmSync(userFile, { force: true });
+    const unpinnedConfig = JSON.parse(readFileSync(runtime.claudeConfig, "utf8"));
+    delete unpinnedConfig.mcpServers["user-pinned-runtime"];
+    writeFileSync(runtime.claudeConfig, `${JSON.stringify(unpinnedConfig, null, 2)}\n`, "utf8");
+    const manifestPath = path.join(runtime.userHome, ".meta-kim", "install-manifest.json");
+    const legacyManifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    const legacyRecord = legacyManifest.entries.find((entry) =>
+      entry.kind === "dir" && path.resolve(entry.path) === path.resolve(third.bundleDir));
+    assert.match(legacyRecord.directoryClosureSha256, /^[a-f0-9]{64}$/u);
+    delete legacyRecord.directoryClosureSha256;
+    delete legacyRecord.directoryClosureEntryCount;
+    writeFileSync(manifestPath, `${JSON.stringify(legacyManifest, null, 2)}\n`, "utf8");
+    const backlogOutput = syncVersion(4);
+    assertBundles([third, fourth, fifth], "a same-version sync retires the provable backlog only");
+    assert.match(backlogOutput, /Removed 1 superseded durable MCP bundle\(s\)/u);
+    assert.match(backlogOutput, /the manifest holds no content record for it/u);
+    const selfTest = requireSuccess(
+      "current durable MCP self-test after retirement",
+      run(process.execPath, [fifth.cliPath, "mcp", "self-test"], {
+        cwd: runtime.userHome,
+        env: runtime.env,
+        timeout: 60_000,
+      }),
+    );
+    assert.match(selfTest.stdout, /"ok"\s*:\s*true/u);
+  } finally {
+    rmSync(testRoot, { recursive: true, force: true });
+  }
+}
+
+function claudeProfileRuntime(userHome, profileName) {
+  const claudeHome = path.join(userHome, "profiles", profileName);
+  mkdirSync(claudeHome, { recursive: true });
+  const env = {
+    ...process.env,
+    HOME: userHome,
+    USERPROFILE: userHome,
+    CLAUDE_CONFIG_DIR: claudeHome,
+    META_KIM_CLAUDE_HOME: claudeHome,
+  };
+  delete env.META_KIM_CLAUDE_USER_CONFIG;
+  return {
+    claudeConfig: path.join(claudeHome, ".claude.json"),
+    claudeHome,
+    userHome,
+    env,
+  };
+}
+
+function syncPackedVersion(candidate, runtime, runtimeBaseDir, suffix, extraEnv = {}) {
+  const manifest = setPackedFixtureVersion(
+    candidate.workspace,
+    suffix ? `${ORIGINAL_MANIFEST.version}-retire-test.${suffix}` : ORIGINAL_MANIFEST.version,
+  );
+  const layout = resolveDurableMetaKimRuntimeLayout(
+    runtimeBaseDir,
+    resolvePortableMetaKimPackageIdentity(manifest, DISTRIBUTION),
+    manifest,
+    process.execPath,
+    "claude",
+  );
+  const result = requireSuccess(
+    `packed global sync ${manifest.version}`,
+    runGlobalSync(candidate.workspace, runtime, extraEnv),
+  );
+  assert.deepEqual(
+    JSON.parse(readFileSync(runtime.claudeConfig, "utf8")).mcpServers["meta-kim-runtime"],
+    layout.definition,
+    "the Claude MCP entry must launch the bundle of the version just synced",
+  );
+  return { layout, output: `${result.stdout ?? ""}\n${result.stderr ?? ""}` };
+}
+
+function verifySharedStoreKeepsBundlesOtherProfilesReference() {
+  const testRoot = mkdtempSync(path.join(os.tmpdir(), "meta-kim-runtime-profiles-"));
+  try {
+    const candidate = preparePackedCandidate(testRoot);
+    const userHome = path.join(testRoot, "runtime-home");
+    const profileA = claudeProfileRuntime(userHome, "a");
+    const profileB = claudeProfileRuntime(userHome, "b");
+    // Both profiles share a parent directory, so they share one runtime store
+    // while each keeps its own Claude MCP configuration.
+    const storeBase = path.join(userHome, "profiles");
+    const { layout: pinnedByA } = syncPackedVersion(candidate, profileA, storeBase, null);
+    syncPackedVersion(candidate, profileB, storeBase, 1);
+    const { output } = syncPackedVersion(candidate, profileB, storeBase, 2);
+    assert.ok(
+      existsSync(pinnedByA.cliPath),
+      `a bundle another profile still launches must stay installed\n${output}`,
+    );
+    assert.deepEqual(
+      JSON.parse(readFileSync(profileA.claudeConfig, "utf8")).mcpServers["meta-kim-runtime"],
+      pinnedByA.definition,
+    );
+    assert.match(output, /the Claude MCP configuration still refers to it/u);
+    assert.doesNotMatch(output, /Removed \d+ superseded/u);
+  } finally {
+    rmSync(testRoot, { recursive: true, force: true });
+  }
+}
+
+function verifyBundleEditedDuringRetirementIsPreserved() {
+  const testRoot = mkdtempSync(path.join(os.tmpdir(), "meta-kim-runtime-retire-race-"));
+  try {
+    const candidate = preparePackedCandidate(testRoot);
+    const runtime = isolatedRuntime(testRoot, "runtime-home");
+    const { layout: first } = syncPackedVersion(candidate, runtime, runtime.userHome, null);
+    const { layout: second } = syncPackedVersion(candidate, runtime, runtime.userHome, 1);
+    const firstFingerprint = treeFingerprint(first.bundleDir);
+    // The hook adds a user file after the closure check and before the rename.
+    const { layout: third, output } = syncPackedVersion(candidate, runtime, runtime.userHome, 2, {
+      META_KIM_TEST_CONCURRENT_DURABLE_MCP_EDIT: "pre_retire_rename",
+    });
+    const userFile = path.join(first.bundleDir, "user-concurrent-runtime-file.txt");
+    assert.equal(
+      existsSync(userFile) && readFileSync(userFile, "utf8"),
+      "preserve concurrent bundle edit\n",
+      `a file added while the bundle was being retired must survive\n${output}`,
+    );
+    rmSync(userFile, { force: true });
+    assert.equal(treeFingerprint(first.bundleDir), firstFingerprint);
+    assert.deepEqual(
+      readdirSync(path.dirname(first.bundleDir)).sort(),
+      [first, second, third].map((layout) => path.basename(layout.bundleDir)).sort(),
+      "no staged retirement directory is left behind",
+    );
+    assert.deepEqual(
+      durableBundleLedger(runtime),
+      expectedDurableBundleLedger(runtime, [first, second, third]),
+      "the drifted bundle keeps its install manifest records",
+    );
+    assert.match(output, /its contents changed while it was being retired/u);
+    assert.doesNotMatch(output, /Removed \d+ superseded/u);
+
+    // A change that lands after the manifest already forgot the bundle leaves
+    // the directory in place as unknown content instead of deleting it.
+    const { layout: fourth, output: lateOutput } = syncPackedVersion(
+      candidate,
+      runtime,
+      runtime.userHome,
+      3,
+      { META_KIM_TEST_CONCURRENT_DURABLE_MCP_EDIT: "pre_retire_delete" },
+    );
+    for (const layout of [first, second]) {
+      assert.equal(
+        readFileSync(path.join(layout.bundleDir, "user-concurrent-runtime-file.txt"), "utf8"),
+        "preserve concurrent bundle edit\n",
+        `a file added after the manifest flush must survive\n${lateOutput}`,
+      );
+    }
+    assert.deepEqual(
+      readdirSync(path.dirname(first.bundleDir)).sort(),
+      [first, second, third, fourth].map((layout) => path.basename(layout.bundleDir)).sort(),
+      "the late-drifted bundles return to their own paths",
+    );
+    assert.deepEqual(
+      durableBundleLedger(runtime),
+      expectedDurableBundleLedger(runtime, [third, fourth]),
+      "the manifest no longer claims the late-drifted bundles",
+    );
+    assert.match(lateOutput, /its contents changed while it was being retired; kept at /u);
+    assert.doesNotMatch(lateOutput, /Removed \d+ superseded/u);
+  } finally {
+    rmSync(testRoot, { recursive: true, force: true });
+  }
+}
+
+function verifyUnrestorableDriftedBundleIsForgottenAndKept() {
+  const testRoot = mkdtempSync(path.join(os.tmpdir(), "meta-kim-runtime-retire-restore-"));
+  try {
+    const candidate = preparePackedCandidate(testRoot);
+    const runtime = isolatedRuntime(testRoot, "runtime-home");
+    const { layout: first } = syncPackedVersion(candidate, runtime, runtime.userHome, null);
+    const { layout: second } = syncPackedVersion(candidate, runtime, runtime.userHome, 1);
+    // The bundle drifts before the rename and the rename back then fails.
+    const { layout: third, output } = syncPackedVersion(candidate, runtime, runtime.userHome, 2, {
+      META_KIM_TEST_CONCURRENT_DURABLE_MCP_EDIT: "pre_retire_rename",
+      META_KIM_TEST_FAIL_DURABLE_MCP_AT: "retire_restore",
+    });
+    const bundleParent = path.dirname(first.bundleDir);
+    const strandedNames = readdirSync(bundleParent)
+      .filter((name) => name.startsWith(".meta-kim-runtime-retired-"));
+    assert.equal(strandedNames.length, 1, `the drifted bundle stays at its staged path\n${output}`);
+    assert.equal(existsSync(first.bundleDir), false);
+    assert.equal(
+      readFileSync(path.join(bundleParent, strandedNames[0], "user-concurrent-runtime-file.txt"), "utf8"),
+      "preserve concurrent bundle edit\n",
+      `the file added during retirement must survive\n${output}`,
+    );
+    assert.deepEqual(
+      durableBundleLedger(runtime),
+      expectedDurableBundleLedger(runtime, [second, third]),
+      "the manifest must not keep claiming a path that no longer exists",
+    );
+    assert.match(output, /could not be moved back; it is kept at .*; move it back to .* manually/u);
+    assert.doesNotMatch(output, /Removed \d+ superseded/u);
+  } finally {
+    rmSync(testRoot, { recursive: true, force: true });
+  }
+}
+
 test(
   "packed sync materializes an idempotent source-independent durable MCP bundle",
   SERIAL_TEST_OPTIONS,
@@ -765,4 +1077,28 @@ test(
   "manifest and late failures preserve concurrent config or bundle edits instead of rolling them back",
   SERIAL_TEST_OPTIONS,
   verifyConcurrentEditsBlockRollback,
+);
+
+test(
+  "updates retire superseded durable MCP bundles and keep the current, the previous, user-modified and still-referenced ones",
+  SERIAL_TEST_OPTIONS,
+  verifySupersededDurableBundlesAreRetired,
+);
+
+test(
+  "profiles that share a runtime store keep the bundles any of their Claude MCP configurations launch",
+  SERIAL_TEST_OPTIONS,
+  verifySharedStoreKeepsBundlesOtherProfilesReference,
+);
+
+test(
+  "a bundle edited between the retirement check and its removal is restored with its manifest records",
+  SERIAL_TEST_OPTIONS,
+  verifyBundleEditedDuringRetirementIsPreserved,
+);
+
+test(
+  "a drifted bundle that cannot be moved back is dropped from the manifest and kept in place",
+  SERIAL_TEST_OPTIONS,
+  verifyUnrestorableDriftedBundleIsForgottenAndKept,
 );
