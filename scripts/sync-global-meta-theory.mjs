@@ -3550,11 +3550,29 @@ async function retireSupersededDurableMcpBundles(plan) {
       );
       assertHomeBound(stagedPath);
       await assertRealHomeBound(stagedPath);
+      if (process.env.META_KIM_TEST_CONCURRENT_DURABLE_MCP_EDIT === "pre_retire_rename") {
+        await fs.writeFile(
+          path.join(entry.path, "user-concurrent-runtime-file.txt"),
+          "preserve concurrent bundle edit\n",
+          "utf8",
+        );
+      }
       try {
         await renameDirectoryWithRetry(entry.path, stagedPath);
       } catch (error) {
         if (!isRetryableDirectoryLock(error)) throw error;
         preserved.push(`${path.basename(entry.path)} (it is in use)`);
+        continue;
+      }
+      // Another process may have changed the bundle between the closure check
+      // and the rename. Ownership is only forgotten for the exact recorded
+      // bytes; anything else goes back in place with its manifest records.
+      if (!durableMcpBundleMatchesRecord(stagedPath, entry)) {
+        const restored = await renameDirectoryWithRetry(stagedPath, entry.path)
+          .then(() => true, () => false);
+        preserved.push(
+          `${path.basename(entry.path)} (its contents changed while it was being retired${restored ? "" : `; kept at ${stagedPath}`})`,
+        );
         continue;
       }
       staged.push({ entry, stagedPath });
@@ -3583,6 +3601,21 @@ async function retireSupersededDurableMcpBundles(plan) {
 
   const retired = [];
   for (const { entry, stagedPath } of staged) {
+    if (process.env.META_KIM_TEST_CONCURRENT_DURABLE_MCP_EDIT === "pre_retire_delete") {
+      await fs.writeFile(
+        path.join(stagedPath, "user-concurrent-runtime-file.txt"),
+        "preserve concurrent bundle edit\n",
+        "utf8",
+      );
+    }
+    if (!durableMcpBundleMatchesRecord(stagedPath, entry)) {
+      // The manifest no longer claims it, so the changed directory is kept as
+      // unknown content rather than deleted.
+      await renameDirectoryWithRetry(stagedPath, entry.path).catch(() => {});
+      const keptAt = (await pathExists(entry.path)) ? entry.path : stagedPath;
+      preserved.push(`${path.basename(entry.path)} (its contents changed while it was being retired; kept at ${keptAt})`);
+      continue;
+    }
     retired.push(path.basename(entry.path));
     await fs.rm(stagedPath, { recursive: true, force: true }).catch((error) => {
       console.warn(

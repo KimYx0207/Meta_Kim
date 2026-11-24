@@ -949,6 +949,72 @@ function verifySharedStoreKeepsBundlesOtherProfilesReference() {
   }
 }
 
+function verifyBundleEditedDuringRetirementIsPreserved() {
+  const testRoot = mkdtempSync(path.join(os.tmpdir(), "meta-kim-runtime-retire-race-"));
+  try {
+    const candidate = preparePackedCandidate(testRoot);
+    const runtime = isolatedRuntime(testRoot, "runtime-home");
+    const { layout: first } = syncPackedVersion(candidate, runtime, runtime.userHome, null);
+    const { layout: second } = syncPackedVersion(candidate, runtime, runtime.userHome, 1);
+    const firstFingerprint = treeFingerprint(first.bundleDir);
+    // The hook adds a user file after the closure check and before the rename.
+    const { layout: third, output } = syncPackedVersion(candidate, runtime, runtime.userHome, 2, {
+      META_KIM_TEST_CONCURRENT_DURABLE_MCP_EDIT: "pre_retire_rename",
+    });
+    const userFile = path.join(first.bundleDir, "user-concurrent-runtime-file.txt");
+    assert.equal(
+      existsSync(userFile) && readFileSync(userFile, "utf8"),
+      "preserve concurrent bundle edit\n",
+      `a file added while the bundle was being retired must survive\n${output}`,
+    );
+    rmSync(userFile, { force: true });
+    assert.equal(treeFingerprint(first.bundleDir), firstFingerprint);
+    assert.deepEqual(
+      readdirSync(path.dirname(first.bundleDir)).sort(),
+      [first, second, third].map((layout) => path.basename(layout.bundleDir)).sort(),
+      "no staged retirement directory is left behind",
+    );
+    assert.deepEqual(
+      durableBundleLedger(runtime),
+      expectedDurableBundleLedger(runtime, [first, second, third]),
+      "the drifted bundle keeps its install manifest records",
+    );
+    assert.match(output, /its contents changed while it was being retired/u);
+    assert.doesNotMatch(output, /Removed \d+ superseded/u);
+
+    // A change that lands after the manifest already forgot the bundle leaves
+    // the directory in place as unknown content instead of deleting it.
+    const { layout: fourth, output: lateOutput } = syncPackedVersion(
+      candidate,
+      runtime,
+      runtime.userHome,
+      3,
+      { META_KIM_TEST_CONCURRENT_DURABLE_MCP_EDIT: "pre_retire_delete" },
+    );
+    for (const layout of [first, second]) {
+      assert.equal(
+        readFileSync(path.join(layout.bundleDir, "user-concurrent-runtime-file.txt"), "utf8"),
+        "preserve concurrent bundle edit\n",
+        `a file added after the manifest flush must survive\n${lateOutput}`,
+      );
+    }
+    assert.deepEqual(
+      readdirSync(path.dirname(first.bundleDir)).sort(),
+      [first, second, third, fourth].map((layout) => path.basename(layout.bundleDir)).sort(),
+      "the late-drifted bundles return to their own paths",
+    );
+    assert.deepEqual(
+      durableBundleLedger(runtime),
+      expectedDurableBundleLedger(runtime, [third, fourth]),
+      "the manifest no longer claims the late-drifted bundles",
+    );
+    assert.match(lateOutput, /its contents changed while it was being retired; kept at /u);
+    assert.doesNotMatch(lateOutput, /Removed \d+ superseded/u);
+  } finally {
+    rmSync(testRoot, { recursive: true, force: true });
+  }
+}
+
 test(
   "packed sync materializes an idempotent source-independent durable MCP bundle",
   SERIAL_TEST_OPTIONS,
@@ -989,4 +1055,10 @@ test(
   "profiles that share a runtime store keep the bundles any of their Claude MCP configurations launch",
   SERIAL_TEST_OPTIONS,
   verifySharedStoreKeepsBundlesOtherProfilesReference,
+);
+
+test(
+  "a bundle edited between the retirement check and its removal is restored with its manifest records",
+  SERIAL_TEST_OPTIONS,
+  verifyBundleEditedDuringRetirementIsPreserved,
 );
