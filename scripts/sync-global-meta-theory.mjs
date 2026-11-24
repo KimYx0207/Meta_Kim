@@ -3420,8 +3420,15 @@ function jsonMentionsPathWithin(value, directoryPath) {
   return false;
 }
 
-async function supersededDurableMcpBundleBlocker(entry, { runtimeBaseDir, runtimeRoot, claudeConfig }) {
-  if (jsonMentionsPathWithin(claudeConfig, entry.path)) {
+function durableMcpBundleMatchesRecord(directoryPath, entry) {
+  const closure = directoryClosureSync(directoryPath);
+  return Boolean(closure) &&
+    closure.sha256 === entry.directoryClosureSha256 &&
+    closure.entryCount === entry.directoryClosureEntryCount;
+}
+
+async function supersededDurableMcpBundleBlocker(entry, { runtimeBaseDir, runtimeRoot, claudeConfigs }) {
+  if (claudeConfigs.some((config) => jsonMentionsPathWithin(config, entry.path))) {
     return "the Claude MCP configuration still refers to it";
   }
   try {
@@ -3440,15 +3447,40 @@ async function supersededDurableMcpBundleBlocker(entry, { runtimeBaseDir, runtim
   ) {
     return "the manifest holds no content record for it";
   }
-  const closure = directoryClosureSync(entry.path);
-  if (
-    !closure ||
-    closure.sha256 !== entry.directoryClosureSha256 ||
-    closure.entryCount !== entry.directoryClosureEntryCount
-  ) {
+  if (!durableMcpBundleMatchesRecord(entry.path, entry)) {
     return "its contents differ from the recorded install";
   }
   return null;
+}
+
+// Claude profiles whose CLAUDE_CONFIG_DIR share a parent directory share one
+// runtime store but keep separate MCP configurations. A bundle is in use while
+// any configuration this installer has written to still mentions it, not only
+// the configuration of the profile being synced.
+async function readClaudeMcpConfigsSharingStore(plan, manifest) {
+  const configPaths = new Map([[packagePathKey(plan.configPath), plan.configPath]]);
+  for (const entry of manifest?.entries ?? []) {
+    if (
+      entry.source === "sync-global-meta-theory" &&
+      entry.kind === "mcp-server" &&
+      entry.purpose === "claude-global-mcp" &&
+      typeof entry.path === "string" &&
+      path.isAbsolute(entry.path)
+    ) {
+      configPaths.set(packagePathKey(entry.path), entry.path);
+    }
+  }
+  const configs = [];
+  for (const configPath of configPaths.values()) {
+    try {
+      if (await pathExists(configPath)) {
+        configs.push(JSON.parse(await fs.readFile(configPath, "utf8")));
+      }
+    } catch {
+      return null;
+    }
+  }
+  return configs;
 }
 
 async function retireSupersededDurableMcpBundles(plan) {
@@ -3483,14 +3515,8 @@ async function retireSupersededDurableMcpBundles(plan) {
   }
   if (candidates.length === 0) return;
 
-  let claudeConfig;
-  try {
-    claudeConfig = (await pathExists(plan.configPath))
-      ? JSON.parse(await fs.readFile(plan.configPath, "utf8"))
-      : {};
-  } catch {
-    return;
-  }
+  const claudeConfigs = await readClaudeMcpConfigsSharingStore(plan, manifest);
+  if (!claudeConfigs) return;
 
   const recorder = openRecorder({
     scope: "global",
@@ -3512,7 +3538,7 @@ async function retireSupersededDurableMcpBundles(plan) {
       const blocker = await supersededDurableMcpBundleBlocker(entry, {
         runtimeBaseDir,
         runtimeRoot: currentLayout.runtimeRoot,
-        claudeConfig,
+        claudeConfigs,
       });
       if (blocker) {
         preserved.push(`${path.basename(entry.path)} (${blocker})`);

@@ -878,6 +878,77 @@ function verifySupersededDurableBundlesAreRetired() {
   }
 }
 
+function claudeProfileRuntime(userHome, profileName) {
+  const claudeHome = path.join(userHome, "profiles", profileName);
+  mkdirSync(claudeHome, { recursive: true });
+  const env = {
+    ...process.env,
+    HOME: userHome,
+    USERPROFILE: userHome,
+    CLAUDE_CONFIG_DIR: claudeHome,
+    META_KIM_CLAUDE_HOME: claudeHome,
+  };
+  delete env.META_KIM_CLAUDE_USER_CONFIG;
+  return {
+    claudeConfig: path.join(claudeHome, ".claude.json"),
+    claudeHome,
+    userHome,
+    env,
+  };
+}
+
+function syncPackedVersion(candidate, runtime, runtimeBaseDir, suffix, extraEnv = {}) {
+  const manifest = setPackedFixtureVersion(
+    candidate.workspace,
+    suffix ? `${ORIGINAL_MANIFEST.version}-retire-test.${suffix}` : ORIGINAL_MANIFEST.version,
+  );
+  const layout = resolveDurableMetaKimRuntimeLayout(
+    runtimeBaseDir,
+    resolvePortableMetaKimPackageIdentity(manifest, DISTRIBUTION),
+    manifest,
+    process.execPath,
+    "claude",
+  );
+  const result = requireSuccess(
+    `packed global sync ${manifest.version}`,
+    runGlobalSync(candidate.workspace, runtime, extraEnv),
+  );
+  assert.deepEqual(
+    JSON.parse(readFileSync(runtime.claudeConfig, "utf8")).mcpServers["meta-kim-runtime"],
+    layout.definition,
+    "the Claude MCP entry must launch the bundle of the version just synced",
+  );
+  return { layout, output: `${result.stdout ?? ""}\n${result.stderr ?? ""}` };
+}
+
+function verifySharedStoreKeepsBundlesOtherProfilesReference() {
+  const testRoot = mkdtempSync(path.join(os.tmpdir(), "meta-kim-runtime-profiles-"));
+  try {
+    const candidate = preparePackedCandidate(testRoot);
+    const userHome = path.join(testRoot, "runtime-home");
+    const profileA = claudeProfileRuntime(userHome, "a");
+    const profileB = claudeProfileRuntime(userHome, "b");
+    // Both profiles share a parent directory, so they share one runtime store
+    // while each keeps its own Claude MCP configuration.
+    const storeBase = path.join(userHome, "profiles");
+    const { layout: pinnedByA } = syncPackedVersion(candidate, profileA, storeBase, null);
+    syncPackedVersion(candidate, profileB, storeBase, 1);
+    const { output } = syncPackedVersion(candidate, profileB, storeBase, 2);
+    assert.ok(
+      existsSync(pinnedByA.cliPath),
+      `a bundle another profile still launches must stay installed\n${output}`,
+    );
+    assert.deepEqual(
+      JSON.parse(readFileSync(profileA.claudeConfig, "utf8")).mcpServers["meta-kim-runtime"],
+      pinnedByA.definition,
+    );
+    assert.match(output, /the Claude MCP configuration still refers to it/u);
+    assert.doesNotMatch(output, /Removed \d+ superseded/u);
+  } finally {
+    rmSync(testRoot, { recursive: true, force: true });
+  }
+}
+
 test(
   "packed sync materializes an idempotent source-independent durable MCP bundle",
   SERIAL_TEST_OPTIONS,
@@ -912,4 +983,10 @@ test(
   "updates retire superseded durable MCP bundles and keep the current, the previous, user-modified and still-referenced ones",
   SERIAL_TEST_OPTIONS,
   verifySupersededDurableBundlesAreRetired,
+);
+
+test(
+  "profiles that share a runtime store keep the bundles any of their Claude MCP configurations launch",
+  SERIAL_TEST_OPTIONS,
+  verifySharedStoreKeepsBundlesOtherProfilesReference,
 );
