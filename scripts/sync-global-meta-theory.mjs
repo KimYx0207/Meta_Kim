@@ -3526,7 +3526,21 @@ async function retireSupersededDurableMcpBundles(plan) {
   const trackedPurposes = new Set(
     ["package-manifest", "cli", "server"].map((label) => `${DURABLE_MCP_BUNDLE_PURPOSE}:${label}`),
   );
+  const forgetBundleRecords = (entry) => {
+    recorder.forget(entry.path, entry.purpose);
+    for (const fileEntry of manifest.entries) {
+      if (
+        recordedBySync(fileEntry) &&
+        fileEntry.kind === "file" &&
+        trackedPurposes.has(fileEntry.purpose) &&
+        pathIsWithin(entry.path, fileEntry.path)
+      ) {
+        recorder.forget(fileEntry.path, fileEntry.purpose);
+      }
+    }
+  };
   const staged = [];
+  const stranded = [];
   const preserved = [];
   const restoreStaged = async () => {
     for (const item of staged.splice(0)) {
@@ -3568,27 +3582,28 @@ async function retireSupersededDurableMcpBundles(plan) {
       // and the rename. Ownership is only forgotten for the exact recorded
       // bytes; anything else goes back in place with its manifest records.
       if (!durableMcpBundleMatchesRecord(stagedPath, entry)) {
-        const restored = await renameDirectoryWithRetry(stagedPath, entry.path)
-          .then(() => true, () => false);
+        const restored = await (
+          process.env.META_KIM_TEST_FAIL_DURABLE_MCP_AT === "retire_restore"
+            ? Promise.reject(new Error("Injected durable MCP retire_restore failure."))
+            : renameDirectoryWithRetry(stagedPath, entry.path)
+        ).then(() => true, () => false);
+        if (restored) {
+          preserved.push(`${path.basename(entry.path)} (its contents changed while it was being retired)`);
+          continue;
+        }
+        // The recorded path no longer exists, so the manifest stops claiming
+        // it and the directory stays where it is as unknown content.
+        forgetBundleRecords(entry);
+        stranded.push(entry);
         preserved.push(
-          `${path.basename(entry.path)} (its contents changed while it was being retired${restored ? "" : `; kept at ${stagedPath}`})`,
+          `${path.basename(entry.path)} (its contents changed while it was being retired and it could not be moved back; it is kept at ${stagedPath}; move it back to ${entry.path} manually)`,
         );
         continue;
       }
       staged.push({ entry, stagedPath });
-      recorder.forget(entry.path, entry.purpose);
-      for (const fileEntry of manifest.entries) {
-        if (
-          recordedBySync(fileEntry) &&
-          fileEntry.kind === "file" &&
-          trackedPurposes.has(fileEntry.purpose) &&
-          pathIsWithin(entry.path, fileEntry.path)
-        ) {
-          recorder.forget(fileEntry.path, fileEntry.purpose);
-        }
-      }
+      forgetBundleRecords(entry);
     }
-    if (staged.length > 0) {
+    if (staged.length > 0 || stranded.length > 0) {
       const result = process.env.META_KIM_TEST_FAIL_DURABLE_MCP_AT === "retire_manifest"
         ? { ok: false, error: "Injected durable MCP retire_manifest failure." }
         : await recorder.flush();
@@ -3613,7 +3628,8 @@ async function retireSupersededDurableMcpBundles(plan) {
       // unknown content rather than deleted.
       await renameDirectoryWithRetry(stagedPath, entry.path).catch(() => {});
       const keptAt = (await pathExists(entry.path)) ? entry.path : stagedPath;
-      preserved.push(`${path.basename(entry.path)} (its contents changed while it was being retired; kept at ${keptAt})`);
+      const manualNote = keptAt === stagedPath ? `; move it back to ${entry.path} manually` : "";
+      preserved.push(`${path.basename(entry.path)} (its contents changed while it was being retired; kept at ${keptAt}${manualNote})`);
       continue;
     }
     retired.push(path.basename(entry.path));

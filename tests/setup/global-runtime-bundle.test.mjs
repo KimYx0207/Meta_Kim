@@ -1015,6 +1015,40 @@ function verifyBundleEditedDuringRetirementIsPreserved() {
   }
 }
 
+function verifyUnrestorableDriftedBundleIsForgottenAndKept() {
+  const testRoot = mkdtempSync(path.join(os.tmpdir(), "meta-kim-runtime-retire-restore-"));
+  try {
+    const candidate = preparePackedCandidate(testRoot);
+    const runtime = isolatedRuntime(testRoot, "runtime-home");
+    const { layout: first } = syncPackedVersion(candidate, runtime, runtime.userHome, null);
+    const { layout: second } = syncPackedVersion(candidate, runtime, runtime.userHome, 1);
+    // The bundle drifts before the rename and the rename back then fails.
+    const { layout: third, output } = syncPackedVersion(candidate, runtime, runtime.userHome, 2, {
+      META_KIM_TEST_CONCURRENT_DURABLE_MCP_EDIT: "pre_retire_rename",
+      META_KIM_TEST_FAIL_DURABLE_MCP_AT: "retire_restore",
+    });
+    const bundleParent = path.dirname(first.bundleDir);
+    const strandedNames = readdirSync(bundleParent)
+      .filter((name) => name.startsWith(".meta-kim-runtime-retired-"));
+    assert.equal(strandedNames.length, 1, `the drifted bundle stays at its staged path\n${output}`);
+    assert.equal(existsSync(first.bundleDir), false);
+    assert.equal(
+      readFileSync(path.join(bundleParent, strandedNames[0], "user-concurrent-runtime-file.txt"), "utf8"),
+      "preserve concurrent bundle edit\n",
+      `the file added during retirement must survive\n${output}`,
+    );
+    assert.deepEqual(
+      durableBundleLedger(runtime),
+      expectedDurableBundleLedger(runtime, [second, third]),
+      "the manifest must not keep claiming a path that no longer exists",
+    );
+    assert.match(output, /could not be moved back; it is kept at .*; move it back to .* manually/u);
+    assert.doesNotMatch(output, /Removed \d+ superseded/u);
+  } finally {
+    rmSync(testRoot, { recursive: true, force: true });
+  }
+}
+
 test(
   "packed sync materializes an idempotent source-independent durable MCP bundle",
   SERIAL_TEST_OPTIONS,
@@ -1061,4 +1095,10 @@ test(
   "a bundle edited between the retirement check and its removal is restored with its manifest records",
   SERIAL_TEST_OPTIONS,
   verifyBundleEditedDuringRetirementIsPreserved,
+);
+
+test(
+  "a drifted bundle that cannot be moved back is dropped from the manifest and kept in place",
+  SERIAL_TEST_OPTIONS,
+  verifyUnrestorableDriftedBundleIsForgottenAndKept,
 );
