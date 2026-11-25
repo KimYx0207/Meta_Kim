@@ -4578,8 +4578,9 @@ Examples:
       }
     }
 
-    // MCP config (.cursor/mcp.json) — reuse Claude's MCP template
-    if (dirs.cursorMcpPath) {
+    // The project renders its MCP template. Global Cursor has no Meta_Kim
+    // registration here, so its shared user config requires no write.
+    if (scope !== "global" && dirs.cursorMcpPath) {
       const mcpContent = await tryReadCanonical(canonicalClaudeMcpPath);
       const cursorInRepoRoot = dirs.cursorMcpPath.includes(repoRoot);
       const renderedMcpContent = cursorInRepoRoot

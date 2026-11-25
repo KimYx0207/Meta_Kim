@@ -1,5 +1,13 @@
 {
   "schemaVersion": "meta-kim-global-install-ownership-policy-v1",
+  "managedDependencies": {
+    "sourceOwner": "install-global-skills-all-runtimes",
+    "retainedSource": {
+      "category": "I",
+      "purpose": "kim-service-dependency-source",
+      "path": ".meta-kim/runtime/dependency-projects/kim-service"
+    }
+  },
   "durableRuntimeBundle": {
     "runtime": "claude",
     "assetType": "mcp",

@@ -69,6 +69,7 @@ import {
   syncManifestPath,
 } from "./meta-kim-sync-config.mjs";
 import { resolveOpenClawWorkspaceOwnedFiles } from "./openclaw-workspace-projection.mjs";
+import { loadMetaKimConfig } from "./meta-kim-config-loader.mjs";
 import { invertNativeJsonMutations, normalizeNativeJsonMutations } from "./native-runtime-projection.mjs";
 import { listJoinedProjectRegistryEntries } from "./project-registry.mjs";
 import { inspectTrustedPath } from "./safe-managed-file-operations.mjs";
@@ -302,7 +303,8 @@ function readGlobalOwnershipPolicy() {
     !policy.durableRuntimeBundle ||
     typeof policy.durableRuntimeBundle !== "object" ||
     !policy.projectionPackageStore ||
-    typeof policy.projectionPackageStore !== "object"
+    typeof policy.projectionPackageStore !== "object" ||
+    !policy.managedDependencies?.retainedSource
   ) {
     throw new Error(`Invalid global install ownership policy: ${GLOBAL_OWNERSHIP_POLICY_PATH}`);
   }
@@ -323,6 +325,29 @@ function buildGlobalRemovalPolicy() {
     distribution,
   );
   const ownershipPolicy = readGlobalOwnershipPolicy();
+  const dependencyPolicy = ownershipPolicy.managedDependencies;
+  const sharedSource = dependencyPolicy.retainedSource;
+  if (dependencyPolicy.sourceOwner !== "install-global-skills-all-runtimes" ||
+      sharedSource.category !== CATEGORIES.I || sharedSource.purpose !== "kim-service-dependency-source" ||
+      sharedSource.path !== ".meta-kim/runtime/dependency-projects/kim-service") {
+    throw new Error("Invalid global ownership managedDependencies");
+  }
+  const dependencySkillPaths = new Map();
+  for (const skill of loadMetaKimConfig({ repoRoot: REPO_ROOT, env: {} }).skills.skills) {
+    if (!/^[a-z0-9][a-z0-9._-]*$/iu.test(skill.id) || skill.claudePlugin ||
+        ["pluginMarketplace", "upstreamCli"].includes(skill.installMethod)) continue;
+    const rootSegment = skill.installRoot === "plugins" && !skill.pluginHookCompat ? "plugins" : "skills";
+    const paths = new Set();
+    for (const runtimeId of skill.targets) {
+      if (!profiles[runtimeId]) continue;
+      const { baseDir } = resolveRuntimeProjection(runtimeId, "global");
+      paths.add(pathKey(path.join(baseDir, rootSegment, skill.id)));
+      if (runtimeId === "codex" && skill.id === "meta-skill-creator") {
+        paths.add(pathKey(path.join(homedir(), ".agents", "skills", skill.id)));
+      }
+    }
+    dependencySkillPaths.set(`${skill.id}-global-skill`, paths);
+  }
   const descriptors = [];
   for (const [runtimeId, profile] of Object.entries(profiles)) {
     const projection = resolveRuntimeProjection(runtimeId, "global");
@@ -445,6 +470,11 @@ function buildGlobalRemovalPolicy() {
     profiles,
     descriptors,
     externalEntries,
+    managedDependencies: {
+      sourceOwner: dependencyPolicy.sourceOwner,
+      retainedSource: { ...sharedSource, rootPath: path.resolve(homedir(), sharedSource.path) },
+      skillPaths: dependencySkillPaths,
+    },
     durableRuntimeBundle: {
       ...durableRule,
       runtimeBaseDir: durableRuntimeBaseDir,
@@ -841,6 +871,19 @@ function matchesExternalGlobalRule(entry, rule) {
     : pathAtOrWithin(rule.rootPath, entry.path);
 }
 
+function matchesManagedDependencyReceipt(entry) {
+  const { sourceOwner, retainedSource, skillPaths } = GLOBAL_REMOVAL_POLICY.managedDependencies;
+  if (entry.source !== sourceOwner || entry.kind !== "dir" || entry.runtimeTarget != null ||
+      !SHA256_RE.test(entry.directoryClosureSha256 ?? "") ||
+      !Number.isSafeInteger(entry.directoryClosureEntryCount) || entry.directoryClosureEntryCount < 1) return false;
+  if (entry.purpose === retainedSource.purpose) {
+    return entry.category === retainedSource.category &&
+      pathKey(path.dirname(entry.path)) === pathKey(retainedSource.rootPath) &&
+      path.basename(entry.path) === entry.directoryClosureSha256;
+  }
+  return entry.category === CATEGORIES.A && (skillPaths.get(entry.purpose)?.has(pathKey(entry.path)) ?? false);
+}
+
 function validateGlobalManifestEntryForRemoval(entry) {
   if (!manifestEntryIsActionable(entry)) return { ok: true };
   if (
@@ -853,6 +896,7 @@ function validateGlobalManifestEntryForRemoval(entry) {
 
   if (trustedDurableRuntimeBundleEntry(entry)) return { ok: true };
   if (trustedProjectionPackageRuntimeBundleEntry(entry)) return { ok: true };
+  if (matchesManagedDependencyReceipt(entry)) return { ok: true };
   if (isExactMcpMemoryBootManifestIdentity(entry, {
     homeRoot: homedir(),
     platformName: process.platform,
@@ -997,6 +1041,7 @@ const MSG = {
     planHeader: "Planned actions:",
     actRemoveDir: (p) => `  − remove directory: ${p}`,
     actRemoveFile: (p) => `  − remove file: ${p}`,
+    actRetainSharedResource: (p) => `  ~ retain shared resource ${p}`,
     actStripSettings: (p, n) =>
       `  ~ strip ${n} Meta_Kim hook entr${n === 1 ? "y" : "ies"} from: ${p}`,
     actBackup: (p) => `  ↳ backup → ${p}`,
@@ -1036,6 +1081,7 @@ const MSG = {
     planHeader: "计划执行的操作：",
     actRemoveDir: (p) => `  − 删除目录：${p}`,
     actRemoveFile: (p) => `  − 删除文件：${p}`,
+    actRetainSharedResource: (p) => `  ~ 保留共享资源 ${p}`,
     actStripSettings: (p, n) => `  ~ 从 ${p} 移除 ${n} 条 Meta_Kim hook 条目`,
     actBackup: (p) => `  ↳ 备份 → ${p}`,
     actPipUninstall: (pkg) => `  − pip 卸载 ${pkg}（仅 --deep 时）`,
@@ -1074,6 +1120,7 @@ const MSG = {
     planHeader: "実行予定の操作：",
     actRemoveDir: (p) => `  − ディレクトリ削除：${p}`,
     actRemoveFile: (p) => `  − ファイル削除：${p}`,
+    actRetainSharedResource: (p) => `  ~ 共有リソースを保持 ${p}`,
     actStripSettings: (p, n) =>
       `  ~ ${p} から Meta_Kim 管理 hook を ${n} 件削除`,
     actBackup: (p) => `  ↳ バックアップ → ${p}`,
@@ -1111,6 +1158,7 @@ const MSG = {
     planHeader: "실행 예정 작업:",
     actRemoveDir: (p) => `  − 디렉터리 삭제: ${p}`,
     actRemoveFile: (p) => `  − 파일 삭제: ${p}`,
+    actRetainSharedResource: (p) => `  ~ 공유 리소스 유지 ${p}`,
     actStripSettings: (p, n) => `  ~ ${p} 에서 Meta_Kim hook 항목 ${n} 건 제거`,
     actBackup: (p) => `  ↳ 백업 → ${p}`,
     actPipUninstall: (pkg) => `  − pip uninstall ${pkg} (--deep 전용)`,
@@ -1406,6 +1454,13 @@ function planActions({
   const actions = [];
 
   for (const f of findings) {
+    if (f.manifestScope === "global" && (
+      f.purpose === GLOBAL_REMOVAL_POLICY.managedDependencies.retainedSource.purpose ||
+      (f.kind === "file" && f.purpose === "cursor-global-mcpFile")
+    )) {
+      actions.push({ kind: "retain-shared-resource", path: f.path });
+      continue;
+    }
     const primaryProjectionReferenceCleanup =
       isPrimaryProjectionReferenceFinding(f);
     switch (f.category) {
@@ -1657,6 +1712,8 @@ function describe(action, t) {
       return `  ~ strip managed MCP ${action.serverName} from: ${action.path}`;
     case "remove-bundle":
       return `  − remove exact managed runtime bundle: ${action.path}`;
+    case "retain-shared-resource":
+      return t.actRetainSharedResource(action.path);
     case "pip-uninstall":
       return t.actPipUninstall(action.package);
     default:

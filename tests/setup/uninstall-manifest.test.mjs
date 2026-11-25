@@ -8,6 +8,7 @@ import {
   mkdtempSync,
   promises as fsPromises,
   readFileSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -66,9 +67,13 @@ const PRIMARY_PROJECTION_BUNDLE_PURPOSE =
   "primary-runtime-global-projection-package-runtime-bundle";
 
 function runUninstall(userHome, args) {
+  return runManifestFixtureCli(userHome, "uninstall.mjs", args);
+}
+
+function runManifestFixtureCli(userHome, script, args) {
   return spawnSync(
     process.execPath,
-    [path.join(REPO_ROOT, "scripts", "uninstall.mjs"), ...args],
+    [path.join(REPO_ROOT, "scripts", script), ...args],
     {
       cwd: REPO_ROOT,
       encoding: "utf8",
@@ -83,6 +88,7 @@ function runUninstall(userHome, args) {
         METAKIM_LANG: "en",
         META_KIM_CLAUDE_HOME: path.join(userHome, ".claude"),
         META_KIM_CODEX_HOME: path.join(userHome, ".codex"),
+        META_KIM_CURSOR_HOME: path.join(userHome, ".cursor"),
       },
     },
   );
@@ -606,6 +612,110 @@ describe("uninstall / findingsFromManifest", () => {
 });
 
 describe("uninstall / manifest fail-closed CLI", () => {
+  test("uninstall preserves shared source and Cursor MCP while removing an exact installed dependency skill", () => {
+    withTmpRepo((home) => {
+      const staged = path.join(home, "synthetic-source");
+      mkdirSync(staged);
+      writeFileSync(path.join(staged, "source-revision.json"), '{"schemaVersion":1}\n');
+      const sourceClosure = directoryClosureSync(staged);
+      const store = path.join(home, ".meta-kim", "runtime", "dependency-projects", "kim-service");
+      mkdirSync(store, { recursive: true });
+      const sourceDir = path.join(store, sourceClosure.sha256);
+      renameSync(staged, sourceDir);
+
+      const installedSkill = path.join(home, ".codex", "skills", "findskill");
+      mkdirSync(installedSkill, { recursive: true });
+      writeFileSync(path.join(installedSkill, "SKILL.md"), "# Installed dependency\n");
+      const skillClosure = directoryClosureSync(installedSkill);
+      const userCheckout = path.join(home, "Kim_Service");
+      mkdirSync(userCheckout);
+      writeFileSync(path.join(userCheckout, "user.txt"), "keep checkout\n");
+
+      const cursorPath = path.join(home, ".cursor", "mcp.json");
+      mkdirSync(path.dirname(cursorPath), { recursive: true });
+      const originalTemplate = `${JSON.stringify({ mcpServers: {} }, null, 2)}\n`;
+      const userMcp = '{"mcpServers":{"user-owned":{"command":"node","args":["custom.mjs"]}}}';
+      writeFileSync(cursorPath, userMcp);
+
+      const managedSource = {
+        path: sourceDir,
+        category: CATEGORIES.I,
+        source: "install-global-skills-all-runtimes",
+        purpose: "kim-service-dependency-source",
+        kind: "dir",
+        directoryClosureSha256: sourceClosure.sha256,
+        directoryClosureEntryCount: sourceClosure.entryCount,
+      };
+      const managedSkill = {
+        path: installedSkill,
+        category: CATEGORIES.A,
+        source: "install-global-skills-all-runtimes",
+        purpose: "findskill-global-skill",
+        kind: "dir",
+        directoryClosureSha256: skillClosure.sha256,
+        directoryClosureEntryCount: skillClosure.entryCount,
+      };
+      const sharedCursorMcp = {
+        path: cursorPath,
+        category: CATEGORIES.C,
+        source: "sync-runtimes",
+        purpose: "cursor-global-mcpFile",
+        kind: "file",
+        runtimeTarget: "cursor",
+        sha256: sha256(originalTemplate),
+        size: Buffer.byteLength(originalTemplate),
+      };
+      const run = () => runUninstall(home, ["--scope=global", "--deep", "--yes"]);
+      writeGlobalManifest(home, [{ ...managedSource, path: userCheckout }, managedSkill, sharedCursorMcp]);
+      const forged = run();
+      assert.notEqual(forged.status, 0);
+      assert.match(forged.stderr, /outside_global_ownership_policy/u);
+      assert.equal(existsSync(installedSkill), true);
+
+      writeGlobalManifest(home, [{ ...managedSource, directoryClosureSha256: "f".repeat(64) }, managedSkill]);
+      const wrongClosure = run();
+      assert.notEqual(wrongClosure.status, 0);
+      assert.equal(existsSync(installedSkill), true);
+
+      writeGlobalManifest(home, [managedSource, managedSkill, sharedCursorMcp]);
+      const skillFile = path.join(installedSkill, "SKILL.md");
+      writeFileSync(skillFile, "user-modified skill\n");
+      const driftedSkill = run();
+      assert.notEqual(driftedSkill.status, 0);
+      assert.equal(readFileSync(skillFile, "utf8"), "user-modified skill\n");
+      writeFileSync(skillFile, "# Installed dependency\n");
+
+      const removed = run();
+      assert.equal(removed.status, 0, `${removed.stdout}\n${removed.stderr}`);
+      assert.match(removed.stdout, /retain shared resource/iu);
+      assert.equal(existsSync(installedSkill), false);
+      assert.equal(existsSync(sourceDir), true);
+      assert.equal(readFileSync(path.join(userCheckout, "user.txt"), "utf8"), "keep checkout\n");
+      assert.equal(readFileSync(cursorPath, "utf8"), userMcp);
+      const persisted = JSON.parse(readFileSync(path.join(home, ".meta-kim", "install-manifest.json"), "utf8"));
+      assert.ok(persisted.entries.some((entry) => entry.path === sourceDir));
+      assert.ok(persisted.entries.some((entry) => entry.path === cursorPath));
+    });
+  });
+
+  test("Cursor global MCP sync preserves user bytes and does not create an empty user file", () => {
+    withTmpRepo((home) => {
+      const cursorPath = path.join(home, ".cursor", "mcp.json");
+      const sync = () => runManifestFixtureCli(home, "sync-runtimes.mjs", [
+        "--scope", "global", "--targets", "cursor", "--global-assets", "mcp",
+      ]);
+      const first = sync();
+      assert.equal(first.status, 0, `${first.stdout}\n${first.stderr}`);
+      assert.equal(existsSync(cursorPath), false);
+
+      mkdirSync(path.dirname(cursorPath), { recursive: true });
+      const userBytes = '{ "mcpServers": { "keep-me": { "url": "https://example.invalid/mcp" } } }';
+      writeFileSync(cursorPath, userBytes);
+      const second = sync();
+      assert.equal(second.status, 0, `${second.stdout}\n${second.stderr}`);
+      assert.equal(readFileSync(cursorPath, "utf8"), userBytes);
+    });
+  });
   test("an exact future MCP Memory Startup manifest entry is removed with hash and identity enforcement", {
     skip: process.platform !== "win32",
   }, () => {
