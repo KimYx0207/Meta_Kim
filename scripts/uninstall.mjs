@@ -1452,6 +1452,9 @@ function planActions({
     };
   }
   const actions = [];
+  const closedGlobalHookDirectories = findings.filter((finding) =>
+    finding.manifestScope === "global" && finding.category === CATEGORIES.B && finding.kind === "dir"
+  );
 
   for (const f of findings) {
     if (f.manifestScope === "global" && (
@@ -1476,13 +1479,16 @@ function planActions({
         break;
       }
       case CATEGORIES.B: {
-        if (f.mcpMemoryBootArtifact === true || typeof f.recoverySignature === "string") {
+        const standaloneGlobalHook = f.manifestScope === "global" && f.kind === "file" &&
+          !f.mcpMemoryBootArtifact &&
+          !closedGlobalHookDirectories.some((directory) => isStrictDescendant(directory.path, f.path));
+        if (standaloneGlobalHook || f.mcpMemoryBootArtifact === true || typeof f.recoverySignature === "string") {
           actions.push({
             kind: "remove",
             path: f.path,
             catLabel: "B",
             recursive: false,
-            primaryProjectionReferenceCleanup,
+            primaryProjectionReferenceCleanup: standaloneGlobalHook || primaryProjectionReferenceCleanup,
             ...removalIntegrity(f),
           });
           break;

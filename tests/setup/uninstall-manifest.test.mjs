@@ -612,6 +612,61 @@ describe("uninstall / findingsFromManifest", () => {
 });
 
 describe("uninstall / manifest fail-closed CLI", () => {
+  test("global uninstall removes exact standalone Cursor hooks and adapters without touching user files", () => {
+    withTmpRepo((home) => {
+      const cursorRoot = path.join(home, ".cursor", "hooks");
+      const codexRoot = path.join(home, ".codex", "hooks");
+      const cursorSources = path.join(cursorRoot, "meta-kim");
+      const codexSources = path.join(codexRoot, "meta-kim");
+      const managed = [
+        [path.join(cursorSources, "graphify-context.mjs"), "sync-runtimes", "cursor-global-hooksDir"],
+        [path.join(cursorRoot, "hookprompt-adapter.mjs"), "sync-runtimes", "cursor-global-hooksRoot"],
+        [path.join(codexRoot, "hookprompt-adapter.mjs"), "sync-global-meta-theory", "codex-global-hookprompt-adapter"],
+      ];
+      const source = "// exact installed artifact\n";
+      const markFile = ([target, owner, purpose]) => {
+        mkdirSync(path.dirname(target), { recursive: true });
+        writeFileSync(target, source);
+        return {
+          path: target, kind: "file", category: CATEGORIES.B, source: owner, purpose,
+          sha256: sha256(source), size: Buffer.byteLength(source),
+        };
+      };
+      const files = managed.map(markFile);
+      const fileInsideClosedDir = markFile([
+        path.join(codexSources, "graphify-context.mjs"), "sync-global-meta-theory", "codex-global-hook",
+      ]);
+      const closure = directoryClosureSync(codexSources);
+      const closedDir = {
+        path: codexSources, kind: "dir", category: CATEGORIES.B,
+        source: "sync-global-meta-theory", purpose: "codex-global-hooks-dir",
+        directoryClosureSha256: closure.sha256, directoryClosureEntryCount: closure.entryCount,
+      };
+      const ownSources = [
+        path.join(cursorSources, "user.mjs"),
+        path.join(codexSources, "user.mjs"),
+        path.join(home, "project", ".cursor", "hooks", "meta-kim", "graphify-context.mjs"),
+      ];
+      for (const target of ownSources) {
+        mkdirSync(path.dirname(target), { recursive: true });
+        writeFileSync(target, "// user-owned file\n");
+      }
+      const modified = markFile([
+        path.join(cursorSources, "post-format.mjs"), "sync-runtimes", "cursor-global-hooksDir",
+      ]);
+      writeFileSync(modified.path, "// preserve user edit\n");
+      writeGlobalManifest(home, [...files, fileInsideClosedDir, closedDir, modified]);
+      const result = runUninstall(home, ["--scope=global", "--yes"]);
+
+      assert.notEqual(result.status, 0, "modified artifacts must be reported as preserved");
+      assert.match(result.stderr, /Preserved user-modified managed file/u);
+      assert.ok(files.every((entry) => !existsSync(entry.path)));
+      assert.equal(readFileSync(fileInsideClosedDir.path, "utf8"), source, "keep the closed Codex bundle together");
+      assert.equal(readFileSync(modified.path, "utf8"), "// preserve user edit\n");
+      assert.ok(ownSources.every((target) => readFileSync(target, "utf8") === "// user-owned file\n"));
+    });
+  });
+
   test("uninstall preserves shared source and Cursor MCP while removing an exact installed dependency skill", () => {
     withTmpRepo((home) => {
       const staged = path.join(home, "synthetic-source");
