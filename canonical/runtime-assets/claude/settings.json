@@ -25,6 +25,15 @@
     ],
     "SessionStart": [
       {
+        "matcher": "compact|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/activate-meta-theory-spine.mjs --runtime claude"
+          }
+        ]
+      },
+      {
         "matcher": "startup|resume",
         "hooks": [
           {

@@ -723,10 +723,16 @@ export async function checkpointGovernedHost(options) {
     taskCorrections, incompleteTaskCriteria, workspaceGate, evidenceLevel: "owner_reported", nativeInvocationVerified: false, publicReadyAuthority: false };
 }
 
-export function buildGovernedHostHandoff({ state, projectRoot, adapterPath, skillPath, language = "zh-CN" }) {
+export function buildGovernedHostHandoff({ state, projectRoot, adapterPath, skillPath, language = "zh-CN", compact = false }) {
   const conversationId = state?.sourceConversation?.conversationId;
   const verified = state?.conversationLinkState === "verified" && text(conversationId);
-  const command = `node ${JSON.stringify(adapterPath)} --project-root ${JSON.stringify(projectRoot)} --run-id ${JSON.stringify(state.runId)}${verified ? ` --conversation-id ${JSON.stringify(conversationId)}` : " --conversation-id <verified-conversation-required>"} --stage <current-stage> --input <project-local-JSON-file-or->`;
+  const boundCommand = `node ${JSON.stringify(adapterPath)} --project-root ${JSON.stringify(projectRoot)} --run-id ${JSON.stringify(state.runId)}${verified ? ` --conversation-id ${JSON.stringify(conversationId)}` : " --conversation-id <verified-conversation-required>"}`;
+  if (compact && verified) {
+    return language === "zh-CN"
+      ? `Meta_Kim 后台执行接续 runId=${state.runId}；当前阶段=${state.currentStage}。先读取当前记录再接续任务，仍沿用现有授权。\n调用：${boundCommand} --inspect`
+      : `Meta_Kim host execution continuation runId=${state.runId}; current stage=${state.currentStage}. Inspect the current records before resuming within existing authorization.\nInvocation: ${boundCommand} --inspect`;
+  }
+  const command = `${boundCommand} --stage <current-stage> --input <project-local-JSON-file-or->`;
   const workspace = state?.liveWorkspace?.schemaVersion === "meta-kim-live-workspace-state-v1" ? state.liveWorkspace : null;
   const workspaceArguments = workspace && text(workspace.profile) && verified
     ? ["--project-root", projectRoot, "--profile", workspace.profile, "--run-id", state.runId, "--conversation-id", conversationId] : null;
@@ -744,6 +750,7 @@ export function buildGovernedHostHandoff({ state, projectRoot, adapterPath, skil
     "Meta_Kim host execution handoff: backstage instructions, not a user-facing rewritten prompt or a completion receipt.",
     `Continue existing runId=${state.runId}; project=${projectRoot}; current stage=${state.currentStage}; conversation=${verified ? conversationId : "unverified; gather binding evidence before writing"}. Do not mint a parallel run or substitute a historical task.`,
     `Read and apply the installed skill ${skillPath}. The current host owns governance and dispatches actual work to discovered capabilities.`,
+    "Bind meta-warden for substantive Critical and Meta-Review. If eligible and authorized, invoke the verified meta-warden definition through the current host's native delegation. Record an unavailable route when binding or delegation is unavailable. Owner-reported records and native invocation evidence remain separate.",
     `Write stage records through ${adapterPath}. Use --inspect for the current template or --template <stage> for lightweight input.`,
     "For review or feedback rework, inspect fresh revision/stage/status, then explicitly --return-to fetch|thinking|execution with findings and that CAS. Preserve the same run; use fresh taskPacketIds linked by replacesTaskPacketId. --template-return describes the input.",
     "New Thinking packets use task-progress-v1: bind current criterion IDs and hash-verified project evidence. Before dispatch, register running through --observe-task with fresh CAS; report that same attempt/result through execution checkpoint. A task_replan_required needs scoped --correct-task after Thinking, not a global reset. --template-progress and --template-correction show the shapes. Legacy packets are explicitly not_observed.",
@@ -758,6 +765,7 @@ export function buildGovernedHostHandoff({ state, projectRoot, adapterPath, skil
     "Meta_Kim 后台执行接续：这不是用户可见的提示词成稿，也不是任务完成回执。",
     `沿用既有 runId=${state.runId}；项目=${projectRoot}；当前阶段=${state.currentStage}；会话=${verified ? conversationId : "尚未验证，先只读取证并补齐绑定"}。不要新建平行 run 或换用历史任务。`,
     `立即读取并应用已安装技能 ${skillPath}，由当前主线程承接治理并按能力分派实际工作。`,
+    "实质性的 Critical 和 Meta-Review 由 meta-warden 负责。核实角色定义、宿主派工能力和现有授权后，通过本宿主的原生接口调用。角色绑定或派工不可用时，记录实际原因。分别保留负责人自报记录和原生调用证据。",
     `阶段记录通过 ${adapterPath} 写回同一任务。先用 --inspect 读取当前模板，或 --template <stage> 获取轻量输入。`,
     "审查或反馈需要返工时，先inspect取得revision/stage/status，再用--return-to fetch|thinking|execution提交发现与这组CAS；沿用同一run，新工单用replacesTaskPacketId关联旧版。--template-return提供输入模板。",
     "新Thinking工单绑定task-progress-v1、当前criterion ID和项目内真实证据hash。派工前用--observe-task及新鲜CAS登记running；执行checkpoint回写同一attempt与真实结果。单任务需改路时，主控完成Thinking后用--correct-task，不全局重置；--template-progress/--template-correction提供输入。旧工单明确为not_observed。",

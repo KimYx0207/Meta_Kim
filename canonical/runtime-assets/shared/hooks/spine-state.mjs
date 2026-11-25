@@ -1359,7 +1359,16 @@ export async function activateSpineState(cwd, state, options = {}) {
     if (expectedRunId !== null) validateRunId(expectedRunId);
     if (options.refreshExisting === true) {
       if (current?.active === true && current.runId === expectedRunId) {
-        await writeMetaRunStatusUnlocked(cwd, current, profile);
+        const verifiedConversation = options.verifiedConversation;
+        const nativeHint = current.stageRuntimeControl?.nativeSessionHint;
+        const updated = !current.sourceConversation && nativeHint?.runtime === "claude"
+          && verifiedConversation?.runtime === "claude" && verifiedConversation.matchBasis === "transcript_file_verified"
+          && typeof verifiedConversation.conversationId === "string"
+          && nativeHint.sessionId === verifiedConversation.conversationId.toLowerCase()
+          ? bindSourceConversation(current, verifiedConversation)
+          : current;
+        if (updated !== current) await safeAtomicWriteJson(cwd, filePath, updated);
+        await writeMetaRunStatusUnlocked(cwd, updated, profile);
         const migration = await reconcileLegacyRunStatusesUnderSpineLock(cwd, profile);
         return {
           activated: false,
@@ -1422,6 +1431,33 @@ export async function activateSpineState(cwd, state, options = {}) {
       supersededRunId,
       migration,
     };
+  });
+}
+
+export function isSameVerifiedSourceConversation(state, conversation) {
+  return state?.conversationLinkState === "verified"
+    && state.sourceConversation?.runId === state.runId
+    && state.sourceConversation?.matchBasis === "transcript_file_verified"
+    && conversation?.matchBasis === "transcript_file_verified"
+    && state.sourceConversation.runtime === conversation.runtime
+    && state.sourceConversation.conversationId === conversation.conversationId;
+}
+
+// This is an emission record only. Update exactly one advisory field under the
+// existing spine lock so a prompt cannot overwrite concurrent stage evidence.
+export async function recordHostHandoffContext(cwd, state, contextHash) {
+  const { filePath } = resolveSpineStateRoute(cwd, state);
+  const lockPath = `${filePath}.lock`;
+  await assertSafeStatePath(cwd, lockPath, { createParents: true });
+  return withFileLock(lockPath, async () => {
+    const record = await readJsonObject(cwd, filePath);
+    const current = record.status === "valid" ? record.value : null;
+    if (current?.active !== true || current.runId !== state.runId || current.currentStage !== state.currentStage
+      || (current.hostCheckpointRevision || 0) !== (state.hostCheckpointRevision || 0)
+      || !isSameVerifiedSourceConversation(current, state.sourceConversation)) return;
+    if (current.lastHostHandoffContextHash !== contextHash) {
+      await safeAtomicWriteJson(cwd, filePath, { ...current, lastHostHandoffContextHash: contextHash });
+    }
   });
 }
 

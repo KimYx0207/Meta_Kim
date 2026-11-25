@@ -1,6 +1,8 @@
 import process from "node:process";
 import { readJsonFromStdin } from "./utils.mjs";
 import {
+  activateSpineState,
+  isSameVerifiedSourceConversation,
   readSpineStateIncludingInactive,
   terminalizeSpineState,
 } from "./spine-state.mjs";
@@ -15,14 +17,14 @@ const payload = await readJsonFromStdin();
 const cwd = process.cwd();
 
 try {
-  const state = await readSpineStateIncludingInactive(cwd);
+  let state = await readSpineStateIncludingInactive(cwd);
   if (!state) {
     process.exit(0);
   }
 
+  const { conversation } = resolveVerifiedSourceConversation(payload, { runtime: "claude" });
   if (state.sourceConversation?.conversationId) {
-    const bound = resolveVerifiedSourceConversation(payload, { runtime: state.sourceConversation.runtime });
-    if (bound.conversation?.conversationId !== state.sourceConversation.conversationId
+    if (!isSameVerifiedSourceConversation(state, conversation)
       || (payload?.run_id && payload.run_id !== state.runId)) {
       process.stderr.write("[spine-cleanup] preserved another or unverified conversation's run\n");
       process.exit(0);
@@ -32,6 +34,22 @@ try {
   const evolutionCompleted =
     state.deactivationReason === "evolution_completed" ||
     state.stages?.evolution?.status === "completed";
+  if (!evolutionCompleted && state.active && payload?.hook_event_name === "Stop"
+    && state.stageRuntimeControl?.activationMode === "hook_observed" && conversation
+    && (!payload?.run_id || payload.run_id === state.runId)) {
+    const nativeHint = state.stageRuntimeControl?.nativeSessionHint;
+    if (!state.sourceConversation && nativeHint?.runtime === "claude") {
+      if (nativeHint.sessionId !== conversation.conversationId.toLowerCase()) process.exit(0);
+      const expectedRunId = state.runId;
+      await activateSpineState(cwd, state, { refreshExisting: true, expectedRunId, verifiedConversation: conversation });
+      state = await readSpineStateIncludingInactive(cwd);
+      if (!state?.active || state.runId !== expectedRunId) process.exit(0);
+    }
+    if (isSameVerifiedSourceConversation(state, conversation)) {
+      process.stderr.write("[spine-cleanup] preserved the verified Claude task across its turn boundary\n");
+      process.exit(0);
+    }
+  }
   if (!evolutionCompleted && Number.isSafeInteger(state.hostCheckpointRevision) && state.hostCheckpointRevision > 0) {
     process.stderr.write("[spine-cleanup] preserved the host task across its turn boundary\n");
     process.exit(0);

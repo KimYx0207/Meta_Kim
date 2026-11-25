@@ -164,6 +164,7 @@ export function buildMetaKimHooksTemplate(
 
   return {
     SessionStart: [
+      { matcher: "compact|resume", hooks: [spineHook()] },
       {
         matcher: "startup|resume",
         hooks: [cmd("planning-continuity.mjs", ["--event", "session-start", "--runtime", "claude"])],

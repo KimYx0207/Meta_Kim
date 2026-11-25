@@ -23,6 +23,8 @@ import {
   createProjectTaskIdentity,
   readExistingTaskIdentityBinding,
   writeSpineState,
+  isSameVerifiedSourceConversation,
+  recordHostHandoffContext,
   recordWorkerLifecycleEvent,
   STAGE_ORDER,
 } from "./spine-state.mjs";
@@ -163,7 +165,11 @@ async function recordLifecycleHook(root) {
   // for diagnostics and stay unlinked.
   const observedRuntime = sourceRuntimeFromPayload();
   const lifecycleBinding = verifiedConversationBinding();
-  let updated = state.sourceConversation
+  const nativeHint = state.stageRuntimeControl?.nativeSessionHint;
+  const differentClaudeSession = nativeHint?.runtime === "claude" && lifecycleBinding.conversation
+    && (lifecycleBinding.conversation.runtime !== "claude"
+      || nativeHint.sessionId !== lifecycleBinding.conversation.conversationId.toLowerCase());
+  let updated = state.sourceConversation || differentClaudeSession
     ? state
     : bindSourceConversation(state, lifecycleBinding.conversation, {
       sourceRuntime: observedRuntime,
@@ -330,14 +336,15 @@ function isManagedStageState(state) {
   );
 }
 
-function shouldReplaceActiveState(existing, promptFingerprint) {
+function shouldReplaceActiveState(existing, promptFingerprint, { continuation, conversation }) {
   if (!existing?.active) return true;
   const incomingSession = payload?.session_id || payload?.sessionId;
   const existingSession = existing.sourceConversation?.runtime === "claude" ? existing.sourceConversation.conversationId
     : existing.stageRuntimeControl?.nativeSessionHint?.runtime === "claude" ? existing.stageRuntimeControl.nativeSessionHint.sessionId : null;
   if (sourceRuntimeFromPayload() === "claude" && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu.test(incomingSession || "")
     && existingSession && existingSession.toLowerCase() !== incomingSession.toLowerCase()) return true;
-  if (canResumeHostCheckpoint(existing)) return false;
+  if (existing.sourceConversation && conversation && !isSameVerifiedSourceConversation(existing, conversation)) return true;
+  if (continuation) return false;
 
   const existingFingerprint =
     existing?.stageRuntimeControl?.promptFingerprint ||
@@ -354,20 +361,25 @@ function shouldReplaceActiveState(existing, promptFingerprint) {
   return !isManagedStageState(existing) && ageMs(existing) > staleCutoffMs;
 }
 
+const NEW_HOST_TASK = /(?:新任务|换个任务|换一个任务|另一个任务|切换(?:主题|任务)|开始(?:另一|新)(?:个)?任务)|\b(?:(?:new|different|another)\s+task|switch\s+(?:the\s+)?(?:task|topic))\b/iu;
+
+function isExplicitTaskContinuation(promptText) {
+  if (NEW_HOST_TASK.test(promptText)) return false;
+  return /^(?:please\s+)?(?:continue|resume)\b|\b(?:for|from)\s+(?:this|that|the previous)\s+(?:fix|change|task)\b|^(?:请)?(?:继续|接着|续跑)|(?:为|针对|基于|沿用)(?:这次|这个|刚才的)(?:修复|改动|任务)/iu.test(promptText.trim());
+}
+
 function isHostSteeringPrompt(promptText) {
-  if (/(?:新任务|换个任务|换一个任务|另一个任务|切换(?:主题|任务)|开始(?:另一|新)(?:个)?任务)|\b(?:new\s+task|different\s+task|switch\s+(?:the\s+)?(?:task|topic))\b/iu.test(promptText)) return false;
+  if (NEW_HOST_TASK.test(promptText)) return false;
   return CONTINUATION_REQUEST_RE.test(promptText)
     || /(?:都修复好了吗|都修好了吗|修复好了以后.{0,20}(?:提交|推送)|我要的是修好|hookprompt.{0,20}(?:没有|没).{0,20}(?:对话|显示|执行))/iu.test(promptText)
     || /(?:进度|状态)(?:怎么样|如何|到哪|怎样|呢|情况|更新)|(?:现在|目前)(?:的)?(?:进度|状态|怎么样)|(?:做到哪|做得怎么样|还没好|补充(?:一下|条件|要求)|另外要求|改成)|(?:你(?:自己|直接)|直接|赶紧)(?:给我|帮我)?(?:修(?:复|好)?|处理|解决|完成)(?:啊|吧|了|一下|[。！!]|$)|\b(?:status\s+update|progress\s+update|follow[- ]?up|additional\s+(?:constraint|requirement)|what(?:'s| is)\s+(?:the\s+)?(?:status|progress))\b/iu.test(promptText);
 }
 
-function canResumeHostCheckpoint(existing) {
-  if (!existing?.active || !(existing.hostCheckpointRevision > 0) || existing.stages?.evolution?.status === "completed"
-    || !isHostSteeringPrompt(getRawPromptText())) return false;
-  const current = verifiedConversationBinding().conversation;
-  return current && existing.conversationLinkState === "verified"
-    && existing.sourceConversation?.conversationId === current.conversationId
-    && existing.sourceConversation?.runtime === current.runtime;
+function canResumeHostCheckpoint(existing, promptText, conversation) {
+  if (!existing?.active || existing.stages?.evolution?.status === "completed"
+    || !isSameVerifiedSourceConversation(existing, conversation)) return false;
+  return (existing.hostCheckpointRevision > 0 && isHostSteeringPrompt(promptText))
+    || (conversation.runtime === "claude" && isObservedState(existing) && isExplicitTaskContinuation(promptText));
 }
 
 // ── EXECUTION_DELTA ─────────────────────────────────────────────────────────
@@ -546,7 +558,7 @@ async function ensureLiveHubOnFirstUse(root, runId = null, profile = "default") 
   }
 }
 
-function emitLiveHubStartedContext(live, language = "en", state, projectRoot) {
+async function emitLiveHubStartedContext(live, language = "en", state, projectRoot, { conversation, restore = false } = {}) {
   const liveContext = typeof live?.deepLink !== "string" ? "" : language === "zh-CN"
     ? `Meta_Kim Live ${live.started ? "已启动" : "已复用"}，当前任务：${live.deepLink}\n请在本轮正常会话回复中显示这条可点击链接。检查宿主实际暴露的侧栏/浏览器工具：有能力时打开或复用当前任务的侧栏视图一次，不重复开页、不抢其他任务焦点；没有工具时只显示链接。只有工具明确成功后才说已打开，queued 仍是等待打开。不要把 Hook 上下文当作业务完成证据。`
     : `Meta_Kim Live ${live.started ? "has started" : "is reused"}. Current task: ${live.deepLink}\nShow this clickable link in the normal assistant response. Inspect the host's exposed sidebar/browser tools; if supported, open or reuse this task's sidebar once without duplicate tabs or stealing another task's focus. Otherwise show the link only. Report opened only after confirmed tool success; queued is still pending. Hook context is not business-completion evidence.`;
@@ -554,24 +566,40 @@ function emitLiveHubStartedContext(live, language = "en", state, projectRoot) {
   const globalSkill = join(runtime === "codex" ? process.env.CODEX_HOME || join(homedir(), ".codex")
     : join(homedir(), runtime === "claude" ? ".claude" : runtime === "cursor" ? ".cursor" : ".openclaw"), "skills", "meta-theory", "SKILL.md");
   const skillPath = existsSync(globalSkill) ? globalSkill : join(packageRoot || dirname(fileURLToPath(import.meta.url)), "canonical", "skills", "meta-theory", "SKILL.md");
-  const additionalContext = [liveContext, buildGovernedHostHandoff({ state, projectRoot,
-    adapterPath: join(dirname(fileURLToPath(import.meta.url)), "governed-host-checkpoint.mjs"), skillPath, language })].filter(Boolean).join("\n\n");
+  const handoffOptions = { state, projectRoot, adapterPath: join(dirname(fileURLToPath(import.meta.url)), "governed-host-checkpoint.mjs"), skillPath, language };
+  const full = buildGovernedHostHandoff(handoffOptions);
+  const canTrackContext = runtime === "claude" && (restore || hookEventName() === "UserPromptSubmit")
+    && isSameVerifiedSourceConversation(state, conversation);
+  const contextHash = canTrackContext
+    ? createHash("sha256").update(JSON.stringify([
+      full, state.hostCheckpointRevision || 0, state.stages?.[state.currentStage]?.status,
+    ])).digest("hex") : null;
+  const compact = !restore && contextHash !== null && state.lastHostHandoffContextHash === contextHash;
+  const additionalContext = [liveContext, compact ? buildGovernedHostHandoff({ ...handoffOptions, compact }) : full].filter(Boolean).join("\n\n");
   const isCursor =
     process.env.META_KIM_HOOK_RUNTIME === "cursor" ||
     payload?.hook_event_name === "beforeSubmitPrompt";
-  process.stdout.write(`${JSON.stringify(isCursor
+  const message = `${JSON.stringify(isCursor
     ? { prompt: additionalContext }
     : {
         hookSpecificOutput: {
-          hookEventName: "UserPromptSubmit",
+          hookEventName: restore ? "SessionStart" : "UserPromptSubmit",
           additionalContext,
         },
-      })}\n`);
+      })}\n`;
+  await new Promise((resolve) => process.stdout.write(message, resolve));
+  if (contextHash !== null && !compact) {
+    await recordHostHandoffContext(projectRoot, state, contextHash).catch(() => {});
+  }
 }
 
 const activation = isMetaTheoryTrigger();
 const lifecycleHook = isLifecycleHookPayload();
-if (!activation.triggered && !lifecycleHook && !isHostSteeringPrompt(getRawPromptText())) {
+const restoreClaudeContext = sourceRuntimeFromPayload() === "claude" && hookEventName() === "SessionStart"
+  && ["compact", "resume"].includes(payload?.source);
+const rawPromptText = getRawPromptText();
+if (!activation.triggered && !lifecycleHook && !restoreClaudeContext
+  && !isHostSteeringPrompt(rawPromptText) && !isExplicitTaskContinuation(rawPromptText)) {
   process.exit(0);
 }
 
@@ -587,17 +615,29 @@ if (!projectRoot) {
   process.exit(0);
 }
 
+const activationBinding = verifiedConversationBinding();
+if (restoreClaudeContext) {
+  const current = await readSpineState(projectRoot);
+  if (current?.active && current.stages?.evolution?.status !== "completed"
+    && isSameVerifiedSourceConversation(current, activationBinding.conversation)) {
+    await emitLiveHubStartedContext(null, current.latestUserInputLanguage || "en", current, projectRoot,
+      { conversation: activationBinding.conversation, restore: true });
+  }
+  process.exit(0);
+}
+
 if (lifecycleHook) {
   startPostCopyAutoInit(projectRoot);
   await recordLifecycleHook(projectRoot);
   process.exit(0);
 }
 
-const rawPromptText = getRawPromptText();
 const entryClassification = classifyMetaTheoryEntry(rawPromptText);
 const rawExisting = await readSpineStateIncludingInactive(projectRoot);
 const existing = rawExisting?.active === false ? null : rawExisting || (await readSpineState(projectRoot));
-if (!activation.triggered && !canResumeHostCheckpoint(existing)) process.exit(0);
+const conversation = activationBinding.conversation;
+const continuation = canResumeHostCheckpoint(existing, rawPromptText, conversation);
+if (!activation.triggered && !continuation) process.exit(0);
 startPostCopyAutoInit(projectRoot);
 const identityBinding = await readExistingTaskIdentityBinding(projectRoot);
 const taskIdentity = await createProjectTaskIdentity(projectRoot, rawPromptText, {
@@ -609,35 +649,31 @@ if (["existing_key_missing", "existing_key_invalid"].includes(taskIdentity.statu
   process.exit(0);
 }
 const promptFingerprint = taskIdentity.taskFingerprint;
-  if (existing && existing.active && !shouldReplaceActiveState(existing, promptFingerprint)) {
+if (existing?.active && !shouldReplaceActiveState(existing, promptFingerprint, { continuation, conversation })) {
   const existingFingerprint =
     existing?.stageRuntimeControl?.promptFingerprint ||
     existing?.promptFingerprint ||
     null;
-  if (canResumeHostCheckpoint(existing) && existingFingerprint !== promptFingerprint) {
+  if (continuation && existingFingerprint !== promptFingerprint) {
     await writeSpineState(projectRoot, { ...existing,
       lastUserSteering: { taskFingerprint: promptFingerprint, receivedAt: new Date().toISOString(), kind: "same_conversation_followup", stage: existing.currentStage },
     }, { expectedRunId: existing.runId, expectedActive: true, expectedStage: existing.currentStage,
       expectedCheckpointRevision: existing.hostCheckpointRevision || 0 });
   } else if (existingFingerprint && existingFingerprint === promptFingerprint) {
-    const observedRuntime = sourceRuntimeFromPayload();
-    const refreshBinding = verifiedConversationBinding();
-    const refreshedState = withNativeSessionHint(existing.sourceConversation
-      ? existing
-      : bindSourceConversation(existing, refreshBinding.conversation, {
-        sourceRuntime: observedRuntime,
-        refusalReason: refreshBinding.binding?.reason,
-      }));
-    await activateSpineState(projectRoot, refreshedState, {
+    await activateSpineState(projectRoot, existing, {
       expectedRunId: existing.runId || null,
       refreshExisting: true,
+      verifiedConversation: conversation,
     });
   }
-  emitLiveHubStartedContext(
+  const current = await readSpineState(projectRoot);
+  if (!current || current.runId !== existing.runId) process.exit(0);
+  await emitLiveHubStartedContext(
     await ensureLiveHubOnFirstUse(projectRoot, existing.runId || null, identityBinding.profile),
     detectPromptLanguage(rawPromptText),
-    await readSpineState(projectRoot) || existing,
+    current,
     projectRoot,
+    { conversation },
   );
   process.exit(0);
 }
@@ -646,7 +682,6 @@ const reusableRunIdentity = resolveReusableRunIdentity(
   rawExisting,
   taskIdentity.taskFingerprint,
 );
-const activationBinding = verifiedConversationBinding();
 const state = withNativeSessionHint(createInitialState({
   taskClassification: activation.taskClassification,
   triggerReason: activation.triggerReason,
@@ -716,16 +751,18 @@ if (isFanoutActivation) {
         : "meta_theory_trigger_request";
 }
 
-await activateSpineState(projectRoot, state, {
+const newActivation = await activateSpineState(projectRoot, state, {
   replaceActive: existing?.active === true,
   expectedRunId: existing?.runId || null,
 });
+if (!newActivation.activated) process.exit(0);
 
-emitLiveHubStartedContext(
+await emitLiveHubStartedContext(
   await ensureLiveHubOnFirstUse(projectRoot, state.runId || null, identityBinding.profile),
   detectPromptLanguage(rawPromptText),
   state,
   projectRoot,
+  { conversation },
 );
 
 // ── multi-agent helpers ───────────────────────────────────────────────────────
