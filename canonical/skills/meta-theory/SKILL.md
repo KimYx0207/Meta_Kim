@@ -304,7 +304,7 @@ Capability scan UX: full global scans happen on install, update, explicit refres
 
 ## Warden Entry Gate
 
-For substantive work, `meta-warden` owns the Critical entry gate and the Meta-Review final gate, whether the run started from ordinary language or a maintainer shortcut. The host coordinates these decisions and uses approved native delegation where the runtime actually supports it. Retain the host return as invocation evidence. When native delegation is unavailable, record the limitation and the owner-reported decision or blocker. Apply the contract's skip conditions to direct read-only questions. `meta-conductor` owns evidence sequencing, `meta-scout` owns external evidence, and `meta-prism` audits Critical, Fetch, and Thinking before output review.
+Governed meta-theory entry uses `meta-warden`'s Critical entry gate for substantive work, whether triggered by ordinary natural language or by an explicit maintainer shortcut. `meta-warden` also owns the Meta-Review final gate. The host coordinates these decisions and uses approved native delegation where the runtime supports it. Retain the host return as invocation evidence. When native delegation is unavailable, record the limitation and the owner-reported decision or blocker. Apply the contract's skip conditions to direct read-only questions. `meta-conductor` owns the evidence lane and sequencing, `meta-scout` owns external evidence, and `meta-prism` audits Critical, Fetch, and Thinking before output review.
 
 ## Product Reasoning Contract
 

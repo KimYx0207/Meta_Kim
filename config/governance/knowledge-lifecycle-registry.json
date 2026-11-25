@@ -50,6 +50,16 @@
       "targetRef": "canonical/skills/meta-theory/SKILL.md",
       "toStatus": "active"
     },
+    "github-ci-20261125:reviewed-warden-entry-source": {
+      "appliedAt": "2026-11-25T10:44:16.606Z",
+      "approvalDigest": "sha256:ca105a69447e150cd98573d99d7b5afbc1b603a3220610914b6b238a0524c181",
+      "candidateDigest": "sha256:0f1ba5b185b179c11019320ce1f3b6cac1682d5a750bcb2f761f70790d6abce5",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "rollbackPlanDigest": "sha256:d063ff3022567bb06393c45bdcebd35927fbec1fe2addc84b2d8dedcd631c855",
+      "targetRef": "canonical/skills/meta-theory/SKILL.md",
+      "toStatus": "active"
+    },
     "intent-to-delivery-20261110:reviewed-absorbed-decision-methods": {
       "appliedAt": "2026-11-10T13:15:56.623Z",
       "approvalDigest": "sha256:9d4340f6da9129dbed55d26528dc4cb81889dfcc3244bd187f45c6ec887b588e",
@@ -217,9 +227,9 @@
       "foundational": true,
       "kind": "knowledge",
       "lifecycle": {
-        "changedAt": "2026-11-15T16:33:43.763Z",
-        "lastTransitionId": "yuan-interaction-20261115:reviewed-host-skill",
-        "reason": "Independent local Agent /root/yuan_live_counterreview read the complete current meta-warden source contract and reviewed the exact source-byte delta from 61d7554e77245dc8e4eb383f8ab8181c901d62b7 through e70c76049335e6bb2574dcd72dc8d1f63ceff84c plus the authorized current scope-barrier wording correction. The complete SKILL delta qualifies stage barriers within each scope while preserving the legacy global graph, names actual module dependency/permission/final integration constraints, and adds only the native-host interaction paragraph and reference index entry. The matching evolution-writeback and dev-governance paragraphs were inspected for consistency. All other SKILL bytes, including nine roles, two-PRD guidance, permissions, foundational capabilities and user acceptance boundaries, are unchanged. This approves only a source-binding knowledge upgrade under the existing user-authorized work; it is not a human/external signature, native model certification, execution grant or public-ready approval."
+        "changedAt": "2026-11-25T10:44:16.606Z",
+        "lastTransitionId": "github-ci-20261125:reviewed-warden-entry-source",
+        "reason": "An exact local review by the coordinating maintainer agent compared the registered baseline before b5ccee13, the failing source at 3fb5a56a, and the corrected skill. The wording retains Warden ownership of substantive Critical and Meta-Review, requires authorized native invocation evidence, and records unavailable routes as owner-reported. It restores the governed-entry wording and evidence lane responsibility covered by the existing structural check. This is an owner-authorized source review with no external signature or native Warden invocation claim."
       },
       "provenance": {
         "evidenceRefs": [
@@ -231,7 +241,7 @@
         ]
       },
       "replacementRefs": [],
-      "sourceDigest": "sha256:3ae4f215527881aa39e62f9b56b32fc7c30986373d3a807339609757256a3d82",
+      "sourceDigest": "sha256:204ce8bad7aa46a1409e6f30f3d99d1dbcaab2b88d105e0af6ce0eede1a4336c",
       "status": "active",
       "targetRef": "canonical/skills/meta-theory/SKILL.md"
     },
@@ -975,6 +985,39 @@
       "targetRef": "config/contracts/core-loop-contract.json",
       "toStatus": "active",
       "transitionId": "yuan-interaction-20261115:reviewed-module-core-loop"
+    },
+    {
+      "appliedAt": "2026-11-25T10:44:16.606Z",
+      "approvalDigest": "sha256:ca105a69447e150cd98573d99d7b5afbc1b603a3220610914b6b238a0524c181",
+      "candidateDigest": "sha256:0f1ba5b185b179c11019320ce1f3b6cac1682d5a750bcb2f761f70790d6abce5",
+      "fromStatus": "active",
+      "operation": "upgrade",
+      "previousEntry": {
+        "executionClass": "execution_eligible",
+        "foundational": true,
+        "kind": "knowledge",
+        "lifecycle": {
+          "changedAt": "2026-11-15T16:33:43.763Z",
+          "lastTransitionId": "yuan-interaction-20261115:reviewed-host-skill",
+          "reason": "Independent local Agent /root/yuan_live_counterreview read the complete current meta-warden source contract and reviewed the exact source-byte delta from 61d7554e77245dc8e4eb383f8ab8181c901d62b7 through e70c76049335e6bb2574dcd72dc8d1f63ceff84c plus the authorized current scope-barrier wording correction. The complete SKILL delta qualifies stage barriers within each scope while preserving the legacy global graph, names actual module dependency/permission/final integration constraints, and adds only the native-host interaction paragraph and reference index entry. The matching evolution-writeback and dev-governance paragraphs were inspected for consistency. All other SKILL bytes, including nine roles, two-PRD guidance, permissions, foundational capabilities and user acceptance boundaries, are unchanged. This approves only a source-binding knowledge upgrade under the existing user-authorized work; it is not a human/external signature, native model certification, execution grant or public-ready approval."
+        },
+        "provenance": {
+          "evidenceRefs": [
+            "AGENTS.md#Meta-Theory-Activation"
+          ],
+          "recordedAt": "2026-08-12T00:00:00.000Z",
+          "sourceRefs": [
+            "canonical/skills/meta-theory/SKILL.md"
+          ]
+        },
+        "replacementRefs": [],
+        "sourceDigest": "sha256:3ae4f215527881aa39e62f9b56b32fc7c30986373d3a807339609757256a3d82",
+        "status": "active",
+        "targetRef": "canonical/skills/meta-theory/SKILL.md"
+      },
+      "targetRef": "canonical/skills/meta-theory/SKILL.md",
+      "toStatus": "active",
+      "transitionId": "github-ci-20261125:reviewed-warden-entry-source"
     }
   ],
   "policy": {
@@ -984,7 +1027,7 @@
     "referenceOnlyPromotion": false,
     "retiredRecordsRemainTombstones": true
   },
-  "revision": 21,
+  "revision": 22,
   "schemaVersion": "knowledge-lifecycle-registry-v1",
-  "updatedAt": "2026-11-15T16:33:43.763Z"
+  "updatedAt": "2026-11-25T10:44:16.606Z"
 }
