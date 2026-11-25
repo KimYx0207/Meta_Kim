@@ -276,26 +276,28 @@ test("graphify-cli exposes managed commands and routes rebuild through existing 
 
 test("setup source preserves existing managed config after native hook install and routes final update through manager", () => {
   const src = readFileSync(setup, "utf8");
+  const runtime = readFileSync(new URL("../../scripts/graphify-managed-runtime.mjs", import.meta.url), "utf8");
   const hookInstall = src.indexOf('["-m", "graphify", "hook", "install"]');
-  const managedRead = src.indexOf('let managedGraphConfig = readManagedGraphConfig(graphifyDir);');
+  const managedRead = src.indexOf('const managedGraph = readManagedGraphRuntime(graphifyDir);');
   const platformLoop = src.indexOf('for (const target of expandGraphifyTargets(activeTargets))');
   const platformInstall = src.indexOf('["-m", "graphify", platform, "install"]');
-  const managedRepair = src.indexOf('runManagedGraphLifecycle(graphifyDir, "install", managedGraphConfig)');
-  const finalRun = src.indexOf('runManagedGraphLifecycle(graphifyDir, "run", managedGraphConfig)');
+  const managedRepair = src.indexOf('runManagedGraphLifecycle(graphifyDir, "install", python)');
+  const finalRun = src.indexOf('runManagedGraphLifecycle(graphifyDir, "run", python)');
   const rawUpdate = src.indexOf('["-m", "graphify", "update", "."]', finalRun);
   assert.ok(hookInstall > 0);
-  assert.ok(managedRead > 0);
+  assert.ok(managedRead > 0 && managedRead < hookInstall);
   assert.ok(platformLoop > hookInstall);
   assert.ok(platformInstall > platformLoop);
   assert.ok(managedRepair > platformInstall, "managed repair must follow platform installers that rewrite AGENTS graphify guidance");
   assert.ok(finalRun > managedRepair, "final refresh must route through manager when config exists");
   assert.ok(rawUpdate > finalRun, "raw update must stay only as the unmanaged fallback branch");
-  assert.match(src, /function readManagedGraphConfig\(targetDir\)/);
-  assert.match(src, /let managedGraphConfig = readManagedGraphConfig\(graphifyDir\);[\s\S]*?let python = managedGraphConfig/);
+  assert.match(runtime, /function readManagedGraphRuntime\(targetDir\)/);
+  assert.match(src, /if \(managedGraph\?\.linkedWorktree\) \{[\s\S]*?return INSTALL_STEP_OUTCOME\.SKIPPED;[\s\S]*?let python = managedGraph\?\.python/);
   assert.match(src, /reconcileGraphifyPackage\(python, \{/);
-  assert.doesNotMatch(src, /managedGraphConfig \? "graphifyy/);
-  assert.doesNotMatch(src, /managedConfig\.manager \?\? sourceManager/);
-  assert.match(src, /function runManagedGraphLifecycle\(targetDir, action, managedConfig\)/);
+  assert.doesNotMatch(src, /managedGraph \? "graphifyy/);
+  assert.match(runtime, /new URL\("\.\/graphify-managed\.py", import\.meta\.url\)/);
+  assert.doesNotMatch(runtime, /config\.manager/);
+  assert.match(runtime, /function runManagedGraphLifecycle\(targetDir, action, python\)/);
 });
 
 test("managed lifecycle reference states opt-in POSIX Git-event scope and excludes autosave/model semantics", () => {

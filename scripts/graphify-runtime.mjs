@@ -270,6 +270,12 @@ export function ensurePip(python, spawnFn = spawnSync) {
   };
 }
 
+const EXTERNAL_MANAGEMENT_PROBE = String.raw`
+import json, pathlib, sys, sysconfig
+print(json.dumps(sys.prefix == sys.base_prefix and
+    (pathlib.Path(sysconfig.get_path("stdlib", sysconfig.get_default_scheme())) / "EXTERNALLY-MANAGED").is_file()))
+`;
+
 export function detectPython310(
   spawnFn = spawnSync,
   platform = process.platform,
@@ -302,6 +308,11 @@ export function detectPython310(
         version: parsed,
         versionText,
       };
+      if (options.probeExternalManagement) {
+        const probe = runPythonModule(python, ["-c", EXTERNAL_MANAGEMENT_PROBE], spawnFn);
+        python.externallyManaged = probe.status === 0 && probe.stdout?.trim() === "true";
+        if (python.externallyManaged) return python;
+      }
       if (options.requirePip) {
         const pip = options.bootstrapPip
           ? ensurePip(python, spawnFn)
@@ -426,6 +437,7 @@ export function extractPipShowVersion(text) {
 // networkx < 3.4 lacks louvain_communities(max_level=...) which graphify needs
 const NETWORKX_MIN_MAJOR = 3;
 const NETWORKX_MIN_MINOR = 4;
+export const GRAPHIFY_NETWORKX_REQUIREMENT = `networkx>=${NETWORKX_MIN_MAJOR}.${NETWORKX_MIN_MINOR}`;
 
 export function meetsMinimumVersion(versionString, minMajor, minMinor) {
   const match = versionString.match(/(\d+)\.(\d+)/);

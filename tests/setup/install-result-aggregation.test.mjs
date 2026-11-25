@@ -19,6 +19,8 @@ import {
   MCP_MEMORY_INSTALL_OUTCOME,
   mcpMemoryInstallStep,
 } from "../../scripts/mcp-memory-install-outcome.mjs";
+import { GRAPHIFY_PACKAGE } from "../../scripts/graphify-package-install.mjs";
+import { buildI18N } from "../../config/i18n/setup-strings.mjs";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
 
@@ -31,6 +33,41 @@ function loadRegisterMcpMemoryServer() {
 }
 
 describe("install result aggregation", () => {
+  test("global Graphify update reports optional skip before any package mutation", async () => {
+    const source = readFileSync(resolve(repoRoot, "setup.mjs"), "utf8");
+    const start = source.indexOf("async function installPythonTools(");
+    const end = source.indexOf("\n// ── Step 4.6: Optional MCP Memory Service", start);
+    assert.ok(start >= 0 && end > start);
+    const output = [];
+    const installPythonTools = vm.runInNewContext(`(${source.slice(start, end)})`, {
+      PROJECT_DIR: repoRoot,
+      t: buildI18N({ MIN_NODE_VERSION: "fixture" }).en,
+      heading: () => {},
+      resolve,
+      join: (...parts) => parts.join("/"),
+      homedir: () => "test-home",
+      assertProjectPersistentWriteBoundary: () => {},
+      assertProjectionPackageWriteBoundary: () => {},
+      projectionPackageWriteBoundary: () => {},
+      readManagedGraphRuntime: () => null,
+      checkPython310: ({ probeExternalManagement }) => {
+        assert.equal(probeExternalManagement, true);
+        return { externallyManaged: true };
+      },
+      reconcileGraphifyPackage: () => assert.fail("Graphify install must not mutate externally managed Python"),
+      skip: (message) => output.push(message),
+      GRAPHIFY_PACKAGE,
+      INSTALL_STEP_OUTCOME,
+    });
+
+    const outcome = await installPythonTools(["claude"], true, repoRoot, { projectWiring: false });
+    assert.equal(outcome, INSTALL_STEP_OUTCOME.SKIPPED);
+    assert.equal(output.length, 1);
+    assert.ok(output[0].includes(`pipx install ${GRAPHIFY_PACKAGE}`));
+    const step = installStep("Graphify", outcome, INSTALL_STEP_CLASSIFICATION.OPTIONAL);
+    assert.equal(summarizeInstallStatus([step]).status, "complete");
+  });
+
   test("critical validation failure produces failed status and non-zero exit", () => {
     const result = summarizeInstallStatus([
       installStep("runtime sync", true),

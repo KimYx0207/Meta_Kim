@@ -62,6 +62,7 @@ import {
 } from "./global-runtime-mcp.mjs";
 import {
   globalAgentProjectionFileName,
+  globalProjectionOwner,
   resolveRuntimeProfilesFromManifest,
   resolveRuntimeProjection,
   syncManifestPath,
@@ -338,7 +339,7 @@ function buildGlobalRemovalPolicy() {
         category: assetKey.endsWith("File")
           ? CATEGORIES.C
           : projectionCategory(assetType),
-        sourceOwner: profile.projection.globalAssetOwners[assetType],
+        sourceOwner: globalProjectionOwner(profile, assetType, assetKey),
         ownershipIdentities: null,
       });
     }
@@ -630,7 +631,7 @@ function stableJson(value) {
   return JSON.stringify(value);
 }
 
-function normalizeManagedHookFragment(fragment) {
+function normalizeManagedHookFragment(fragment, allowFlatCommands) {
   if (
     !fragment ||
     typeof fragment !== "object" ||
@@ -642,7 +643,8 @@ function normalizeManagedHookFragment(fragment) {
     !fragment.hook ||
     typeof fragment.hook !== "object" ||
     Array.isArray(fragment.hook) ||
-    fragment.hook.type !== "command" ||
+    (fragment.hook.type !== "command" &&
+      !(allowFlatCommands && !Object.hasOwn(fragment.hook, "type"))) ||
     typeof fragment.hook.command !== "string" ||
     !fragment.hook.command
   ) return null;
@@ -698,8 +700,9 @@ export function manifestEntryToFinding(entry) {
   if (entry.kind === "settings-merge") {
     const commands = entry.mergedHookCommands || [];
     const rawFragments = entry.mergedHookFragments;
+    const allowFlatCommands = entry.purpose === "cursor-global-hooks-json-merge";
     const normalizedFragments = Array.isArray(rawFragments)
-      ? rawFragments.map(normalizeManagedHookFragment)
+      ? rawFragments.map((fragment) => normalizeManagedHookFragment(fragment, allowFlatCommands))
       : null;
     const managedHookFragments = normalizedFragments &&
         normalizedFragments.every(Boolean)
@@ -1194,25 +1197,37 @@ function isManagedRepoCommand(command) {
   return [...REPO_HOOK_FILES].some((f) => n.endsWith(f)) || isRetiredHookCommand(command);
 }
 
-function stripManagedHookBlocks(hooksSection, predicate) {
+function stripManagedHookBlocks(hooksSection, predicate, exact) {
   if (!hooksSection || typeof hooksSection !== "object") {
     return { hooks: {}, stripped: 0 };
   }
   let stripped = 0;
   const next = {};
   for (const [event, blocks] of Object.entries(hooksSection)) {
+    if (!Array.isArray(blocks)) {
+      next[event] = blocks;
+      continue;
+    }
     const kept = [];
-    for (const block of blocks ?? []) {
-      const filtered = (block.hooks ?? []).filter((h) => {
-        const hit = predicate(h.command ?? "", event, block, h);
+    for (const block of blocks) {
+      if (!Array.isArray(block?.hooks)) {
+        if (exact && typeof block?.command === "string" && predicate(block.command, event, block, block)) {
+          stripped += 1;
+        } else {
+          kept.push(block);
+        }
+        continue;
+      }
+      const filtered = block.hooks.filter((h) => {
+        const hit = predicate(h?.command ?? "", event, block, h);
         if (hit) stripped += 1;
         return !hit;
       });
-      if (filtered.length > 0) {
+      if (filtered.length > 0 || block.hooks.length === 0) {
         kept.push({ ...block, hooks: filtered });
       }
     }
-    if (kept.length > 0) next[event] = kept;
+    if (kept.length > 0 || blocks.length === 0) next[event] = kept;
   }
   return { hooks: next, stripped };
 }
@@ -1826,7 +1841,7 @@ export function stripManagedSettingsFile(
       return true;
     };
   }
-  const { hooks, stripped } = stripManagedHookBlocks(parsed.hooks ?? {}, predicate);
+  const { hooks, stripped } = stripManagedHookBlocks(parsed.hooks ?? {}, predicate, Array.isArray(action.exactFragments));
   if (!Number.isInteger(action.expectedCount) || action.expectedCount <= 0) {
     return { success: false, stripped: 0, reason: "no_managed_entries_recorded" };
   }

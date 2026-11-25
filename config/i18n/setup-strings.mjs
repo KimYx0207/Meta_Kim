@@ -388,6 +388,8 @@ Possible causes:
       `Repaired ${n} unsafe Graphify hook command(s) in ${project} (backup: ${backup})`,
     graphifyProjectWiringSkipped:
       "Graphify is installed globally. Run `npm run meta:graphify:rebuild` (or `python -m graphify update .`) inside a project to build its knowledge graph.",
+    graphifyExternalPythonSkipped: (pkg) =>
+      `Skipped Graphify because Python is managed by the system. To install Graphify separately, run: pipx install ${pkg}`,
     stepMcpMemory: "Meta_Kim cross-session memory",
     mcpMemoryInstalling: "Installing MCP Memory Service (Layer 3)...",
     mcpMemoryInstalled: "MCP Memory Service installed",
@@ -1037,6 +1039,8 @@ ${r ? `原始错误：${r}` : ""}
       `已修复 ${project} 中 ${n} 个不安全的 Graphify hook 命令（备份：${backup}）`,
     graphifyProjectWiringSkipped:
       "Graphify 已全局安装。在项目目录内跑 `npm run meta:graphify:rebuild`（或 `python -m graphify update .`）生成该项目的知识图谱。",
+    graphifyExternalPythonSkipped: (pkg) =>
+      `当前 Python 由系统管理，已跳过 Graphify。需要单独安装时，可运行 pipx install ${pkg}`,
     stepMcpMemory: "Meta_Kim 跨会话记忆",
     mcpMemoryInstalling: "正在安装 MCP Memory Service（第三层）...",
     mcpMemoryInstalled: "MCP Memory Service 已安装",
@@ -1689,6 +1693,8 @@ ${r ? `生エラー：${r}` : ""}
       "全タイプ綺麗（agents/skills/commands/capability-index/hooks）：削除 0",
     graphifyProjectWiringSkipped:
       "Graphify はグローバルにインストール済み。プロジェクト内で `npm run meta:graphify:rebuild`（または `python -m graphify update .`）を実行してナレッジグラフを構築してください。",
+    graphifyExternalPythonSkipped: (pkg) =>
+      `Python がシステムで管理されているため、Graphify をスキップしました。個別にインストールするには pipx install ${pkg} を実行してください。`,
     stepMcpMemory: "Meta_Kim クロスセッション記憶",
     mcpMemoryInstalling: "MCP Memory Service（第三層）をインストール中...",
     mcpMemoryInstalled: "MCP Memory Service がインストールされました",
@@ -2363,6 +2369,8 @@ ${r ? `원본 오류：${r}` : ""}
       "모든 타입 정리됨 (agents/skills/commands/capability-index/hooks): 삭제 0",
     graphifyProjectWiringSkipped:
       "Graphify가 전역에 설치되었습니다. 프로젝트 디렉터리에서 `npm run meta:graphify:rebuild`(또는 `python -m graphify update .`)를 실행해 지식 그래프를 생성하세요.",
+    graphifyExternalPythonSkipped: (pkg) =>
+      `시스템에서 관리하는 Python이므로 Graphify를 건너뛰었습니다. 별도로 설치하려면 pipx install ${pkg} 명령을 실행하세요.`,
     stepMcpMemory: "Meta_Kim 크로스세션 메모리",
     mcpMemoryInstalling: "MCP Memory Service（3층） 설치 중...",
     mcpMemoryInstalled: "MCP Memory Service 설치 완료",

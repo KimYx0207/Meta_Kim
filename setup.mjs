@@ -28,7 +28,7 @@ import { isIgnoredDeploySourceDir } from "./scripts/project-bootstrap-source-fil
  */
 
 import { hasNpmInstalledDependencies } from "./src/infrastructure/installer/npm-installed-dependencies.mjs";
-import { reconcileGraphifyPackage } from "./scripts/graphify-package-install.mjs";
+import { GRAPHIFY_PACKAGE, reconcileGraphifyPackage } from "./scripts/graphify-package-install.mjs";
 import { execSync, spawnSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -94,6 +94,12 @@ import {
   checkNetworkx,
   resolveGraphifyExecutable,
 } from "./scripts/graphify-runtime.mjs";
+import {
+  MANAGED_GRAPHIFY_LINKED_WORKTREE,
+  MANAGED_GRAPHIFY_UNSUPPORTED_PLATFORM,
+  readManagedGraphRuntime,
+  runManagedGraphLifecycle,
+} from "./scripts/graphify-managed-runtime.mjs";
 import {
   reconcileExistingGraphifyWindowsHooks,
   sanitizeGraphifyWindowsHooks,
@@ -2124,11 +2130,14 @@ function copyDirRecursive(src, dest, context = {}) {
   return count;
 }
 
-function projectDeployRootsForPlatform(platformId) {
+function projectDeployRootsForPlatform(platformId, targetDir) {
   const roots = [];
   const add = (srcRel, destRel = srcRel) => roots.push({ srcRel, destRel });
+  const projectEntry = isNativeSourceProjectTarget(targetDir)
+    ? null
+    : "canonical/runtime-assets/shared/project-entry.md";
   if (platformId === "claude" || platformId === "all") {
-    add("CLAUDE.md");
+    add(projectEntry ?? "CLAUDE.md", "CLAUDE.md");
   }
   if (
     platformId === "openclaw" ||
@@ -2137,7 +2146,7 @@ function projectDeployRootsForPlatform(platformId) {
     NATIVE_PROJECTION_RUNTIME_IDS.includes(platformId) ||
     platformId === "all"
   ) {
-    add("AGENTS.md");
+    add(projectEntry ?? "AGENTS.md", "AGENTS.md");
   }
 
   // Replace whole-directory roots (.claude/.codex/.cursor/openclaw) with
@@ -2475,7 +2484,7 @@ function collectProjectDeployPlan(activeTargets, targetDir) {
   const managedFileMap = previousProjectManagedFileMap(targetDir);
   const protectedPaths = loadProtectedProjectCapabilityPaths(targetDir, PROJECT_DIR);
   for (const platformId of activeTargets) {
-    for (const root of projectDeployRootsForPlatform(platformId)) {
+    for (const root of projectDeployRootsForPlatform(platformId, targetDir)) {
       const src = join(PROJECT_DIR, root.srcRel);
       const dest = join(targetDir, root.destRel);
       for (const plan of collectDeployFilePlansFromRoot(src, dest, {
@@ -4262,7 +4271,7 @@ function deployPlatformFiles(platformId, targetDir) {
     }
   };
 
-  for (const root of projectDeployRootsForPlatform(platformId)) {
+  for (const root of projectDeployRootsForPlatform(platformId, targetDir)) {
     copyIfExists(root.srcRel, root.destRel);
   }
   fileCount += writeProjectGeneratedHooks(platformId, targetDir, protectedPaths);
@@ -6152,10 +6161,11 @@ async function installAllSkills() {
 
 // ── Step 4.5: Optional Python tools (graphify) ─────────
 
-function checkPython310() {
+function checkPython310({ probeExternalManagement = false } = {}) {
   return detectPython310(spawnSync, platform(), {
     requirePip: true,
     bootstrapPip: true,
+    probeExternalManagement,
   });
 }
 
@@ -6251,52 +6261,6 @@ async function downloadAndInstallPython() {
   }
 }
 
-function readManagedGraphConfig(targetDir) {
-  const location = spawnSync(
-    "git",
-    ["-C", targetDir, "rev-parse", "--git-path", "graphify/config.json"],
-    { encoding: "utf8", windowsHide: true },
-  );
-  if (location.status !== 0) return null;
-  const configFile = resolve(targetDir, location.stdout.trim());
-  return existsSync(configFile)
-    ? JSON.parse(readFileSync(configFile, "utf8"))
-    : null;
-}
-
-function runManagedGraphLifecycle(targetDir, action, managedConfig) {
-  if (!managedConfig) return null;
-  if (platform() === "win32") {
-    warn("Repository-managed Graphify is currently supported on macOS/Linux");
-    return {
-      status: 1,
-      stdout: "",
-      stderr: "Repository-managed Graphify is currently supported on macOS/Linux",
-    };
-  }
-  const sourceManager = join(PROJECT_DIR, "scripts", "graphify-managed.py");
-  return spawnSync(
-    managedConfig.python,
-    [
-      sourceManager,
-      action,
-      "--repo",
-      targetDir,
-    ],
-    {
-      cwd: targetDir,
-      stdio: "pipe",
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        PYTHONNOUSERSITE: "1",
-        PYTHONHASHSEED: "0",
-      },
-      windowsHide: true,
-    },
-  );
-}
-
 async function installPythonTools(
   activeTargets,
   inUpdateMode = false,
@@ -6315,14 +6279,20 @@ async function installPythonTools(
     [join(homedir(), ".claude", "settings.json")],
     { operation: "Graphify user Hook reconciliation" },
   );
-  let managedGraphConfig = readManagedGraphConfig(graphifyDir);
-  let python = managedGraphConfig
-    ? {
-        command: managedGraphConfig.python,
-        args: [],
-        versionText: "repository-managed Python",
-      }
-    : checkPython310();
+  const managedGraph = readManagedGraphRuntime(graphifyDir);
+  if (managedGraph?.linkedWorktree) {
+    skip(MANAGED_GRAPHIFY_LINKED_WORKTREE);
+    return INSTALL_STEP_OUTCOME.SKIPPED;
+  }
+  if (managedGraph && platform() === "win32") {
+    warn(MANAGED_GRAPHIFY_UNSUPPORTED_PLATFORM);
+    return false;
+  }
+  let python = managedGraph?.python ?? checkPython310({ probeExternalManagement: !projectWiring });
+  if (python?.externallyManaged) {
+    skip(t.graphifyExternalPythonSkipped(GRAPHIFY_PACKAGE));
+    return INSTALL_STEP_OUTCOME.SKIPPED;
+  }
   if (!python) {
     python = await downloadAndInstallPython();
     if (!python) return false;
@@ -6444,18 +6414,16 @@ async function installPythonTools(
     }
   }
 
-  if (managedGraphConfig) {
-    const managedRepair = runManagedGraphLifecycle(graphifyDir, "install", managedGraphConfig);
-    if (managedRepair?.status === 0) {
-      managedGraphConfig = readManagedGraphConfig(graphifyDir) ?? managedGraphConfig;
-    } else {
+  if (managedGraph) {
+    const managedRepair = runManagedGraphLifecycle(graphifyDir, "install", python);
+    if (managedRepair.status !== 0) {
       warn(`Managed Graphify wiring repair failed: ${readProcessText(managedRepair)}`);
       return false;
     }
   }
 
-  const rebuildResult = managedGraphConfig
-    ? runManagedGraphLifecycle(graphifyDir, "run", managedGraphConfig)
+  const rebuildResult = managedGraph
+    ? runManagedGraphLifecycle(graphifyDir, "run", python)
     : runPythonModule(
         python,
         ["-m", "graphify", "update", "."],

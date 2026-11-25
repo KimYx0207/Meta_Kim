@@ -156,6 +156,7 @@ function parseCliArgs(args) {
     "--check",
     "--print-targets",
     "--with-global-hooks",
+    "--cursor-hooks-config-only",
     "--skip-global-hooks",
     "--skip-durable-mcp",
     "--repair-claude-mcp",
@@ -194,6 +195,7 @@ function parseCliArgs(args) {
     printTargetsOnly: args.includes("--print-targets"),
     skipGlobalHooks,
     withGlobalHooks: args.includes("--with-global-hooks") && !skipGlobalHooks,
+    cursorHooksConfigOnly: args.includes("--cursor-hooks-config-only"),
     skipDurableMcp: args.includes("--skip-durable-mcp"),
     repairClaudeMcp: args.includes("--repair-claude-mcp"),
   };
@@ -2617,6 +2619,14 @@ function cursorGlobalHookPromptAdapterPath() {
   return path.join(runtimeHomes.cursor.dir, "hooks", "hookprompt-adapter.mjs");
 }
 
+function isCursorGlobalHookCommand(command) {
+  const script = hookCommandScriptPath(command);
+  return Boolean(script && path.isAbsolute(script) && (
+    packagePathKey(path.dirname(script)) === packagePathKey(cursorGlobalMetaKimHooksDir()) ||
+    packagePathKey(script) === packagePathKey(cursorGlobalHookPromptAdapterPath())
+  ));
+}
+
 async function ensureCursorGlobalHookPromptAdapter() {
   const adapterPath = cursorGlobalHookPromptAdapterPath();
   assertHomeBound(adapterPath);
@@ -2655,7 +2665,7 @@ function buildCursorGlobalHooksTemplate() {
 // Codex hooks.json uses nested event blocks; Cursor hooks.json uses native flat
 // command blocks. Both shapes are accepted here, with ownership keyed on the
 // command so a runtime-specific representation is never rewritten.
-function stripGlobalMetaKimHooksFromRuntimeHooksConfig(config = {}) {
+function stripGlobalMetaKimHooksFromRuntimeHooksConfig(config, isOwnedCommand) {
   const next = structuredClone(config && typeof config === "object" ? config : {});
   const hooks = {};
   for (const [event, blocks] of Object.entries(next.hooks ?? {})) {
@@ -2668,22 +2678,22 @@ function stripGlobalMetaKimHooksFromRuntimeHooksConfig(config = {}) {
       const blockHooks = Array.isArray(block?.hooks)
         ? block.hooks.filter(
             (hook) =>
-              !isOwnedGlobalMetaKimHookCommand(hook?.command ?? ""),
+              !isOwnedCommand(hook?.command ?? ""),
           )
         : [];
       if (Array.isArray(block?.hooks)) {
-        if (blockHooks.length > 0) {
+        if (blockHooks.length > 0 || block.hooks.length === 0) {
           keptBlocks.push({ ...block, hooks: blockHooks });
         }
         continue;
       }
       if (
-        !isOwnedGlobalMetaKimHookCommand(block?.command ?? "")
+        !isOwnedCommand(block?.command ?? "")
       ) {
         keptBlocks.push(block);
       }
     }
-    if (keptBlocks.length > 0) {
+    if (keptBlocks.length > 0 || blocks.length === 0) {
       hooks[event] = keptBlocks;
     }
   }
@@ -2691,28 +2701,33 @@ function stripGlobalMetaKimHooksFromRuntimeHooksConfig(config = {}) {
   return next;
 }
 
-function mergeRuntimeGlobalHooksIntoConfig(config, template) {
-  const next = stripGlobalMetaKimHooksFromRuntimeHooksConfig(config);
+function mergeRuntimeGlobalHooksIntoConfig(config, template, isOwnedCommand) {
+  const next = stripGlobalMetaKimHooksFromRuntimeHooksConfig(config, isOwnedCommand);
   next.hooks ??= {};
   for (const [event, additionBlocks] of Object.entries(template.hooks ?? {})) {
+    const existingBlocks = Object.hasOwn(next.hooks, event) ? next.hooks[event] : [];
+    if (!Array.isArray(existingBlocks)) throw new Error(`Expected an array for hooks.${event}`);
     next.hooks[event] = mergeHookMatcherBlocks(
-      Array.isArray(next.hooks[event]) ? next.hooks[event] : [],
+      existingBlocks,
       Array.isArray(additionBlocks) ? additionBlocks : [additionBlocks],
     );
   }
   return next;
 }
 
-async function readJsonConfig(configPath, label) {
-  if (!(await pathExists(configPath))) {
-    return {};
-  }
-  const raw = await fs.readFile(configPath, "utf8");
+function parseRuntimeHooksConfig(raw, configPath) {
+  let config;
   try {
-    return JSON.parse(raw);
+    config = JSON.parse(raw);
   } catch {
-    throw new Error(`Invalid JSON in ${label}; fix or move aside before sync.`);
+    throw new Error(`Invalid JSON in ${configPath}; fix or move aside before sync.`);
   }
+  if (!config || typeof config !== "object" || Array.isArray(config) ||
+      (Object.hasOwn(config, "hooks") &&
+       (!config.hooks || typeof config.hooks !== "object" || Array.isArray(config.hooks)))) {
+    throw new Error(`Invalid hook configuration in ${configPath}; expected a JSON object.`);
+  }
+  return config;
 }
 
 async function syncRuntimeGlobalHooksJson({
@@ -2720,43 +2735,51 @@ async function syncRuntimeGlobalHooksJson({
   label,
   hooksJsonPath,
   template,
+  isOwnedCommand = isOwnedGlobalMetaKimHookCommand,
 }) {
   assertHomeBound(hooksJsonPath);
   await assertRealHomeBound(hooksJsonPath);
-  const base = await readJsonConfig(hooksJsonPath, hooksJsonPath);
-  const merged = mergeRuntimeGlobalHooksIntoConfig(base, template);
+  const snapshot = await captureExactFileSnapshot(hooksJsonPath);
+  const previous = snapshot.bytes?.toString("utf8") ?? null;
+  const base = previous !== null
+    ? parseRuntimeHooksConfig(previous, hooksJsonPath)
+    : runtimeId === "cursor" ? { version: template.version } : {};
+  const merged = mergeRuntimeGlobalHooksIntoConfig(base, template, isOwnedCommand);
   const out = `${JSON.stringify(merged, null, 2)}\n`;
-  const prev = (await pathExists(hooksJsonPath))
-    ? await fs.readFile(hooksJsonPath, "utf8")
-    : null;
 
   const managedCommands = flattenHookCommands(template.hooks);
   const recordHooksJsonMerge = () => {
-    recordSafe((rec) =>
+    recordSafe((rec) => {
+      if (runtimeId === "cursor") {
+        const legacyFile = rec.snapshot().entries.find((entry) =>
+          packagePathKey(entry.path) === packagePathKey(hooksJsonPath) && entry.kind === "file" &&
+          entry.source === "sync-runtimes" && entry.purpose === "cursor-global-hooksFile"
+        );
+        if (legacyFile) rec.forget(legacyFile.path, legacyFile.purpose);
+      }
       rec.recordSettingsMerge(hooksJsonPath, managedCommands, {
         source: "sync-global-meta-theory",
         purpose: `${runtimeId}-global-hooks-json-merge`,
         category: CATEGORIES.C,
         managedHookFragments: flattenHookFragments(template.hooks),
-      }),
-    );
+      });
+    });
   };
 
-  if (prev === out) {
+  if (previous === out) {
     console.log(`${label} hooks.json already up to date: ${hooksJsonPath}`);
     recordHooksJsonMerge();
     return;
   }
 
-  await fs.mkdir(path.dirname(hooksJsonPath), { recursive: true });
-  if (prev !== null) {
+  if (snapshot.exists) {
     await backupExistingPath(hooksJsonPath, {
       family: "settings",
       label: `${label} hooks.json`,
     });
   }
 
-  await writeUtf8FileAtomic(hooksJsonPath, out, `${runtimeId}-hooks`);
+  await promoteExactFileFromSnapshot(hooksJsonPath, snapshot, out, { failureId: `${runtimeId}-hooks` });
   console.log(`Merged Meta_Kim hooks into ${hooksJsonPath}`);
   recordHooksJsonMerge();
 }
@@ -2776,7 +2799,28 @@ async function syncCursorGlobalHooksJson() {
     label: "Cursor",
     hooksJsonPath: cursorGlobalHooksJsonPath(),
     template: buildCursorGlobalHooksTemplate(),
+    isOwnedCommand: isCursorGlobalHookCommand,
   });
+}
+
+// sync-runtimes projects the Cursor hook scripts. It delegates registration to
+// the same writer as a normal global sync, with no unrelated global assets.
+async function runCursorHooksConfigOnly() {
+  if (selectedTargetIds.length !== 1 || selectedTargetIds[0] !== "cursor") {
+    throw new Error("--cursor-hooks-config-only requires --targets cursor");
+  }
+  if (checkOnly) {
+    if (!(await checkCursorGlobalHooksJson())) process.exitCode = 2;
+    return;
+  }
+  const packageVersion = JSON.parse(await fs.readFile(path.join(repoRoot, "package.json"), "utf8")).version;
+  manifestRecorder = openRecorder({ scope: "global", metaKimVersion: packageVersion });
+  await syncCursorGlobalHooksJson();
+  const result = await manifestRecorder.flush();
+  if (!result.ok || manifestRecordFailures.length > 0) {
+    const reasons = [...manifestRecordFailures, result.error].filter(Boolean).join("; ");
+    throw globalManifestPartialFailure(reasons);
+  }
 }
 
 async function readClaudeGlobalSettings(settingsPath) {
@@ -2886,9 +2930,15 @@ async function checkClaudeGlobalSettingsHooks() {
   return inSync;
 }
 
-async function checkRuntimeGlobalHooksJson({ label, hooksJsonPath, template }) {
-  const config = await readJsonConfig(hooksJsonPath, hooksJsonPath);
-  const expected = mergeRuntimeGlobalHooksIntoConfig(config, template);
+async function checkRuntimeGlobalHooksJson({
+  label, hooksJsonPath, template, isOwnedCommand = isOwnedGlobalMetaKimHookCommand,
+}) {
+  const json = await fs.readFile(hooksJsonPath, "utf8").catch((error) => {
+    if (error.code === "ENOENT") return "{}";
+    throw error;
+  });
+  const config = parseRuntimeHooksConfig(json, hooksJsonPath);
+  const expected = mergeRuntimeGlobalHooksIntoConfig(config, template, isOwnedCommand);
 
   // Object insertion order is not semantic JSON state; array order is. Node's
   // deep strict comparison preserves that boundary without stringifying keys.
@@ -2896,7 +2946,7 @@ async function checkRuntimeGlobalHooksJson({ label, hooksJsonPath, template }) {
   const missingCommands = [];
 
   for (const command of flattenHookCommands(config.hooks)) {
-    if (!isGlobalMetaKimManagedHookCommand(command)) {
+    if (!isOwnedCommand(command)) {
       continue;
     }
     const scriptPath = hookCommandScriptPath(command);
@@ -2933,6 +2983,7 @@ async function checkCursorGlobalHooksJson() {
     label: "Cursor",
     hooksJsonPath: cursorGlobalHooksJsonPath(),
     template: buildCursorGlobalHooksTemplate(),
+    isOwnedCommand: isCursorGlobalHookCommand,
   });
 }
 
@@ -3718,6 +3769,10 @@ async function main() {
     return;
   }
   await resolveTargets();
+  if (cliOptions.cursorHooksConfigOnly) {
+    await runCursorHooksConfigOnly();
+    return;
+  }
   if (printTargetsOnly) {
     printTargets();
     return;

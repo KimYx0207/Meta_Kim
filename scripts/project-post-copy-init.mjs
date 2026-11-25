@@ -4,8 +4,22 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import { join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { detectPython310, formatPythonLauncher, runPythonModule } from "./graphify-runtime.mjs";
+import {
+  GRAPHIFY_NETWORKX_REQUIREMENT,
+  checkNetworkx,
+  detectPython310,
+  formatPythonLauncher,
+  readProcessText,
+  runPythonModule,
+} from "./graphify-runtime.mjs";
+import { reconcileGraphifyPackage } from "./graphify-package-install.mjs";
 import { sanitizeGraphifyWindowsHooks } from "./graphify-hook-sanitize.mjs";
+import {
+  MANAGED_GRAPHIFY_LINKED_WORKTREE,
+  MANAGED_GRAPHIFY_UNSUPPORTED_PLATFORM,
+  readManagedGraphRuntime,
+  runManagedGraphLifecycle,
+} from "./graphify-managed-runtime.mjs";
 import { resolveProjectRoot } from "../canonical/runtime-assets/shared/hooks/project-root.mjs";
 
 const projectRootArgIndex = process.argv.indexOf("--project-root");
@@ -112,7 +126,7 @@ function markerAgeMs(marker) {
 function shouldSkipAutoLaunch() {
   const marker = readAutoMarker();
   const currentScriptMtimeMs = scriptMtimeMs();
-  if (marker?.status === "passed" && marker.scriptMtimeMs === currentScriptMtimeMs) {
+  if ((marker?.status === "passed" || marker?.status === "skipped") && marker.scriptMtimeMs === currentScriptMtimeMs) {
     return true;
   }
   if (marker?.status === "running" && markerAgeMs(marker) < runningTtlMs) {
@@ -185,21 +199,43 @@ function guideAlreadyHasGraphifySection(platform) {
   return /^##\s+graphify\b/im.test(readFileSync(filePath, "utf8"));
 }
 
-const python = findPython();
+let managedGraph;
+try {
+  managedGraph = readManagedGraphRuntime(rootDir);
+} catch (error) {
+  fail(`[Meta_Kim] Could not read managed Graphify configuration: ${error.message}`);
+}
+if (managedGraph?.linkedWorktree) {
+  writeAutoMarker("skipped", { mode: autoWorkerMode ? "auto" : "manual", message: MANAGED_GRAPHIFY_LINKED_WORKTREE });
+  console.log(`[Meta_Kim] ${MANAGED_GRAPHIFY_LINKED_WORKTREE}`);
+  process.exit(0);
+}
+if (managedGraph && process.platform === "win32") {
+  fail(`[Meta_Kim] ${MANAGED_GRAPHIFY_UNSUPPORTED_PLATFORM}`);
+}
+
+const python = managedGraph?.python ?? findPython();
 if (!python) {
   fail("[Meta_Kim] Python 3.10+ with pip is required for graphify. Install Python, then run this script again.");
 }
 console.log(`[Meta_Kim] Using Python for graphify: ${formatPythonLauncher(python)}`);
 
-const pipShow = runCandidate(python, ["-m", "pip", "show", "graphifyy"], "pipe");
-if (pipShow.status !== 0) {
-  runPython(python, ["-m", "pip", "install", "graphifyy"]);
+if (managedGraph) {
+  const result = reconcileGraphifyPackage(python);
+  if (!result.ok) fail(`[Meta_Kim] ${result.code}: ${readProcessText(result.processResult)}`);
+} else {
+  const pipShow = runCandidate(python, ["-m", "pip", "show", "graphifyy"], "pipe");
+  if (pipShow.status !== 0) {
+    runPython(python, ["-m", "pip", "install", "graphifyy"]);
+  }
 }
-runPython(python, ["-m", "pip", "install", "--upgrade", "networkx>=3.4"], {
-  optional: true,
-});
+if (!managedGraph || !checkNetworkx(python).meets) {
+  runPython(python, ["-m", "pip", "install", "--upgrade", GRAPHIFY_NETWORKX_REQUIREMENT], {
+    optional: !managedGraph,
+  });
+}
 
-if (existsSync(join(rootDir, ".git"))) {
+if (!managedGraph && existsSync(join(rootDir, ".git"))) {
   runPython(python, ["-m", "graphify", "hook", "install"]);
   const repaired = sanitizeGraphifyWindowsHooks(
     join(rootDir, ".claude", "settings.json"),
@@ -210,7 +246,7 @@ if (existsSync(join(rootDir, ".git"))) {
       `(backup: ${repaired.backup}).`,
     );
   }
-} else {
+} else if (!managedGraph) {
   console.log("[Meta_Kim] Skipping graphify git hook; no .git directory found.");
 }
 
@@ -222,7 +258,16 @@ for (const platform of graphifyPlatforms()) {
   runPython(python, ["-m", "graphify", platform, "install"], { optional: true });
 }
 
-runPython(python, ["-m", "graphify", "update", "."]);
+if (managedGraph) {
+  for (const action of ["install", "run"]) {
+    const result = runManagedGraphLifecycle(rootDir, action, python);
+    if (result.status !== 0) {
+      fail(`[Meta_Kim] Managed Graphify ${action} failed: ${readProcessText(result)}`, result.status || 1);
+    }
+  }
+} else {
+  runPython(python, ["-m", "graphify", "update", "."]);
+}
 writeAutoMarker("passed", {
   mode: autoWorkerMode ? "auto" : "manual",
   graphPath: join(rootDir, "graphify-out", "graph.json"),

@@ -34,6 +34,44 @@ function sectionBlock(configText, sectionName) {
   return lines.slice(start, end).join("\n");
 }
 
+test("removing temporary project trust preserves following user-owned TOML tables", () => {
+  const temporaryProject = '[projects."/tmp/meta-kim-harness-fitness-lab-workspaces/example"]\ntrust_level = "trusted"\n';
+  for (const userTable of ['[[skills.config]]', '[projects."C:/Work/Name]with bracket"]']) {
+    const retained = `${userTable}\ncustom = true\n`;
+    assert.equal(removeMetaKimTemporaryProjectResidue(`${temporaryProject}${retained}`), retained);
+  }
+});
+
+test("temporary project cleanup ignores table-like lines inside a multiline string", () => {
+  const config = [
+    'developer_instructions = """',
+    '[projects."/tmp/meta-kim-harness-fitness-lab-workspaces/example"]',
+    'This heading is part of the instructions.',
+    '"""',
+    '[[skills.config]]',
+    'enabled = true',
+    '',
+  ].join('\n');
+  assert.equal(removeMetaKimTemporaryProjectResidue(config), config);
+});
+
+test("Codex merge inserts root keys before an array table and preserves its entries", () => {
+  const array = '[[skills.config]]\npath = "my-skill"\nenabled = true\n';
+  const result = mergeCodexConfigAddOnly(`\uFEFF${array}`, 'custom_root = true\n');
+  assert.match(result, /^\uFEFFcustom_root = true\n(?:\n)?\[\[skills\.config\]\]/u);
+  assert.ok(result.endsWith(array));
+});
+
+test("Codex configuration merge preserves an existing escaped quoted key", () => {
+  const config = String.raw`"custom_\u0072oot" = false` + '\n[[skills.config]]\nenabled = true\n';
+  assert.equal(mergeCodexConfigAddOnly(config, 'custom_root = true\n'), config);
+});
+
+test("Codex TOML validation keeps track of containers closed after multiline strings", () => {
+  const config = 'instructions = ["""one\n[not.a.table]\nthree"""]\n[features]\nweb_search = true\n';
+  assert.doesNotThrow(() => assertCodexConfigTomlMergeable(config));
+});
+
 function appMaterializationFixture(t, names = ["browser", "codex-app-tools"]) {
   const root = mkdtempSync(path.join(os.tmpdir(), "meta-kim-codex-app-materialization-"));
   t.after(() => {

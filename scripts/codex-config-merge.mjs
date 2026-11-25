@@ -21,20 +21,10 @@ const WINDOWS_NOTIFY_COMMAND = [
 ];
 
 function findSection(lines, sectionName) {
-  const headerRe = new RegExp(`^\\s*\\[${sectionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\]\\s*(?:#.*)?$`);
-  const anyHeaderRe = /^\s*\[[^\]]+\]\s*(?:#.*)?$/;
-  const start = lines.findIndex((line) => headerRe.test(line));
-  if (start < 0) {
-    return null;
-  }
-  let end = lines.length;
-  for (let index = start + 1; index < lines.length; index += 1) {
-    if (anyHeaderRe.test(lines[index])) {
-      end = index;
-      break;
-    }
-  }
-  return { start, end };
+  const { headers } = scanTomlStatements(lines);
+  const index = headers.findIndex(({ name, array }) => !array && name === sectionName);
+  if (index < 0) return null;
+  return { start: headers[index].index, end: headers[index + 1]?.index ?? lines.length };
 }
 
 function normalizeLines(configText = "") {
@@ -47,8 +37,63 @@ function normalizeLines(configText = "") {
   return lines;
 }
 
-const TOML_BARE_KEY_RE = /^\s*[A-Za-z0-9_.-]+\s*=/;
-const TOML_TABLE_HEADER_RE = /^\s*\[\[?[^\]]+\]\]?\s*(?:#.*)?$/;
+const TOML_KEY_SEGMENT = String.raw`(?:[A-Za-z0-9_-]+|"(?:[^"\\]|\\.)*"|'[^']*')`;
+const TOML_ASSIGNMENT_RE = new RegExp(String.raw`^(\s*)(${TOML_KEY_SEGMENT}(?:\.${TOML_KEY_SEGMENT})*)(\s*=\s*)(.*)$`, "u");
+const TOML_TABLE_HEADER_RE = new RegExp(
+  String.raw`^\s*(\[\[?)\s*(${TOML_KEY_SEGMENT}(?:\s*\.\s*${TOML_KEY_SEGMENT})*)\s*(\]\]?)\s*(?:#.*)?$`,
+  "u",
+);
+
+function scanTomlStatements(lines) {
+  const headers = [];
+  const continuations = new Set();
+  const masked = new Map();
+  const tokens = /"{3}|'{3}|"(?:\\.|[^"\\])*"|'[^']*'|#.*$/gu;
+  const basicEnd = /\\.|"{3,5}/gu;
+  const literalEnd = /'{3,5}/gu;
+  let multiline = null;
+  for (const [index, line] of lines.entries()) {
+    if (multiline) {
+      continuations.add(index);
+    } else {
+      const match = TOML_TABLE_HEADER_RE.exec(line);
+      if (match && match[1].length === match[3].length) {
+        headers.push({ index, name: match[2], array: match[1].length === 2 });
+        continue;
+      }
+    }
+    let position = 0;
+    let maskStart = 0;
+    let code = line;
+    while (position < line.length) {
+      if (multiline) {
+        const end = multiline === '"""' ? basicEnd : literalEnd;
+        end.lastIndex = position;
+        let match = end.exec(line);
+        while (match?.[0].startsWith("\\")) match = end.exec(line);
+        if (!match) {
+          code = code.slice(0, maskStart) + " ".repeat(line.length - maskStart);
+          break;
+        }
+        position = end.lastIndex;
+        code = code.slice(0, maskStart) + " ".repeat(position - maskStart) + code.slice(position);
+        multiline = null;
+      } else {
+        tokens.lastIndex = position;
+        const match = tokens.exec(line);
+        if (!match || match[0].startsWith("#")) break;
+        position = tokens.lastIndex;
+        if (match[0] === '"""' || match[0] === "'''") {
+          multiline = match[0];
+          maskStart = match.index;
+          if (position === line.length) code = code.slice(0, maskStart) + " ".repeat(position - maskStart);
+        }
+      }
+    }
+    if (code !== line) masked.set(index, code);
+  }
+  return { headers, continuations, masked };
+}
 
 function codeBeforeTomlComment(line = "") {
   let quote = null;
@@ -130,15 +175,17 @@ function scanTomlContainers(code, stack, lineNumber) {
 function codexConfigTomlIssue(configText = "") {
   const lines = normalizeLines(configText);
   const stack = [];
+  const { headers, continuations, masked } = scanTomlStatements(lines);
+  const headerIndexes = new Set(headers.map(({ index }) => index));
 
   for (let index = 0; index < lines.length; index += 1) {
     const lineNumber = index + 1;
     const rawLine = lines[index];
-    const code = codeBeforeTomlComment(rawLine);
+    const code = codeBeforeTomlComment(masked.get(index) ?? rawLine);
     if (!code.trim()) continue;
 
-    const isTableHeader = TOML_TABLE_HEADER_RE.test(rawLine);
-    if (stack.length > 0 && (TOML_BARE_KEY_RE.test(code) || isTableHeader)) {
+    const isTableHeader = headerIndexes.has(index);
+    if (stack.length > 0 && !continuations.has(index) && (TOML_ASSIGNMENT_RE.test(code) || isTableHeader)) {
       return {
         type: "statement_inside_unclosed_container",
         line: lineNumber,
@@ -219,29 +266,21 @@ function ensureSectionSetting(lines, sectionName, settingName, settingValue) {
 }
 
 function firstSectionIndex(lines) {
-  const index = lines.findIndex((line) => /^\s*\[[^\]]+\]\s*(?:#.*)?$/.test(line));
-  return index < 0 ? lines.length : index;
+  return scanTomlStatements(lines).headers[0]?.index ?? lines.length;
 }
 
 function rootSettingNames(lines) {
-  const names = new Set();
-  const end = firstSectionIndex(lines);
-  for (const line of lines.slice(0, end)) {
-    const match = line.match(/^\s*([A-Za-z0-9_.-]+)\s*=/);
-    if (match) names.add(match[1]);
-  }
-  return names;
+  return new Set(rootSettingLines(lines).map(settingNameFromLine));
 }
 
 function rootSettingLines(lines) {
-  const end = firstSectionIndex(lines);
-  return lines.slice(0, end).filter((line) => /^\s*[A-Za-z0-9_.-]+\s*=/.test(line));
+  const { headers, continuations } = scanTomlStatements(lines);
+  return lines.slice(0, headers[0]?.index ?? lines.length)
+    .filter((line, index) => !continuations.has(index) && TOML_ASSIGNMENT_RE.test(line));
 }
 
 function sectionNames(lines) {
-  return lines
-    .map((line) => line.match(/^\s*\[([^\]]+)\]\s*(?:#.*)?$/)?.[1])
-    .filter(Boolean);
+  return scanTomlStatements(lines).headers.filter(({ array }) => !array).map(({ name }) => name);
 }
 
 function codexProjectPathFromSectionName(sectionName = "") {
@@ -262,15 +301,12 @@ function isMetaKimTemporaryProjectPath(projectPath = "") {
 export function removeMetaKimTemporaryProjectResidue(configText = "") {
   assertCodexConfigTomlMergeable(configText);
   const lines = normalizeLines(configText);
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    const sectionName = lines[index].match(/^\s*\[([^\]]+)\]\s*(?:#.*)?$/u)?.[1];
-    const projectPath = codexProjectPathFromSectionName(sectionName);
-    if (!projectPath || !isMetaKimTemporaryProjectPath(projectPath)) continue;
-    let end = index + 1;
-    while (end < lines.length && !/^\s*\[[^\]]+\]\s*(?:#.*)?$/u.test(lines[end])) {
-      end += 1;
-    }
-    lines.splice(index, end - index);
+  const { headers } = scanTomlStatements(lines);
+  let end = lines.length;
+  for (const { index, name, array } of headers.toReversed()) {
+    const projectPath = array ? null : codexProjectPathFromSectionName(name);
+    if (projectPath && isMetaKimTemporaryProjectPath(projectPath)) lines.splice(index, end - index);
+    end = index;
   }
   while (lines.length > 0 && lines.at(-1).trim() === "") lines.pop();
   return lines.length === 0 ? "" : `${lines.join("\n")}\n`;
@@ -279,13 +315,28 @@ export function removeMetaKimTemporaryProjectResidue(configText = "") {
 function sectionSettingLines(lines, sectionName) {
   const section = findSection(lines, sectionName);
   if (!section) return [];
+  const { continuations } = scanTomlStatements(lines);
   return lines
     .slice(section.start + 1, section.end)
-    .filter((line) => /^\s*[A-Za-z0-9_.-]+\s*=/.test(line));
+    .filter((line, index) => !continuations.has(section.start + 1 + index) && TOML_ASSIGNMENT_RE.test(line));
+}
+
+function tomlSettingName(token) {
+  if (token.startsWith("'") && /^'[^']*'$/u.test(token)) return token.slice(1, -1);
+  if (!/^"(?:\\.|[^"\\])*"$/u.test(token)) return token;
+  try {
+    return JSON.parse(token.replace(/\\\\|\\U([a-fA-F\d]{8})/gu, (escape, codepoint) => {
+      if (!codepoint) return escape;
+      return JSON.stringify(String.fromCodePoint(Number.parseInt(codepoint, 16))).slice(1, -1);
+    }));
+  } catch {
+    return token;
+  }
 }
 
 function settingNameFromLine(line) {
-  return line.match(/^\s*([A-Za-z0-9_.-]+)\s*=/)?.[1] ?? null;
+  const assignment = TOML_ASSIGNMENT_RE.exec(line);
+  return assignment ? tomlSettingName(assignment[2]) : null;
 }
 
 function isTopLevelMcpServerSection(sectionName = "") {
@@ -341,8 +392,9 @@ export function mergeCodexConfigAddOnly(baseConfigText = "", additiveConfigText 
   assertCodexConfigTomlMergeable(baseConfigText);
   assertCodexConfigTomlMergeable(additiveConfigText);
 
-  const baseLines = normalizeLines(baseConfigText);
-  const additiveLines = normalizeLines(additiveConfigText);
+  const baseStyle = codexConfigTextStyle(baseConfigText);
+  const baseLines = normalizeLines(baseStyle.body);
+  const additiveLines = normalizeLines(codexConfigTextStyle(additiveConfigText).body);
   const preferredMcpTransports = new Map(
     sectionNames(additiveLines)
       .filter(isTopLevelMcpServerSection)
@@ -388,7 +440,7 @@ export function mergeCodexConfigAddOnly(baseConfigText = "", additiveConfigText 
 
   normalizeCodexMcpServerTransportConflicts(baseLines, preferredMcpTransports);
 
-  return `${baseLines.join("\n")}\n`;
+  return `${baseStyle.bom}${baseLines.join("\n")}\n`;
 }
 
 export function ensureCodexRequestUserInputFeature(configText = "") {
@@ -921,6 +973,8 @@ function codexConfigLineRecords(configText = "") {
 
 function parseCodexConfigLocators(configText = "") {
   const document = codexConfigLineRecords(configText);
+  const { headers, continuations, masked } = scanTomlStatements(document.records.map(({ body }) => body));
+  const headersByIndex = new Map(headers.map((header) => [header.index, header]));
   const tables = new Map();
   const assignments = new Map();
   let table = "";
@@ -931,29 +985,33 @@ function parseCodexConfigLocators(configText = "") {
     map.set(key, values);
   };
 
-  for (const record of document.records) {
-    const header = record.body.match(/^\s*\[([^\]]+)\]\s*(?:#.*)?$/u);
+  for (const [index, record] of document.records.entries()) {
+    const header = headersByIndex.get(index);
     if (header) {
-      table = header[1];
-      push(tables, table, record);
+      table = header.array ? null : header.name;
+      if (table !== null) push(tables, table, record);
       continue;
     }
-    const assignment = record.body.match(/^(\s*)([A-Za-z0-9_.-]+)(\s*=\s*)(.*)$/u);
+    if (table === null || continuations.has(index)) continue;
+    const assignment = TOML_ASSIGNMENT_RE.exec(record.body);
     if (!assignment) continue;
-    const code = codeBeforeTomlComment(assignment[4]);
+    const code = codeBeforeTomlComment(masked.get(index)?.slice(assignment[1].length + assignment[2].length + assignment[3].length) ?? assignment[4]);
     const stack = [];
     scanTomlContainers(code, stack, 1);
-    push(assignments, `${table}\u0000${assignment[2]}`, {
+    const key = tomlSettingName(assignment[2]);
+    push(assignments, `${table}\u0000${key}`, {
       ...record,
       table,
-      key: assignment[2],
+      key,
+      keyToken: assignment[2],
       indent: assignment[1],
       separator: assignment[3],
       rhs: assignment[4],
-      multiline: stack.length > 0,
+      multiline: stack.length > 0 || continuations.has(index + 1),
     });
   }
-  return { ...document, tables, assignments };
+  const tableBoundaries = headers.map(({ index }) => document.records[index]);
+  return { ...document, tableBoundaries, tables, assignments };
 }
 
 function expandedAssignment(text, assignment) {
@@ -961,13 +1019,15 @@ function expandedAssignment(text, assignment) {
   const parsed = codexConfigLineRecords(text);
   const startIndex = parsed.records.findIndex((record) => record.start === assignment.start);
   if (startIndex < 0) throw new Error("Codex config multiline locator disappeared.");
+  const { continuations, masked } = scanTomlStatements(parsed.records.map(({ body }) => body));
   const stack = [];
-  const firstCode = codeBeforeTomlComment(assignment.rhs);
+  const rhsStart = assignment.indent.length + assignment.keyToken.length + assignment.separator.length;
+  const firstCode = codeBeforeTomlComment(masked.get(startIndex)?.slice(rhsStart) ?? assignment.rhs);
   scanTomlContainers(firstCode, stack, 1);
   let last = parsed.records[startIndex];
-  for (let index = startIndex + 1; stack.length > 0 && index < parsed.records.length; index += 1) {
+  for (let index = startIndex + 1; index < parsed.records.length && (stack.length > 0 || continuations.has(index)); index += 1) {
     last = parsed.records[index];
-    scanTomlContainers(codeBeforeTomlComment(last.body), stack, index + 1);
+    scanTomlContainers(codeBeforeTomlComment(masked.get(index) ?? last.body), stack, index + 1);
   }
   if (stack.length > 0) {
     throw new Error(`Codex config mutation cannot safely locate multiline ${assignment.table}.${assignment.key}.`);
@@ -996,7 +1056,7 @@ function sameTomlScalar(rhs, desiredValue) {
 function replaceTomlScalar(assignment, desiredValue) {
   const { code, comment } = splitTomlRhsComment(assignment.rhs);
   const trailing = code.slice(code.trimEnd().length);
-  return `${assignment.indent}${assignment.key}${assignment.separator}${desiredValue}${trailing}${comment}`;
+  return `${assignment.indent}${assignment.keyToken}${assignment.separator}${desiredValue}${trailing}${comment}`;
 }
 
 function assertSinglePlanningTable(parsed, tableName) {
@@ -1050,10 +1110,7 @@ function planCodexSettingMutation(configText, table, key, desiredValue) {
     const suffix = parsed.trailingNewline ? parsed.eol : "";
     afterFragment = `${separator}[${table}]${parsed.eol}${settingLine}${suffix}`;
   } else if (table) {
-    const headerIndex = parsed.records.indexOf(header);
-    const nextHeader = parsed.records.slice(headerIndex + 1).find((record) =>
-      /^\s*\[[^\]]+\]\s*(?:#.*)?$/u.test(record.body)
-    );
+    const nextHeader = parsed.tableBoundaries.find((record) => record.start > header.start);
     position = nextHeader?.start ?? configText.length;
     const prefix = position === configText.length && !parsed.trailingNewline && parsed.body.length > 0
       ? parsed.eol
@@ -1061,9 +1118,7 @@ function planCodexSettingMutation(configText, table, key, desiredValue) {
     const suffix = position < configText.length || parsed.trailingNewline ? parsed.eol : "";
     afterFragment = `${prefix}${settingLine}${suffix}`;
   } else {
-    const firstHeader = parsed.records.find((record) =>
-      /^\s*\[[^\]]+\]\s*(?:#.*)?$/u.test(record.body)
-    );
+    const firstHeader = parsed.tableBoundaries[0];
     position = firstHeader?.start ?? configText.length;
     const suffix = position < configText.length || parsed.trailingNewline ? parsed.eol : "";
     afterFragment = `${settingLine}${suffix}`;
@@ -1195,7 +1250,7 @@ function planCodexBundledSourceCommentRecovery(configText, source, codexHome) {
   if (comments.length === 0) return null;
   if (comments.length !== 1) throw new Error("Codex config managed disabled comment is ambiguous: marketplaces.openai-bundled.source");
   const comment = comments[0];
-  const nextHeader = header && parsed.records.find(record => record.start > header.start && /^\s*\[[^\]]+\]\s*(?:#.*)?$/u.test(record.body));
+  const nextHeader = header && parsed.tableBoundaries.find(record => record.start > header.start);
   const original = comment.body.slice(prefix.length).trimStart();
   if (
     !header || comment.start < header.end || comment.start >= (nextHeader?.start ?? configText.length) ||
@@ -1523,16 +1578,9 @@ function insertedTableHasUnmanagedContent(text, mutation, assignment) {
   );
   if (!mutation.locator.table || !headerMatch) return false;
   const parsed = parseCodexConfigLocators(text);
-  const header = [...parsed.records]
-    .reverse()
-    .find((record) =>
-      record.start < assignment.start &&
-      new RegExp(`^\\s*\\[${mutation.locator.table.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\]\\s*(?:#.*)?$`, "u").test(record.body)
-    );
+  const header = parsed.tables.get(mutation.locator.table)?.findLast((record) => record.start < assignment.start);
   if (!header) return true;
-  const nextHeader = parsed.records.find((record) =>
-    record.start > header.start && /^\s*\[[^\]]+\]\s*(?:#.*)?$/u.test(record.body)
-  );
+  const nextHeader = parsed.tableBoundaries.find((record) => record.start > header.start);
   const sectionEnd = nextHeader?.start ?? text.length;
   const remainder = `${text.slice(header.end, assignment.start)}${text.slice(assignment.end, sectionEnd)}`;
   return remainder.split(/\r\n|\n|\r/u).some((line) => {
@@ -1562,13 +1610,9 @@ export function invertCodexConfigMutations(configText = "", mutations = []) {
       let position = text.length;
       if (mutation.locator.table) {
         const header = parsed.tables.get(mutation.locator.table)[0];
-        position = parsed.records.find((record) =>
-          record.start > header.start && /^\s*\[[^\]]+\]\s*(?:#.*)?$/u.test(record.body)
-        )?.start ?? text.length;
+        position = parsed.tableBoundaries.find((record) => record.start > header.start)?.start ?? text.length;
       } else {
-        position = parsed.records.find((record) =>
-          /^\s*\[[^\]]+\]\s*(?:#.*)?$/u.test(record.body)
-        )?.start ?? text.length;
+        position = parsed.tableBoundaries[0]?.start ?? text.length;
       }
       text = `${text.slice(0, position)}${mutation.beforeFragment}${text.slice(position)}`;
       continue;

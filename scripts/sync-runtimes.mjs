@@ -1,5 +1,6 @@
 import { ENTRY_CLASSIFIER_HOOK_FILES } from "./runtime-hook-mapping.mjs";
 import { promises as fs } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import process from "node:process";
@@ -32,6 +33,7 @@ import {
   GLOBAL_PROJECTION_OWNER_SYNC_RUNTIMES,
   globalAgentProjectionFileName,
   globalProjectionIsOwnedBy,
+  globalProjectionOwner,
   repoRoot,
   resolveTargetContext,
   parseScopeArg,
@@ -643,7 +645,7 @@ function buildGlobalProjectionRecordDescriptors(targetIds) {
         assetType,
         rootPath: assetPath,
         category: globalProjectionCategory(assetType),
-        owner: profile.projection.globalAssetOwners[assetType],
+        owner: globalProjectionOwner(profile, assetType, assetKey),
       });
     }
   }
@@ -4546,45 +4548,32 @@ Examples:
       }
       if (scope === "global") {
         await syncGlobalHookPackage(dirs.cursorHooksDir, dp.cursorHooks, changedFiles, "cursor");
-      }
-      const graphifyHookPath =
-        scope === "global"
-          ? path.join(dirs.cursorHooksDir, "graphify-context.mjs")
-          : ".cursor/hooks/graphify-context.mjs";
-      const spineHookPath =
-        scope === "global"
-          ? path.join(dirs.cursorHooksDir, "activate-meta-theory-spine.mjs")
-          : ".cursor/hooks/activate-meta-theory-spine.mjs";
-      const enforceAgentDispatchHookPath =
-        scope === "global"
-          ? path.join(dirs.cursorHooksDir, "enforce-agent-dispatch.mjs")
-          : ".cursor/hooks/enforce-agent-dispatch.mjs";
-      const cursorMemoryHookPath =
-        scope === "global"
-          ? path.join(dirs.cursorHooksDir, "meta-kim-memory-save.mjs")
-          : null;
-      const cursorHookPromptAdapterPath =
-        scope === "global"
-          ? path.join(path.dirname(dirs.cursorHooksDir), "hookprompt-adapter.mjs")
-          : null;
-      const cursorHooksDir =
-        scope === "global" ? dirs.cursorHooksDir : ".cursor/hooks";
-      if (
-        (
-          await writeGeneratedJson(
-            dirs.cursorHooksFile,
-            buildCursorProjectHooksJson({
-              graphifyHookPath,
-              memoryHookPath: cursorMemoryHookPath,
-              spineHookPath,
-              enforceAgentDispatchHookPath,
-              hookPromptAdapterPath: cursorHookPromptAdapterPath,
-              packageRoot: repoRoot,
-              hooksDir: cursorHooksDir,
-            }),
-          )
-        ).changed
-      ) {
+        const previous = await fs.readFile(dirs.cursorHooksFile, "utf8").catch((error) => {
+          if (error.code === "ENOENT") return null;
+          throw error;
+        });
+        const result = spawnSync(process.execPath, [
+          path.join(repoRoot, "scripts", "sync-global-meta-theory.mjs"),
+          "--targets", "cursor", "--cursor-hooks-config-only",
+          ...(checkOnly ? ["--check"] : []),
+        ], { cwd: repoRoot, env: process.env, encoding: "utf8", windowsHide: true });
+        if (result.error) throw result.error;
+        if (checkOnly && result.status === 2) {
+          staleFiles.push({
+            path: dirs.cursorHooksFile,
+            category: CATEGORIES.C,
+            action: previous === null ? "create" : "update",
+          });
+        } else if (result.status !== 0) {
+          throw new Error(result.stderr.trim() || "Cursor global hook registration failed");
+        }
+        if (checkOnly ? result.status === 2 : previous !== await fs.readFile(dirs.cursorHooksFile, "utf8")) {
+          changedFiles.push(dp.cursorHooksFile);
+        }
+      } else if ((await writeGeneratedJson(
+        dirs.cursorHooksFile,
+        buildCursorProjectHooksJson({ packageRoot: repoRoot }),
+      )).changed) {
         changedFiles.push(dp.cursorHooksFile);
       }
     }

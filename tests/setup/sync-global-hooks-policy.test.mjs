@@ -1,6 +1,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -700,6 +701,76 @@ console.log("About to git push");
       const afterCheck = await readFile(hooksPath, "utf8");
       assert.equal(afterCheck, beforeCheck, "global hooks check must be read-only");
       assert.match(afterCheck, /user-owned-cursor-hook\.mjs/);
+    });
+  });
+
+  test("Cursor global sync preserves user hooks through runtime sync and uninstall", async () => {
+    await withTempRuntimeHomes(async ({ env, root }) => {
+      const hooksPath = path.join(root, "cursor", "hooks.json");
+      const manifestPath = path.join(root, ".meta-kim", "install-manifest.json");
+      const events = [
+        "beforeSubmitPrompt", "preToolUse", "postToolUse", "stop",
+        "postToolUseFailure", "beforeShellExecution", "beforeMCPExecution", "afterAgentResponse",
+      ];
+      const config = {
+        version: 1,
+        userSettings: { keep: true },
+        hooks: Object.fromEntries(events.map((event) => [event, [{
+          command: `node user-owned-${event}.mjs`, timeout: 17,
+        }]])),
+      };
+      config.hooks.preToolUse.push({
+        command: `node "${path.join(root, "third-party", "hooks", "meta-kim", "unrelated.mjs")}"`,
+      });
+      await mkdir(path.dirname(hooksPath), { recursive: true });
+      await writeFile(hooksPath, JSON.stringify(config));
+
+      const syncArgs = ["--scope", "global", "--targets", "cursor", "--global-assets", "hooks"];
+      await runScript(["--targets", "cursor", "--with-global-hooks"], env);
+      const before = await readFile(hooksPath, "utf8");
+      const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+      // Older runtime sync can leave a conflicting whole-file record. An
+      // exact match must not make a shared settings file deletable.
+      manifest.entries.push({
+        path: hooksPath,
+        kind: "file",
+        source: "sync-runtimes",
+        purpose: "cursor-global-hooksFile",
+        category: "B",
+        ownershipClass: "install_projection",
+        runtimeTarget: "cursor",
+        size: Buffer.byteLength(before),
+        sha256: createHash("sha256").update(before).digest("hex"),
+      });
+      await writeFile(manifestPath, JSON.stringify(manifest));
+
+      await runRuntimeSync(syncArgs, env);
+      assert.equal(await readFile(hooksPath, "utf8"), before,
+        "runtime sync after global registration must retain the third-party configuration");
+
+      // The standalone runtime entry must also set up registration itself.
+      await writeFile(hooksPath, JSON.stringify(config));
+      await runRuntimeSync(syncArgs, env);
+      assert.equal(await readFile(hooksPath, "utf8"), before);
+      const { entries } = JSON.parse(await readFile(manifestPath, "utf8"));
+      const records = entries.filter(({ path: candidate }) => candidate === hooksPath);
+      assert.deepEqual(records.map(({ kind, purpose }) => [kind, purpose]), [
+        ["settings-merge", "cursor-global-hooks-json-merge"],
+      ]);
+      assert.ok(records[0].mergedHookFragments.length > 0);
+
+      const current = JSON.parse(await readFile(hooksPath, "utf8"));
+      const lateHook = { command: "node late-user-hook.mjs", timeout: 23 };
+      for (const value of [current, config]) {
+        value.hooks.preToolUse.push(lateHook);
+        value.userSettings.updatedAfterInstall = true;
+      }
+      await writeFile(hooksPath, JSON.stringify(current));
+
+      await execFileAsync(process.execPath, [
+        path.join(REPO_ROOT, "scripts", "uninstall.mjs"), "--scope=global", "--yes",
+      ], { cwd: REPO_ROOT, env });
+      assert.deepEqual(JSON.parse(await readFile(hooksPath, "utf8")), config);
     });
   });
 

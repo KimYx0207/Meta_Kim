@@ -282,6 +282,9 @@ const runtimeProfileCatalog = {
         capabilityIndex: GLOBAL_PROJECTION_OWNER_SYNC_RUNTIMES,
         rules: GLOBAL_PROJECTION_OWNER_SYNC_RUNTIMES,
       },
+      globalAssetKeyOwners: {
+        hooksFile: GLOBAL_PROJECTION_OWNER_SYNC_GLOBAL,
+      },
     },
     activation: {
       supportsGlobalSkillSync: true,
@@ -455,14 +458,15 @@ export function resolveGlobalAgentProjectionTargets(
   return targets;
 }
 
-export function globalProjectionOwner(profile, assetType) {
+export function globalProjectionOwner(profile, assetType, assetKey) {
   if (!profile || typeof profile !== "object") {
     throw new Error("A runtime profile is required for global projection ownership");
   }
   if (typeof assetType !== "string" || !assetType.trim()) {
     throw new Error("A global projection asset type is required");
   }
-  const owner = profile.projection?.globalAssetOwners?.[assetType];
+  const owner = profile.projection?.globalAssetKeyOwners?.[assetKey] ??
+    profile.projection?.globalAssetOwners?.[assetType];
   if (!GLOBAL_PROJECTION_OWNERS.includes(owner)) {
     throw new Error(
       `Runtime profile ${profile.id ?? "unknown"} has no valid global owner for ${assetType}`,
@@ -1128,6 +1132,11 @@ export function validateRuntimeProfile(profile, sourceName = "<unknown>") {
       throw new Error(
         `runtime profile ${sourceName} declares unsupported global owner ${owner} for ${assetType}`,
       );
+    }
+  }
+  for (const [assetKey, owner] of Object.entries(profile.projection.globalAssetKeyOwners ?? {})) {
+    if (!Object.hasOwn(profile.projection.outputPaths, assetKey) || !GLOBAL_PROJECTION_OWNERS.includes(owner)) {
+      throw new Error(`runtime profile ${sourceName} has an invalid global owner for ${assetKey}`);
     }
   }
   if (

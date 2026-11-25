@@ -80,6 +80,36 @@ describe("project-post-copy-init graphify bootstrap", () => {
 });
 
 describe("detectPython310()", () => {
+  test("global Graphify can identify an externally managed interpreter before bootstrapping pip", () => {
+    const calls = [];
+    const python = detectPython310((command, args) => {
+      calls.push([command, ...args]);
+      if (args[0] === "--version") return { status: 0, stdout: "Python 3.12.1" };
+      if (args[0] === "-c") {
+        assert.match(args[1], /sys\.prefix == sys\.base_prefix/);
+        assert.match(args[1], /EXTERNALLY-MANAGED/);
+        return { status: 0, stdout: "true\n" };
+      }
+      return { status: 1 };
+    }, "linux", { requirePip: true, bootstrapPip: true, probeExternalManagement: true });
+
+    assert.equal(python?.externallyManaged, true);
+    assert.deepEqual(calls.map(([, arg]) => arg), ["--version", "-c"]);
+  });
+
+  test("an isolated interpreter can use pip even when the base environment has a marker", () => {
+    const calls = [];
+    const python = detectPython310((command, args) => {
+      calls.push([command, ...args]);
+      if (args[0] === "--version") return { status: 0, stdout: "Python 3.12.1" };
+      if (args[0] === "-c") return { status: 0, stdout: "false\n" };
+      return { status: 0, stdout: "pip 24.0" };
+    }, "linux", { requirePip: true, bootstrapPip: true, probeExternalManagement: true });
+
+    assert.equal(python?.externallyManaged, false);
+    assert.deepEqual(calls.map(([, arg]) => arg), ["--version", "-c", "-m"]);
+  });
+
   test("detects python when version is printed to stderr", () => {
     const python = detectPython310((command) => {
       if (command === "python3") {

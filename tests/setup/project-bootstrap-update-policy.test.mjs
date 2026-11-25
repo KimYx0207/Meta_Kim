@@ -34,6 +34,32 @@ function runBootstrap(args, options = {}) {
   });
 }
 
+test("external bootstrap replaces the legacy maintainer block with a portable project entry", () => {
+  const projectRoot = mkdtempSync(path.join(os.tmpdir(), "meta-kim-bootstrap-entry-"));
+  try {
+    const projectText = "# Local rules\r\n\r\nUse the project's documented build commands.\r\n";
+    for (const file of ["AGENTS.md", "CLAUDE.md"]) {
+      const legacyBlock = `<!-- BEGIN META_KIM MANAGED BLOCK: ${file} -->\nRun npm run meta:sync and inspect canonical/agents/.\n<!-- END META_KIM MANAGED BLOCK: ${file} -->\n`;
+      writeFileSync(path.join(projectRoot, file), `${projectText}\r\n${legacyBlock}`);
+    }
+    const args = ["--project-bootstrap", "--targets", "claude,codex", "--project-dir", projectRoot, "--apply", "--json"];
+    runBootstrap(args);
+    for (const file of ["AGENTS.md", "CLAUDE.md"]) {
+      const content = readFileSync(path.join(projectRoot, file), "utf8");
+      assert.ok(content.startsWith(projectText));
+      assert.match(content, /meta-kim project bootstrap/u);
+      assert.doesNotMatch(content, /npm run meta:|canonical\/(?:agents|skills)\//u);
+      assert.equal(content.match(/<!-- BEGIN META_KIM MANAGED BLOCK:/gu)?.length, 1);
+    }
+    const first = readFileSync(path.join(projectRoot, "AGENTS.md"));
+    runBootstrap(args);
+    assert.deepEqual(readFileSync(path.join(projectRoot, "AGENTS.md")), first);
+  } finally {
+    assert.ok(path.resolve(projectRoot).startsWith(`${path.resolve(os.tmpdir())}${path.sep}meta-kim-bootstrap-entry-`));
+    rmSync(projectRoot, { recursive: true, force: true });
+  }
+});
+
 test("three-hash policy distinguishes managed merge/delta refresh, protected project copies, and unknown ownership", () => {
   const oldHash = "a".repeat(64);
   const newHash = "b".repeat(64);
