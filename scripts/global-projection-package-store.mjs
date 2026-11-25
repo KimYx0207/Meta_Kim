@@ -20,6 +20,7 @@ export const PROJECTION_PACKAGE_RECEIPT_SCHEMA =
 export const PROJECTION_PACKAGE_MANIFEST_SOURCE = "sync-global-meta-theory";
 export const PROJECTION_PACKAGE_PURPOSE = Object.freeze({
   bundle: "primary-runtime-global-projection-package-runtime-bundle",
+  supersededBundle: "primary-runtime-global-projection-package-superseded-runtime-bundle",
   receipt: "primary-runtime-global-projection-package-runtime-bundle:receipt",
   packageManifest:
     "primary-runtime-global-projection-package-runtime-bundle:package-manifest",
@@ -1681,22 +1682,17 @@ export async function findAuthoritativeGlobalProjectionPackage(
     ...packageNameSegments(expectedPackageName),
     assertVersion(expectedPackageVersion),
   );
-  const candidates = entries
-    .filter((entry) =>
-      entry.source === PROJECTION_PACKAGE_MANIFEST_SOURCE &&
-      entry.purpose === PROJECTION_PACKAGE_PURPOSE.bundle &&
-      entry.category === CATEGORIES.C &&
-      entry.kind === "dir" &&
-      entry.ownershipClass === "install_projection" &&
-      entry.runtimeTarget == null &&
-      pathKey(path.dirname(entry.path)) === pathKey(versionRoot) &&
-      SHA256_RE.test(path.basename(entry.path))
-    )
-    .sort((left, right) =>
-      String(right.installedAt ?? "").localeCompare(String(left.installedAt ?? ""))
-    );
-  const candidate = candidates[0];
-  if (!candidate) return refuse("authority_not_recorded");
+  const candidates = entries.filter((entry) =>
+    entry.source === PROJECTION_PACKAGE_MANIFEST_SOURCE &&
+    entry.purpose === PROJECTION_PACKAGE_PURPOSE.bundle
+  );
+  if (candidates.length === 0) return refuse("authority_not_recorded");
+  if (candidates.length !== 1) return refuse("ambiguous_authority");
+  const [candidate] = candidates;
+  if (candidate.category !== CATEGORIES.C || candidate.kind !== "dir" ||
+      candidate.ownershipClass !== "install_projection" || candidate.runtimeTarget != null ||
+      pathKey(path.dirname(candidate.path)) !== pathKey(versionRoot) ||
+      !SHA256_RE.test(path.basename(candidate.path))) return refuse("authority_not_recorded");
   try {
     const verified = await verifyGlobalProjectionPackage(candidate.path, {
       homeRoot,
@@ -1732,8 +1728,7 @@ export async function findAuthoritativeGlobalProjectionPackage(
       return verified;
     }
   } catch {
-    // The newest authority for this exact version is invalid. Fail closed;
-    // never fall back to an older digest or version.
+    // A superseded digest is ownership evidence, never execution authority.
   }
   return refuse("bundle_verification_failed");
 }
@@ -1746,21 +1741,36 @@ export async function recordGlobalProjectionPackage(recorder, verifiedPackage) {
     expectedPackageTarballSha256: verifiedPackage.packageTarballSha256,
   });
   const currentEntries = recorder.snapshot()?.entries ?? [];
+  const packageStore = path.dirname(path.dirname(verified.digestDir));
+  const supersededDigestPaths = currentEntries.filter((entry) => {
+    const segments = path.relative(pathKey(packageStore), pathKey(entry.path)).split(path.sep);
+    return entry.source === PROJECTION_PACKAGE_MANIFEST_SOURCE &&
+      entry.category === CATEGORIES.C && entry.kind === "dir" &&
+      entry.purpose === PROJECTION_PACKAGE_PURPOSE.bundle &&
+      entry.ownershipClass === "install_projection" && entry.runtimeTarget == null &&
+      segments.length === 2 && VERSION_RE.test(segments[0]) && SHA256_RE.test(segments[1]) &&
+      pathKey(entry.path) !== pathKey(verified.digestDir);
+  }).map(({ path: digestPath }) => digestPath);
+  const activePurposes = new Set(Object.values(PROJECTION_PACKAGE_PURPOSE));
+  activePurposes.delete(PROJECTION_PACKAGE_PURPOSE.supersededBundle);
   for (const entry of currentEntries) {
-    const isProjectionPackageAuthority =
-      entry.source === PROJECTION_PACKAGE_MANIFEST_SOURCE &&
-      entry.category === CATEGORIES.C &&
-      (
-        entry.purpose === PROJECTION_PACKAGE_PURPOSE.bundle ||
-        entry.purpose?.startsWith(`${PROJECTION_PACKAGE_PURPOSE.bundle}:`)
-      );
-    if (
-      isProjectionPackageAuthority &&
-      !pathAtOrWithin(verified.digestDir, entry.path)
-    ) {
+    if (entry.source !== PROJECTION_PACKAGE_MANIFEST_SOURCE || entry.category !== CATEGORIES.C) continue;
+    const isCurrentDigest = pathAtOrWithin(verified.digestDir, entry.path);
+    if (activePurposes.has(entry.purpose) && !isCurrentDigest) {
+      if (supersededDigestPaths.some((digestPath) => pathAtOrWithin(digestPath, entry.path))) {
+        recorder.reclassifyEntryPurpose(entry.path, entry.purpose, entry.purpose.replace(
+          PROJECTION_PACKAGE_PURPOSE.bundle, PROJECTION_PACKAGE_PURPOSE.supersededBundle,
+        ));
+        continue;
+      }
+      // Older transient roots are not part of the immutable package store.
+      recorder.forget(entry.path, entry.purpose);
+    } else if (isCurrentDigest && (entry.purpose === PROJECTION_PACKAGE_PURPOSE.supersededBundle ||
+        entry.purpose?.startsWith(`${PROJECTION_PACKAGE_PURPOSE.supersededBundle}:`))) {
       recorder.forget(entry.path, entry.purpose);
     }
   }
+  recorder.requireUniqueEntryPurpose(PROJECTION_PACKAGE_MANIFEST_SOURCE, PROJECTION_PACKAGE_PURPOSE.bundle);
   recorder.recordDir(verified.digestDir, {
     source: PROJECTION_PACKAGE_MANIFEST_SOURCE,
     purpose: PROJECTION_PACKAGE_PURPOSE.bundle,

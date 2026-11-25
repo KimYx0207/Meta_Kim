@@ -142,8 +142,7 @@ function createManagedBundle(repo) {
   };
 }
 
-function createPrimaryProjectionBundle(repo, { storeRoot = null } = {}) {
-  const digest = "a".repeat(64);
+function createPrimaryProjectionBundle(repo, { storeRoot = null, digest = "a".repeat(64) } = {}) {
   const versionRoot = path.join(
     storeRoot ?? path.join(repo, ".meta-kim", "runtime", "projection-packages"),
     "meta-kim",
@@ -2053,6 +2052,58 @@ describe("uninstall / durable runtime bundle ownership", () => {
       const result = removeExactManagedRuntimeBundle(action);
       assert.equal(result.success, true);
       assert.equal(existsSync(digestDir), false);
+    });
+  });
+
+  test("uninstall removes exact inactive digests independently and preserves configured references", () => {
+    withTmpRepo((home) => {
+      const current = createPrimaryProjectionBundle(home);
+      const retained = createPrimaryProjectionBundle(home, { digest: "b".repeat(64) });
+      const expired = createPrimaryProjectionBundle(home, { digest: "c".repeat(64) });
+      const unowned = createPrimaryProjectionBundle(home, { digest: "d".repeat(64) });
+      const supersededPurpose = "primary-runtime-global-projection-package-superseded-runtime-bundle";
+      const bundleEntries = ([bundle, purpose]) => [{
+        path: bundle.digestDir,
+        kind: "dir",
+        source: bundle.action.source,
+        purpose,
+        category: CATEGORIES.C,
+        ownershipClass: "install_projection",
+        directoryClosureSha256: bundle.action.closureSha256,
+        directoryClosureEntryCount: bundle.action.closureEntryCount,
+      }, ...bundle.action.proofFiles.map(({ role, ...proof }) => ({
+        ...proof,
+        purpose: `${purpose}:${role}`,
+        category: CATEGORIES.C,
+        ownershipClass: "install_projection",
+      }))];
+      writeGlobalManifest(home, [
+        [current, PRIMARY_PROJECTION_BUNDLE_PURPOSE],
+        [retained, supersededPurpose],
+        [expired, supersededPurpose],
+      ].flatMap(bundleEntries));
+      const codexConfig = path.join(home, ".codex", "config.toml");
+      mkdirSync(path.dirname(codexConfig), { recursive: true });
+      const userConfig = `[mcp_servers.user_tool]\ncommand = "node"\nargs = [${JSON.stringify(retained.proofByRole.cli)}]\n`;
+      writeFileSync(codexConfig, userConfig);
+      const run = () => runUninstall(home, ["--scope=global", "--yes"]);
+
+      const first = run();
+      assert.equal(first.status, 0, `${first.stdout}\n${first.stderr}`);
+      assert.equal(readFileSync(codexConfig, "utf8"), userConfig);
+      assert.equal(existsSync(current.digestDir), false);
+      assert.equal(existsSync(expired.digestDir), false);
+      assert.equal(existsSync(retained.digestDir), true);
+      assert.equal(existsSync(unowned.digestDir), true);
+      const manifestPath = path.join(home, ".meta-kim", "install-manifest.json");
+      assert.equal(JSON.parse(readFileSync(manifestPath, "utf8")).entries.length, 5);
+
+      writeFileSync(codexConfig, "# user removed the reference\n");
+      const second = run();
+      assert.equal(second.status, 0, `${second.stdout}\n${second.stderr}`);
+      assert.equal(existsSync(retained.digestDir), false);
+      assert.equal(existsSync(unowned.digestDir), true);
+      assert.deepEqual(JSON.parse(readFileSync(manifestPath, "utf8")).entries, []);
     });
   });
 

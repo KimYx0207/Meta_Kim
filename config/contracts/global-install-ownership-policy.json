@@ -12,6 +12,7 @@
     "category": "C",
     "sourceOwner": "sync-global-meta-theory",
     "bundlePurpose": "primary-runtime-global-projection-package-runtime-bundle",
+    "supersededBundlePurpose": "primary-runtime-global-projection-package-superseded-runtime-bundle",
     "proofRoles": [
       "receipt",
       "package-manifest",

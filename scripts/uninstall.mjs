@@ -63,6 +63,7 @@ import {
 import {
   globalAgentProjectionFileName,
   globalProjectionOwner,
+  resolveClaudeUserConfigPath,
   resolveRuntimeProfilesFromManifest,
   resolveRuntimeProjection,
   syncManifestPath,
@@ -82,6 +83,7 @@ import {
   snapshotMcpMemoryBootArtifactFile,
 } from "./mcp-memory-boot-artifacts.mjs";
 import {
+  PROJECTION_PACKAGE_PURPOSE,
   resolveGlobalProjectionPackageLayout,
   withProjectionDigestLock,
 } from "./global-projection-package-store.mjs";
@@ -96,8 +98,9 @@ const GLOBAL_OWNERSHIP_POLICY_PATH = path.join(
 );
 const RUNTIME_BUNDLE_PURPOSE_SUFFIX = "-runtime-bundle";
 const DURABLE_MCP_BUNDLE_PURPOSE = "claude-global-mcp-runtime-bundle";
-const PRIMARY_PROJECTION_BUNDLE_PURPOSE =
-  "primary-runtime-global-projection-package-runtime-bundle";
+const PRIMARY_PROJECTION_BUNDLE_PURPOSE = PROJECTION_PACKAGE_PURPOSE.bundle;
+const SUPERSEDED_PROJECTION_BUNDLE_PURPOSE = PROJECTION_PACKAGE_PURPOSE.supersededBundle;
+const PROJECTION_BUNDLE_PROOF_ROLES = new Set(["receipt", "package-manifest", "cli", "sync-script"]);
 const PROJECTION_PACKAGE_RECEIPT_SCHEMA =
   "meta-kim-global-projection-package-v1";
 const REQUIRED_BUNDLE_PROOF_ROLES_BY_PURPOSE = new Map([
@@ -105,17 +108,20 @@ const REQUIRED_BUNDLE_PROOF_ROLES_BY_PURPOSE = new Map([
     DURABLE_MCP_BUNDLE_PURPOSE,
     new Set(["package-manifest", "cli", "server"]),
   ],
-  [
-    PRIMARY_PROJECTION_BUNDLE_PURPOSE,
-    new Set(["receipt", "package-manifest", "cli", "sync-script"]),
-  ],
+  [PRIMARY_PROJECTION_BUNDLE_PURPOSE, PROJECTION_BUNDLE_PROOF_ROLES],
+  [SUPERSEDED_PROJECTION_BUNDLE_PURPOSE, PROJECTION_BUNDLE_PROOF_ROLES],
 ]);
 const BUNDLE_SOURCE_BY_PURPOSE = new Map([
   [DURABLE_MCP_BUNDLE_PURPOSE, "sync-global-meta-theory"],
   [PRIMARY_PROJECTION_BUNDLE_PURPOSE, "sync-global-meta-theory"],
+  [SUPERSEDED_PROJECTION_BUNDLE_PURPOSE, "sync-global-meta-theory"],
 ]);
 const PACKAGE_VERSION_RE = /^[0-9A-Za-z][0-9A-Za-z._+-]*$/u;
 const SHA256_RE = /^[a-f0-9]{64}$/u;
+
+function isProjectionBundlePurpose(purpose) {
+  return purpose === PRIMARY_PROJECTION_BUNDLE_PURPOSE || purpose === SUPERSEDED_PROJECTION_BUNDLE_PURPOSE;
+}
 
 function pathKey(value) {
   const resolved = path.resolve(value);
@@ -421,6 +427,7 @@ function buildGlobalRemovalPolicy() {
     projectionRule.category !== CATEGORIES.C ||
     projectionRule.sourceOwner !== "sync-global-meta-theory" ||
     projectionRule.bundlePurpose !== PRIMARY_PROJECTION_BUNDLE_PURPOSE ||
+    projectionRule.supersededBundlePurpose !== SUPERSEDED_PROJECTION_BUNDLE_PURPOSE ||
     projectionRule.base !== "home" ||
     projectionRelPath !== ".meta-kim/runtime/projection-packages" ||
     projectionRule.layout !==
@@ -549,7 +556,10 @@ function resolveProjectionPackageCli(packageManifest) {
 
 function trustedProjectionPackageRuntimeBundleEntry(entry) {
   const rule = GLOBAL_REMOVAL_POLICY.projectionPackageStore;
+  const bundlePurpose = [rule.bundlePurpose, rule.supersededBundlePurpose].find((purpose) =>
+    entry.purpose === purpose || entry.purpose?.startsWith(`${purpose}:`));
   if (
+    !bundlePurpose ||
     entry.category !== rule.category ||
     entry.source !== rule.sourceOwner ||
     entry.runtimeTarget != null ||
@@ -595,20 +605,20 @@ function trustedProjectionPackageRuntimeBundleEntry(entry) {
   ) return false;
 
   const exactIdentities = new Map([
-    [rule.bundlePurpose, { kind: "dir", path: digestDir }],
-    [`${rule.bundlePurpose}:receipt`, {
+    [bundlePurpose, { kind: "dir", path: digestDir }],
+    [`${bundlePurpose}:receipt`, {
       kind: "file",
       path: path.join(digestDir, "receipt.json"),
     }],
-    [`${rule.bundlePurpose}:package-manifest`, {
+    [`${bundlePurpose}:package-manifest`, {
       kind: "file",
       path: packageManifestPath,
     }],
-    [`${rule.bundlePurpose}:cli`, {
+    [`${bundlePurpose}:cli`, {
       kind: "file",
       path: path.resolve(packageRoot, cliRelative),
     }],
-    [`${rule.bundlePurpose}:sync-script`, {
+    [`${bundlePurpose}:sync-script`, {
       kind: "file",
       path: path.join(packageRoot, "scripts", "sync-global-meta-theory.mjs"),
     }],
@@ -794,7 +804,8 @@ function findingsFromOneManifest(manifest) {
       finding.bundleProofFiles = manifest.entries
         .filter((candidate) =>
           typeof candidate.purpose === "string" &&
-          candidate.purpose.startsWith(proofPrefix),
+          candidate.purpose.startsWith(proofPrefix) &&
+          (!isProjectionBundlePurpose(finding.purpose) || isStrictDescendant(finding.path, candidate.path)),
         )
         .map((candidate) => ({
           path: candidate.path,
@@ -955,8 +966,7 @@ export function manifestFindingsState({ scope, repoRoot }) {
       blockedReasons.push(`${manifestScope}:manifest_has_no_actionable_entries:${manifestPath}`);
       continue;
     }
-    findings.push(...currentFindings.map((finding) => finding.kind === "json-fragment-merge"
-      ? { ...finding, manifestScope } : finding));
+    findings.push(...currentFindings.map((finding) => ({ ...finding, manifestScope })));
   }
   return { findings, blockedReasons };
 }
@@ -1262,12 +1272,42 @@ function isPrimaryProjectionReferenceFinding(finding) {
   );
 }
 
+function portableBundleReference(value) {
+  const normalized = value.replace(/\\+/gu, "/");
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function currentGlobalPackageReferences(bundlePath) {
+  const needle = portableBundleReference(path.resolve(bundlePath));
+  const referenceFiles = new Set([resolveClaudeUserConfigPath()]);
+  for (const { assetKey, rootPath } of GLOBAL_REMOVAL_POLICY.descriptors) {
+    if (["hooksFile", "configFile", "settingsFile", "mcpFile"].includes(assetKey)) {
+      referenceFiles.add(rootPath);
+    } else if (assetKey === "commandsDir" && existsSync(rootPath)) {
+      for (const entry of readdirSync(rootPath)) {
+        if (entry.endsWith(".md")) referenceFiles.add(path.join(rootPath, entry));
+      }
+    }
+  }
+  return [...referenceFiles].filter((filePath) => {
+    try {
+      const stat = lstatSync(filePath);
+      if (!stat.isFile() || stat.isSymbolicLink()) return true;
+      return portableBundleReference(readFileSync(filePath, "utf8")).includes(needle);
+    } catch (error) {
+      if (error.code === "ENOENT") return false;
+      // An unreadable active configuration cannot prove a digest is unused.
+      return true;
+    }
+  });
+}
+
 /** A global uninstall must not strand a still-enrolled project's native hooks/MCP. */
 export async function joinedProjectPackageReferences(bundlePath, { homeDir = homedir() } = {}) {
   const references = [];
-  const needle = path.resolve(bundlePath).replaceAll("\\", "/");
+  const needle = portableBundleReference(path.resolve(bundlePath));
   const containsReference = (value) => {
-    if (typeof value === "string") return value.replaceAll("\\", "/").includes(needle);
+    if (typeof value === "string") return portableBundleReference(value).includes(needle);
     if (Array.isArray(value)) return value.some(containsReference);
     return value && typeof value === "object" ? Object.values(value).some(containsReference) : false;
   };
@@ -1424,6 +1464,8 @@ function planActions({
             catLabel: "C",
             mutationJournal: f.tomlMutationJournal,
             primaryProjectionReferenceCleanup,
+            manifestScope: f.manifestScope,
+            purpose: f.purpose,
           });
           break;
         }
@@ -1452,6 +1494,7 @@ function planActions({
             closureSha256: f.directoryClosureSha256,
             closureEntryCount: f.directoryClosureEntryCount,
             proofFiles: f.bundleProofFiles ?? [],
+            manifestScope: f.manifestScope,
           });
           break;
         }
@@ -1464,6 +1507,8 @@ function planActions({
           exactFragments: f.manifestManaged ? f.managedHookFragments : null,
           requiresExactFragments: f.manifestManaged === true,
           primaryProjectionReferenceCleanup,
+          manifestScope: f.manifestScope,
+          purpose: f.purpose,
         });
         break;
       }
@@ -1584,7 +1629,7 @@ export function orderUninstallActions(actions) {
     if (action.kind === "strip-mcp") return 0;
     if (
       action.kind === "remove-bundle" &&
-      action.purpose === PRIMARY_PROJECTION_BUNDLE_PURPOSE
+      isProjectionBundlePurpose(action.purpose)
     ) return 100;
     if (action.kind === "remove-bundle") return 1;
     if (action.kind === "remove" && action.scanDerived && action.recursive) return 3;
@@ -2509,7 +2554,7 @@ function inspectManagedBundle(action, rootPath = action.path) {
     !Array.isArray(action.proofFiles) ||
     action.proofFiles.length < requiredProofRoles.size ||
     (
-      action.purpose === PRIMARY_PROJECTION_BUNDLE_PURPOSE &&
+      isProjectionBundlePurpose(action.purpose) &&
       action.proofFiles.length !== requiredProofRoles.size
     )
   ) {
@@ -2557,7 +2602,7 @@ function inspectManagedBundle(action, rootPath = action.path) {
       return { ok: false, reason: "bundle_proof_drift" };
     }
   }
-  if (action.purpose === PRIMARY_PROJECTION_BUNDLE_PURPOSE) {
+  if (isProjectionBundlePurpose(action.purpose)) {
     const receipt = inspectPrimaryProjectionReceipt(action, rootPath);
     if (!receipt.ok) return receipt;
   }
@@ -2581,7 +2626,7 @@ export async function removeExactManagedRuntimeBundleWithLock(
   options = {},
 ) {
   const { homeRoot = homedir() } = options;
-  if (action?.purpose !== PRIMARY_PROJECTION_BUNDLE_PURPOSE) {
+  if (!isProjectionBundlePurpose(action?.purpose)) {
     return removeExactManagedRuntimeBundle(action, options);
   }
   const packageName = GLOBAL_REMOVAL_POLICY.projectionPackageStore.packageName;
@@ -2607,7 +2652,16 @@ export async function removeExactManagedRuntimeBundleWithLock(
   try {
     return await withProjectionDigestLock(
       layout,
-      () => removeExactManagedRuntimeBundle(action, options),
+      async () => {
+        if (options.checkReferences) {
+          const host = currentGlobalPackageReferences(action.path);
+          const project = await joinedProjectPackageReferences(action.path, { homeDir: homeRoot });
+          if (host.length + project.length > 0) {
+            return { success: false, preserved: true, references: { host, project } };
+          }
+        }
+        return removeExactManagedRuntimeBundle(action, options);
+      },
       { homeRoot },
     );
   } catch (error) {
@@ -2715,7 +2769,8 @@ async function main() {
       a.kind === "revert-json-fragments"
     ) {
       if (!existsSync(a.path)) continue;
-      const jsonOwnership = a.kind === "revert-json-fragments" && a.manifestScope
+      const configurationOwnership = a.manifestScope && (a.kind === "revert-json-fragments" ||
+        a.primaryProjectionReferenceCleanup === true)
         ? openRecorder({ scope: a.manifestScope, repoRoot, requireExistingValidManifest: true }) : null;
       const result = a.kind === "strip-mcp"
         ? removeManagedMcpFragmentFromFile(a)
@@ -2726,9 +2781,9 @@ async function main() {
           : stripManagedSettingsFile(a);
       const { success, stripped, backupPath } = result;
       if (success) {
-        if (jsonOwnership) {
-          jsonOwnership.forget(a.path, a.purpose);
-          const flushed = await jsonOwnership.flush();
+        if (configurationOwnership) {
+          configurationOwnership.forget(a.path, a.purpose);
+          const flushed = await configurationOwnership.flush();
           if (!flushed.ok) {
             hadFailure = true;
             recordPrimaryReferenceFailure(a, { success: false, reason: flushed.error });
@@ -2760,14 +2815,9 @@ async function main() {
         }
       }
     } else if (a.kind === "remove-bundle") {
-      if (a.purpose === PRIMARY_PROJECTION_BUNDLE_PURPOSE) {
-        const references = await joinedProjectPackageReferences(a.path);
-        if (references.length > 0) {
-          console.log(`${C.yellow}Shared execution package preserved: ${references.length} enrolled project configuration(s) still use it. ${a.path}${C.reset}`);
-          continue;
-        }
-      }
-      const result = a.purpose === PRIMARY_PROJECTION_BUNDLE_PURPOSE &&
+      const bundleOwnership = isProjectionBundlePurpose(a.purpose) && a.manifestScope === "global"
+        ? openRecorder({ scope: "global", requireExistingValidManifest: true }) : null;
+      const result = isProjectionBundlePurpose(a.purpose) &&
           primaryProjectionReferenceCleanupFailures.length > 0
         ? {
             success: false,
@@ -2778,11 +2828,25 @@ async function main() {
             a.purpose === DURABLE_MCP_BUNDLE_PURPOSE && mcpCleanupFailed
           )
           ? { success: false, preserved: true, reason: "mcp_cleanup_failed" }
-          : a.purpose === PRIMARY_PROJECTION_BUNDLE_PURPOSE
-            ? await removeExactManagedRuntimeBundleWithLock(a)
+          : isProjectionBundlePurpose(a.purpose)
+            ? await removeExactManagedRuntimeBundleWithLock(a, { checkReferences: true })
             : removeExactManagedRuntimeBundle(a);
       if (result.success) {
         if (!result.missing) removedCount += 1;
+        if (bundleOwnership) {
+          bundleOwnership.forget(a.path, a.purpose);
+          for (const proof of a.proofFiles) {
+            bundleOwnership.forget(proof.path, `${a.purpose}:${proof.role}`);
+          }
+          const flushed = await bundleOwnership.flush();
+          if (!flushed.ok) {
+            hadFailure = true;
+            console.error(`${C.yellow}${t.writeFailed(a.path, flushed.error)}${C.reset}`);
+          }
+        }
+      } else if (result.references) {
+        const { host, project } = result.references;
+        console.log(`${C.yellow}Shared execution package preserved: ${host.length} global and ${project.length} enrolled project configuration(s) still use it. ${a.path}${C.reset}`);
       } else {
         hadFailure = true;
         const message = result.reason?.startsWith("projection_reference_cleanup_failed:")

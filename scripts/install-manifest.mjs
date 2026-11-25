@@ -867,6 +867,7 @@ export function openRecorder({
   const touchedEntryKeys = new Set();
   const expectedTouchedEntryStates = new Map();
   const forgetOperations = [];
+  const uniqueEntryPurposes = [];
   let promotedEntries = null;
   let promotedForgetEntryStates = null;
   try {
@@ -925,7 +926,28 @@ export function openRecorder({
     }
   };
 
+  const forget = (targetPath, purpose) => {
+    manifest = removeByPath(manifest, targetPath, purpose);
+    forgetOperations.push({
+      targetPath,
+      purpose,
+      expectedEntries: structuredClone(matchingEntries(baseManifest, targetPath, purpose)),
+    });
+  };
+
   return {
+    reclassifyEntryPurpose(targetPath, currentPurpose, nextPurpose) {
+      const entries = matchingEntries(manifest, targetPath, currentPurpose);
+      if (entries.length !== 1 || matchingEntries(manifest, targetPath, nextPurpose).length > 0) {
+        recordErrors.push(`cannot reclassify the existing manifest entry: ${targetPath}::${currentPurpose}`);
+        return;
+      }
+      safeRecord({ ...entries[0], purpose: nextPurpose });
+      forget(targetPath, currentPurpose);
+    },
+    requireUniqueEntryPurpose(source, purpose) {
+      uniqueEntryPurposes.push({ source, purpose });
+    },
     recordFile(
       filePath,
       {
@@ -1113,14 +1135,7 @@ export function openRecorder({
     },
     forget(targetPath, purpose) {
       try {
-        manifest = removeByPath(manifest, targetPath, purpose);
-        forgetOperations.push({
-          targetPath,
-          purpose,
-          expectedEntries: structuredClone(
-            matchingEntries(baseManifest, targetPath, purpose),
-          ),
-        });
+        forget(targetPath, purpose);
       } catch {
         /* ignore */
       }
@@ -1199,6 +1214,11 @@ export function openRecorder({
           for (const key of touchedEntryKeys) {
             const entry = localEntries.get(key);
             if (entry) next = record(next, entry);
+          }
+          for (const { source, purpose } of uniqueEntryPurposes) {
+            if (next.entries.filter((entry) => entry.source === source && entry.purpose === purpose).length !== 1) {
+              throw new Error(`install manifest requires exactly one entry for ${source}::${purpose}`);
+            }
           }
           if (metaKimVersion && next.metaKimVersion !== metaKimVersion) {
             next = { ...next, metaKimVersion };

@@ -46,6 +46,7 @@ import {
 
 const RECEIPT_SCHEMA = "meta-kim-global-projection-package-v1";
 const BUNDLE_PURPOSE = "primary-runtime-global-projection-package-runtime-bundle";
+const HISTORICAL_BUNDLE_PURPOSE = "primary-runtime-global-projection-package-superseded-runtime-bundle";
 const PROJECTION_STORE_SOURCE = readFileSync(
   path.join(import.meta.dirname, "..", "..", "scripts", "global-projection-package-store.mjs"),
   "utf8",
@@ -518,6 +519,58 @@ test("recording a stable package retires only superseded package authority entri
       updated.entries.some((entry) => entry.path === otherOwnerPath),
       true,
     );
+  });
+});
+
+test("a new digest supersedes authority but retains the previous exact owned bundle", async () => {
+  await withFixture(async ({ root, homeRoot, sourceRoot, env }) => {
+    const previous = await materializeGlobalProjectionPackage({ sourceRoot, homeRoot, env });
+    writeFileSync(path.join(sourceRoot, "assets", "non-key.txt"), "Next release content\n");
+    const current = await materializeGlobalProjectionPackage({ sourceRoot, homeRoot, env });
+    assert.notEqual(current.digestDir, previous.digestDir);
+
+    const manifestPath = manifestPathFor("project", root);
+    const writer = () => openRecorder({ scope: "project", repoRoot: root, metaKimVersion: current.packageVersion });
+    const firstWriter = writer();
+    const competingWriter = writer();
+    await recordGlobalProjectionPackage(firstWriter, previous);
+    await recordGlobalProjectionPackage(competingWriter, current);
+    assert.equal((await firstWriter.flush()).ok, true);
+    const competing = await competingWriter.flush();
+    assert.equal(competing.ok, false);
+    assert.match(competing.error, /requires exactly one entry/u);
+
+    const initial = manifestFor(previous);
+    initial.scope = "project";
+    const recordedAt = "2026-11-24T10:00:00.000Z";
+    initial.entries = initial.entries.map((entry) => ({ ...entry, installedAt: recordedAt }));
+    writeManifest(manifestPath, initial);
+
+    const recorder = writer();
+    await recordGlobalProjectionPackage(recorder, current);
+    const result = await recorder.flush();
+    assert.equal(result.ok, true, result.error);
+
+    const manifest = readManifest(manifestPath);
+    assert.equal(manifest.entries.filter((entry) => entry.purpose === BUNDLE_PURPOSE).length, 1);
+    for (const entry of initial.entries) {
+      assert.deepEqual(manifest.entries.find((item) => item.path === entry.path), {
+        ...entry,
+        purpose: entry.purpose.replace(BUNDLE_PURPOSE, HISTORICAL_BUNDLE_PURPOSE),
+      });
+    }
+    assert.equal(existsSync(previous.digestDir), true);
+
+    manifest.scope = "global";
+    const findAuthority = (expectedFirstPartyClosure) => findAuthoritativeGlobalProjectionPackage(manifest, {
+      homeRoot,
+      expectedPackageVersion: current.packageVersion,
+      expectedFirstPartyClosure,
+    });
+    assert.equal((await findAuthority(current.firstPartyClosure))?.digestDir, current.digestDir);
+    assert.equal(await findAuthority(previous.firstPartyClosure), null);
+    writeFileSync(path.join(current.packageRoot, "assets", "non-key.txt"), "Drift\n");
+    assert.equal(await findAuthority(previous.firstPartyClosure), null);
   });
 });
 
