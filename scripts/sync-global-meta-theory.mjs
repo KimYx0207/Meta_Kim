@@ -14,6 +14,7 @@ import process from "node:process";
 import { setTimeout as delay } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath } from "node:url";
+import { describeGlobalHookDrift, hookCommandScriptPath } from "./global-hook-diagnostics.mjs";
 import {
   buildMetaKimHooksTemplate,
   hookCommandNode,
@@ -2881,16 +2882,6 @@ function flattenHookFragments(hooks = {}) {
   return fragments;
 }
 
-function hookCommandScriptPath(command) {
-  const trimmed = String(command ?? "").trim();
-  const quoted = trimmed.match(/^node\s+"([^"]+)"/u);
-  if (quoted) {
-    return quoted[1];
-  }
-  const unquoted = trimmed.match(/^node\s+([^\s]+)/u);
-  return unquoted?.[1] ?? null;
-}
-
 async function checkClaudeGlobalSettingsHooks() {
   const settingsPath = path.join(runtimeHomes.claude.dir, "settings.json");
   const absHooks = globalMetaKimHooksDir();
@@ -2922,6 +2913,9 @@ async function checkClaudeGlobalSettingsHooks() {
   console.log(
     `${inSync ? `${C.green}✓${C.reset}` : `${C.yellow}⊘${C.reset}`} ${C.dim}Claude Code global settings hooks: ${settingsPath}${C.reset}`,
   );
+  for (const drift of describeGlobalHookDrift(settings.hooks, expected.hooks, Object.keys(template.hooks ?? {}))) {
+    console.log(`  Claude Code configured vs expected: ${drift}`);
+  }
   if (!inSync && missingCommands.length > 0) {
     console.log(
       `${C.yellow}⊘${C.reset} ${C.dim}Missing registered Meta_Kim hook scripts: ${missingCommands.length}${C.reset}`,
@@ -2962,6 +2956,9 @@ async function checkRuntimeGlobalHooksJson({
   console.log(
     `${inSync ? `${C.green}✓${C.reset}` : `${C.yellow}⊘${C.reset}`} ${C.dim}${label} global hooks.json: ${hooksJsonPath}${C.reset}`,
   );
+  const drift = describeGlobalHookDrift(config.hooks, expected.hooks, Object.keys(template.hooks ?? {}));
+  for (const line of drift) console.log(`  ${label} configured vs expected: ${line}`);
+  if (label === "Codex" && drift.length) console.log("  Codex runtime hook trust is a separate host state; verify it in Codex.");
   if (!inSync && missingCommands.length > 0) {
     console.log(
       `${C.yellow}⊘${C.reset} ${C.dim}Missing registered Meta_Kim ${label} hook scripts: ${missingCommands.length}${C.reset}`,

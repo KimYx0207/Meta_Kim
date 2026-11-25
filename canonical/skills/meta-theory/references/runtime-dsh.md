@@ -37,7 +37,7 @@ Pass `--service-package /path/to/built-service-package` to install the Kim_Servi
 
 ### Skills and complete method loading
 
-DSH discovers one-level `<skill-root>/<name>/SKILL.md` entries. The integration creates one `meta-theory` dispatcher plus the **existing nine canonical governance roles**, as native Skills. These roles remain governance owners; business implementation methods come from Kim_Service or another discovered capability source. There is no invented `.dsh/agents` protocol and no persona-only preset pretending to contain the native tool stack.
+DSH discovers one-level `<skill-root>/<name>/SKILL.md` entries. The integration creates one `meta-theory` dispatcher and projects the `canonical/agents/meta-*.md` roles marked `subagent_type: meta-governance` as native Skills. The role names must be unique and match their source filenames. Business implementation methods come from Kim_Service or another discovered capability source.
 
 Every entry is bounded below the reviewed standard preset's 8192-character result-pruner threshold. Its `method.json` points to a primary `partsIndex`; read every listed index page and part in order. Parts preserve the complete source with at most 6000 characters, 120 lines and 1500 characters per line, reserving room for DSH's line-numbered read envelope and avoiding the read tool's separate 2000-character line cap. Large indexes are paginated as well. Load **all primary parts** before using the method. Read the complete required capability/professional-method contracts through their indexes, including late outputChecks and acceptance rules. Load only relevant additional references, with original source directories as link bases.
 
@@ -79,7 +79,7 @@ The core `installation.json` and Service `projection.json` contain expected cont
 
 ## Do not
 
-- Do not invent DSH agent directories, preset IDs, permission fields or Hook enforcement. Inspect native schemas before invoking a tool; keep the existing nine Meta_Kim roles as governance Skills.
+- Inspect native schemas before invoking a tool. Use the canonical Meta_Kim roles as governance Skills, and use documented DSH preset IDs, permission fields and Hook surfaces.
 - Do not use a catalogue summary, truncated resource, partial JSON or unread index page as the complete professional method. Do not silently fall back to another Skill when project shadowing changes the selected source.
 - Do not count a subagent start receipt as completed work, an MCP connection as write permission, a pending human gate as approval, or local file verification as native execution acceptance.
 - Do not rewrite user provider settings, credentials, model routing, unrelated files or modified owned files to force a passing installation. Do not delete shared immutable execution packages during DSH-only uninstall.
@@ -130,7 +130,7 @@ When a host revision or repeated failure suggests an improvement, record the rep
 
 ## Preserve
 
-Preserve user credentials, permission/model configuration, unrelated and modified files, source licenses/notices, full original method bytes and the shared immutable package lifecycle. Preserve the nine governance-agent boundaries, Service ownership of professional implementation methods, real native tool stacks, complete human decisions and the distinction between package, host, delegation and accepted-delivery evidence. Keep the general Meta_Kim Node requirement unchanged for other hosts.
+Preserve user credentials, permission/model configuration, unrelated and modified files, source licenses/notices, full original method bytes and the shared immutable package lifecycle. Preserve the canonical governance-agent boundaries, Service ownership of professional implementation methods, real native tool stacks, complete human decisions and the distinction between package, host, delegation and accepted-delivery evidence. Keep the general Meta_Kim Node requirement unchanged for other hosts.
 
 ## Upstream source contract
 

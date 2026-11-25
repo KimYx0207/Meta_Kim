@@ -68,9 +68,10 @@ function filesBelow(root) {
   return files;
 }
 
-function frontmatterField(text, field) {
+function frontmatterField(text, field, { optional = false } = {}) {
   const header = text.match(/^---\r?\n([\s\S]*?)\r?\n---/u)?.[1];
   const value = header?.match(new RegExp(`^${field}:\\s*(.+)$`, "mu"))?.[1]?.trim();
+  if (!value && optional) return null;
   if (!value || /^[>|]$/u.test(value)) throw new Error(`Missing scalar canonical ${field}`);
   return value.replace(/^(["'])(.*)\1$/u, "$2");
 }
@@ -154,12 +155,18 @@ export function buildDshProjection({ sourceRoot = ROOT, executionRoot = null, sc
     })));
   };
   skill("meta-theory", "Govern substantial work, architecture and module PRDs, evidence, dynamic delegation, review, verification and project evolution with Meta_Kim.", dispatcher, "canonical/skills/meta-theory/SKILL.md");
-  const agentFiles = filesBelow(path.join(sourceRoot, "canonical/agents")).filter((file) => /^meta-[a-z-]+\.md$/u.test(path.basename(file)));
-  if (agentFiles.length !== 9) throw new Error("DSH requires the existing nine canonical Meta governance owners");
+  const agentFiles = filesBelow(path.join(sourceRoot, "canonical/agents")).filter((file) => /^meta-[a-z0-9-]+\.md$/u.test(path.basename(file)));
+  const roleNames = new Set();
   for (const agentFile of agentFiles) {
     const content = readPlain(agentFile).toString("utf8");
-    skill(frontmatterField(content, "name"), frontmatterField(content, "description"), roleBody, portable(path.relative(sourceRoot, agentFile)));
+    if (frontmatterField(content, "subagent_type", { optional: true }) !== "meta-governance") continue;
+    const name = frontmatterField(content, "name");
+    if (roleNames.has(name)) throw new Error(`Duplicate canonical governance name: ${name}`);
+    if (path.basename(agentFile, ".md") !== name || name === "meta-theory") throw new Error(`Invalid canonical governance file name: ${agentFile}`);
+    roleNames.add(name);
+    skill(name, frontmatterField(content, "description"), roleBody, portable(path.relative(sourceRoot, agentFile)));
   }
+  if (!roleNames.size) throw new Error("DSH requires at least one canonical Meta governance owner");
   const packageManifest = JSON.parse(readPlain(path.join(sourceRoot, "package.json")));
   const patch = executionRoot ? [{ insert: [{
     id: "meta-kim-mcp", name: contract.mcpPlugin,

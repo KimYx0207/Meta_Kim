@@ -9,6 +9,11 @@ import { addDshResource, buildDshProjection, manageDsh, readDshServicePackage } 
 import { sha256Buffer } from "../../scripts/safe-managed-file-operations.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const canonicalAgentDirectory = path.join(ROOT, "canonical/agents");
+const canonicalRoleCount = fs.readdirSync(canonicalAgentDirectory, { withFileTypes: true })
+  .filter((entry) => entry.isFile() && /^meta-[a-z0-9-]+\.md$/u.test(entry.name) &&
+    /^subagent_type: meta-governance\s*$/mu.test(fs.readFileSync(path.join(canonicalAgentDirectory, entry.name), "utf8")))
+  .length;
 function resourceParts(files, indexPath) {
   const index = JSON.parse(files.get(indexPath));
   const dir = path.posix.dirname(indexPath);
@@ -36,10 +41,23 @@ const fixture = (t) => {
   return { temp, homeRoot, sourceRoot, mcp: false };
 };
 
-test("native projection keeps the nine governance methods lossless and entry bodies bounded", () => {
+test("DSH follows the canonical governance role markers and rejects duplicate names", (t) => {
+  const opts = fixture(t);
+  const agents = path.join(opts.sourceRoot, "canonical/agents");
+  const extra = "---\nname: meta-evaluator\ndescription: Evaluate work.\nsubagent_type: meta-governance\n---\n\nEvaluate the work.\n";
+  fs.writeFileSync(path.join(agents, "meta-evaluator.md"), extra);
+  fs.writeFileSync(path.join(agents, "meta-example.md"), extra.replace("meta-evaluator", "meta-example").replace("meta-governance", "example"));
+  const projection = buildDshProjection(opts);
+  assert.ok(projection.files.has("skills/meta-evaluator/SKILL.md"));
+  assert.equal(projection.files.has("skills/meta-example/SKILL.md"), false);
+  fs.writeFileSync(path.join(agents, "meta-zduplicate.md"), extra);
+  assert.throws(() => buildDshProjection(opts), /duplicate canonical governance name/iu);
+});
+
+test("native projection keeps canonical governance methods lossless and entry bodies bounded", () => {
   const projection = buildDshProjection();
   const entries = [...projection.files.keys()].filter((file) => /^skills\/[^/]+\/SKILL\.md$/u.test(file));
-  assert.equal(entries.length, 10);
+  assert.equal(entries.length, canonicalRoleCount + 1);
   for (const entry of entries) {
     const body = projection.files.get(entry).toString("utf8").replace(/^---\n[\s\S]*?\n---\n/u, "");
     assert.ok(body.length <= 6000);
@@ -157,7 +175,7 @@ test("install/update/check/uninstall use one ledger and preserve unrelated confi
   fs.writeFileSync(original, "# user configuration\n");
   const installed = await manageDsh("install", opts);
   assert.equal(installed.ok, true);
-  assert.equal(installed.skillCount, 10);
+  assert.equal(installed.skillCount, canonicalRoleCount + 1);
   assert.deepEqual(installed.launch, ["dsh", "--profile", "meta-kim"]);
   const ledger = path.join(opts.homeRoot, ".meta-kim/install-manifest.json");
   assert.ok(JSON.parse(fs.readFileSync(ledger)).entries.every((entry) => entry.runtimeTarget === "deepseek-harness"));
@@ -307,11 +325,11 @@ test("Service packages share lifecycle ownership and stay installed during a cor
     fs.writeFileSync(path.join(bundle, "dsh-package.json"), JSON.stringify({ schemaVersion: 1, kind: "kim-service-dsh-skills", files: [...files].map(([file, bytes]) => ({ path: file, size: Buffer.byteLength(bytes), sha256: sha256Buffer(Buffer.from(bytes)) })) }));
   };
   makeBundle(1);
-  assert.equal((await manageDsh("install", { ...opts, servicePackage: bundle })).skillCount, 12);
+  assert.equal((await manageDsh("install", { ...opts, servicePackage: bundle })).skillCount, canonicalRoleCount + 3);
   const installed = path.join(opts.homeRoot, ".dsh/skills/kim-example/SKILL.md");
   const coreOnly = await manageDsh("update", opts);
   assert.equal(coreOnly.ok, true);
-  assert.equal(coreOnly.skillCount, 12);
+  assert.equal(coreOnly.skillCount, canonicalRoleCount + 3);
   assert.match(fs.readFileSync(installed, "utf8"), /version 1/u);
   makeBundle(2);
   assert.equal((await manageDsh("update", { ...opts, servicePackage: bundle })).ok, true);

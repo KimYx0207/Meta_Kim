@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { promises as fs, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { promises as fs, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -43,7 +43,9 @@ test("MCP packaged resources ignore a polluted repository-root environment", () 
     );
     assert.equal(result.status, 0, result.stderr || result.stdout || result.error?.message);
     const payload = JSON.parse(result.stdout);
-    assert.equal(payload.agentCount, 9);
+    const packagedAgents = readdirSync("canonical/agents", { withFileTypes: true })
+      .filter((entry) => entry.isFile() && /^meta-.*\.md$/u.test(entry.name));
+    assert.equal(payload.agentCount, packagedAgents.length);
     assert.equal(payload.tools.length, 7);
     assert.ok(payload.tools.includes("calculate_materials"));
     assert.deepEqual(payload.resources.slice(-2), ["meta://runtime-effective", "meta://skill/meta-theory"]);

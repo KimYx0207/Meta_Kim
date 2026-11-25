@@ -387,6 +387,7 @@
     "LICENSE",
     "NOTICE",
     "AGENTS.md",
+    "MAINTAINER.md",
     "CLAUDE.md",
     "src/domain/design/software-design.mjs",
     "src/infrastructure/project/project-relations.mjs",
